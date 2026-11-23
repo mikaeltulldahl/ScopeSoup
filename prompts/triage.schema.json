@@ -1,0 +1,38 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["ready", "size", "questions", "draft", "links", "blockers", "paths"],
+  "properties": {
+    "ready": { "type": "boolean" },
+    "notReadyReason": { "type": "string" },
+    "size": { "enum": ["small", "medium", "large"] },
+    "questions": { "type": "array", "items": {
+      "type": "object", "additionalProperties": false, "required": ["question", "options", "recommendation"],
+      "properties": {
+        "question": { "type": "string" },
+        "options": { "type": "array", "items": {
+          "type": "object", "additionalProperties": false, "required": ["label", "description"],
+          "properties": { "label": { "type": "string" }, "description": { "type": "string" } }
+        } },
+        "recommendation": { "type": "string" },
+        "context": { "type": "string" },
+        "multiSelect": { "type": "boolean" }
+      }
+    } },
+    "draft": { "type": "string" },
+    "links": { "type": "array", "items": {
+      "type": "object", "additionalProperties": false, "required": ["type", "item", "reason"],
+      "properties": { "type": { "enum": ["blockedBy", "blocks", "duplicateOf", "conflictsWith", "related"] }, "item": { "type": "string" }, "reason": { "type": "string" } }
+    } },
+    "labels": {
+      "type": "object", "additionalProperties": false, "required": ["add", "remove"],
+      "properties": { "add": { "type": "array", "items": { "type": "string" } }, "remove": { "type": "array", "items": { "type": "string" } } }
+    },
+    "blockers": { "type": "array", "items": { "type": "string" } },
+    "paths": { "type": "array", "items": { "type": "string" } },
+    "parts": { "type": "array", "items": {
+      "type": "object", "additionalProperties": false, "required": ["title", "description", "verification"],
+      "properties": { "title": { "type": "string" }, "description": { "type": "string" }, "verification": { "type": "string" } }
+    } }
+  }
+}

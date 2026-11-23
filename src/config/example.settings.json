@@ -1,0 +1,12 @@
+{
+  "project": "example",
+  "mainBranch": "main",
+  "level": 0,
+  "setupCommand": ["node", ".scopesoup/scopesoup-setup.mjs", "--from-clone", "{{ownClone}}"],
+  "setupWatch": ["package-lock.json"],
+  "bugLabels": ["bug"],
+  "roles": {
+    "implement": { "model": "sonnet", "allowedTools": ["Read", "Glob", "Grep", "Edit", "Write", "Bash(git *)", "Bash(pnpm test *)"] },
+    "review": { "model": "opus" }
+  }
+}

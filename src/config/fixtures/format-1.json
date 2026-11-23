@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "project": "example",
+  "repoPath": "../example-clone",
+  "mainBranch": "main",
+  "remote": "origin",
+  "realPaths": ["/srv/example-production"],
+  "level": 0,
+  "keepAwake": true,
+  "machineName": "desk",
+  "bugLabels": ["bug"],
+  "claude": { "path": "claude" },
+  "settings": {
+    "maxParallelSessions": { "value": 1, "reason": "One implementor at a time." },
+    "budgetReserve": { "value": 4, "reason": "We work in the same window and the same week." }
+  },
+  "roles": {
+    "implement": { "model": "sonnet", "allowedTools": ["Read", "Glob", "Grep", "Edit", "Write", "Bash(git *)", "Bash(npm test *)"] },
+    "review": { "model": "opus" }
+  },
+  "host": { "kind": "metaBranch" }
+}

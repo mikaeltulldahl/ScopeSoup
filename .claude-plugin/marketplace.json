@@ -1,0 +1,14 @@
+{
+  "name": "scopesoup",
+  "description": "Scope Soup: runs a project's work loop with coding agents.",
+  "owner": {
+    "name": "Mikael Tulldahl"
+  },
+  "plugins": [
+    {
+      "name": "scopesoup",
+      "source": "./plugins/scopesoup",
+      "description": "Put a project under Scope Soup, or take it off again, from your own Claude Code session."
+    }
+  ]
+}

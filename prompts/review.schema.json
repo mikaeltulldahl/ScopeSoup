@@ -1,0 +1,12 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["verdict", "findings"],
+  "properties": {
+    "verdict": { "enum": ["approve", "changes"] },
+    "findings": { "type": "array", "items": {
+      "type": "object", "additionalProperties": false, "required": ["severity", "text"],
+      "properties": { "severity": { "enum": ["must", "should"] }, "file": { "type": "string" }, "text": { "type": "string" }, "ask": { "type": "boolean" } }
+    } }
+  }
+}

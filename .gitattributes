@@ -1,0 +1,10 @@
+# Everything is stored and checked out with LF, whatever core.autocrlf says: prompt templates and
+# tests compare exact text.
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.gif binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+*.sqlite binary

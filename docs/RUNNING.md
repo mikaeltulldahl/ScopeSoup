@@ -1,0 +1,667 @@
+# Running Scope Soup on a project
+
+How to configure and start Scope Soup. A Claude Code skill writes the configuration with you (see "Onboarding with the Claude Code plugin" and `docs/ONBOARDING.md`); this page is the reference for every key.
+
+## What the machine needs
+
+- Node 22.18 or newer, and pnpm.
+- git, with a clone of the project that can push to its remote without asking for a password.
+- The `claude` command (Claude Code), logged in. Agent sessions run as that login and use its usage allowance.
+- For a GitHub project: a GitHub token that can read the repository and, when writes are on, comment, label, edit and close issues (and at level 4 with `mergeQueue.ci: "github"`, open the batches' pull requests; `docs/github-mapping.md`, "Token rights"). A meta branch project needs no token.
+
+`pnpm release` makes `release/scopesoup-<version>/`, a zip of it and the zip's SHA-256 (git-ignored): the server sources, the prompts, the built web app, `docs/RUNNING.md`, `plugins/scopesoup/claude-md-section.md` (what the onboarding skill reads), `scopesoup.cmd`, `scopesoup.sh` and `release.json` (the commit, whether the check passed on it, and the three format numbers). How a release is cut, and why it checks the exact commit it is tagged on: "Cutting a release" below. How a release is installed, started and upgraded: "Installing and upgrading" below. Its `package.json` has no `web:build` script and needs no `pnpm install`. On the target machine only Node 22.18 or newer is needed, with no `pnpm install`; set the `SCOPESOUP_*` variables and run the script. A single `.exe` is later work. Otherwise it is installed with Node and pnpm (decision 36). A release's notes say whether the configuration file's format changed ("The file's format and upgrades" below), whether the meta branch's format changed ("The meta branch's format and upgrades" below), and whether the database's schema version changed ("The database's schema version and upgrades" below): the new number, and what the migration does to an older file, branch or database.
+
+## Installing and upgrading
+
+Scope Soup runs released versions of itself. A machine has one **Scope Soup home**: a folder of its own, outside every git repository, that holds a folder per version, a pointer to the one that runs, and the launcher:
+
+```
+scopesoup/                  Scope Soup's home (the onboarding skill proposes <parent of the config folder>/scopesoup/)
+  bin/scopesoup.cmd         the launcher for Windows: runs the version `current` names
+  bin/scopesoup             the launcher for sh (Git Bash, macOS, Linux)
+  current                one line: the folder of the version that runs, such as scopesoup-0.5.0
+  upgrade.json           the last switch: from, to, when, whether the new version started, the backup
+  scopesoup-0.5.0/          a release, unpacked as it came
+  scopesoup-0.4.2/          the version before it, kept for "Go back" (at most one)
+  backups/               the database and config copied before the last upgrade
+```
+
+**The first install.** Unpack the release zip as it is into the home (it holds one folder, `scopesoup-<version>/`), then run once, in a terminal:
+
+```
+pnpm --dir <home>/scopesoup-0.5.0 setup-home
+```
+
+(or `node <home>/scopesoup-0.5.0/src/scopesoup.ts setup-home`). It writes `current` (only when there is none) and the two launchers in `<home>/bin`. **It does not change the PATH or any other setting of the machine**: it prints how you add `<home>/bin` to your PATH yourself. On Windows: Settings, search "environment variables", "Edit environment variables for your account", Path, New, `<home>\bin`; or in PowerShell, for your account only, `[Environment]::SetEnvironmentVariable("Path", [Environment]::GetEnvironmentVariable("Path", "User") + ";<home>\bin", "User")`. On sh, `export PATH="<home>/bin:$PATH"` in `~/.profile`. Open a new terminal; `scopesoup version` prints the version. The onboarding skill does the unpacking and `setup-home` with you, and leaves the PATH to you.
+
+**The one command.** `scopesoup <command>` runs the current version's command: `scopesoup start` (the server), `scopesoup item ...` (the item commands, below), `scopesoup config:check`, `scopesoup config:register`, `scopesoup config:setup`, `scopesoup settings:init`, `scopesoup offboard`, `scopesoup meta:accept`, `scopesoup version`. The CLAUDE.md section a project commits says `scopesoup item ...`, so it is right after every upgrade and on every machine; it never names a folder. Run in a project's repository, the commands find this machine's configuration for it themselves ("Which config a command reads" below).
+
+**Themes**. The Settings page opens with a theme picker: "Default" (the lighthouse look and the board's own words), "Plain" (ordinary words, a grey palette) and "Graveyard Shift" (a murder mystery at night: cases, a stakeout, a coroner's report). The choice is yours alone and stays in this browser (localStorage), so it needs no config key, and it works in light and dark. A theme gives the board its words and look: `web/src/theme.ts` maps neutral keys to words, colours (custom properties) and the logo and tab icon; to add a theme, add one entry there.
+
+**The version on the board.** The board's footer says which version runs, and "Scope Soup X.Y.Z is available" when a newer release is known. The Settings page has the panel: the version, where it runs from, the last check, the newer release's notes, and the buttons.
+
+**The update check.** Scope Soup asks GitHub for the newest release of its own repository (`GET /repos/mikaeltulldahl/scopesoup/releases/latest`) once a day, at start when the last check is older than a day, and when you press "Check now". Drafts and pre-releases do not count. It only reads, and nothing is upgraded on its own. `SCOPESOUP_UPDATE_TOKEN` is the token for a private repository (from the environment, never a file); `SCOPESOUP_UPDATE_REPO` names another repository; `SCOPESOUP_UPDATE_API` another API address; `SCOPESOUP_UPDATE_CHECK=off` switches the check off (a laptop that may not reach GitHub: the board then says the check is off, and a release is installed by hand as below). A failed check is shown on the panel and tried again the next day.
+
+**Get latest** (a button on the Settings page, after a yes):
+
+1. The folder of the version before the current one is deleted (at most two versions on disk).
+2. The release zip is downloaded, and checked: its size and its SHA-256 (the digest GitHub reports for the asset, or the `.zip.sha256` attached to the release), that it unpacks to one folder `scopesoup-<version>/` with the files a release has, and that its `package.json` says that version. It is unpacked through a temporary folder in the home and renamed into place only when all of it is right; the running version's folder is never touched.
+3. Agents and merging are paused (as Pause agents and Pause merge queue), and Scope Soup waits until no session and no queue batch runs. A running session finishes its step and a running check finishes; nothing is cut off. The panel says what it waits for, and Cancel stops the wait (agents and the merge queue stay paused).
+4. The database (a whole copy, `VACUUM INTO`) and this machine's `scopesoup.config.json` are copied to `<home>/backups/before-scopesoup-<version>/`, replacing the copy of the upgrade before.
+5. The pointer is switched, and Scope Soup exits with code 75. The launcher starts the version `current` names. The new version migrates what it must at start ("The file's format and upgrades", "The meta branch's format and upgrades", "The database's schema version and upgrades"), comes up paused as after every start, and the board reloads on it.
+
+Scope Soup started without the launcher (`pnpm start`, or a version folder's own `scopesoup.cmd`) switches the pointer and says to start it again with `scopesoup start`. A development checkout has no Get latest: update it with git.
+
+**A version that cannot start** (it cannot read the project's data, or fails before its board listens) right after a switch gives the pointer back to the version before it and exits with code 75, so the launcher starts the old one again; the panel says so. This happens once: the old version is not switched again if it fails too.
+
+**Go back to X.Y.Z.** One step back, to the version the last switch left, while its folder is kept: the button waits for idle the same way and switches the pointer. No other older version can be picked. Going back needs nothing else when no format changed (the usual case: new log kinds and optional fields are ignored by an older version). Across a breaking change the older version refuses the newer data: the config file (it is kept as `scopesoup.config.v<old>.json` by the migration), the database (`scopesoup.v<old>.sqlite` beside it, and the copy in `<home>/backups/`) must be put back by hand, with Scope Soup stopped, and anything written since is not in them. The meta branch cannot be put back (other laptops share it): an older Scope Soup reads a newer meta branch and refuses to write to it ("upgrade").
+
+**Cleaning up.** At most two versions are on disk: the current one and the one Go back returns to. The older one is deleted once the current one has run cleanly for a day (started, and not given the pointer back), or at the next upgrade, whichever comes first. Only `scopesoup-<version>` folders are deleted. Each step is an event in the store (`scopesoup.update_checked`, `scopesoup.upgrade_started`, `scopesoup.upgraded`, `scopesoup.went_back`, `scopesoup.upgrade_cancelled`, `scopesoup.upgrade_failed`, `scopesoup.version_removed`).
+
+**Several projects on one machine** share the home: Get latest on one board switches the pointer for all of them, and the other projects' Scope Soup keeps running the version it started with until it is started again. Restart them after an upgrade, before the older folder is cleaned up.
+
+**By hand** (no network to GitHub): unpack the new zip into the home beside the current version, stop Scope Soup when nothing runs, write the new folder's name into `current`, and start it with `scopesoup start`.
+
+The machine has to stay on. Scope Soup does nothing while it is asleep, and picks up where it was when it starts again. On Windows Scope Soup keeps the laptop awake itself while it has work (see the Windows section).
+
+### Which config a command reads
+
+Every command that reads this machine's `scopesoup.config.json` (`start`, `item`, `config:check`, `settings:init`, `offboard`) takes the first of (`src/config/locate.ts`):
+
+1. `--config <file>` (for `config:check`, its file argument);
+2. `SCOPESOUP_CONFIG`;
+3. `scopesoup.config.json` in the folder the command runs in;
+4. the config this machine knows for the git repository the command runs in.
+
+For the last, Scope Soup's home keeps a short list of config files, `<home>/configs.json`. The onboarding skill adds the config it writes (`scopesoup config:register <file>`, by hand too); offboarding takes it off again. A config is for the repository when the repository's top folder (for a worktree, its main repository's too) is the config's own clone (`ownClone`), Scope Soup's clone (`repoPath`) or one of its `realPaths`, or when the repository has a remote with the config's remote URL (`remoteUrl`, else the URL of `remote` in `repoPath`). So a session in your clone, in a worktree of it or in another clone of the project finds its config, and two projects on one machine each find their own. Outside a repository, with no config on the list for it, or with more than one: the command says so and asks for `--config` or `SCOPESOUP_CONFIG`. A development checkout has no home and so no list. `scopesoup start` without a config is only a board, as before, and says why.
+
+## Start
+
+In a clone of Scope Soup:
+
+```
+pnpm install
+pnpm web:build
+SCOPESOUP_GITHUB_REPO=owner/name SCOPESOUP_GITHUB_TOKEN=... SCOPESOUP_CONFIG=/path/to/project/scopesoup.config.json pnpm start
+```
+
+The board is then on http://127.0.0.1:4310.
+
+The host can instead be set in the project's shared settings (see "The host" below). Then `pnpm start` with only this machine's file is enough for a meta branch project.
+
+| Variable | Does |
+|---|---|
+| `SCOPESOUP_META_REPO` | A local git repository (its own top level, a bare repository or a submodule folder; a plain subdirectory of another repository is refused) whose meta ref (`refs/scopesoup/meta`, a fixed name) holds the items (`docs/DESIGN.md`, "Items on a meta branch"). Read from its object store, never checked out. Fetched, written and pushed only with `SCOPESOUP_META_WRITE=1` (`docs/DESIGN.md`, "Writing to the meta branch"). |
+| `SCOPESOUP_META_WRITE` | `1` lets Scope Soup create and edit items, append to their logs, and fetch and push the meta ref. Without it the meta ref is only read. Needs git 2.29 or newer. |
+| `SCOPESOUP_META_AUTHOR_NAME`, `SCOPESOUP_META_AUTHOR_EMAIL` | With `SCOPESOUP_META_WRITE=1`: the person meta commits are made as. Required; the machine's git config is not used. |
+| `SCOPESOUP_META_PREFIX` | With `SCOPESOUP_META_WRITE=1`: this machine's prefix for the ids of items made here (`A` gives `A-12`). One per machine, never the same on two machines. Without it no item is created here, and Scope Soup says so at start. |
+| `SCOPESOUP_META_REMOTE` | The remote the meta ref is pushed to and fetched from. Default `origin`; `none` keeps it local. A push runs the repository's own `pre-push` hook. |
+| `SCOPESOUP_META_FETCH_SECONDS` | How often a read fetches the meta ref first. Default 60. |
+| `SCOPESOUP_MERGE_QUEUE` | `off`: do not take the merge queue lease before merging. Default: with a writable meta branch host, merging (through the merge queue) waits for the lease on the remote's `refs/scopesoup/merge-queue`, so only one machine merges at a time. |
+| `SCOPESOUP_GITHUB_REPO` | The repository to read, as `owner/name`. Without it or `SCOPESOUP_META_REPO` nothing is synced. |
+| `SCOPESOUP_GITHUB_TOKEN` | The token for reading it, and for Scope Soup's writes to it when writes are on. |
+| `SCOPESOUP_CONFIG` | This machine's private configuration. Default `./scopesoup.config.json`, else the config this machine knows for the git repository Scope Soup is started in ("Which config a command reads"). The project's shared settings are read from the meta ref of the repository it names. Without the file the orchestrator stays off and Scope Soup is only a board. |
+| `SCOPESOUP_WRITE` | `1` lets Scope Soup write to GitHub (`docs/github-mapping.md`): edit issues, add its labels, post its question, answer, draft, claim and log comments, add dependencies and sub-issues, close an item's issue when its change merges (with a comment naming the commit and the batch), and at level 4 with `mergeQueue.ci: "github"` push and open the batches' pull requests. Without it GitHub is only read, and the board says the issue should be closed by hand. A push uses git's own credentials. At start, Scope Soup checks that the clone's remote is the repository in `SCOPESOUP_GITHUB_REPO`; if not, writes stay off and it says which two it compared. It does not switch on writes to the meta ref (`SCOPESOUP_META_WRITE`). |
+| `SCOPESOUP_DATA` | Where the database is kept (`scopesoup.sqlite`, and the copy a migration may keep, "The database's schema version and upgrades" below). Default `./data`. |
+| `SCOPESOUP_HOST`, `SCOPESOUP_PORT` | Where the board listens. Default `127.0.0.1:4310`. |
+| `SCOPESOUP_ALLOW_LAN` | `1` allows an address other than this machine. There is no login yet, so only on a network you trust. |
+| `SCOPESOUP_POLL_SECONDS` | How often the host is polled. Default 20. |
+| `SCOPESOUP_PERSON` | Read by the item commands only (below), as the person's name when `--as` is not given. The board does not read it: its person is the one picked at the top of the board, remembered in that browser. |
+| `SCOPESOUP_PIPELINES` | Workflow names to keep run history for, for time estimates. |
+| `SCOPESOUP_UPDATE_CHECK` | `off`: never ask GitHub for new Scope Soup releases ("Installing and upgrading" above). Default: once a day. |
+| `SCOPESOUP_UPDATE_TOKEN` | A token that can read the releases of Scope Soup's repository, when it is private. |
+| `SCOPESOUP_UPDATE_REPO`, `SCOPESOUP_UPDATE_API` | The repository whose releases are Scope Soup's (default `mikaeltulldahl/scopesoup`) and the API's address (default `https://api.github.com`). |
+| `SCOPESOUP_LAUNCHER` | Set by the launcher (`<home>/bin/scopesoup`), not by you: Scope Soup then exits with code 75 to be restarted on another version. |
+
+## The project's configuration
+
+A project's settings are in two places, and each key is in exactly one of them. There are no duplicates and no override rules; a key in the wrong place is refused with a message that says where it belongs.
+
+- **Shared, on the meta ref: `settings/settings.json` on `refs/scopesoup/meta`.** What decides the outcome, the same on every machine: `project`, `host` (where the Items live), `mainBranch`, `level`, what "OK to merge" means (`checkCommand`, `rerunFilesCommand`, `mergeQueue`), the setup (`setupCommand`, `setupWatch`), `bugLabels`, `roles` (models, turns, tools), the resources every machine shares (`sharedResources`) and the rule-like numbers under `settings` (`persistence`, `stallTimeoutMinutes`, `sessionTimeoutMinutes`, `retryBackoffCapSeconds`, `checkTimeoutMinutes`, `queueMinBatch`, `queueMaxBatch`, `queueRerunCost`, `queueMinOutcomes`, `triageMaxAgeDays`). The meta ref's name is fixed, so finding the settings needs no setting: Scope Soup reads them straight from the object store of `repoPath` (again only when the ref moved, and at most every 2 seconds), and fetches the ref from `remote` when it starts and then every minute. Every project has the ref: a meta branch project keeps its Items next to the settings, and a GitHub-host project has it for the settings alone (like `refs/scopesoup/merge-queue`). The setup script, `.scopesoup/scopesoup-setup.mjs`, is code that runs, so it stays in the repository, on the main branch. A save is one commit on the meta ref ("The Settings page and the sliders" below); there is no file in a working tree to edit.
+- **Private, per machine: `scopesoup.config.json`.** `version`, `machineName`, where the repository is (`repoPath`, `remote`, `remoteUrl`), the local paths (`realPaths`, `ownClone`, `workspacesDir`, `workspaces`, `streamsDir`, `promptsDir`, `claude`), `keepAwake`, this machine's own resources (`resources`), this machine's part of a meta branch host (`meta`, below) and what this machine may spend and how often it looks, under `settings` (`maxParallelSessions`, `budgetReserve`, `tickSeconds`): each machine has its own subscription. Tokens stay in the environment. Keep it, and Scope Soup's `data/`, in a folder outside the project's repository; the list in Scope Soup's home ("Which config a command reads") or `SCOPESOUP_CONFIG` finds it.
+
+`src/config/example.config.json` and `src/config/example.settings.json` show the two shapes. Check this machine's file with the project's shared settings with `pnpm config:check <file>` (below). The first person on a project writes the shared settings with `pnpm settings:init` (below; the onboarding skill runs it); after that they are changed on the Settings page. The parts that matter first:
+
+- `repoPath`: the clone Scope Soup works in, relative to the configuration file. Scope Soup keeps a few worktrees of it under `workspacesDir` and never works in the clone's own checkout.
+- `workspaces`: where sessions work. Left out, it is `{ "kind": "worktree" }`: worktrees of `repoPath`, reused across items like a pool. An item claims a free one (`<workspacesDir>/slot-1`, `slot-2`, ...; the one it had before first), which is put on the item's branch; it keeps it across its steps and frees it when it is parked or merges. A new worktree is made only when none is free, so there are as many as items have been under way at once. Freeing one resets tracked files, removes untracked files git does not ignore and detaches HEAD; files git ignores (installed dependencies, build output) stay, so the next item there finds the setup done (see "The setup of a fresh clone"). Which worktree an item holds is kept in Scope Soup's database (`orchestrator.worktree_slots`, with `orchestrator.worktree_taken` and `orchestrator.worktree_freed` events). A worktree an older Scope Soup made per item (`<workspacesDir>/<item>-<hash>`) is still used, and removed when the Item is parked, as before. For a project whose repository is a submodule of an outer repository, see "A pool of clones" below.
+- When a worktree is freed when the Item is parked (an escalation or a question), what the session left uncommitted is first written as `<streamsDir>/wip/<workspace>.diff`. When the item resumes, the patch is applied in the worktree it gets, uncommitted, and the session is told the edits are there and not yet committed. A patch that does not apply cleanly is kept where it is and the session is told so. A session to resume that ran in another worktree than the one the item gets now starts afresh with its prompt and the message (`claude` keeps a session per folder).
+- `setupCommand` and `setupWatch`: the setup of a fresh clone, below. `ownClone` (private): your own clone of the project on this machine, which `{{ownClone}}` in the shared `setupCommand` stands for.
+- `realPaths`: anything on the machine that agents must never run in. Sessions refuse to start there.
+- `machineName`: this machine's name where the hosts show it: claim comments on GitHub, log lines and commit trailers on the meta branch, the merge queue lease, and the address of session commits (`scopesoup@<name>.invalid`). 1 to 40 letters, digits, `-`, `_` or `.`. Required: a file without it does not load, because two machines with the same name treat each other's claims as their own. Give each machine that shares a project its own name. It is the only way to name the machine: the older meta branch `host.machine` is dropped when the file is migrated to format 1 (below), and `SCOPESOUP_MACHINE` is not read (Scope Soup says so at start when it is set). Without a configuration file nothing names the machine, so `SCOPESOUP_META_WRITE=1` and `SCOPESOUP_WRITE=1` then refuse to start. Scope Soup never uses the computer's host name here: on a public repository everyone could read it. After a change of name, claims written under the old name stay until they expire (120 minutes, or the merge queue lease's length); this machine renews and writes under the new name only. On a meta branch project, share the meta branch (let Scope Soup push it, so the sharing report says it is shared) before you change `machineName`: commits not yet shared carry the old name, and Scope Soup no longer counts them as its own.
+- `keepAwake`: `true` (the default) keeps a Windows laptop from sleeping while sessions run or work is waiting; `false` switches it off. See the Windows section.
+- `level`: how much Scope Soup does on its own, 0 to 4 (the default 0). See "Levels" below.
+- `rules`: no rule switch is left. From level 1 the usage stop at `settings.budgetReserve` is always on, and Scope Soup claims the Items it starts on a shared host (a meta branch with writes and a remote, or GitHub with writes) for a fixed 120 minutes (`docs/RULES.md`). An older file's `rules` (`rules.hardBudgetStop`, `rules.claims` and the other removed switches) is dropped when the file is migrated to format 1 (below).
+- `claude` (private): the settings of the Claude Code provider, the agent CLI sessions run on (one provider today, `src/orchestrator/providers/`): `path` (the program, below under "Windows"), `prefixArgs` and `extraArgs` (arguments before and after Scope Soup's own), `promptVia` (`"stdin"`, the default, or `"arg"`) and `dropApiKeyEnv` (default `true`: `ANTHROPIC_API_KEY` is taken out of the session's environment, so sessions draw from the subscription). A second provider will get a section of its own.
+- `roles`: per role, the model, the turn limit and the tools the agent may use. A role whose model the file does not name runs on its default: opus for triage and review, sonnet for implement. An implementor can only run the commands listed here, so list the project's test command. Every session is also refused `git push --force*`, `git push -f*` and `*--no-verify*` (`--disallowedTools`), and from level 4 any `git push`, whatever `allowedTools` say. A `roles.fix` in an older file is dropped when it is migrated to format 1.
+
+### Levels
+
+One setting, `level`, says how much Scope Soup does; each level includes the ones below it:
+
+| `level` | Name | What the orchestrator starts | How a finished change ends |
+|---|---|---|---|
+| 0 | Watch | Nothing: no session, no hand-over, no merging. The board still syncs and shows the work. | - |
+| 1 | Triage | Triage sessions only. A triaged item waits at its implement step; an item that states its size gets its triage too. | - |
+| 2 | Implement | Triage and implement. An item that states its size (`size:small` or `size:medium`) skips triage. | The implementor merges it itself, on its own judgement, as the project's CLAUDE.md says (or opens a pull request) |
+| 3 | Review | Also review: every built change is reviewed; findings go back to the implementor. | After the reviewer approves, the implementor merges it as CLAUDE.md says (or opens a pull request) |
+| 4 | Autopilot | Everything, and Scope Soup merges every reviewed change through its merge queue (one waiting change is a batch of one). Needs `remoteUrl` (and `checkCommand` to merge anything, or with `mergeQueue.ci: "github"` a GitHub host with writes on). | Merged on the main branch by the queue |
+
+Start picks from the whole backlog in order (priority, then bugs, smaller, older); there is no invite label. Below level 4 Scope Soup merges nothing and `remoteUrl` is not needed; see "Merging by the session" below. A step above the level waits where it is (say, a job at review after the level went from 3 to 2) and goes on when the level is raised; it keeps no session slot, and the idle line counts such items. A level change is an `orchestrator.level_changed` event. The keep-awake hold is off at level 0.
+
+A file of format 0 (see "The file's format and upgrades" below) may still carry the keys the levels replaced. The migration to format 1 drops or converts them once, with a notice for each:
+
+- `dryRun`. A file that sets `level` keeps that level, and its `dryRun` is dropped. An older file without `level` gets the level written in its place:
+
+  | Old file | Level |
+  |---|---|
+  | `dryRun: true`, whatever else it says | 0, with a notice naming the level the rest of the file describes (1, or 4 with `mergeQueue` `"push"` or `"queue"`) |
+  | no `dryRun` and no `level` (dryRun defaulted to true) | 0 |
+  | no configuration file | board only, as level 0 |
+  | `dryRun: false`, `mergeQueue: "person"` or none | 1, with a notice: agents used to hand changes to a person |
+  | `dryRun: false`, `mergeQueue: "push"` or `"queue"` | 4 |
+
+  The "would start" events (`orchestrator.would`) and the idle text "Nothing would be started" are gone; old events still show in the history as they were written.
+- `inviteLabel`, dropped: start picks from the whole backlog. A split's sub-items get no label either.
+- `rules.reviewer`, dropped: the level decides; from level 3 every built change is reviewed.
+- `mergeQueue` as a string (`"push"`, `"queue"`, `"person"`) or any other value that is not an object, dropped: the level decides. Below level 4 the implementing session merges; at level 4 Scope Soup merges through the merge queue, always (the separate merging by push is gone). The object form `mergeQueue: { "ci": ..., "ciTimeoutMinutes": ... }` is read ("Waiting for CI on GitHub" below) and kept.
+- `rules.riskClasses` and `rules.pinnedApproval`, dropped: there is no approval step any more. No change waits for an Approve, whatever paths it touches; Approve and merge, Send back (`POST /api/approve`, `POST /api/send-back`) and the PR for the record are gone. A project that wants a person to merge stays below level 4 and says so in its CLAUDE.md. (a change an older Scope Soup left parked for an approval is not migrated any more.)
+
+### The file's format and upgrades
+
+`version` is the format of the private file: a whole number, raised only when an older file would no longer load as it is. The shared settings have no `version` (the meta ref has its `format`). The split left the format at 1 and has no migration: a file of format 0 or 1 that still holds project settings is refused, each such key with where it belongs; move them into the shared settings (`pnpm settings:init` on a new project, the Settings page after that). The migration below still runs on what stays private. A file without it is format 0, what release 0.5.0 and everything before wrote. This Scope Soup writes and reads format 1, and the Settings page, the onboarding skill, `src/config/example.config.json` and this repository's own file write `"version": 1`. When you upgrade Scope Soup:
+
+- **An older file is migrated at start.** Each step from one format to the next is code (`src/config/migrate.ts`). Scope Soup first keeps one copy of the file beside it, `scopesoup.config.v<old>.json` (`scopesoup.config.v0.json` for format 0; an older such copy is removed, so only the newest is kept), then rewrites the file in the current format and prints a notice, once, that says what changed. The step from 0 to 1 drops the keys no Scope Soup reads any more (`irreversibleActions`, `agentCheckCommand`, `inviteLabel`, `review.checklist`, every `rules.*`, the settings `reviewDepth`, `autonomy`, `triageDepth` and `modelStrength`, the roles `fix`, `check-review`, `rebase` and `situation`, meta branch `host.machine`, a `mergeQueue` that is not an object) and converts two: `dryRun` (with a string `mergeQueue`) becomes `level` as in the table above, and `settings.parallelSessions` is merged into `settings.maxParallelSessions` (the smaller value is kept). In a format-1 file those keys are unknown keys.
+- **A file that would not load is not touched.** What no step can invent, such as `machineName`, still stops the start with the usual message, and the file stays as it was; add the key (in the old file is fine) and the next start migrates it.
+- **A file that cannot be written** (read-only, say) stops the start with a message that says so and what the migration would change; nothing is written.
+- **A newer file is refused.** A file whose `version` is newer than this Scope Soup's stops the start with "this project's config is from a newer Scope Soup; upgrade Scope Soup", and the file is not changed.
+- `pnpm config:check` and the item commands only read: they show an older file as it would be migrated and leave it alone. A save on the Settings page migrates an older file as the start would.
+
+The fixtures of each released format are in `src/config/fixtures/`, with tests that this Scope Soup reads them.
+
+A change to the file is picked up at the next tick. A file that does not validate is ignored with an error and the last good one stays in use. A change to `host` needs a restart.
+
+### Start, Pause and Stop
+
+Two switches and the stop switch, in the board's header. **Scope Soup comes up paused after every start-up**: nothing runs until Start agents is pressed (and, at level 4, Start merge queue). Work under way goes on from the items' logs when it is (`src/orchestrator/recover.ts`).
+
+| Button | Endpoint | Event | What it does |
+|---|---|---|---|
+| Start agents | `POST /api/agents/start` | `control.agents_started` | The orchestrator starts sessions again (triage, implement, review, as the level allows), and takes on hand-backs. |
+| Pause agents | `POST /api/agents/pause` | `control.agents_paused` | Nothing new starts. Running sessions finish their current step and their answers are settled; the next step waits. Ends no session. |
+| Start merge queue | `POST /api/merge-queue/start` | `control.merge_queue_started` | Level 4: reviewed changes are handed to the merge queue and the queue is driven. |
+| Pause merge queue | `POST /api/merge-queue/pause` | `control.merge_queue_paused` | No new merging starts: a reviewed change waits (`orchestrator.merge_queue_paused`) and the queue builds no new batch. A merging already under way finishes: its check runs to the end and it pushes if green (for the queue, the batch under way, with its reruns). With `mergeQueue.ci: "github"` nothing is merged while merging is paused: a wait for CI under way is left, and a green batch merges once merging is started. |
+| Stop | `POST /api/stop` | `control.stopped` | The stop switch (core rule 3): pauses agents and the merge queue at once, ends running sessions (`orchestrator.stopped`) and cuts off a merge under way at its next safe point: a running check is stopped and nothing is pushed. Agents and merging show as "stopped"; Pause agents and Pause merge queue do not undo that. Start agents and Start merge queue must both be pressed again. |
+
+Each endpoint answers `{ agents, mergeQueue, changed, paused }` (`agents` is `"started"`, `"paused"` or `"stopped"`; `mergeQueue` is `"started"`, `"paused"` or `"stopped"`; `paused` is true while agents are not started). Pressing a switch that is already in that state changes nothing and writes no event. At start-up Scope Soup writes `control.startup_paused` with what the switches were before. `GET /api/status` and the board's status carry `agents`, `mergeQueue` and the project's `level`. On the board, the agents buttons are disabled at level 0 and the merge buttons below level 4, each with the reason; with no configuration file (board only) none are shown.
+
+**Items with no triage** (replacing an earlier offer). With a configuration file at level 0, the overview shows one line once there are ready Items that have none: "N Items have no triage: set level 1 and press Start agents." An Item counts as having one when its log has a triage `session` line (`role: triage`) or Scope Soup holds a triage result for it. There is no special way to run them: level 1 with agents started gives every Item without a triage one, and nothing runs a triage while agents are paused. From level 1 the Backlog has a divider (replacing "Triage done for N of M Items"): above it the Items that passed a triage, in planned order; below it, under "Not triaged yet · N", the open Items that have had none, in the order their triages run. An Item moves above the line once its triage takes it in; one parked on its triage's questions or draft is in "Your turn" as well. Triages with a big backlog are paced by what level 1 already does: they run in creation order, oldest first, except that an Item with a priority above major (`priority:blocker` or `priority:critical`) goes ahead and one with `priority:minor` goes behind, `maxParallelSessions` at a time (shared with the other roles from level 2), on the triage's model (`roles.triage.model`; set a cheaper one on the Settings page), and none starts once the usage reaches the reserve (`budgetReserve`), until the window resets. `POST /api/triage` is gone; the `orchestrator.triages_requested` and `orchestrator.triages_done` events and the `triagesCancelled` field of `control.stopped` are no longer written (old ones stay in the history), and a request stored earlier is ignored.
+
+**The old endpoints still work.** `POST /api/pause` is Pause agents and Pause merge queue (running sessions finish their step; only Stop ends them), and `POST /api/resume` is Start agents and Start merge queue. Their events are the new ones, with `via` naming the old endpoint. The events `control.paused` and `control.resumed` are no longer written; old ones stay in the history.
+
+**Pause merge queue and the queue's own pause are two things.** The merge queue pauses itself when it cannot go on safely (a refused push with the main branch in place, an unusable check, a hold on order-dependent tests): that is `orchestrator.queue_paused`, shown on the Queue page, and only **Resume the queue** there (`POST /api/queue/resume`, 409 `QUEUE_NOT_PAUSED` when it is not paused) lets it go on. Pause merge queue is a person's switch over all merging. The queue merges only while both are clear: Start merge queue does not resume a queue that paused itself (pressing the old stop switch off and on used to; it no longer does, since every start-up now pauses merging), and a resume asked for while merging is paused is done when merging is started.
+
+### The setup of a fresh clone
+
+Scope Soup's worktrees, the clones of a pool and the merge queue's clone are fresh folders: they lack what your own checkout has (installed dependencies, a virtual environment, generated files, submodules, a `.env` with test settings). `setupCommand` sets one up:
+
+```json
+"setupCommand": ["node", ".scopesoup/scopesoup-setup.mjs", "--from-clone", "{{ownClone}}"],
+"setupWatch": ["package-lock.json", "api/requirements.txt"]
+```
+
+Both are shared settings, and the script is committed in the repository. `{{ownClone}}` is each machine's own clone, `ownClone` in its private file, so the personal files are copied from each person's own clone and never enter the repository. A command with `{{ownClone}}` on a machine without `ownClone` is refused.
+
+- `setupCommand`: the program and its arguments, run without a shell in the folder, like `checkCommand` (on Windows an `.exe`; `node` is found as `node.exe`). The onboarding skill writes a setup script, `.scopesoup/scopesoup-setup.mjs`, into Scope Soup's own clone of the project, to be committed there and merged on the main branch, and fills this in. It runs in each fresh folder, so the relative path finds it: the script copies the personal files you confirmed from your own clone (`--from-clone`) and runs the install steps. Absent: nothing is set up.
+- It runs once in each folder, and again when the content of a watched file changes, or `setupCommand` itself, or a file it names (the script). There is no file watching: before each implement or review session (not before a triage, which only reads) and before each check in the queue's clone, Scope Soup hashes the watched files and compares them with what the last successful setup in that folder saw. That record is `scopesoup-setup.json` in the folder's own git directory, so every worktree and clone has its own and builds its own output; nothing is shared between them.
+- `setupWatch`: the files, relative to the repository, with `/` between folders; `*` matches inside one part of a path (`requirements*.txt`). Absent: the lockfiles and dependency lists that are there (`package-lock.json`, `pnpm-lock.yaml`, `yarn.lock`, `bun.lock`, `requirements*.txt`, `poetry.lock`, `uv.lock`, `Pipfile.lock`, `Cargo.lock`, `go.sum`, `Gemfile.lock`, `composer.lock`, `.gitmodules`). List what your code generation reads too.
+- It is given `settings.checkTimeoutMinutes` to finish, and its environment has no `SCOPESOUP_*` variable (no token) and no `ANTHROPIC_API_KEY`. Stop ends a setup under way. The first setup in a folder can take minutes, and the tick that starts the session waits for it.
+- What it makes must be ignored by git, and tracked files must stay as they are: a setup that leaves a changed tracked file or an untracked file git does not ignore fails, so a copied secret or generated file never ends up in a commit.
+- **A failed setup is reported as the setup's**: in a session's folder no agent starts, and the item is parked for you as an escalation, not counted as a failed attempt of the step. Fix the setup (the Settings page, or the script) and answer to try again. In the queue's clone it pauses the queue (not a red check: no change is sent back); Resume the queue once it is fixed.
+- **Its output never leaves this machine**: the end of it is in the local event `orchestrator.setup_failed`, on the board's Item page (the session's reason) and, for the queue, in the problem note on the Queue page. What goes to the host (the comment on GitHub, the lines in the item's log on the meta branch, which other machines and people read) and the queue's pause reason say only `Setup failed in <folder> (exit N); the output is on Scope Soup's board on <machineName>.`
+- Agents' prompts say the setup has run (`{{setup}}` in `implement.md` and `review.md`), so they do not install again.
+- The script prints only file names, never their content, and Scope Soup keeps a failed setup's output on this machine (above). Secrets stay in your clone and in the folders' ignored files: never in the repository, a prompt or a log. After you change a personal file (a new `.env`), it is copied again the next time the setup runs; delete `scopesoup-setup.json` in a folder's git directory to make it run there now.
+
+### Limited resources
+
+Some projects need something only so many of exist to build, run or test: a license with a few seats, an Android emulator or a phone on USB, a hardware rig, a GPU, a shared test database, a paid API quota (decision 74). Declare each one, and Scope Soup makes sessions and the merge queue's check take turns with it:
+
+```json
+"resources": [
+  { "name": "phone", "units": 1, "neededBy": ["implement", "check"], "env": { "ANDROID_SERIAL": "phone-{{unit}}" } }
+]
+```
+
+- `resources` in this machine's `scopesoup.config.json` are this machine's own: a phone on USB, an emulator, a GPU. `sharedResources`, in the shared settings, have the same shape and are counted across every machine: license seats, a shared test database, an API quota. A name is used once, in both lists together.
+- `name`: letters, digits, `-` and `_`, at most 40. `units`: how many there are, 1 to 64. `neededBy`: what needs one: `triage` (the triage), `implement`, `review` and `check` (the merge queue's check, level 4).
+- `env` (optional): environment variables for the session or check that holds a unit, so each gets its own instance: its own emulator, its own database name. `{{unit}}` in a value is the unit's number, from 1.
+- **Taking turns.** A session that needs a resource takes a unit of each one it needs before its workspace and claim, all or none. When none is free the Item waits ("implement for A-12 waits: all 1 unit(s) of phone are held: implement for A-9") and the next Item that does not need it may start. The unit goes back when the session ends, however it ends: done, failed, stalled, timed out or stopped. A chat turn takes one too, or is refused while none is free. The queue's check waits without pausing the queue and runs once a unit is free. Scope Soup gives back everything at start, since nothing it ran survives a restart.
+- **Across machines.** A unit of a shared resource is also held on the project's remote, one lease per unit on `refs/scopesoup/resources/<name>/<unit>`, the same kind of lease as `refs/scopesoup/merge-queue` (a chain of empty commits, taken by a fast-forward push), so it works on a GitHub project too. A unit another machine holds is not free here. A lease lasts as long as the longest a session or check may run with its setup, plus 15 minutes, so a machine that died does not hold a unit longer than that; when it starts again it lets its leases go at once. When the remote cannot be reached, work that needs a shared resource waits.
+- **The board** shows each resource on the overview: how many of its units are in use, who holds each (a session's role and Item, the check, or another machine's name) and what waits for one.
+- **The Settings page** shows them under Resources, where you add, change and remove them. "Shared by every machine" puts one in `sharedResources` (a project setting, saved on the meta ref); otherwise it goes in this machine's file. Onboarding does not ask for them.
+
+### Which project a board is, and its folders
+
+With Scope Soup running for several projects at once, each board says which one it is. The header shows the project's name (`project` in the shared settings) and its repository: `owner/name` from the GitHub host, else from the URL of `remote` (`remoteUrl`, or `git remote get-url` in `repoPath`), else the remote's name. When the host or the remote is on GitHub, the repository links to its page there. The browser tab is titled `Scope Soup · <project>`, and the dot beside the name and the tab icon have a colour made from the name, the same on every machine. Without a configuration (board only) a GitHub host's repository names the board.
+
+The folder button in the header opens your own checkout in the file manager (Explorer, Finder or `xdg-open`): `ownClone`, else the first of `realPaths`. The Settings page also opens Scope Soup's clone (`repoPath`) and the folder of `scopesoup.config.json`. The server opens them, on its own machine, through `POST /api/open-folder` with `{ "folder": "checkout" | "clone" | "config" }`: the path is always the configuration's, a body with anything else (a path) is refused, and a folder that is not there is not offered. The file manager is started without a shell, with the path as one argument.
+
+### The Settings page and the sliders
+
+**Where a save goes.** The page shows the two as one; it does not say where a key is kept. A save of this machine's own settings (parallel sessions, the usage reserve, the remote's URL) writes its `scopesoup.config.json`, in effect at the next tick. A save of a project setting (the level, the check command, the setup, a model, the age of a triage) is one commit on the meta ref, written the way Scope Soup writes Items (`docs/DESIGN.md`, "Writing to the meta branch"): `settings/settings.json` and one line in `settings/log.jsonl` that says who changed what, made with plumbing, the ref moved only from the value it was read at (compare-and-swap: a save that lost the race is made again, and checked again, on the newest settings), then pushed fast-forward only. The commit's author is the person picked at the top of the board (`X-ScopeSoup-Person`), and so is the log line's `by`; a save of a project setting with nobody picked is refused. It is in effect at once on this machine, and on the others at their next fetch of the meta ref (every minute). When two machines save at once, the second to push puts its save on top of the first's: only the values it changed are made again on the newest settings, so both merge; a value both changed ends as the later save has it. History shows the settings' log ("Settings changes", `GET /api/settings/log`). If the save cannot be made, nothing is saved, this machine's part included; a push that fails is reported on the page and goes with the next round. Saving a level is refused when a need of that level is missing, as below; the `config.changed` event carries the meta commit and what changed (`shared`).
+
+The board's Settings page opens with the level as five rows, each with one sentence of what Scope Soup does at that level and what it needs. A level whose needs are missing is shown but cannot be picked, with what is missing ("Level 4 needs a check command (checkCommand)."): level 1 and up need the `claude` program (`claude.path`, a path or a name on PATH; whether it is logged in shows only when a session runs), level 4 needs `checkCommand` and `remoteUrl` (with `mergeQueue.ci: "github"`: a GitHub host with writes on and `remoteUrl`, and level 4's sentence says so). Picking level 4 while either is missing asks for it right there, and Save writes it to the file with `level: 4` (below level 4 the board refuses both fields):
+- the check command, asked as "What command decides a change is OK — the one you would want green before anything merges?", with the candidates Scope Soup found in the repository to pick from: the `package.json` scripts (run with its package manager), the plain `run:` steps of the GitHub Actions workflows in `.github/workflows` (one command each, no shell syntax, no installs), and the `Makefile`'s targets, likely names (`check`, `ci`, `test`, ...) first. It is proposed from the project's `package.json`: its `check` script, else its `test` script, as `<manager> run <script>` with the package manager its `packageManager` field or lock file names (npm when neither does); nothing is proposed when there is neither script. A note says it runs in a fresh clone after the setup. It is edited as one line (double quotes keep spaces in one word) and saved as the list `checkCommand` is. On Windows a package manager that is only a `.cmd` shim is proposed as `["cmd.exe", "/d", "/c", "pnpm", "run", "check"]`, since the check runs without a shell. At level 4 with the check command in the file, the question stays on the page with the file's command, and a changed command is saved;
+- the remote's URL, read with `git remote get-url <remote>` in the project's clone (local; nothing is contacted).
+
+A check command that cannot be started is refused with the reason. The test is cheap and runs nothing: the program must be found as the merge queue starts it (on PATH, or relative to the repository when named with a folder; on Windows an `.exe`, not a shim), and for `cmd.exe /c` the program after `/c` must be found too. Level 4 always merges through Scope Soup's own merge queue. Whether its check command or the project's CI on GitHub checks the batches (`mergeQueue.ci`) is file-only; with `"github"` the page asks for no check command. Nothing on the page asks for a reason: a saved level goes into the `config.changed` event with the level it came from and went to, and a saved number is written as `{ "value": n }`, dropping the reason the file had for the old value. Below the level the page has only parallel sessions (`settings.maxParallelSessions`), the usage reserve (`settings.budgetReserve`, hidden at level 0), the age after which a triage is taken again (`settings.triageMaxAgeDays`, from level 2), the setup of a fresh clone (`setupCommand` as one line and `setupWatch` one file per line, at every level; emptied, each is removed from the file), the limited resources (`resources` and `sharedResources`, each list saved whole; emptied, it is removed) and the model of each role (triage, implement, review). Everything else is file-only, with its defaults: `POST /api/config` refuses any other field. The numbers under `settings` are `{ "value": n }`, with an optional `"reason"` when you edit the file by hand:
+
+| Setting | Positions | What it sets |
+|---|---|---|
+| `maxParallelSessions` | 1 to 32 (default 1) | How many sessions run at once, of every role (triage, implement, review) |
+| `persistence` | 1 to 5 (default 3) | Failed attempts per step and review rounds (the change back to the implementor) before an item goes to you: 1/0, 2/1, 3/2, 5/4, 8/6. |
+| `budgetReserve` | 1 to 5 (default 3) | The share of the 5-hour and weekly windows kept for you: 0, 10, 20, 35, 50 %. From level 1 no session starts while less than that is left. |
+| `triageMaxAgeDays` | 1 to 365 days (default 30) | From level 2: a waiting Item whose triage is older than this has its triage again before its implement step. Optional in format 1; on the Settings page as "Triage again after". |
+
+Questions always go to you: a decision from triage or the implementer is parked on the item page with its options and the agent's recommendation, and Scope Soup never takes the recommendation itself. A set of several decisions from triage is listed in full, and the item goes on only once every one is answered. An item that states its own size (a `size:small` or `size:medium` label), does not wait for a decision and has no open question, skips the triage (triage) from level 2 and goes straight to implement, with no setting; every other new item gets a full triage session. With risk classes gone the size label alone decides; a `risk:` line in an older item file is ignored. The models are set per role under `roles` (the Models section of the page; Use default removes the file's model).
+
+**The triage's draft**. The triage also writes the Item's description as it would read with every recommendation taken, and the Item page shows it next to the description with the questions. Keeping the recommendations, you accept, edit or reject the draft in one press; another answer runs the triage again. Accept or Edit replaces the description: on the meta branch through the item's own text (the history keeps the old one); on a GitHub project with writes on (`SCOPESOUP_WRITE=1` or `host.write`) Scope Soup replaces only the issue's body with the accepted text, made inert like all text it writes there, and GitHub keeps the edit history (decision 48). The triage may also propose label changes, only of labels the repository has and never `scopesoup:*`; they are shown with the draft as `+bug, −question`, applied with it on Accept (one call per label on GitHub; a label someone changed since stays as they set it), changed with it on Edit, and not applied on Reject. Reject sends nothing. When the issue cannot be written (writes off, or GitHub refuses), the accepted text is kept as your answer and given to the agents in place of the issue's; a refusal is named in that answer on the Item page and in an `orchestrator.host_write_failed` event.
+
+**Triage again** (decision 68). A triage reflects the code and the Item as they were. When a waiting Item comes to the front of the line, that is when its implement step is next to start (from level 2), Scope Soup first checks whether its triage is out of date, and if so runs it again instead (`orchestrator.triage_again`, with the reasons): commits on the main branch changed the paths the triage named since it (`git log` from the remote's main as Scope Soup read it right after that triage to the remote's main now, fetched then); the Item's title, description or verification was edited since (a description Scope Soup wrote itself from an accepted or edited draft is no edit); an Item it was blocked by then is done; or it is older than `triageMaxAgeDays` (default 30). Nothing else is checked: the backlog behind the front is never triaged again in bulk, and at level 1, where nothing comes to an implement step, no triage is redone. An Item whose implement step has begun (a session ran, findings or an answer came back, its branch has a revision, a failed attempt) is never sent back. The triage that runs again is told what changed (`{{recheck}}` in `prompts/triage.md`): when the one before was taken and why it is taken again, its answer (ready, size, paths, blockers, questions), the commits that touch its paths (the newest 20, with how many there were), the Item's text as it read it when that was edited, and the blockers done since; all as data between markers, and it keeps the draft as the description unless the change calls for another. Its answer is settled as any triage's (questions, a draft, a split, not ready, or on to implement). A job from earlier has no record of what its triage saw, so only the age counts for it, from when its job started. What a triage saw is kept on the job (`looked`: when, main, the text and its hash, the open blockers).
+
+Removed: the check before a risk-class change waits for an answer (the queue still checks before anything merges), the rules `waitingCap`, `changePerItem` (counted as off: every item has its own branch, and Scope Soup opens no pull request for it, neither as a hand-over nor for the record of an approval; and Scope Soup no longer follows a pull request an older version opened) and `weeklyPacing` (the budget reserve is the one usage control), and the second parallel setting: `parallelSessions` is part of `maxParallelSessions`. An old (format 0) file that names any of them loads; the migration to format 1 drops them with a notice, and merges `parallelSessions` into `maxParallelSessions`, keeping the smaller value. Older `orchestrator.precheck_*` events in the store are still shown in the history; none are written now.
+
+The `autonomy`, `triageDepth` and `modelStrength` sliders were removed. An old (format 0) file that still names them loads, and the migration to format 1 drops each with a notice; its roles then run on the defaults above unless `roles` names a model. `assumption` lines that older versions wrote in item logs are still read and shown in the item's history. The implementor records the decisions it took itself as cheap to change later in a new form of `assumption` line (or a comment on GitHub), shown on the board for Accept or Overturn (decision 66). An Overturn while the change has not merged goes into the running work: the implementor's own session is resumed with the answer before the next step, and only an Overturn after merging files a new Item.
+
+The code for each is in `src/config` (`persistence.ts` and its siblings), and `pnpm config:check` prints advice about a valid file. The status line forecasts when each usage window is used up, from the per-session rate times the sessions planned.
+
+An item may carry a priority (`priority: blocker | critical | major | minor` in its header; `priority:<name>` as a GitHub label), which orders the backlog first, then bugs, smaller items and older ones. The backlog column on the overview lists items in the order the orchestrator will take them. An item whose state is `todo` and that waits on an open item (`blockedBy`, including one that waits on your decision) is in the Blocked column, leftmost, and its card says what it waits for; when the last blocker is done it moves to Backlog by itself. An item that itself waits on your decision stays in Your turn. A board with no items shows a hint on how to start instead of empty columns (`DEMO_EMPTY=1 pnpm demo` shows it).
+
+### The review
+
+From level 3 (Review), a built change goes straight to a review session on the strong model. "Changes requested" resumes the implementor's own session (`claude --resume` with the session id Scope Soup kept) with a short message listing the findings, so it keeps its context; when that session is not known (an older job, or a resume that failed) a fresh implementor gets its prompt with the findings after it. This goes on within the limit of rounds (`persistence`); at the limit the item goes to you with the open findings listed in the message. It goes to you sooner when a round gets nowhere (`docs/AUTONOMY.md`, "Two guards against wandering"): a round that does not leave fewer `must` findings than the one before, or the same finding (or the same failing check at merging) twice in a row. Before review, the fence compares the change with the triage's paths and size and stops one well beyond them with a report and a proposed split. An approval's `should` findings become one small follow-up Item, and the merge goes on. At level 2 there is no review: the implementor merges the change itself. At level 3 an approval resumes the implementor's own session with "Approved. Merge now as CLAUDE.md says."; when that session cannot be resumed (it is not known, or the resume failed), a fresh implementor is started and told to merge the approved branch. The change is not reviewed again after that.
+
+### Merging by the session (levels 2 and 3)
+
+At levels 2 and 3 the implementing session merges its own change (decision 47). Its prompt says, at level 2 and at level 3 after the approval: "When you judge it done, merge it to main and push the way CLAUDE.md says (or open a pull request if it says so)"; at level 3 before the approval: "commit and stop; do not merge". Scope Soup sets no gate before that merge and opens no pull request itself; whether the session merges, runs a check first or opens a pull request is the project's CLAUDE.md's call. The session's answer names what it did in `mergedAs`: the commit on main, or the pull request's URL.
+
+Scope Soup does not take the answer's word. When the session says it is done, Scope Soup fetches the remote's main and checks whether it contains the branch head:
+- **Contains it**: the Item is done. Scope Soup writes the `revision` and `merged` lines (`merged`: the branch head, the main branch) as a merge does, an `orchestrator.merged` event, and closes the Item on its host as after a merge.
+- **Squash-merged**: main does not contain the head, but `mergedAs` names a commit that is on the remote's main, was not in main when the item's first implement session started (it descends from that commit and is not it), and has every file the branch changed exactly as the branch head has it. The Item is done as above, and `merged` names the squash commit.
+- **Does not, and `mergedAs` is a URL**: the session opened a pull request. The Item is handed over, with the link in Your turn and the In review lane; merging it is a person's call.
+- **Neither**: the Item is parked for you with the reason (main's commit, the branch head, where the branch is). Answer once it is merged, and Scope Soup looks again.
+
+A branch head that was already in main when the item's first implement session started (nothing committed) is a failed attempt, not a merge. A change handed back by a person (`item handback`) at level 2 has no session to merge it, so it is parked for you the same way; at level 3 it is reviewed, and an approval starts a fresh implementor to merge it.
+
+**The main branch only moves forward.** After every session ends (and before an item's first implement session), Scope Soup fetches the remote's main and compares it with the commit it last saw there (kept per repository under `orchestrator.main_seen`). A fast-forward is an `orchestrator.main_moved` event. A main that moved any other way, a force push or rewritten history, is an `orchestrator.main_rewritten` event with both commits, and Scope Soup presses Pause agents (`control.agents_paused`, via `main-guard`): running sessions finish their step and nothing new starts. Look at the main branch, then press Start agents. Sessions are also refused `git push --force`, `git push -f` and `--no-verify` outright.
+
+The checklist stage that used to come first (role `check-review`, `review.checklist`, the program's checks of commit bodies and test files, and the `reviewDepth` setting) was removed. An old (format 0) file that still names any of them loads, and the migration to format 1 drops each with a notice. A job stored at the old `check-review` step goes to review from level 3, else it is released and the item starts over.
+
+### The host
+
+`host` says where the items live. It is `{ "kind": "github", ... }` or `{ "kind": "metaBranch", ... }`.
+
+- **github**: `repo` (`owner/name`), `write` (like `SCOPESOUP_WRITE=1`: pushes, pull requests, comments, and closing the issue when a change merges; with `write: false` the board says to close it by hand). The token is still `SCOPESOUP_GITHUB_TOKEN`.
+- **meta branch**: `write` and `fetchSeconds` in the shared `host`. The Items are on the meta ref `refs/scopesoup/meta` of `repoPath`, shared with `remote` (both from the private file), next to the shared settings: there is no `ref`, folder or remote of its own. What belongs to one machine or person is in that machine's private file as `meta`: `meta.authorName`, `meta.authorEmail`, `meta.prefix`. They mean what the `SCOPESOUP_META_*` variables mean. `host.authorName`, `host.authorEmail` or `host.prefix` in the shared settings are refused. An older `machine` is dropped when the file is migrated to format 1: the top-level `machineName` names the machine. With `write: true`, every machine needs `meta.authorName` and `meta.authorEmail`.
+
+A relative path in the private file is relative to that file. A token is never in either file; a key with "token" in its name is refused.
+
+How the file and the environment meet:
+
+- The file has `host`: the file wins. `SCOPESOUP_GITHUB_REPO`, `SCOPESOUP_WRITE` and `SCOPESOUP_META_*` are not read. Scope Soup names the ones that are set at start.
+- The file has no `host`, or there is no file: the environment variables work as before. Writing (`SCOPESOUP_META_WRITE=1`, `SCOPESOUP_WRITE=1`) needs the file's `machineName`, so without a file the hosts are only read.
+- The installation's own settings (`SCOPESOUP_DATA`, `SCOPESOUP_PORT` and the rest) and the token always come from the environment.
+- `pnpm meta:accept` still reads the `SCOPESOUP_META_*` variables, and takes the machine's name as `--machine <name>`.
+
+With a meta branch host Scope Soup makes no network request of its own. Only git talks to the project's remote. A test checks that the server side never calls `fetch`.
+
+A board without the orchestrator: start without a configuration file, with the host in the environment. Or keep `level: 0` (the default): the orchestrator then starts no session and merges nothing.
+
+An example for one laptop. Your own clone of the project is `C:\projects\shop`; the file is `C:\projects\shop-scopesoup\scopesoup.config.json`, outside any repository, and Scope Soup's own clone of the project is `C:\projects\shop-scopesoup
+epo`:
+
+```json
+{
+  "version": 1,
+  "repoPath": "repo",
+  "realPaths": ["C:/projects/shop"],
+  "machineName": "laptop-a",
+  "meta": { "authorName": "Robin Example", "authorEmail": "robin@example.invalid", "prefix": "A" }
+}
+```
+
+with the project's shared settings on its meta ref (written once by the first person, `pnpm settings:init`):
+
+```json
+{ "project": "shop", "level": 0, "host": { "kind": "metaBranch", "write": true } }
+```
+
+Start it with `$env:SCOPESOUP_CONFIG = "C:\projects\shop-scopesoup\scopesoup.config.json"` and `pnpm start`. The items are on `refs/scopesoup/meta` in Scope Soup's clone, next to the shared settings, pushed to `origin`. Raise the level on the Settings page (1 for triages, then 2 or 3) when the board looks right.
+
+### Merging through the merge queue
+
+Level 4 always merges through the merge queue (the separate merging by push is gone, and a batch of one is the same thing):
+
+```json
+"level": 4,
+"remoteUrl": "ssh://git@git.example.invalid/team/project.git",
+"checkCommand": ["node", "scripts/check.js"],
+"settings": { "checkTimeoutMinutes": { "value": 60, "reason": "The check takes about 10 minutes." } }
+```
+
+- `remoteUrl`: the repository the main branch is pushed to. Before it pushes, Scope Soup compares it with `git remote get-url <remote>`, ignoring case, a trailing `.git`, a user name and a port, and the difference between `https://`, `ssh://` and `git@host:` forms. When they differ nothing is pushed.
+- `checkCommand`: the program and its arguments. It runs without a shell, in the queue's clone. On Windows it must be an `.exe`: a `.cmd` or `.bat` is refused, as for `claude`. Name `node.exe` and the tool's script, or start a script of the project's own with `["cmd.exe", "/d", "/c", "check.cmd"]`. Without it nothing merges: a reviewed change is parked as an escalation, and an answer once it is set hands it to the queue.
+- `checkTimeoutMinutes`: a check that runs longer is stopped, with everything it started, and counts as failed. Default 60.
+
+The check runs once per batch. A reviewed change is not pushed on its own. It is parked as "queued" and the queue (`src/queue`, see its README) takes it:
+
+1. Changes that are ready together are built into one chain: each is replayed (cherry-picked) on the one before it, starting at the main branch, in a clone of the project's repository that Scope Soup keeps in `<workspacesDir>/queue`. Nothing runs in an item's workspace or a person's checkout. A change that does not apply is sent back with the change it conflicts with.
+2. The setup runs there first when it must (`setupCommand`, "The setup of a fresh clone"), then `checkCommand` runs on the tip of the chain. Green: the tip is pushed to the main branch, fast-forward only, and every change in the chain is merged.
+3. Red: the files the output names as failing (`test at <file>` lines and lines that begin with `FAIL`, `not ok` or a cross; when it names none, the whole check counts as one file) are tried again on the same commit. With `rerunFilesCommand` set (below) only those files run; without it, or when a name is not a plain file of the repository, the whole check runs again. If it passes, the batch merges and a flake is logged as `orchestrator.queue_flake`, with the failed files and an excerpt of the first failing output. If it fails again, the chain is bisected: shorter chains are checked, every green prefix is pushed as soon as it is known, and the first change that makes a prefix red is sent back to its item as a fix round: the implementor's session is resumed with the failing files and the end of the output ("Merging failed: ..."). The changes behind it lead the next batch.
+4. Batch size is chosen by the engine from the measured failure rate, the measured cost of a rerun, how often the failure report names the culprit and how long checks take (`docs/BATCH_SIZE.md`). The numbers are settings, read at every step: `queueMinBatch` (default 2), `queueMaxBatch` (12), `queueRerunCost` (0.15, the starting value for what a rerun costs) and `queueMinOutcomes` (10, outcomes needed before the model sizes batches). An older file without them loads with these defaults.
+5. The head that was handed over is what merges; a branch that moves afterwards is not built (`pinnedApproval` is gone).
+
+`rerunFilesCommand` (a file-only setting, not changed from the board) is the check command for rerunning only the failed files, for the merge queue: the program and its arguments with exactly one argument `"{files}"`, replaced by one argument per failed file, for example `"rerunFilesCommand": ["node", "--test", "{files}"]`. Only relative names of files that exist in the repository are passed on, never one that starts with `-`.
+
+The safety rules: the remote must be the configured repository (every push URL is compared); only a commit on which the check passed is pushed, by its id, so a main branch that moved means a new chain on the new main branch; the push is a plain fast-forward `git push`, never forced, git's hooks never skipped; no new batch starts while merging is paused (the batch under way finishes), and after Stop nothing is pushed and a running check is stopped. If the check changes a tracked file it counts as failed.
+
+The queue's state is kept in the store (`orchestrator.queue`) and written to the board as batches, so the Queue page shows the real batches; a restart or a stop in the middle of a check goes on from the state. When the engine pauses itself (a refused push with the main branch in place, an unusable check, a hold on order-dependent tests) the reason is in the log as `orchestrator.queue_paused`; press Resume the queue on the Queue page to let it go on; the next tick resumes it, once (Start merge queue does not; see "Start, Pause and Stop"). The Queue page also lists the recent flakes and problems and a "Recent flaky tests" list with how often each failed test failed. A failed check keeps the failed files and a short excerpt of the output in the batch and in the `queue_check` event, also when a rerun passes and the batch merges, and the flake and problem notes name the failed files. A paused queue or a problem in the last day shows in the status line's alerts. The check runs beside the ticks: a tick starts it (or sees that it is still running) and moves on to settling and dispatch, and a later tick applies its result. On an item kept on the meta branch, `revision` and `merged` lines go to the item's log.
+
+### Waiting for CI on GitHub
+
+On a GitHub project the project's own CI can check each batch instead of `checkCommand`:
+
+```json
+"level": 4,
+"remoteUrl": "https://github.com/acme/widgets.git",
+"host": { "kind": "github", "repo": "acme/widgets", "write": true },
+"mergeQueue": { "ci": "github", "ciTimeoutMinutes": 60 }
+```
+
+- `mergeQueue.ci`: `"local"` (the default, also when `mergeQueue` is absent) runs `checkCommand` in the queue's clone as above; `"github"` waits for the project's CI on GitHub, and level 4 then needs no `checkCommand`. It needs a GitHub host with writes on (`host.write` or `SCOPESOUP_WRITE=1`, with the clone's remote pointing at that repository, as for every GitHub write); a file whose `host` is meta branch is refused. Without such a host a reviewed change is parked as an escalation that names the reason, and an answer once it is set hands it to the queue.
+- `mergeQueue.ciTimeoutMinutes`: how long a check may stay pending, 1 to 1440. Default 60.
+
+The queue builds the batch as before (the newest main with the changes replayed on it). Then, for the commit it would test:
+
+1. It pushes the commit to a branch of its own, `scopesoup/batch-<batch>-<first 7 digits of the commit>`, with a plain `git push` (never forced), and opens a pull request from it into the main branch: the title "Scope Soup merge queue: batch N", a description made only of Scope Soup's own data (the batch, the items' numbers, the commits) and a `batch` marker (docs/github-mapping.md). The items' numbers carry no closing keyword, so the pull request closes and links nothing; merging closes the items as always.
+2. Each tick it reads every check run and every commit status on exactly that commit (`GET /commits/{sha}/check-runs` and `/status`), the latest of each name. Branch protection and "required" checks are not read: every check counts.
+3. **All green** (success, neutral or skipped): the run passed, and that same commit is pushed to the main branch fast-forward (no squash; what merges is what was tested). GitHub then shows the pull request as merged. If main moved meanwhile, the batch is rebuilt on the new main and checked again on a new pull request.
+4. **A check red**: the run failed. The change is sent back to its implementor as with a red check command, with the failing check's name, its conclusion and the end of its log (a GitHub Actions job's log), or its link when the log cannot be read. A batch of several is bisected as before, each shorter chain on a pull request of its own; there is no rerun of failed files.
+5. **Still pending after `ciTimeoutMinutes`**: the Items of that commit leave the queue and are parked for a person with the pending checks' links; nothing is merged and no implementor is resumed. An answer hands them to the queue again.
+6. **No check at all** 5 minutes after the push (no workflow ran for that commit): the Items are parked for a person saying no CI ran, rather than merging unchecked.
+
+GitHub could not be reached (a 5xx, a rate limit, offline): the queue tries again at the next tick. A refusal (missing rights, a branch that cannot be pushed) pauses the queue with the reason, for Resume the queue on the Queue page. GitHub's own auto-merge is not used.
+
+**Tidying up**. A batch's pull request that ends without merging (a red check, the time limit, no CI, or a batch that ended because main moved or a member left, bisect probes included) gets one comment why ("Red: `test (ubuntu)` ended failure; the change went back to the implementor.", "Timed out after 60 min; the Items wait for an answer.", "Not merged: batch 4 ended (the main branch moved outside the queue (abc1234)). ..."), is closed, and its `scopesoup/batch-...` branch is deleted. A batch that merged shows as merged on GitHub; only its branch is deleted, once GitHub shows it merged. Scope Soup touches only a pull request whose head is a `scopesoup/batch-...` branch and whose description ends in the `batch` marker, opened by the token's own login; any other is left as it is, with a note on the Queue page. A failure is tried again at the next tick and never holds the queue up; a step already done (the comment, the close) is not done again. Besides the git pushes these are the only GitHub writes: the pull request, the comment, the close and the branch delete.
+
+**remoteUrl must be the GitHub repository**. The batches are pushed to `remoteUrl` and their pull requests opened on the GitHub host, so at start Scope Soup refuses `mergeQueue.ci: "github"` when `remoteUrl` names another repository (compared as for every push: case, `.git`, user, port and the `https://`, `ssh://` and `git@host:` forms do not count). The reason is printed at start, and a reviewed change is parked as an escalation that names it.
+
+### A pool of clones
+
+The pool's clones belong to Scope Soup; developers do not work in them (decision 35).
+
+Git worktrees do not work well with submodules. When the project's repository is a submodule of an outer repository that the tests need, make a few full clones of the outer repository side by side (with the submodule checked out) and list them:
+
+```json
+"workspaces": { "kind": "pool", "paths": ["../pool/one", "../pool/two"], "projectSubdir": "libs/project" }
+```
+
+- `paths`: the clones, relative to the configuration file. Each is a folder of its own.
+- `projectSubdir`: where the project's repository is inside each clone, relative and without `..`. Left out, the clone itself is the project's repository. It must be a git repository of its own (the submodule), not a plain folder of the outer repository; a clone where it is not is refused.
+- An item claims a free clone and its sessions work in `<clone>/<projectSubdir>` on the item's branch. It keeps the clone across its steps; the clone is free again when the item is parked (handed over, waiting for a person, or put down with a question) or is finished. When no clone is free the item waits, and the board's log says so. A hand-over that holds no clone (one a person retries after the Item was parked, or one rebuilt from the log) takes a clone again before the change goes to the queue. When no clone is free, the hand-over waits, and the log says "The hand-over of <item> waits: ... It goes on when a clone is free."
+- Before a new item starts in a clone, Scope Soup fetches the main branch of the project's repository there and makes the item's branch from it. When an item is freed, uncommitted changes there may be discarded (below), and the project's repository is left on a detached HEAD at the item's last commit.
+- **Never edit in a clone that an item holds.** When the clone is freed (the item is parked or is finished, or a clone taken for nothing is freed at the next tick), Scope Soup discards everything uncommitted in the project's repository there, if a session of the item ran in it while the item held it. Scope Soup cannot tell a person's edits from a session's: your edits in a held clone are discarded with the session's. They are recorded first (below), but work in a clone no item holds. To see which clones are held: the event log on the board shows `orchestrator.workspace_taken` and `orchestrator.workspace_freed` with the clone's path, and Scope Soup's database (`data/scopesoup.sqlite`) keeps the record under the value `orchestrator.workspaces` (`"held": true` while an item holds a clone).
+- **When the discard happens.** Only when the clone is freed, and only when all of these hold, checked again just before: Scope Soup's record says the item holds that clone; a session of the item started a process in it since the item took it; no session of the item is running (by Scope Soup's record, and the session's own process has ended; processes a session started and left behind are not looked for); the project's repository is on the item's branch, or on a detached HEAD at its tip; no rebase, merge, cherry-pick, revert or bisect is in progress, and nothing has a conflict; and the path checks (`realPaths`, the subfolder inside the clone, the record outside the clone by real path) pass. Changed tracked files are then restored from the last commit by name, and untracked files are removed one by one. Otherwise nothing is touched, the event log says why (`orchestrator.workspace_not_discarded`), and the clone is passed over as below until you clean it. A clone that is dirty when an item wants to take it is never cleaned.
+  - **What is never discarded.** Anything, when no session of the item ran in the clone during the hold, or when the leftovers are too large to record (more than 500 MB of copies and diffs together) or the record cannot be written: then a person must clean the clone. Files git ignores, including those ignored by the machine's own global excludes file (`core.excludesFile`), so a compile cache in ignored folders survives. Paths matching `workspaces.keep`, a list of patterns written as in `.gitignore` and relative to the project's repository, for example `"keep": ["build/", "**/*.cache"]`; use `/` between folders, and a pattern may not start with `/` or `!`, or contain `..`. A changed tracked file that matches is left as it is, so the clone then stays passed over until you deal with it. A tracked file whose path has become a folder of untracked files is left, with that folder. Nested repositories and submodules inside the project, links and files behind links are never cleaned, and the outer repository is never touched.
+  - **Untracked files under a `keep` path do not count as changes** when an item claims a clone. An agent session may then work in a clone next to a person's untracked files there.
+  - **What is recorded, and how to get it back.** Before anything is discarded, a full copy goes to `<streamsDir>/discarded/<item>-<time>/` on this machine (beside the sessions' stream files, `data/streams` by default). If any of it cannot be written or verified, nothing is discarded. After the discard the folder holds exactly what was discarded and nothing else: `staged.diff` (what was staged, when anything was), `worktree.diff` (the changes to tracked files in the working tree, when there were any), `files/` with a copy of every untracked file that was removed and of every restored file that had been taken out of the index (`git rm --cached`), `discarded.json` with every path and what happened to it (restored, removed, left with the reason, kept), and `RESTORE.md`. **To get it back, open the folder and follow `RESTORE.md` there**: it gives the commands for that record, in order, to run in Git Bash; they bring back what was discarded and touch nothing that was left in the clone. A file that was only marked intent-to-add (`git add -N`) comes back as an untracked file with the same content. With `core.autocrlf` on, line endings may differ after `git apply`; the content is the same.
+  - The event `orchestrator.workspace_discarded` names the clone, the item, the first few paths restored, removed and left (with why: changed or appeared after it was recorded, or could not be removed because another program holds it open), and the record's folder, whose `discarded.json` has every path.
+- **When a clone is not available.** Scope Soup passes a clone over, and never cleans it, when the project's repository there has: uncommitted changes (a person's edits, or leftovers that were not discarded as above; untracked files matching `workspaces.keep` do not count); an operation in progress (a rebase, merge, cherry-pick, revert or bisect, even with a clean tree); a branch that looks like a person's work (it is on a branch other than the main branch or a `scopesoup/` branch, or on a detached HEAD at commits no local or remote-tracking branch contains); or a stale item branch (a branch with the item's name that this item did not start in that clone). The reason names the clone. When no clone is left the item waits, and a session that finds its own clone in such a state is refused. Apart from the discard when an item's clone is freed (above), Scope Soup never discards, overwrites, resets, cleans or stashes anything in a clone. Finish or put away your work (switch the clone back to the main branch, finish the rebase, delete the old branch) to give it back to the pool.
+- **Ignored files are not protected.** Switching to an item's branch uses plain `git checkout`, which can replace a file that git ignores when the branch has a tracked file of that name. Keep nothing you care about in ignored files of a pool clone.
+- **Moving between clones.** An item keeps its clone across its steps. If it has to go to another clone (its own is in use), its branch is fetched from the earlier clone and goes with it, but uncommitted work does not.
+- **The outer repository shows the project as modified** (a changed submodule commit) while an item works in it. That is expected; Scope Soup does not touch the outer repository.
+- A clone taken for an item that then did not start (the start failed, or the item was closed or is not ready any more) is freed at the next tick. If the record of which clone each item holds in Scope Soup's database cannot be read (it is not valid JSON), Scope Soup writes an event, hands out no clone, and keeps the last good copy in use for items that already hold one, until it is readable again.
+- A pool path may not equal, contain or lie inside `repoPath`.
+- `realPaths` apply to every clone and to the subfolder in it.
+- **Scope Soup never touches the outer repository**: not its branch, not its other submodules. Keeping the outer clones up to date (pulling the outer repository, updating its other submodules) is your job; do it while no session runs in that clone.
+- Which clone each item holds is kept in Scope Soup's database, so a restart picks up where it was.
+
+## How the backlog is ordered
+
+The Backlog column, the order of the board's numbers and the item Scope Soup starts next are one order (decision 79), and it is the same everywhere. Items that had a triage come before those that did not (the divider "Not triaged yet"). Among each, a `priority:blocker` Item goes first, then the higher score. A score is points, and the weights are fixed defaults in `src/orchestrator/score.ts` (`WEIGHTS`), not settings:
+
+| What | Points |
+|---|---|
+| Priority | critical 60, major 30, no priority 0, minor -30 (a `priority:blocker` Item goes first, as above) |
+| Bug (one of `bugLabels`) | 10 |
+| Each open Item it unblocks | 5, up to 4 Items |
+| Already started (code has been written: the Item is in the implement or review step, or its branch head differs from main; an answered question or an earlier session does not count) | 35 |
+| Age | 0.25 for each open Item that is newer, so it grows slowly and nothing waits forever |
+| Size from the triage | small 0, medium -3, large -8 |
+| A person's vote | a number of points the vote buttons set (see below), 2 decimals |
+
+Until the triage, only priority, vote and age count: bugs, size, blocking and having started do not. Ties go to the older Item.
+
+**Votes.** Each Item has one vote, a score offset in points (default 0, 2 decimals, no limit). Each press of "Vote up" or "Vote down" (on the Backlog card and on the Item page) moves the Item exactly one place: the server computes the vote at press time from the current order, so the Item's score merges halfway between the two Items above it (above the top Item by a fixed margin of 1 point when it is 2nd; for Vote down the same below). If those two Items have the same score, the age tie-break decides, and when no age fits between them the vote goes a small fixed gap (0.05) beyond both. Nothing about the neighbours is stored, and up then down gives the old order back. Voting stays inside the Item's own group: Items with a triage or without, and a `priority:blocker` Item among blockers; at the top or bottom of its group the button is off and says why. The board never shows the number: a card says its place and why in words, for example "2nd: major bug, unblocks 2, small, voted up; behind #41 because #41 is already started" (it says "voted up" or "voted down", not how many times). On the meta branch host the vote is the header field `vote` of the Item's `item.md`; on GitHub it is kept in Scope Soup's own store (it does not travel to other machines).
+
+## A stand-in for trials
+
+To try the whole loop on repositories shaped like a submodule setup, with made-up content:
+
+```
+pnpm standin C:\trials\standin
+```
+
+The folder must be new or empty. It gets:
+
+- `remotes/harbour-tools.git` and `remotes/tidy-units.git`: bare "remotes" for an outer repository and a small project (a few lines of JavaScript that convert metric lengths, one `node:test` test).
+- `pool/one` and `pool/two`: full clones of the outer repository, with the project as the submodule `libs/tidy-units`.
+- `scopesoup-repo`: Scope Soup's own clone of the project. The items are kept on `refs/scopesoup/meta` there and pushed to the project's remote.
+- `scopesoup.config.json`: a meta branch host with writes on (prefix `A`, author "Scope Soup trial"), the pool, the merge queue with `node --test` as the check, haiku for every role but review (sonnet), and `level: 4`.
+- `data/`: Scope Soup's database, workspaces and stream files.
+
+The script prints the command to start Scope Soup on it, for PowerShell and Git Bash, with the board on port 4330. At level 4, an item written on the board starts real `claude` sessions; set `"level": 0` in the file to look first. To start over, stop Scope Soup, delete the folder and run the script again. Deleting only `data/` keeps the items, which are on the project's remote.
+
+## Item commands: file, claim and hand back from a terminal or a Claude Code session
+
+A person, or an interactive Claude Code session working for one, files and claims items with a command line. It is `scopesoup item <verb>` (or `pnpm --dir <Scope Soup> item <verb>`), run in the project's repository, which finds this machine's config for it ("Which config a command reads"); from anywhere else give the project's configuration with `--config <file>` or `SCOPESOUP_CONFIG`:
+
+```
+pnpm --dir <Scope Soup> item new --title "..." [--body-file notes.md | --body "..."] [--priority blocker|critical|major|minor] [--label bug] [--claim]
+pnpm --dir <Scope Soup> item claim A-12 [--as "Name"]
+pnpm --dir <Scope Soup> item handback A-12 [--note "..."]
+pnpm --dir <Scope Soup> item release A-12 [--note "..."]
+pnpm --dir <Scope Soup> item list [--mine | --free] [--all] [--search "words"] [--json]
+pnpm --dir <Scope Soup> item show A-12 [--json]
+```
+
+pnpm keeps where it was started in `INIT_CWD`, so relative paths and the git checkout are the caller's. Exit code 0 is done, 1 is refused or failed (the reason is printed), 2 is a misuse of the command.
+
+- **new** files an item (on GitHub, an issue; GitHub has no priority field, so the priority is not kept there). **`--claim`** files it already held by the person, in one write: on the meta branch the item and its `created` and `claimed` lines are one meta commit (through the server, `POST /api/items` with `claim`), on GitHub the issue is created with the assignee set. Use it for new work you mean to build: filing and then `take` is a race, because Scope Soup starts a free item within seconds and `take` is then refused while a session runs.
+- **take** makes the person the holder. Scope Soup does not start the item, and leaves alone a step it had waiting. It stops nothing that runs: it is **refused**, with the reason, when an agent holds the item (a live claim; written on a shared host) and, when the server is up, when a session is running on it. A person's hold has no `until` that matters (the `claimed` line carries one ten years ahead, because the log format needs one) and nothing expires it: people have no stall timer, so Scope Soup never calls a person's Item stalled or takes it back, even when the `until` has passed. The board calls a hold quiet after a day without a line. The Item is that person's turn: it is in their "Your turn" on a board where they are picked, not in other people's.
+- **handback** says the work is on the item's branch, `scopesoup/<item>` (the name is fixed), pushed to the project's remote (`remote`, default `origin`): `git push origin scopesoup/A-12` first. The command takes no branch or commit: it fetches the branch from the remote into the project's repository, the one `repoPath` names, and records the branch's newest commit there. A branch that is not on the remote, or has no commits beyond the main branch, is refused with the reason, and nothing is written. The branch of the same name in that repository is made, or moved forward, to the remote's commit; when it has commits the remote does not have, or is checked out somewhere behind the remote, the hand-back is refused and that branch is left alone (push those commits, or delete that branch if they are not wanted). Then: on the meta branch writes a `revision` line (`handback: true`, the full commit id, the branch, the note) and a `released` line, both by the person; on GitHub opens a pull request from the branch ("Closes #N"), labels it `scopesoup:review` and unassigns. Scope Soup takes it on from there: a job is made as if an implement session had just finished, so the review (from level 3) runs as for an agent's change, then the check and the merge (level 4). At level 2 it goes straight to the hand-over, which is parked for you until main contains the branch (no session merges it). It waits while the item is still held, agents are not started, the level is below 2, or the branch is not in the repository Scope Soup works from. With `workspaces.kind: "pool"` the branch has to be in one of the pool's clones, so a hand-back from another clone waits ("not there"); worktrees (the default) see the project repository's branches.
+- **A pull request Scope Soup will not review**: on the board, an open pull request whose head branch is not `scopesoup/...` and that has no `scopesoup:review` label shows "open pull request by <author>; Scope Soup does not review it", Only the branch and the label decide it.
+- **release** lets go without a branch: a `released` line, or unassigning. An agent may pick the item up. Anyone may release anyone's hold (people are equals); releasing another person's hold writes `of` with the holder on the `released` line (on GitHub, a comment naming both), so the log says who released whose. An agent's claim is not released: it ends at its `until`.
+- **On the board**, the Item page has the same three as buttons for the board's picked person, through the same code on the server (`POST /api/item/claim`, `/api/item/handback`, `/api/item/release`), where the project's items can be written (meta branch): **Claim** for anyone but the holder, **Hand back** for the holder, **Release** while a person holds it. A button that cannot be pressed says why (an agent holds the Item, a session runs on it, nobody is picked). After Claim, the holder sees the Item's branch and the commands to copy: `git fetch origin && git switch -c scopesoup/48 origin/main` to start it, or `git fetch origin && git switch scopesoup/48` when the branch is on the remote already (the page asks the remote, `GET /api/item/branch?id=48`), then `git push origin scopesoup/48`. Hand back is one button, with an optional note: Scope Soup fetches the branch and hands back its newest commit, exactly as `item handback` does, or says under the button why it cannot (the branch is not on the remote, or has nothing beyond main). The board does not push. The demo (`pnpm demo`) has an in-memory Items host and a pretend remote, so the buttons and New item work there: an Item's branch shows up on the demo's remote 20 seconds after Take, as if pushed.
+- **list** shows the open items and who holds what (`--all` adds finished ones). An item nobody holds that already has a change (a hand-back, or an agent's work) shows as "in review", not "free", and `--free` leaves it out. `--mine` and `--free` filter. **`--search`** keeps the items whose id, title, labels, description or verification hold every word (any case).
+- **show** prints one item in full: state, priority, labels, parent, blockers, holder, link, description and verification. `show` and `list` without `--mine` only read, so they need no person's name. The triage runs both (below).
+
+The person's name is `--as`, else `SCOPESOUP_PERSON`, else `host.authorName` of the configuration (or `SCOPESOUP_META_AUTHOR_NAME`), else git's `user.name`; there is no other guess. On GitHub the holder is the token's user (`SCOPESOUP_GITHUB_TOKEN`, from the environment only, and `SCOPESOUP_WRITE=1` or `host.write`), and `--as` may only name that user. A session started by Claude Code says so in the claim (`from: claude-code`; `--from` sets another source), and the board shows "from a Claude Code session".
+
+Where it writes, on metaBranch: through the running Scope Soup server's local API when `GET /api/health` answers (`SCOPESOUP_URL`, else `http://127.0.0.1:` + `SCOPESOUP_PORT`, else 4310; `--server` and `--no-server` override), otherwise straight on the meta ref with the same writer, as the person (the machine's configured author) and with the same fetch and push of the ref. The two paths use one set of rules (`src/items/service.ts`); the server's endpoints are `POST /api/items`, `/api/item/claim`, `/api/item/handback`, `/api/item/release`, `GET /api/item/rows` (with `search`) and `GET /api/item/show` (`id`), with `as` naming the person. On GitHub both read the issues with the token, as `list` always did.
+
+### Importing from GitHub Issues
+
+A project whose backlog is on GitHub Issues and that moves to Items imports it once (decision 67). The configuration's host is meta branch with `write: true`; the token is `SCOPESOUP_GITHUB_TOKEN`, read from the environment only and never printed. It writes straight on the meta ref, never through the server:
+
+```
+pnpm --dir <Scope Soup> item import github --repo OWNER/NAME [--closed N|all] [--comments N|none] [--on-github leave|label|close [--yes]] [--dry-run] [--github-login LOGIN]
+```
+
+- **What comes along.** Every open issue becomes an Item: title, body, labels, priority from a `priority:*` label, parent and sub-issues, blocked-by links, and the assignee as holder when it is the token's user (other assignees are named in the text). Links between imported issues (`#12`, the parent, the blockers) are rewritten to the new Item ids. Each Item records `importedFrom: github:OWNER/NAME#N` in its header and a link in its body.
+- **Comments**: the last 3 of each issue by default (`--comments N`, or `none`), under "Comments imported from GitHub" in the Item's description, each quoted with who wrote it, when and a link. Scope Soup's own marker comments, bots' and empty ones are left out.
+- **Closed issues** are left out unless asked for: `--closed N` takes the N most recently updated, `--closed all` all of them. **Pull requests** are never imported.
+- **One commit.** The import is one meta commit by the person who runs it, pushed with the meta ref, so it can be read and undone. A second run imports nothing twice: an issue already imported is skipped. `--dry-run` prints which issue would become which Item and writes nothing.
+- **GitHub is only read**, unless `--on-github` says otherwise. `leave` (the default) changes nothing there. `label` gives each open imported issue the label `moved-to-scopesoup` (created when missing) and one comment naming its Item. `close` does that and closes each as not planned. Pull requests and closed issues are never touched. `label` and `close` are asked first in a terminal, or need `--yes`; without either they are refused before anything is read. The step waits while the import's commit is not on the remote ("GitHub was left as it is"), and a run again finishes a step that stopped halfway, without commenting twice.
+
+The onboarding skill offers the import when the backlog is on GitHub Issues today and the person picks Items from now on ("Onboarding with the Claude Code plugin"). Only GitHub is supported as a source. When a project leaves Scope Soup, offboarding exports the Items back as Markdown files ("Offboarding" below); exporting them as GitHub issues is not built.
+
+### The text for a project's CLAUDE.md
+
+`plugins/scopesoup/claude-md-section.md` is the text the onboarding skill offers to add to a project's `CLAUDE.md` (a release carries it): the backlog is Scope Soup's Items, and the item commands above, as `scopesoup item ...` through the launcher ("Installing and upgrading"). It names no folder, so it stays right after an upgrade and on every machine; each person's sessions need `<home>/bin` on their PATH, and their config on the list in Scope Soup's home (onboarding puts it there). It sets no rules for a session; whether a session builds, merges or opens a pull request is the project's own `CLAUDE.md`'s call.
+
+## Starting on a real project
+
+What the stand-in trial (`docs/TRIALS.md`, 2026-11-19) taught, in the order to do it:
+
+1. **Look first.** Start with `"level": 0`. The board fills from the meta ref and nothing starts. Then set level 1, press Start agents and read the triages.
+2. **One prefix per laptop.** `meta.prefix` (in each machine's private file) must differ on every machine that writes items. `machineName` names the laptop in the logs and claims; give each laptop its own.
+3. **The check command.** One program and its arguments, run without a shell, in the project's folder of the clone. A `.cmd` is refused: write `["cmd.exe", "/d", "/c", "x.cmd"]`. Set `settings.checkTimeoutMinutes` well above how long it takes; a running check does not block session starts (it runs beside the tick), and it still stops on Stop and at its time limit (Pause merge queue lets it finish). Run it once by hand in a pool clone first. The prompts do not name the check command: a session checks the way the project's `CLAUDE.md` says, so give the implement role's `allowedTools` the plain form it names (such as `"Bash(pnpm check*)"`).
+4. **The remote.** `remoteUrl` must name the repository the clones push to. Every push URL of the clone's remote is compared with it, and merging refuses on a mismatch. The project's pre-push hook runs; Scope Soup never skips it.
+5. **Small items first, then raise the level.** Watch the first item go through at each level: triage, implement, review, then at level 4 check and merging. The item page has the log; the meta ref on the remote has the same.
+6. **If Scope Soup's `data/` is lost,** start it again: items and answers come back from the logs on the remote. The step and review round live in the job, so an item that was waiting on an answered implement question or escalation restarts at triage with the answer in its prompt.
+
+## Onboarding with the Claude Code plugin
+
+This repository is a Claude Code plugin marketplace (`.claude-plugin/marketplace.json`). It carries one plugin, `scopesoup` (`plugins/scopesoup/`), whose skill `scopesoup-onboard` walks you through the steps of "Starting on a real project" from your own Claude Code session, in a project that knows nothing about Scope Soup.
+
+Install it once, in any session:
+
+```
+/plugin marketplace add mikaeltulldahl/scopesoup
+/plugin install scopesoup@scopesoup
+```
+
+Then, in a session in the project's clone, run `/scopesoup:scopesoup-onboard` (optionally with the clone's path). The skill finds the Scope Soup install (`scopesoup version` through the launcher, or a release folder `scopesoup-<version>/`; it refuses the project clone and, unless asked, a development checkout, and offers to download a release into Scope Soup's home and run `setup-home`, leaving the PATH to you: "Installing and upgrading") and asks three things: where the project's clone is, the backlog in two parts (where it is today: GitHub Issues, another tracker, a text file or nowhere; and where to keep it from now on: Scope Soup's own Items on the meta branch, or GitHub Issues), and, for Items, this machine's prefix (it proposes the first one no other machine uses, read from the ids on the meta ref). The rest it reads from the clone or proposes: the remote and main branch, `realPaths`, a separate `repoPath` clone, and a config folder outside any repository. It also proposes the setup of a fresh clone from what it finds (`pnpm config:setup <your clone> <repository>`: the installs the lockfiles ask for, submodules, a `Makefile` setup target, and the ignored personal files in your clone such as `.env` and `*.local.*`), without a fourth question: you confirm or correct it in the summary. When the backlog is on GitHub Issues today and moves to Items, it offers the import ("Importing from GitHub Issues") and asks, as part of the backlog question, what to do with the issues on GitHub: leave them, label them, or label and close them (`--on-github`); after the yes it runs the import once the configuration is clean. Another tracker is not imported: it says so. It shows one summary with the file in full, and does nothing before one yes. Then, on a project Scope Soup does not run yet, it writes this machine's `scopesoup.config.json` in the config folder, checks it with the shared settings it proposes (`pnpm config:check --shared`), and writes those (`level: 0`, the host, `setupCommand`, `setupWatch`) to the meta ref as the first person, one commit named after you, pushed (`pnpm settings:init`). The setup script `.scopesoup/scopesoup-setup.mjs` is code, so it goes into the repository: it is committed in Scope Soup's own clone on a branch `scopesoup/onboard` and pushed, and you merge it the way the project's changes merge; until then a setup fails and says so. On a project Scope Soup already runs, it writes only this machine's private file ("Joining a project Scope Soup already runs" below). The check command, the remote's URL and the like are not asked: the Settings page says what each level needs when you raise it, and shows the setup to edit. Two optional steps, each only on your yes: the plugin in the project's `.claude/settings.json`, and the `CLAUDE.md` section above.
+
+### Joining a project Scope Soup already runs
+
+When a teammate already runs Scope Soup on the project, its shared settings are on the meta ref: you do not write them again, and the onboarding skill does not. Run the onboarding skill on your own machine, in a session in your clone of the project. It asks where your clone is and, for Items, your own prefix (one no other machine uses); it writes only your machine's private `scopesoup.config.json` (your `machineName`, `repoPath`, your own clone, `meta` with your name, email and prefix, what your machine may spend) and runs `pnpm config:check`, which fetches `refs/scopesoup/meta` (a clone does not bring it) and checks your file with the project's settings. Nothing is committed and nothing is pushed. `pnpm settings:init` refuses to write when the project has shared settings already, and says that you are joining. A project setting you change on the Settings page afterwards is in effect for everyone, named after you.
+
+### Writing the shared settings of a new project
+
+```
+pnpm settings:init <settings.json> --as <your name> [--config <this machine's scopesoup.config.json>]
+```
+
+The first person on a project writes its shared settings to the meta ref: the file is checked with this machine's private file, the meta ref is fetched from `remote`, and when the project has no shared settings yet they are written as one commit named after you and pushed. When it has them already, nothing is written: you are joining (above). The exit code is 0 when written, 1 when refused.
+
+### Checking a configuration file
+
+```
+pnpm config:check [file] [--shared <path to settings.json>]
+```
+
+Validates the private file together with the project's shared settings, with the same rules as the orchestrator, then prints every problem, or the recommendations for a valid pair. The shared settings are read as Scope Soup reads them, from `refs/scopesoup/meta` of the `repoPath` the private file names, fetched from `remote` first; `--shared` reads them from a file instead, to check settings not written yet. Without a file it checks the config the command finds ("Which config a command reads"). A relative path is relative to the folder the command was typed in. The exit code is 0 for a valid file and 1 for a missing or invalid one.
+
+## A GitHub project
+
+GitHub is the source of truth for a GitHub project: the issue is the Item, and Scope Soup's store is a cache of it (`docs/github-mapping.md`). Look first: start with `SCOPESOUP_GITHUB_REPO` and a token and no configuration, or with a configuration at `level: 0`. For triages set level 1 and press Start agents. With writes on (`host.write` or `SCOPESOUP_WRITE=1`), Scope Soup's questions and drafts appear as comments on the issues. At level 2 or 3 the implementor pushes `scopesoup/<issue>` and merges it, or opens a pull request, as the project's `CLAUDE.md` says; once main contains the branch, Scope Soup closes the issue (with writes on). At level 4 Scope Soup merges through its merge queue, on `checkCommand` or on the project's CI ("Waiting for CI on GitHub"). When it needs you, the item is in "your turn" and the issue carries `scopesoup:needs-decision`.
+
+## The meta branch's format and upgrades
+
+The meta branch carries its format (decision 63): a file `format` at the root of its tree with a whole number, raised only for a breaking change. A branch without the file is format 0, what every Scope Soup before the format entry wrote. This Scope Soup reads and writes format 1, which is format 0 with the file; a new meta branch gets the file with its first commit. Laptops on different Scope Soup versions share one branch, and the branch cannot be restored from a backup, so the rules are forward only:
+
+- **An older branch is migrated once, by one machine.** With `SCOPESOUP_META_WRITE=1`, Scope Soup checks the format at start and, while the branch is older, every two minutes. The machine that holds the merge queue lease migrates it: Scope Soup takes the lease (`refs/scopesoup/merge-queue` on the project's remote, the one merging uses) for the migration alone, at any level, fetches, makes one commit on top of the remote's (`Meta branch format 0 to 1`, whose only change from 0 to 1 is the new `format` file), pushes it and lets the lease go. While another machine holds the lease (it merges), the migration waits. With `SCOPESOUP_MERGE_QUEUE=off` (one machine only) or a meta branch without a remote, no lease is needed. Scope Soup prints what it did, and writes it as a `scopesoup.meta_format` event.
+- **Writes go on meanwhile** onto format 0: format 1 only adds the file. (A later format whose step changes more will say so, and then writes wait for the migration.)
+- **A newer branch is read only.** A branch whose format is newer than this Scope Soup's, or whose `format` file cannot be read, is still read and shown, but every write (the board's New item and Edit, answers, the orchestrator's log lines, the item commands) is refused with "this project's data is from a newer Scope Soup; upgrade". Commits this machine made before it saw the newer format stay on its own meta ref and are not pushed on top of it; upgrade Scope Soup and they are shared at the next push.
+- There are no downgrade migrations: going back to an older Scope Soup after the branch was migrated means that Scope Soup reads only.
+
+The fixtures of each released format are in `src/hosts/metaBranch/fixtures/` (`format-0`, `format-1`), with tests that this Scope Soup reads them.
+
+## The database's schema version and upgrades
+
+Scope Soup's database (`scopesoup.sqlite` in `SCOPESOUP_DATA`) carries its schema version (decision 64) in SQLite's `PRAGMA user_version`: a whole number, raised only when the schema changes. A database without one is version 0, what every Scope Soup before the schema version made. This Scope Soup reads and writes version 1, which is version 0 with the number set; a new database starts at version 1. For a GitHub project the database is a copy of what is on GitHub; for a meta-branch project it also holds the answers and the work in progress, so an upgrade must not lose it. When you upgrade Scope Soup:
+
+- **An older database is migrated when it is opened**, in one transaction: each step from one version to the next is code (`src/store/schema.ts`), and every row is kept. If a step fails, nothing is changed. Scope Soup prints `… was migrated from version 0 to version 1` once and writes a `scopesoup.store_migrated` event. The step from 0 to 1 only sets the number (and adds `usage_samples` to a database old enough not to have it, as older versions did at open).
+- **A copy is kept before a step that changes the schema**: `scopesoup.v<old>.sqlite` beside the database (an older such copy is removed, so only the newest is kept). With it, going back across that change is the old Scope Soup folder plus the copy (the upgrade policy): stop Scope Soup and put the copy in place of `scopesoup.sqlite`. Anything written after the upgrade is not in the copy. The step from 0 to 1 makes no copy: an older Scope Soup ignores the number and reads a version-1 database as it is.
+- **A newer database is read only.** A database whose version is newer than this Scope Soup's is opened without changing anything on disk: reads work, and every write is refused with "this project's data is from a newer Scope Soup; upgrade". The server writes from its first moment, so it does not start on one: the start stops with that message and the path, and the file is left as it was.
+- There are no downgrade migrations.
+
+The fixtures of each released version are in `src/store/fixtures/` (`version-0.sql`, `version-1.sql`, each with rows in every table), with tests that this Scope Soup migrates and reads them.
+
+## When the meta ref refuses what it fetched
+
+With `SCOPESOUP_META_WRITE=1`, Scope Soup does not take a fetched meta ref that was rewritten, has a merge commit, removed or changed a log line it had seen, or no longer contains the last commit this machine shared. It keeps writing on its own copy and stops pushing, and the sharing report says why. To look (the ref names below are for the default remote `origin`; the meta ref is always `refs/scopesoup/meta`):
+
+```
+git log --oneline --first-parent refs/scopesoup-incoming/origin/scopesoup/meta
+git diff refs/scopesoup-remote/origin/scopesoup/meta refs/scopesoup-incoming/origin/scopesoup/meta -- items
+```
+
+The first is the history that came in; the second shows what changed against the last good fetch (the lines that went). If what came in is right (a person rewrote the history on purpose), stop Scope Soup and accept it with
+
+```
+pnpm meta:accept --machine <machineName>
+```
+
+with the same `SCOPESOUP_META_*` settings Scope Soup runs with, and `--machine` the `machineName` of Scope Soup's configuration file (required: this machine's own commits are the ones that carry that name; the command reads no configuration file, as it reads no host from one). It saves this machine's meta ref under `refs/scopesoup-backup/<time>`, takes the fetched history as the remote's, puts this machine's own unshared commits (those made here since it last shared) on top of it, pushes, and prints each step and where the backup is. Lines the accepted history removed stay removed. Commits on the meta ref here that this machine did not make are not put back; they stay in the backup, and the command names them.
+
+## ssh
+
+Fetch and push never wait for a password or a host key: ssh runs in batch mode. Your own `GIT_SSH_COMMAND` or `core.sshCommand` is kept with `-o BatchMode=yes` added; when it is PuTTY's `plink` or `TortoisePlink`, `-batch` is added instead. A program set with `GIT_SSH` is left as it is. Set up the key (an agent, or a key without a passphrase) so that `git fetch` works in a fresh terminal without a prompt.
+
+## Stopping
+
+**Pause agents** lets running sessions finish and starts nothing new; **Stop** on the board also ends running sessions and cuts off a merge under way; both keep everything (see "Start, Pause and Stop"). Ctrl-C stops the process; sessions are stopped and resume or restart once Start agents is pressed after the next start. Deleting `data/` forgets Scope Soup's own state (jobs, answers, the event log) and nothing on the host.
+
+## Offboarding
+
+Stopping keeps everything ("Stopping" above): pausing is not leaving. To leave, `docs/ONBOARDING.md` ("Offboarding") says what happens; the skill `/scopesoup:scopesoup-offboard` runs this command with you (decision 75):
+
+```
+pnpm offboard [--config <scopesoup.config.json>] [--data <folder>]
+pnpm offboard --remove work,items,github,project,machine|all [--include-kept <groups>|all] [--out <folder>]
+pnpm offboard record setup-script|claude-md|plugin-settings [--config <scopesoup.config.json>]
+```
+
+Without `--config` it offboards the config it finds ("Which config a command reads"). 
+Without `--remove` it only prints the plan: everything Scope Soup left for the project in five groups, each entry with what removing it does and `[remove]` or `[keep]`. It reads the manifest `scopesoup.manifest.jsonl` beside the config file (what onboarding and Scope Soup recorded making outside the config folder), this machine's file and the shared settings, `refs/scopesoup/*` and `scopesoup/*` branches on the remote (fetched into Scope Soup's clone without writing a ref, to tell merged from not), `scopesoup/*` branches in Scope Soup's clone and the pool clones, `CLAUDE.md`, `.claude/settings.json` and `.scopesoup/scopesoup-setup.mjs` on the main branch, the folders, the `.v*` copies, and whether the config is on the list of configs in Scope Soup's home (taken off it with the machine group). With a GitHub host, or labels on the manifest, it reads the labels and open pull requests with `SCOPESOUP_GITHUB_TOKEN`. The data folder is `--data`, else `SCOPESOUP_DATA`, else what the manifest recorded at Scope Soup's last start, and `<config folder>/data`.
+
+`--remove` acts on the groups named, in order, and only on their `[remove]` entries; `--include-kept` names the groups whose `[keep]` entries (branches not merged, open pull requests, folders with work not pushed) go too. It refuses while a board answers on `SCOPESOUP_PORT` (default 4310). The Items are exported to `<out>/items/<id>.md` with the shared settings before `refs/scopesoup/meta` is deleted (kept if the export failed); the project's files become `<out>/scopesoup-offboard.patch` to apply and commit; the report is `<out>/report.txt`. `<out>` is `<config folder>-offboard` beside the config folder unless given. Branches and refs are deleted with a plain push, never forced; a folder is never removed when it overlaps the person's checkout (`ownClone`, `realPaths`), a pool clone, a remote on this machine, the install or the export folder. The installation and the plugin are left to the person. The exit code is 0 when everything asked was done, 1 when something was not.
+
+`record` is for the onboarding skill: it notes the setup script (and its `scopesoup/onboard` branch), the CLAUDE.md section or the plugin lines on the manifest. The Settings page's "Stop using Scope Soup" (`#/settings/stop`) shows the same plan, read only, with Stop.
+
+## Cutting a release
+
+A release is a tag `vX.Y.Z` on `main` whose commit passed `pnpm check` as it is, with a GitHub release carrying the zip, its `.sha256` and notes. In a clean clone of Scope Soup, on the commit to release (normally `main` after `git pull`), with `version` in `package.json` raised:
+
+```
+pnpm release
+```
+
+1. It refuses a tree that is not clean (a changed or untracked file that git does not ignore), and a version that is already a tag in the clone or on `origin` (`git ls-remote --tags`). Raise `version` for a new release.
+2. It runs `pnpm check` on that commit, then makes sure the tree is still clean and `HEAD` did not move. When something merged in between (as when the queue merged a change between the check and the merge of 0.3.0), there is no release: run it again on the new commit. So the tag is always on a commit that passed the check as it is.
+3. It builds `release/scopesoup-<version>/`, the zip and `scopesoup-<version>.zip.sha256`, writes the commit and the three format numbers into `release.json`, and prints them.
+4. It prints the commands that tag exactly the commit that was checked, and runs none of them: `git tag -a vX.Y.Z <commit> -m "Scope Soup X.Y.Z"`, `git push origin vX.Y.Z`, and `gh release create vX.Y.Z <zip> <zip>.sha256 --title "Scope Soup X.Y.Z" --notes-file <notes.md>`.
+
+The notes say what changed, and for each of the config file, the meta branch and the database whether its format changed (the numbers `pnpm release` printed against the last release's `release.json`), and what the migration does. `pnpm release --no-check` makes a test build without the check; its `release.json` says `"checked": false`, and it is never tagged or published.
+
+## Scope Soup's own tests
+
+In a clone of Scope Soup, `pnpm check` runs the typecheck, every test and the web build; `pnpm test` runs the fast tests, `pnpm test:slow` the `*.slow.test.ts` integration tests and `pnpm test:long` everything with the full counts of the random-input tests (`CLAUDE.md`, "Working here"). A test file is the unit that runs in parallel. `SCOPESOUP_TEST_JOBS` sets how many test files run at once (a positive integer; anything else is refused before a test runs). Without it, a quarter of the machine's logical processors run at once, at least 1, so a check leaves the laptop usable and quieter (on a 20-thread laptop a whole `pnpm check` took 105 s with 10 at once, 119 s with 4 and 165 s with 2). The runner prints the number it used on its first line, for example `126 test files, 5 at once (a quarter of 20 logical processors; SCOPESOUP_TEST_JOBS sets it)`. In PowerShell: `$env:SCOPESOUP_TEST_JOBS = "4"; pnpm check`.
+
+## Windows
+
+Scope Soup runs on Windows 11 with the same commands; use PowerShell or Git Bash. In PowerShell set the variables as `$env:SCOPESOUP_GITHUB_REPO = "owner/name"` before `pnpm start`.
+
+**What the machine needs, besides the list above.**
+- Node 22.18 or newer (Node 26 works) and pnpm.
+- Git for Windows. This repository pins line endings to LF with `.gitattributes`, whatever `core.autocrlf` says. A project's own clone keeps its own rules.
+- `claude` as a real executable, see below.
+- `powershell.exe` (Windows PowerShell 5.1, always present) for keep-awake and for the desktop notification (a balloon from `System.Windows.Forms.NotifyIcon`). Nothing needs elevation. On macOS the notification is made with `osascript`, on Linux with `notify-send`.
+
+**How `claude` is found.** Sessions start `claude` without a shell, and Windows cannot start a `.cmd` shim that way (it fails with EINVAL). With `claude.path` left at `claude`, Scope Soup searches `PATH`, tries `claude.exe` first and uses the first one it finds. If only a shim exists, for example the `claude.cmd` that npm installs, the session is refused with a message that names the shim. Fix it by setting `claude.path` in the project configuration to the real executable; the native install puts it at `%USERPROFILE%\.local\bin\claude.exe`. `claude.path` may be a full path, with or without `.exe`. To run the CLI through Node instead, set `path` to `node.exe` and put the script in `claude.prefixArgs`.
+
+**Stopping.** A stalled, overdue or stopped session is ended with everything it started. Windows reuses process ids, so `taskkill /T`, which follows parent ids, could end unrelated programs; instead one `powershell` call lists the processes with their parent ids and creation times, takes from the session's process down only processes created after their parent, and ends each by its own id once its creation time is checked again (about a second). A process that has already exited is never killed by its id: its id may belong to another program by then. (A child whose parent exited before the kill hangs off no living parent and is not reached, as with `taskkill /T`.) A session left by an earlier run of Scope Soup that is still alive is ended the same way at the next start, but only when the process is the session's own: it must have been created when the session started (Scope Soup reads the process's creation time with one `powershell` call), and the machine must not have restarted since. Windows reuses process ids quickly, and a shutdown with Fast Startup does not reset the boot time, so otherwise the process is another program and is left alone, as it is when its creation time cannot be read; the session is then marked failed with that reason.
+
+**Keep-awake.** While a session runs, an item is ready to start, or something waits for a time (a retry or a usage-limit reset), Scope Soup starts a small `powershell` child that asks Windows not to go to sleep (`SetThreadExecutionState` with `ES_SYSTEM_REQUIRED`). When there is nothing to do, agents are paused or stopped with no session still finishing, or the level is 0, the child is ended and the laptop may sleep as usual. The child holds the request only while the pipe from Scope Soup stays open, so it ends when Scope Soup stops and also if Scope Soup is killed. The screen may still turn off; only sleep is prevented. Set `"keepAwake": false` in the project configuration to switch it off. The event log records when it starts and ends, and when it could not start. `powercfg /requests` in an administrator terminal shows the request.
+
+**Who is at the board.** People are equals, and there is no login. A picker at the top of the board says who is there; it offers the people Scope Soup knows (whoever holds an Item, wrote a line in an Item's log or answered on one) and takes a new name. The pick is kept in that browser only (`localStorage`; without storage it lasts while the page is open), and every request names it in the `X-ScopeSoup-Person` header (URI-encoded). The server records it: answers, a triage's draft and a split decided, Accept and Overturn, chat messages, edits, takes and releases, and the switches' events. A request that records an answer or an edit without a person is refused (`PERSON_MISSING`); the switches (Start, Pause, Stop) never are: without a person their event names `board`. Every question Scope Soup asks is in every person's "Your turn" until someone answers it; a person's own holds and hand-backs are only theirs, on every board where they are picked: a person is not tied to a machine, so a hold written on another laptop is still theirs, and they release or hand it back from any board. Only agents' claims are machine-bound.
+
+**Idle on your turn.** When a tick starts nothing, no session runs and "Your turn" is not empty, Scope Soup shows one desktop notification with the count and the first three entries (`powershell.exe` on Windows, `osascript` on macOS, `notify-send` on Linux; the text goes in environment variables, not on a command line). It does so once per stretch of waiting: the stretch ends at the first tick that is not idle or has nothing waiting for an answer, and a new one notifies again. The event log records `orchestrator.answers_waiting` when it notifies and `orchestrator.notify_failed` when the command could not run (for example no `notify-send`); it is not retried in that stretch, and the board's "Your turn" list stays the fallback.
+
+**Known limits.**
+- Closing the lid is a separate Windows setting: if the laptop is set to sleep on lid close, the request does not override it.
+- The request does not stop a sleep or shutdown that a person asks for, nor a forced hibernation at critical battery.
+- If Scope Soup is killed hard, sessions it had running keep going until the next start finds and ends them.
+- Very long paths in a workspace may need `git config core.longpaths true` in the project clone.

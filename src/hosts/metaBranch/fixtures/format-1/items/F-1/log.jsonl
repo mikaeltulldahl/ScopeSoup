@@ -1,0 +1,10 @@
+{"at":"2026-11-18T09:00:00Z","by":{"who":"robin","machine":"laptop-a","agent":false},"kind":"created"}
+{"at":"2026-11-18T09:01:00Z","by":"robin","kind":"claimed","until":"2026-11-18T11:01:00Z"}
+{"at":"2026-11-18T09:02:00Z","by":{"who":"triage","machine":"laptop-a","agent":true},"kind":"session","role":"triage","model":"opus","outcome":"done","summary":"Ready to build.","durationMs":60000,"risk":"low","riskReason":"tests only"}
+{"at":"2026-11-18T09:03:00Z","by":{"who":"implement","machine":"laptop-a","agent":true},"kind":"assumption","assumption":"The suite runs with the fast tests."}
+{"at":"2026-11-18T09:04:00Z","by":{"who":"implement","machine":"laptop-a","agent":true},"kind":"question","question":"Where should the suite live?","options":["next to the code","in a folder of its own"],"recommendation":"next to the code"}
+{"at":"2026-11-18T09:05:00Z","by":{"who":"robin","machine":"laptop-a","agent":false},"kind":"answer","answer":"next to the code","to":"2026-11-18T09:04:00Z"}
+{"at":"2026-11-18T09:06:00Z","by":{"who":"implement","machine":"laptop-a","agent":true},"kind":"revision","sha":"1111111111111111111111111111111111111111","branch":"scopesoup/F-1"}
+{"at":"2026-11-18T09:07:00Z","by":{"who":"review","machine":"laptop-a","agent":true},"kind":"review","sha":"1111111111111111111111111111111111111111","verdict":"pass","findings":[]}
+{"at":"2026-11-18T09:08:00Z","by":{"who":"scopesoup","machine":"laptop-a","agent":true},"kind":"check","sha":"1111111111111111111111111111111111111111","verdict":"pass","command":"pnpm check"}
+{"at":"2026-11-18T09:09:00Z","by":{"who":"robin","machine":"laptop-a","agent":false},"kind":"celebrated","mood":"a kind no Scope Soup knows"}

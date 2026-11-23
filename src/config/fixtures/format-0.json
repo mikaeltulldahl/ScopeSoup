@@ -1,0 +1,45 @@
+{
+  "project": "example",
+  "repoPath": "../example-clone",
+  "mainBranch": "main",
+  "remote": "origin",
+  "realPaths": ["/srv/example-production"],
+  "irreversibleActions": ["publish a package"],
+  "dryRun": true,
+  "mergeQueue": "queue",
+  "keepAwake": true,
+  "machineName": "desk",
+  "bugLabels": ["bug"],
+  "inviteLabel": "scopesoup",
+  "agentCheckCommand": ["npm", "test"],
+  "claude": { "path": "claude" },
+  "rules": {
+    "changePerItem": { "on": true, "reason": "Agents now run while nobody watches." },
+    "riskClasses": {
+      "on": true,
+      "reason": "Agents now run while nobody watches.",
+      "effects": [
+        { "name": "changes the database schema", "paths": ["**/migrations/**"] },
+        { "name": "changes how the project is built or released", "paths": [".github/**", "deploy/**"] }
+      ]
+    },
+    "reviewer": { "on": true, "reason": "Agents now run while nobody watches." },
+    "hardBudgetStop": { "on": true, "reason": "Agents now run while nobody watches." },
+    "claims": { "on": false, "reason": "Only one session runs at a time.", "expiryMinutes": 120 },
+    "waitingCap": { "on": false, "reason": "We still follow every change.", "max": 5 }
+  },
+  "settings": {
+    "maxParallelSessions": { "value": 4, "reason": "Room for all sessions." },
+    "parallelSessions": { "value": 1, "reason": "One implementor at a time." },
+    "budgetReserve": { "value": 4, "reason": "We work in the same window and the same week." },
+    "modelStrength": { "value": 3, "reason": "The middle position." }
+  },
+  "review": { "checklist": ["The change has a test for what it adds or changes."] },
+  "roles": {
+    "implement": { "model": "sonnet", "allowedTools": ["Read", "Glob", "Grep", "Edit", "Write", "Bash(git *)", "Bash(npm test *)"] },
+    "review": { "model": "opus" },
+    "fix": { "model": "sonnet" },
+    "check-review": { "model": "haiku" }
+  },
+  "host": { "kind": "metaBranch", "machine": "laptop-a" }
+}

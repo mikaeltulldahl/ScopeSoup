@@ -1,0 +1,27 @@
+name: CI
+
+# Started by hand only (Actions tab, "Run workflow"): the account's Actions minutes are used up.
+# The same checks run before every push as `pnpm check`.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # Reads the pnpm version from "packageManager" in package.json.
+      - uses: pnpm/action-setup@v6
+      # Reads the Node range from "engines" in package.json.
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: package.json
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm test:slow
+      - run: pnpm web:build

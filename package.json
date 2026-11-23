@@ -1,0 +1,33 @@
+{
+  "name": "scopesoup",
+  "license": "MIT",
+  "version": "0.5.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22.18" },
+  "packageManager": "pnpm@10.28.0",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "check": "pnpm typecheck && node --disable-warning=ExperimentalWarning src/testing/run.ts all && pnpm web:build",
+    "test": "node --disable-warning=ExperimentalWarning src/testing/run.ts fast",
+    "test:slow": "node --disable-warning=ExperimentalWarning src/testing/run.ts slow",
+    "test:long": "node --disable-warning=ExperimentalWarning src/testing/run.ts all --long",
+    "start": "node --disable-warning=ExperimentalWarning src/main.ts",
+    "demo": "node --disable-warning=ExperimentalWarning src/server/demo.ts",
+    "item": "node --disable-warning=ExperimentalWarning src/item.ts",
+    "offboard": "node --disable-warning=ExperimentalWarning src/offboard/cli.ts",
+    "release": "node --disable-warning=ExperimentalWarning src/release.ts",
+    "standin": "node --disable-warning=ExperimentalWarning src/standin.ts",
+    "queue-trial": "node --disable-warning=ExperimentalWarning src/queueTrial.ts",
+    "config:check": "node --disable-warning=ExperimentalWarning src/config/check.ts",
+    "config:register": "node --disable-warning=ExperimentalWarning src/config/register.ts",
+    "settings:init": "node --disable-warning=ExperimentalWarning src/config/settingsInit.ts",
+    "config:setup": "node --disable-warning=ExperimentalWarning src/config/setupScript.ts",
+    "meta:accept": "node --disable-warning=ExperimentalWarning src/hosts/metaBranch/accept.ts",
+    "web:build": "pnpm --dir web install --frozen-lockfile && pnpm --dir web build"
+  },
+  "devDependencies": {
+    "@types/node": "^22.18.0",
+    "typescript": "^5.9.0"
+  }
+}

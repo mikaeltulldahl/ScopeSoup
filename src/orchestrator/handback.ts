@@ -1,0 +1,125 @@
+// A person's hand-back (docs/PEOPLE.md): the work is on a branch and the cycle goes on with review,
+// check and merging, as for an agent's change. The item command writes the signal; this reads it.
+//   metaBranch: a `revision` line by a person with `handback: true` (and the hold released after it).
+//   GitHub:  an open pull request labelled `scopesoup:review` that names the item.
+// Each hand-back is taken on once per store. The job it makes stands where an implement session
+// would have left it: built, with the branch and its head. Nothing here starts a session.
+
+import { HANDBACK_LABEL, holdStands } from "../model/people.ts";
+import { agentsOn } from "../store/control.ts";
+import type { Change, Ref, WorkItem } from "../model/types.ts";
+import { refKey } from "../model/types.ts";
+import type { Context } from "./context.ts";
+import { errorText } from "./context.ts";
+import { afterBuild } from "./cycle.ts";
+import type { Job } from "./jobs.ts";
+import { workBranch, workspaceKey, BRANCH_PREFIX } from "./paths.ts";
+
+const SEEN_KEY = "orchestrator.handbacks";
+
+export interface Handback {
+  /** What makes it once-only: the item and the commit on the meta branch, the pull request on GitHub. */
+  key: string;
+  item: WorkItem;
+  branch: string;
+  sha: string;
+  /** The person, in words. */
+  by: string;
+  note?: string;
+  change?: Ref;
+}
+
+const str = (value: unknown): string => (typeof value === "string" ? value : "");
+const open = (item: WorkItem): boolean => item.state !== "done" && item.state !== "abandoned";
+
+/** Pure. The hand-backs the items' logs and the changes show. */
+export function findHandbacks(items: readonly WorkItem[], changes: readonly Change[]): Handback[] {
+  const found: Handback[] = [];
+  const byKey = new Map(items.map((item) => [refKey(item.ref), item]));
+  for (const item of items) {
+    if (!open(item)) continue;
+    // The newest revision of the log, and only when a person wrote it as a hand-back: Scope Soup's own later work supersedes it.
+    const newest = [...(item.log ?? [])].reverse().find((line) => line.kind === "revision");
+    if (!newest || newest.by.agent || newest.fields.handback !== true) continue;
+    const sha = str(newest.fields.sha);
+    const branch = str(newest.fields.branch);
+    if (!sha || !branch) continue;
+    const note = str(newest.fields.note);
+    found.push({ key: `${refKey(item.ref)}@${sha}`, item, branch, sha, by: newest.by.machine ? `${newest.by.who} on ${newest.by.machine}` : newest.by.who, ...(note ? { note } : {}) });
+  }
+  for (const change of changes) {
+    if (change.state !== "open" || !(change.labels ?? []).includes(HANDBACK_LABEL) || !change.branch) continue;
+    const item = change.works.map((work) => byKey.get(refKey(work))).find((each) => each !== undefined && each.ref.host === change.ref.host);
+    const sha = change.revisions?.[change.revisions.length - 1]?.sha;
+    if (!item || !open(item) || !sha) continue;
+    found.push({ key: `${refKey(change.ref)}`, item, branch: change.branch, sha, by: change.author.name, change: change.ref });
+  }
+  return found;
+}
+
+function seenKeys(ctx: Context): Set<string> {
+  try {
+    const value: unknown = JSON.parse(ctx.deps.store.getValue(SEEN_KEY) ?? "[]");
+    return new Set(Array.isArray(value) ? value.filter((each): each is string => typeof each === "string") : []);
+  } catch {
+    return new Set();
+  }
+}
+
+/**
+ * Takes on the hand-backs not seen yet: a job at the end of implement, then the next step of the
+ * cycle (the review from level 3, else the hand-over).
+ * Waits when the item is still held (the person has not released it, or an agent of another machine took
+ * it), when a session runs on it, when agents are not started (Pause agents, Stop, start-up) or the level is below 2 (Implement), and when the branch is not here.
+ * Returns the items whose hand-back still waits: the tick does not start them as new items meanwhile.
+ */
+export async function adoptHandbacks(ctx: Context, items: readonly WorkItem[], changes: readonly Change[]): Promise<Set<string>> {
+  const pending = new Set<string>();
+  const candidates = findHandbacks(items, changes);
+  if (candidates.length === 0) return pending;
+  const { store, runner, actions } = ctx.deps;
+  const seen = seenKeys(ctx);
+  const fresh = candidates.filter((candidate) => !seen.has(candidate.key));
+  for (const handed of fresh) pending.add(refKey(handed.item.ref));
+  if (fresh.length === 0) return pending;
+  if (ctx.config.level < 2 || !agentsOn(store)) return pending;
+  for (const handed of fresh) {
+    const { item } = handed;
+    const key = refKey(item.ref);
+    const holder = item.holder;
+    const held = holdStands(holder, Date.parse(ctx.at));
+    if (held && holder?.actor.id !== actions.claimant) continue;
+    if (ctx.jobs[key]?.sessionId) continue;
+    if (!handed.branch.startsWith(BRANCH_PREFIX) || handed.branch === BRANCH_PREFIX) {
+      ctx.say("orchestrator.handback_refused", `The hand-back of ${item.ref.id} names the branch ${handed.branch}, which is not an item branch (${BRANCH_PREFIX}...). Scope Soup does not review it.`, key);
+      pending.delete(key);
+      continue;
+    }
+    // The branch must be here, in the repository Scope Soup works from: a hand-back from a clone Scope Soup cannot see waits.
+    let head = handed.sha;
+    if (runner.head) {
+      try {
+        head = await runner.head(handed.branch);
+      } catch (error) {
+        ctx.say("orchestrator.handback_waits", `The hand-back of ${item.ref.id} waits: ${errorText(error)}`, key);
+        continue;
+      }
+    }
+    ctx.forget("orchestrator.handback_waits", key);
+    const job: Job = {
+      item: item.ref, workspace: workspaceKey(item.ref), branch: handed.branch || workBranch(item.ref),
+      step: "implement", failures: 0, fixRounds: 0, startedAt: ctx.at, head,
+      implement: {
+        done: true,
+        summary: `Handed back by ${handed.by}${handed.note ? `: ${handed.note}` : "."}`,
+      },
+    };
+    ctx.jobs[key] = job;
+    seen.add(handed.key);
+    pending.delete(key);
+    store.setValue(SEEN_KEY, JSON.stringify([...seen]));
+    ctx.commit("orchestrator.handback", `${handed.by} handed ${item.ref.id} back on ${handed.branch} (${head.slice(0, 9)}). The cycle goes on from the review.`, key, { branch: handed.branch, head });
+    await ctx.act("continue the cycle after a hand-back", key, () => afterBuild(ctx, job, item));
+  }
+  return pending;
+}

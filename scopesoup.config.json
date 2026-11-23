@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "repoPath": ".",
+  "remote": "origin",
+  "realPaths": [],
+  "machineName": "dev-checkout",
+  "settings": {
+    "maxParallelSessions": { "value": 1, "reason": "The parallel stage is not switched on." }
+  }
+}

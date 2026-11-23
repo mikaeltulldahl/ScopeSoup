@@ -1,0 +1,12 @@
+node_modules/
+dist/
+release/
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+data/
+.env
+.env.*
+*.pem
+.claude/worktrees/
+CLAUDE.local.md

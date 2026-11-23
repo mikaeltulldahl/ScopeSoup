@@ -1,0 +1,311 @@
+// Changes the configuration file from the board. Only the safe fields may change: the level,
+// parallel sessions, the usage reserve, the age of a triage and the three models; the setup of a fresh clone; and, saved with level 4 only,
+// the check command and the remote's URL that level needs; the limited resources. Everything else is file-only, with its defaults.
+// A change is merged into the file as it is on disk, validated as a whole, and written atomically. A file of an older
+// format is migrated first, so a save always writes the current format, with `version`.
+// A project setting (the level, the check, the setup, the models, the age of a triage) is in the shared
+// settings on the meta ref and is saved as one commit there, which takes effect at once; parallel sessions, the usage reserve
+// and the remote's URL are this machine's, saved into its private file.
+
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { DEFAULT_MODELS, DEFAULT_SETUP_WATCH } from "./defaults.ts";
+import { checkCommandProblem, type MergeQueueOptions, type MergeQueueSetup, mergeQueueSetup } from "./mergeQueue.ts";
+import { type LevelChoice, levelChoices } from "./levels.ts";
+import { CONFIG_VERSION, migrateConfig } from "./migrate.ts";
+import { programFound } from "./program.ts";
+import { type Sliders, SLIDERS } from "./sliders.ts";
+import type { Level, ProjectConfig } from "./types.ts";
+import { mergeQueueCi } from "./types.ts";
+import { metaSettings } from "./metaSettings.ts";
+import { parseShared, PRIVATE_KEYS, PRIVATE_SETTINGS, repositoryOf, SaveRefused, type SettingChange, SHARED_KEYS, SHARED_SETTINGS, SHARED_WHERE, type SharedSettings, validateFiles } from "./shared.ts";
+import { configText, writeConfigFile } from "./write.ts";
+
+type Obj = Record<string, unknown>;
+
+/**
+ * The fields the board may change, and inside each what may be given. `true` means any value (validation decides);
+ * a function checks the names and keys allowed one level down.
+ */
+const SETTING_NAMES = ["maxParallelSessions", "budgetReserve", "triageMaxAgeDays"];
+const ROLE_NAMES = ["triage", "implement", "review"];
+const SAFE: Record<string, true | ((value: unknown, err: (message: string) => void) => void)> = {
+  level: true,
+  // Numbers; validation holds them within their bounds. No reason is asked for.
+  settings: (value, err) => nested(value, "settings", SETTING_NAMES, ["value"], err),
+  // The model per role (null or "" removes it, so the role runs on its default model). allowedTools, permissionMode and maxTurns govern what a session may do.
+  roles: (value, err) => nested(value, "roles", ROLE_NAMES, ["model"], err),
+  // What level 4 needs, saved together with `level: 4` (refused below it); validation checks their form.
+  checkCommand: true,
+  remoteUrl: true,
+  // The setup of a fresh clone, at any level; null removes it (no setup, or the default watched files).
+  setupCommand: true,
+  setupWatch: true,
+  // The limited resources, each list whole (this machine's, and the shared ones on the meta ref); null removes the list.
+  resources: true,
+  sharedResources: true,
+};
+
+/** Fields a null in the change removes from the file. */
+const REMOVABLE = ["setupCommand", "setupWatch", "resources", "sharedResources"];
+
+/** The fields saved only with level 4. */
+const MERGE_QUEUE_FIELDS = ["checkCommand", "remoteUrl"];
+
+export const SAFE_FIELDS = Object.keys(SAFE);
+
+function isObj(value: unknown): value is Obj {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** Names that reach an object's prototype; never looked up or merged. */
+const FORBIDDEN = ["__proto__", "constructor", "prototype"];
+
+/** `{ name: { key: ... } }` where each name is one of `names` and each key one of `allowed`. */
+function nested(value: unknown, field: string, names: string[], allowed: string[], err: (message: string) => void): void {
+  if (!isObj(value)) return void err(`${field} must be an object.`);
+  for (const [name, entry] of Object.entries(value)) {
+    if (FORBIDDEN.includes(name)) {
+      err(`${field}.${name} is not a name the board can change.`);
+      continue;
+    }
+    if (!names.includes(name)) {
+      err(`${field}.${name} cannot be changed from the board. Edit the configuration file. The board changes ${field} ${names.join(", ")}.`);
+      continue;
+    }
+    if (!isObj(entry)) {
+      err(`${field}.${name} must be an object.`);
+      continue;
+    }
+    for (const key of Object.keys(entry)) {
+      if (!allowed.includes(key)) err(`${field}.${name}.${key} cannot be changed from the board. Edit the configuration file, or run the onboarding skill.`);
+    }
+  }
+}
+
+/** Objects merge key by key, keeping the target's order; anything else replaces. Prototype names are skipped. */
+function merge(target: unknown, change: unknown): unknown {
+  if (!isObj(target) || !isObj(change)) return change;
+  const out: Obj = { ...target };
+  for (const [key, value] of Object.entries(change)) {
+    if (FORBIDDEN.includes(key)) continue;
+    out[key] = merge(Object.hasOwn(target, key) ? target[key] : undefined, value);
+  }
+  return out;
+}
+
+/** A null or empty `roles.<role>.model` removes the model from the file, so the role runs on its default model. */
+function dropClearedModels(next: Obj, change: Obj): void {
+  if (!isObj(change.roles) || !isObj(next.roles)) return;
+  for (const [name, entry] of Object.entries(change.roles)) {
+    if (FORBIDDEN.includes(name) || !isObj(entry) || (entry.model !== null && entry.model !== "")) continue;
+    const role = next.roles[name];
+    if (!isObj(role)) continue;
+    delete role.model;
+    if (Object.keys(role).length === 0) delete next.roles[name];
+  }
+  if (Object.keys(next.roles).length === 0) delete next.roles;
+}
+
+/** A number saved from the board drops the file's reason for it, which described the old value. */
+function dropStaleReasons(next: Obj, change: Obj): void {
+  if (!isObj(change.settings) || !isObj(next.settings)) return;
+  for (const name of Object.keys(change.settings)) {
+    const setting = Object.hasOwn(next.settings, name) ? next.settings[name] : undefined;
+    if (isObj(setting)) delete setting.reason;
+  }
+}
+
+/** A level change as the event records it. */
+export interface LevelChange {
+  from: Level;
+  to: Level;
+}
+
+/** A shared change was saved on the meta ref: the commit, what changed, and whether the remote has it yet. */
+export interface SharedSaved {
+  commit: string | null;
+  changes: SettingChange[];
+  sharing: { state: "local" | "shared" | "pending"; problem?: string };
+}
+
+export type EditResult =
+  | { ok: true; config: ProjectConfig; raw: Obj; changed: boolean; level?: LevelChange; shared?: SharedSaved }
+  | { ok: false; status: 400 | 500; errors: string[] };
+
+/** How a program is looked up for the level's needs; tests give a fake so they never depend on the machine's agent CLI. */
+export interface EditOptions {
+  programFound?: (command: string) => boolean;
+  /** Why a check command cannot be started, or null (`checkCommandProblem` in mergeQueue.ts); tests give a fake. */
+  checkCommandProblem?: (command: readonly string[], repoPath: string) => string | null;
+  /** For level 4's proposals in the view: the environment, platform and `git remote get-url` (`mergeQueue.ts`). */
+  mergeQueue?: MergeQueueOptions;
+  /** Where the shared settings are read from and saved to: the meta ref by default. */
+  shared?: SharedSettings;
+  /** The person who saves, named in the meta commit and the settings' log. A shared change needs one. */
+  by?: string;
+}
+
+let defaultShared: SharedSettings | null = null;
+const sharedOf = (options: EditOptions): SharedSettings => options.shared ?? (defaultShared ??= metaSettings());
+
+/** Splits a change from the Settings page into the shared settings' part and the private file's part, by the key sets. */
+export function splitChange(change: Obj): { shared: Obj; own: Obj } {
+  const shared: Obj = {};
+  const own: Obj = {};
+  for (const [key, value] of Object.entries(change)) {
+    if (key === "settings" && isObj(value)) {
+      const mine = Object.fromEntries(Object.entries(value).filter(([name]) => PRIVATE_SETTINGS.includes(name)));
+      const ours = Object.fromEntries(Object.entries(value).filter(([name]) => !PRIVATE_SETTINGS.includes(name)));
+      if (Object.keys(mine).length > 0) own.settings = mine;
+      if (Object.keys(ours).length > 0) shared.settings = ours;
+    } else if (PRIVATE_KEYS.includes(key)) own[key] = value;
+    else shared[key] = value;
+  }
+  return { shared, own };
+}
+
+type Files = { path: string; text: string; raw: Obj; shared: { raw: Obj; text: string; commit: string }; repoPath: string; remote: string; machine: string | null };
+
+/** Reads the private file and the shared settings of the repository it names. */
+function readFiles(file: string, options: EditOptions): { ok: true; files: Files } | { ok: false; errors: string[] } {
+  const path = resolve(file);
+  let text: string;
+  let raw: unknown;
+  try {
+    text = readFileSync(path, "utf8");
+    raw = JSON.parse(text);
+  } catch (error) {
+    return { ok: false, errors: [`Cannot read ${path}: ${error instanceof Error ? error.message : String(error)}`] };
+  }
+  if (!isObj(raw)) return { ok: false, errors: [`${path} is not a JSON object.`] };
+  const where = repositoryOf(raw, dirname(path));
+  const read = parseShared(sharedOf(options).read(where.repoPath));
+  if (!read.ok) return { ok: false, errors: [read.error] };
+  if (!isObj(read.raw)) return { ok: false, errors: [`${SHARED_WHERE} must be a JSON object.`] };
+  return { ok: true, files: { path, text, raw, shared: { raw: read.raw, text: read.text, commit: read.commit }, ...where } };
+}
+
+/** The change merged into one file's raw object, with the removals the board's fields allow. */
+function applied(raw: Obj, change: Obj): Obj {
+  const next = merge(raw, change) as Obj;
+  dropClearedModels(next, change);
+  for (const key of REMOVABLE) if (Object.hasOwn(change, key) && change[key] === null) delete next[key];
+  dropStaleReasons(next, change);
+  return next;
+}
+
+/**
+ * Reads both, merges the change into each one's part (shared keys into the shared settings on the meta ref, this
+ * machine's into its private file), validates the two together, and only then writes: the shared part as one meta commit
+ * (`shared.save`, compare-and-swap: made again and checked again on the newest settings if another save was first), then the
+ * private file. A new level comes back as `level` (from, to) for the event. A level whose needs are missing is refused.
+ * A shared change takes effect at once here, and on the other machines at their next fetch of the meta ref.
+ */
+export async function editConfig(file: string, change: unknown, options: EditOptions = {}): Promise<EditResult> {
+  if (!isObj(change)) return { ok: false, status: 400, errors: ["The change must be a JSON object of fields to change."] };
+  const errors: string[] = [];
+  const err = (message: string): void => void errors.push(message);
+  for (const [key, value] of Object.entries(change)) {
+    const rule = Object.hasOwn(SAFE, key) ? SAFE[key] : undefined;
+    if (rule === undefined) err(`${key} cannot be changed from the board. Edit the configuration, or run the onboarding skill. Fields the board may change: ${SAFE_FIELDS.join(", ")}.`);
+    else if (rule !== true) rule(value, err);
+  }
+  if (errors.length > 0) return { ok: false, status: 400, errors };
+
+  const read = readFiles(file, options);
+  if (!read.ok) return { ok: false, status: 500, errors: read.errors };
+  const { path, text, raw, shared } = read.files;
+  const files = read.files;
+  const migrated = migrateConfig(raw);
+  if (!migrated.ok) return { ok: false, status: 400, errors: migrated.errors };
+  const parts = splitChange(change);
+  const nextOwn = applied(migrated.raw, parts.own);
+  const nextShared = applied(shared.raw, parts.shared);
+  const result = validateFiles(nextOwn, nextShared, dirname(path));
+  if (!result.ok) return { ok: false, status: 400, errors: result.errors };
+  const mergeQueue = MERGE_QUEUE_FIELDS.filter((key) => Object.hasOwn(change, key));
+  if (mergeQueue.length > 0 && result.config.level !== 4) {
+    return { ok: false, status: 400, errors: [`${mergeQueue.join(" and ")} can be saved from the board only with level 4 (Autopilot). Edit the configuration, or pick level 4.`] };
+  }
+  // A cheap test that the check command can be started; the check itself is not run on save.
+  if (Object.hasOwn(change, "checkCommand") && result.config.checkCommand) {
+    const problem = (options.checkCommandProblem ?? ((command, repo) => checkCommandProblem(command, repo, options.mergeQueue)))(result.config.checkCommand, result.config.repoPath);
+    if (problem) return { ok: false, status: 400, errors: [`checkCommand cannot be run: ${problem}`] };
+  }
+
+  const before = validateFiles(raw, shared.raw, dirname(path));
+  let level: LevelChange | undefined;
+  if (Object.hasOwn(change, "level")) {
+    const from: Level = before.ok ? before.config.level : 0;
+    const to = result.config.level;
+    if (!before.ok || from !== to) {
+      const blocked = levelChoices(result.config, options.programFound ?? programFound)[to]?.blocked;
+      if (blocked) return { ok: false, status: 400, errors: [blocked] };
+      level = { from, to };
+    }
+  }
+
+  let saved: SharedSaved | undefined;
+  const sharedFields = Object.keys(parts.shared);
+  if (sharedFields.length > 0 && JSON.stringify(nextShared) !== JSON.stringify(shared.raw)) {
+    const store = sharedOf(options);
+    const named = sharedFields.join(", ");
+    if (!store.save) return { ok: false, status: 400, errors: [`${named} ${sharedFields.length === 1 ? "is a project setting" : "are project settings"} in ${SHARED_WHERE}, and this Scope Soup cannot write them.`] };
+    if (!options.by) return { ok: false, status: 400, errors: [`${named} ${sharedFields.length === 1 ? "is a project setting" : "are project settings"}, shared by every machine, and a save names who made it: pick who you are at the top of the board first.`] };
+    if (!files.machine) return { ok: false, status: 400, errors: ["machineName is missing from this machine's scopesoup.config.json: a save of the shared settings names the machine."] };
+    const done = await store.save({
+      repoPath: files.repoPath,
+      remote: files.remote,
+      machine: files.machine,
+      by: options.by,
+      // Made on the settings as they stand at the save: another save may have come in since they were read.
+      update: (current) => {
+        const next = applied(current, parts.shared);
+        const checked = validateFiles(nextOwn, next, dirname(path));
+        if (!checked.ok) throw new SaveRefused(checked.errors.join(" "));
+        return next;
+      },
+    });
+    if (!done.ok) return { ok: false, status: done.refused ? 400 : 500, errors: [`The shared settings were not saved, and nothing was changed: ${done.error}`] };
+    if (done.changed) saved = { commit: done.commit, changes: done.changes, sharing: done.sharing };
+  }
+
+  const out = configText(nextOwn, text);
+  const ownChanged = out !== text;
+  if (ownChanged) {
+    // An older file is migrated by the save as it would be at start: with a copy of the old file beside it.
+    const failed = writeConfigFile(path, out, migrated.from < CONFIG_VERSION ? { version: migrated.from } : undefined);
+    if (failed) return { ok: false, status: 500, errors: [saved ? `${failed} The shared settings were saved (${saved.commit?.slice(0, 7) ?? ""}).` : failed] };
+  }
+  if (!ownChanged && !saved) return { ok: true, config: result.config, raw: nextOwn, changed: false };
+  return { ok: true, config: result.config, raw: nextOwn, changed: true, ...(level ? { level } : {}), ...(saved ? { shared: saved } : {}) };
+}
+
+/**
+ * What `GET /api/config` shows: both files as one (`raw`, no key is in both, so nothing says which file it is in), as
+ * Scope Soup reads them (with defaults), the level picker's rows, and `mergeQueue`, what level 4 would ask for.
+ */
+export type ConfigView =
+  | { present: false }
+  | { present: true; file: string; raw: unknown; config: ProjectConfig | null; errors: string[]; safeFields: string[]; sharedFields: string[]; sliders: Sliders; defaultModels: Readonly<Record<string, string>>; setupWatchDefault: readonly string[]; levels: LevelChoice[]; mergeQueue: MergeQueueSetup | null };
+
+export function readConfigView(file: string | undefined, options: EditOptions = {}): ConfigView {
+  if (file === undefined) return { present: false };
+  const path = resolve(file);
+  // Which of the page's fields are shared by every machine (saved on the meta ref); the rest are this machine's.
+  const sharedFields = [...SAFE_FIELDS.filter((key) => SHARED_KEYS.includes(key) && key !== "settings"), ...SETTING_NAMES.filter((name) => SHARED_SETTINGS.includes(name)).map((name) => `settings.${name}`)];
+  const common = { file: path, safeFields: SAFE_FIELDS, sharedFields, sliders: SLIDERS, defaultModels: DEFAULT_MODELS, setupWatchDefault: DEFAULT_SETUP_WATCH };
+  const read = readFiles(path, options);
+  if (!read.ok) return { present: true, ...common, raw: null, config: null, errors: read.errors, levels: [], mergeQueue: null };
+  const result = validateFiles(read.files.raw, read.files.shared.raw, dirname(path));
+  if (!result.ok) return { present: true, ...common, raw: result.combined ?? null, config: null, errors: result.errors, levels: [], mergeQueue: null };
+  const levels = levelChoices(result.config, options.programFound ?? programFound);
+  // Level 4's needs, proposed for the page to ask for: while one is missing, or while the check command is the
+  // project's own, so the page can show the check question with the candidates found in the repository. git is read only for a
+  // missing remote URL.
+  const mergeQueue = (levels[4]?.asks.length ?? 0) > 0 || mergeQueueCi(result.config) === "local" ? mergeQueueSetup(result.config, options.mergeQueue) : null;
+  // The same test of the command as a save makes, when one is given (tests and the demo look at no PATH).
+  if (mergeQueue?.checkCommand && options.checkCommandProblem) mergeQueue.checkCommandProblem = options.checkCommandProblem(mergeQueue.checkCommand, result.config.repoPath);
+  return { present: true, ...common, raw: result.combined, config: result.config, errors: [], levels, mergeQueue };
+}

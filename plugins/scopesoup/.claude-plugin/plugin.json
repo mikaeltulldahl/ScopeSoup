@@ -1,0 +1,10 @@
+{
+  "name": "scopesoup",
+  "version": "0.1.0",
+  "description": "Put a project under Scope Soup, or take it off again, from your own Claude Code session.",
+  "author": {
+    "name": "Mikael Tulldahl"
+  },
+  "homepage": "https://github.com/mikaeltulldahl/scopesoup",
+  "repository": "https://github.com/mikaeltulldahl/scopesoup"
+}

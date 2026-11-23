@@ -1,0 +1,549 @@
+// Hand-written validation of the configuration file. Collects every problem, in words a person
+// can act on, instead of stopping at the first.
+
+import { isAbsolute, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import type { SessionRole } from "../model/types.ts";
+import { defaultClaude, defaultRoles, defaultSettings, expandScopesoup, MACHINE_NAME } from "./defaults.ts";
+import type { Level, ProjectConfig, RoleConfig, SettingName, Settings } from "./types.ts";
+import { LEVELS, ROLES } from "./types.ts";
+import { migrateConfig } from "./migrate.ts";
+import type { HostConfig, MergeQueueConfig, ResourceConfig, ResourceUser, WorkspacesConfig } from "./types.ts";
+import { RESOURCE_USERS } from "./types.ts";
+import { DEFAULT_CI_TIMEOUT_MINUTES } from "./types.ts";
+import { win32 } from "node:path";
+
+/**
+ * `notices`: what the migration to the current format changed (migrate.ts), one line each; empty for a file in the
+ * current format. `from`: the file's format before that; `raw`: the file in the current format, for the loader to write.
+ */
+export type ConfigResult = { ok: true; config: ProjectConfig; notices: string[]; from: number; raw: Record<string, unknown> } | { ok: false; errors: string[] };
+
+type Obj = Record<string, unknown>;
+
+/** `machineName` has no default: two machines with the same name would treat each other's claims as their own. */
+export const MACHINE_NAME_MISSING = `machineName is required: this machine's name in claims and log lines, for example "machineName": "desk". Give every machine that shares the project its own name: two machines with the same name treat each other's claims as their own.`;
+
+/** In setupCommand, this machine's own clone. */
+export const OWN_CLONE = "{{ownClone}}";
+
+const PERMISSION_MODES = ["default", "acceptEdits", "plan", "auto", "dontAsk"];
+
+/** Where each number must lie. Fractions are 0 to just under 1; the rest are whole numbers. */
+const SETTING_RANGES: Record<SettingName, { min: number; max: number; whole: boolean }> = {
+  maxParallelSessions: { min: 1, max: 32, whole: true },
+  tickSeconds: { min: 1, max: 3600, whole: true },
+  stallTimeoutMinutes: { min: 1, max: 1440, whole: false },
+  sessionTimeoutMinutes: { min: 1, max: 1440, whole: false },
+  reserveFiveHour: { min: 0, max: 0.99, whole: false },
+  reserveSevenDay: { min: 0, max: 0.99, whole: false },
+  budgetReserve: { min: 1, max: 5, whole: true },
+  persistence: { min: 1, max: 5, whole: true },
+  retryBackoffCapSeconds: { min: 10, max: 86400, whole: true },
+  checkTimeoutMinutes: { min: 1, max: 1440, whole: false },
+  queueMinBatch: { min: 1, max: 100, whole: true },
+  queueMaxBatch: { min: 1, max: 100, whole: true },
+  queueRerunCost: { min: 0, max: 2, whole: false },
+  queueMinOutcomes: { min: 1, max: 1000, whole: true },
+  triageMaxAgeDays: { min: 1, max: 365, whole: true },
+};
+
+/** Settings that older files carry and that stay accepted; absent from the defaults. */
+const LEGACY_SETTINGS = ["reserveFiveHour", "reserveSevenDay"];
+
+const TOP_KEYS = [
+  "workspaces", "remoteUrl", "checkCommand", "rerunFilesCommand", "setupCommand", "setupWatch",
+  "version", "project", "repoPath", "ownClone", "mainBranch", "remote", "realPaths", "level", "keepAwake", "machineName", "workspacesDir",
+  "streamsDir", "promptsDir", "bugLabels", "claude", "settings", "roles", "host", "mergeQueue", "resources", "sharedResources",
+];
+
+function isObj(value: unknown): value is Obj {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Validates the parsed file. An older format is first brought to the current one in memory (migrate.ts; the loader
+ * writes it). Relative paths are resolved against `baseDir` (the file's directory).
+ */
+export function validateConfig(given: unknown, baseDir: string): ConfigResult {
+  const migrated = migrateConfig(given);
+  if (!migrated.ok && migrated.raw === undefined) return { ok: false, errors: migrated.errors };
+  const raw = migrated.raw!;
+  const from = migrated.ok ? migrated.from : 0;
+  const notices = migrated.ok ? migrated.changes : [];
+  const errors: string[] = migrated.ok ? [] : [...migrated.errors];
+  const err = (message: string): void => void errors.push(message);
+
+  const unknownKeys = (obj: Obj, known: readonly string[], where: string): void => {
+    for (const key of Object.keys(obj)) {
+      if (!known.includes(key)) err(`${where}: unknown key "${key}". Known keys: ${known.join(", ")}.`);
+    }
+  };
+  const str = (obj: Obj, key: string, where: string, fallback?: string): string => {
+    const value = obj[key];
+    if (value === undefined && fallback !== undefined) return fallback;
+    if (typeof value !== "string" || value.trim() === "") {
+      err(`${where}${key} must be a non-empty string.`);
+      return fallback ?? "";
+    }
+    return value;
+  };
+  const bool = (obj: Obj, key: string, where: string, fallback: boolean): boolean => {
+    const value = obj[key];
+    if (value === undefined) return fallback;
+    if (typeof value !== "boolean") {
+      err(`${where}${key} must be true or false.`);
+      return fallback;
+    }
+    return value;
+  };
+  const strList = (obj: Obj, key: string, where: string, fallback: string[]): string[] => {
+    const value = obj[key];
+    if (value === undefined) return fallback;
+    if (!Array.isArray(value) || value.some((entry) => typeof entry !== "string" || entry === "")) {
+      err(`${where}${key} must be a list of non-empty strings.`);
+      return fallback;
+    }
+    return value as string[];
+  };
+  const num = (value: unknown, where: string, min: number, max: number, whole: boolean, fallback: number): number => {
+    if (typeof value !== "number" || !Number.isFinite(value) || value < min || value > max || (whole && !Number.isInteger(value))) {
+      err(`${where} must be a ${whole ? "whole " : ""}number from ${min} to ${max}.`);
+      return fallback;
+    }
+    return value;
+  };
+  const path = (value: string): string => (isAbsolute(value) ? resolve(value) : resolve(baseDir, value));
+
+  unknownKeys(raw, TOP_KEYS, "Top level");
+
+  const project = str(raw, "project", "");
+  const repoPath = path(str(raw, "repoPath", "", undefined) || ".");
+  const mainBranch = str(raw, "mainBranch", "", "main");
+  const remote = str(raw, "remote", "", "origin");
+  if (/\s/.test(remote) || remote.startsWith("-")) err(`remote must be a git remote name: no spaces, not starting with "-".`);
+  const realPaths = strList(raw, "realPaths", "", []).map(path);
+  // This machine's own clone, which a setup script copies personal files from: `{{ownClone}}` in setupCommand.
+  const ownClone = raw.ownClone === undefined ? undefined : path(str(raw, "ownClone", ""));
+  const keepAwake = bool(raw, "keepAwake", "", true);
+  let machineName = "";
+  if (raw.machineName === undefined) err(MACHINE_NAME_MISSING);
+  else if (typeof raw.machineName !== "string" || !MACHINE_NAME.test(raw.machineName)) err('machineName must be 1 to 40 letters, digits, "-", "_" or ".", for example "desk". Hosts show it in claims and log lines.');
+  else machineName = raw.machineName;
+  const workspacesDir = path(str(raw, "workspacesDir", "", "data/workspaces"));
+  const streamsDir = path(str(raw, "streamsDir", "", "data/streams"));
+  const promptsDir = raw.promptsDir === undefined
+    ? fileURLToPath(new URL("../../prompts", import.meta.url))
+    : path(str(raw, "promptsDir", ""));
+  const bugLabels = strList(raw, "bugLabels", "", ["bug"]);
+
+  // --- the level ---
+  let level: Level = 0;
+  if (raw.level !== undefined) {
+    if (typeof raw.level !== "number" || !(LEVELS as readonly number[]).includes(raw.level)) err("level must be a whole number from 0 to 4: 0 Watch, 1 Triage, 2 Implement, 3 Review, 4 Autopilot.");
+    else level = raw.level as Level;
+  }
+  let remoteUrl: string | undefined;
+  if (raw.remoteUrl !== undefined) {
+    if (typeof raw.remoteUrl !== "string" || raw.remoteUrl.trim() === "") err("remoteUrl must be a non-empty string.");
+    else remoteUrl = raw.remoteUrl.trim();
+  }
+  if (level === 4 && remoteUrl === undefined) {
+    err(`level 4 (Autopilot) needs remoteUrl: the repository the main branch is pushed to, as \`git remote get-url\` shows it. Scope Soup checks the remote against it before every push.`);
+  }
+  let mergeQueue: MergeQueueConfig | undefined;
+  if (raw.mergeQueue !== undefined) {
+    if (isObj(raw.mergeQueue)) mergeQueue = mergeQueueOf(raw.mergeQueue, err);
+    else err('mergeQueue must be an object: "ci" and "ciTimeoutMinutes".');
+  }
+  let checkCommand: string[] | undefined;
+  if (raw.checkCommand !== undefined) {
+    const given = raw.checkCommand;
+    if (!Array.isArray(given) || given.length === 0 || given.some((part) => typeof part !== "string") || typeof given[0] !== "string" || given[0].trim() === "") {
+      err('checkCommand must be a list: the program, then its arguments, for example ["node", "scripts/check.js"]. It is run without a shell.');
+    } else checkCommand = given as string[];
+  }
+  let rerunFilesCommand: string[] | undefined;
+  if (raw.rerunFilesCommand !== undefined) {
+    const given = raw.rerunFilesCommand;
+    if (!Array.isArray(given) || given.length === 0 || given.some((part) => typeof part !== "string") || (given[0] as string).trim() === "" || given[0] === "{files}") {
+      err('rerunFilesCommand must be a list: the program, then its arguments, for example ["node", "--test", "{files}"]. It is run without a shell.');
+    } else if (given.filter((part) => part === "{files}").length !== 1) {
+      err('rerunFilesCommand must hold exactly one argument that is "{files}": it is replaced by the failed test files, one argument each.');
+    } else rerunFilesCommand = given as string[];
+  }
+
+  let setupCommand: string[] | undefined;
+  if (raw.setupCommand !== undefined) {
+    const given = raw.setupCommand;
+    if (!Array.isArray(given) || given.length === 0 || given.some((part) => typeof part !== "string") || (given[0] as string).trim() === "") {
+      err('setupCommand must be a list: the program, then its arguments, for example ["node", ".scopesoup/scopesoup-setup.mjs", "--from-clone", "{{ownClone}}"]. It is run without a shell.');
+    } else setupCommand = given as string[];
+  }
+  // SetupCommand is shared by every machine; `{{ownClone}}` in it stands for this machine's own clone (ownClone).
+  if (setupCommand?.some((word) => word.includes(OWN_CLONE))) {
+    if (ownClone === undefined) err(`setupCommand uses ${OWN_CLONE}, so this machine's scopesoup.config.json needs ownClone: the path of your own clone of the project, which the setup copies personal files (.env and the like) from.`);
+    else setupCommand = setupCommand.map((word) => word.split(OWN_CLONE).join(ownClone.replace(/\\/g, "/")));
+  }
+  const setupWatch = raw.setupWatch === undefined ? undefined : setupWatchOf(raw.setupWatch, err);
+
+  // --- claude ---
+  const claude = defaultClaude();
+  if (raw.claude !== undefined) {
+    if (!isObj(raw.claude)) err("claude must be an object.");
+    else {
+      unknownKeys(raw.claude, Object.keys(claude), "claude");
+      claude.path = str(raw.claude, "path", "claude.", claude.path);
+      // A command with a directory is a file path like the others, relative to the configuration file; a bare name is looked up on PATH.
+      if (/[\\/]/.test(claude.path)) claude.path = path(claude.path);
+      claude.prefixArgs = strList(raw.claude, "prefixArgs", "claude.", claude.prefixArgs);
+      claude.extraArgs = strList(raw.claude, "extraArgs", "claude.", claude.extraArgs);
+      claude.dropApiKeyEnv = bool(raw.claude, "dropApiKeyEnv", "claude.", claude.dropApiKeyEnv);
+      const via = raw.claude.promptVia;
+      if (via === "stdin" || via === "arg") claude.promptVia = via;
+      else if (via !== undefined) err('claude.promptVia must be "stdin" or "arg".');
+    }
+  }
+
+  // --- settings ---
+  const settings: Settings = defaultSettings();
+  if (raw.settings !== undefined) {
+    if (!isObj(raw.settings)) err("settings must be an object.");
+    else {
+      const names = [...Object.keys(settings), ...LEGACY_SETTINGS] as SettingName[];
+      const kept = raw.settings;
+      unknownKeys(kept, names, "settings");
+      for (const name of names) {
+        const given = kept[name];
+        if (given === undefined) continue;
+        const where = `settings.${name}`;
+        if (!isObj(given)) {
+          err(`${where} must be an object with "value" (and, if you like, "reason").`);
+          continue;
+        }
+        unknownKeys(given, ["value", "reason"], where);
+        const range = SETTING_RANGES[name];
+        const value = num(given.value, `${where}.value`, range.min, range.max, range.whole, settings[name]?.value ?? 0.2);
+        // The reason is optional: the settings page saves a number without one.
+        if (given.reason !== undefined && typeof given.reason !== "string") err(`${where}.reason must be text, if given.`);
+        else settings[name] = { value, reason: typeof given.reason === "string" ? given.reason.trim() : "" };
+      }
+    }
+  }
+
+  // --- roles ---
+  const roles: Record<SessionRole, RoleConfig> = defaultRoles();
+  if (raw.roles !== undefined) {
+    if (!isObj(raw.roles)) err("roles must be an object.");
+    else {
+      unknownKeys(raw.roles, ROLES, "roles");
+      for (const role of ROLES) {
+        const given = raw.roles[role];
+        if (given === undefined) continue;
+        const where = `roles.${role}`;
+        if (!isObj(given)) {
+          err(`${where} must be an object.`);
+          continue;
+        }
+        unknownKeys(given, ["model", "maxTurns", "allowedTools", "permissionMode"], where);
+        const target = roles[role];
+        target.model = str(given, "model", `${where}.`, target.model);
+        if (given.maxTurns !== undefined) target.maxTurns = num(given.maxTurns, `${where}.maxTurns`, 1, 1000, true, target.maxTurns);
+        target.allowedTools = strList(given, "allowedTools", `${where}.`, target.allowedTools);
+        const mode = str(given, "permissionMode", `${where}.`, target.permissionMode);
+        if (mode === "bypassPermissions") {
+          err(`${where}.permissionMode: "bypassPermissions" is refused. List the tools the role needs in allowedTools.`);
+        } else if (!PERMISSION_MODES.includes(mode)) {
+          err(`${where}.permissionMode must be one of ${PERMISSION_MODES.join(", ")}.`);
+        } else target.permissionMode = mode;
+      }
+    }
+  }
+  // `{{scopesoup}}` in a role's allowed tools is the folder Scope Soup is installed in (the item commands of the triage).
+  const scopesoup = fileURLToPath(new URL("../..", import.meta.url));
+  for (const role of ROLES) roles[role].allowedTools = expandScopesoup(roles[role].allowedTools, scopesoup);
+  // Which model a role runs on is the project's choice; see recommend.ts for advice that is not enforced.
+
+  const workspaces = workspacesOf(raw.workspaces, path, err);
+  const host = raw.host === undefined ? undefined : hostOf(raw.host, repoPath, remote, err);
+  if (mergeQueue?.ci === "github" && host !== undefined && host.kind !== "github") {
+    err(`mergeQueue.ci is "github", but the host is ${host.kind}: Scope Soup waits for CI on GitHub only for a project whose host is GitHub. Remove mergeQueue.ci, or set it to "local" to run checkCommand.`);
+  }
+
+  // --- core rule 1 ---
+  for (const real of realPaths) {
+    if (overlaps(real, workspacesDir)) err(`workspacesDir (${workspacesDir}) overlaps the real path ${real}. Sessions never run there.`);
+    if (within(real, repoPath)) err(`repoPath (${repoPath}) is inside the real path ${real}. Point Scope Soup at a separate clone.`);
+  }
+  if (workspaces.kind === "pool") {
+    for (const clone of workspaces.paths) {
+      if (overlaps(clone, repoPath)) err(`workspaces.paths: the clone ${clone} equals, contains or is inside repoPath (${repoPath}). A clone of the pool is never the repository Scope Soup itself works from.`);
+      for (const real of realPaths) {
+        if (overlaps(real, clone)) err(`workspaces.paths: the clone ${clone} overlaps the real path ${real}. Sessions never run there.`);
+      }
+    }
+  }
+
+  const resources = [...resourcesOf(raw.resources, false, err), ...resourcesOf(raw.sharedResources, true, err)];
+  const names = resources.map((each) => each.name);
+  for (const [index, name] of names.entries()) if (names.indexOf(name) !== index) err(`The resource name "${name}" is used twice: each resource needs its own name, in resources and sharedResources together.`);
+
+  if (settings.queueMinBatch.value > settings.queueMaxBatch.value) {
+    err(`settings.queueMinBatch (${settings.queueMinBatch.value}) is larger than settings.queueMaxBatch (${settings.queueMaxBatch.value}).`);
+  }
+
+  if (errors.length > 0) return { ok: false, errors };
+  return {
+    ok: true,
+    notices,
+    from,
+    raw,
+    config: {
+      workspaces,
+      ...(host === undefined ? {} : { host }),
+      machineName,
+      ...(ownClone === undefined ? {} : { ownClone }),
+      project, repoPath, mainBranch, remote, realPaths, level, keepAwake, workspacesDir, streamsDir,
+      promptsDir, bugLabels,
+      ...(remoteUrl === undefined ? {} : { remoteUrl }), ...(checkCommand === undefined ? {} : { checkCommand }), ...(rerunFilesCommand === undefined ? {} : { rerunFilesCommand }),
+      ...(setupCommand === undefined ? {} : { setupCommand }), ...(setupWatch === undefined ? {} : { setupWatch }),
+      ...(mergeQueue === undefined ? {} : { mergeQueue }),
+      ...(resources.length > 0 ? { resources } : {}),
+      claude, settings, roles,
+    },
+  };
+}
+
+const RESOURCE_KEYS = ["name", "units", "neededBy", "env"];
+
+/** `resources` (this machine's) or `sharedResources` (held across machines on the remote): a list of resources. */
+function resourcesOf(value: unknown, shared: boolean, err: (message: string) => void): ResourceConfig[] {
+  const key = shared ? "sharedResources" : "resources";
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) {
+    err(`${key} must be a list, for example [{ "name": "emulator", "units": 2, "neededBy": ["implement", "check"] }].`);
+    return [];
+  }
+  const out: ResourceConfig[] = [];
+  for (const [index, entry] of value.entries()) {
+    const where = `${key}[${index}]`;
+    if (!isObj(entry)) {
+      err(`${where} must be an object with name, units and neededBy (and, if you like, env).`);
+      continue;
+    }
+    for (const name of Object.keys(entry)) if (!RESOURCE_KEYS.includes(name)) err(`${where}: unknown key "${name}". Known keys: ${RESOURCE_KEYS.join(", ")}.`);
+    const name = entry.name;
+    if (typeof name !== "string" || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,39}$/.test(name)) {
+      err(`${where}.name must be letters, digits, "-" and "_" (at most 40, starting with a letter or digit): it names the resource's lease on the remote.`);
+      continue;
+    }
+    const units = entry.units;
+    if (typeof units !== "number" || !Number.isInteger(units) || units < 1 || units > 64) err(`${where}.units must be a whole number from 1 to 64.`);
+    const neededBy = entry.neededBy;
+    if (!Array.isArray(neededBy) || neededBy.length === 0 || neededBy.some((user) => !RESOURCE_USERS.includes(user as ResourceUser))) {
+      err(`${where}.neededBy must name what needs it, one or more of ${RESOURCE_USERS.join(", ")}.`);
+    }
+    const env: Record<string, string> = {};
+    if (entry.env !== undefined) {
+      if (!isObj(entry.env)) err(`${where}.env must be an object of environment variables, for example { "TEST_DB": "test_{{unit}}" }.`);
+      else {
+        for (const [variable, text] of Object.entries(entry.env)) {
+          if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(variable)) err(`${where}.env: "${variable}" is not an environment variable's name.`);
+          else if (typeof text !== "string") err(`${where}.env.${variable} must be text.`);
+          else env[variable] = text;
+        }
+      }
+    }
+    if (typeof units === "number" && Array.isArray(neededBy)) out.push({ name, units, shared, neededBy: [...new Set(neededBy as ResourceUser[])], env });
+  }
+  return out;
+}
+
+const GITHUB_KEYS = ["kind", "repo", "write"];
+/** `mergeQueue`, the object form: what checks the merge queue's batches, and how long a check on GitHub may stay pending. */
+function mergeQueueOf(value: Obj, err: (message: string) => void): MergeQueueConfig {
+  for (const key of Object.keys(value)) {
+    if (key !== "ci" && key !== "ciTimeoutMinutes") err(`mergeQueue: unknown key "${key}". Known keys: ci, ciTimeoutMinutes.`);
+  }
+  let ci: MergeQueueConfig["ci"] = "local";
+  if (value.ci !== undefined) {
+    if (value.ci !== "local" && value.ci !== "github") err(`mergeQueue.ci must be "local" (checkCommand runs in the queue's clone) or "github" (the project's own CI on GitHub).`);
+    else ci = value.ci;
+  }
+  let ciTimeoutMinutes = DEFAULT_CI_TIMEOUT_MINUTES;
+  if (value.ciTimeoutMinutes !== undefined) {
+    const given = value.ciTimeoutMinutes;
+    if (typeof given !== "number" || !Number.isFinite(given) || given < 1 || given > 1440) err("mergeQueue.ciTimeoutMinutes must be a number from 1 to 1440.");
+    else ciTimeoutMinutes = given;
+  }
+  return { ci, ciTimeoutMinutes };
+}
+
+// The meta ref is refs/scopesoup/meta in repoPath, shared with remote (both from this machine's file): no ref, folder or remote here.
+const META_BRANCH_KEYS = ["kind", "write", "authorName", "authorEmail", "prefix", "fetchSeconds"];
+
+/** `host`: where the items live. No token here; tokens stay in the environment. */
+function hostOf(value: unknown, repoPath: string, remote: string, err: (message: string) => void): HostConfig | undefined {
+  if (!isObj(value) || (value.kind !== "github" && value.kind !== "metaBranch")) {
+    err('host must be an object with "kind": "github" or "metaBranch".');
+    return undefined;
+  }
+  const known = value.kind === "github" ? GITHUB_KEYS : META_BRANCH_KEYS;
+  for (const key of Object.keys(value)) {
+    if (/token/i.test(key)) err(`host.${key}: a token is never kept in the configuration file. Set it in the environment.`);
+    else if (!known.includes(key)) err(`host: unknown key "${key}" for kind "${value.kind}". Known keys: ${known.join(", ")}.`);
+  }
+  const text = (key: string): string | undefined => {
+    const given = value[key];
+    if (given === undefined) return undefined;
+    if (typeof given !== "string" || given.trim() === "") {
+      err(`host.${key} must be a non-empty string.`);
+      return undefined;
+    }
+    return given.trim();
+  };
+  let write = false;
+  if (value.write !== undefined) {
+    if (typeof value.write !== "boolean") err("host.write must be true or false.");
+    else write = value.write;
+  }
+
+  if (value.kind === "github") {
+    const repo = text("repo");
+    if (repo === undefined) err('host.repo must be the repository as "owner/name".');
+    else if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) err(`host.repo (${repo}) must be the repository as "owner/name".`);
+    return { kind: "github", repo: repo ?? "", write };
+  }
+
+  const authorName = text("authorName");
+  const authorEmail = text("authorEmail");
+  const prefix = text("prefix");
+  let fetchSeconds = 60;
+  if (value.fetchSeconds !== undefined) {
+    const given = value.fetchSeconds;
+    if (typeof given !== "number" || !Number.isInteger(given) || given < 0 || given > 86400) err("host.fetchSeconds must be a whole number from 0 to 86400.");
+    else fetchSeconds = given;
+  }
+  if (write && (authorName === undefined || authorEmail === undefined)) {
+    err("host.write is true, so host.authorName and host.authorEmail are required: meta commits are made as that person. Each machine sets them in its own scopesoup.config.json as meta.authorName and meta.authorEmail.");
+  }
+  return {
+    kind: "metaBranch",
+    repoPath,
+    write,
+    remote,
+    fetchSeconds,
+    ...(authorName === undefined ? {} : { authorName }),
+    ...(authorEmail === undefined ? {} : { authorEmail }),
+    ...(prefix === undefined ? {} : { prefix }),
+  };
+}
+
+/** `workspaces`: absent means worktrees. A pool's paths resolve like the other paths; its subfolder must stay inside each clone. */
+function workspacesOf(value: unknown, path: (value: string) => string, err: (message: string) => void): WorkspacesConfig {
+  if (value === undefined) return { kind: "worktree" };
+  if (!isObj(value)) {
+    err('workspaces must be an object with "kind": "worktree" or "pool".');
+    return { kind: "worktree" };
+  }
+  if (value.kind === "worktree") {
+    for (const key of Object.keys(value)) if (key !== "kind") err(`workspaces: unknown key "${key}" for kind "worktree".`);
+    return { kind: "worktree" };
+  }
+  if (value.kind !== "pool") {
+    err('workspaces.kind must be "worktree" or "pool".');
+    return { kind: "worktree" };
+  }
+  for (const key of Object.keys(value)) {
+    if (!["kind", "paths", "projectSubdir", "keep"].includes(key)) err(`workspaces: unknown key "${key}". Known keys: kind, paths, projectSubdir, keep.`);
+  }
+  const given = value.paths;
+  let paths: string[] = [];
+  if (!Array.isArray(given) || given.length === 0 || given.some((entry) => typeof entry !== "string" || entry.trim() === "")) {
+    err("workspaces.paths must be a non-empty list of clone folders.");
+  } else {
+    paths = (given as string[]).map(path);
+    paths.forEach((clone, index) => {
+      paths.slice(index + 1).forEach((other) => {
+        if (overlaps(clone, other)) err(`workspaces.paths: ${clone} and ${other} overlap. Each clone is a folder of its own.`);
+      });
+    });
+  }
+  let projectSubdir = ".";
+  if (value.projectSubdir !== undefined) {
+    const subdir = value.projectSubdir;
+    if (typeof subdir !== "string" || subdir.trim() === "") err("workspaces.projectSubdir must be a non-empty string.");
+    else if (isAbsolute(subdir) || win32.isAbsolute(subdir) || /^[A-Za-z]:/.test(subdir) || subdir.split(/[\\/]/).includes("..")) {
+      err(`workspaces.projectSubdir (${subdir}) must be a folder inside each clone: relative, without "..".`);
+    } else projectSubdir = subdir;
+  }
+  if (value.keep === undefined) return { kind: "pool", paths, projectSubdir };
+  return { kind: "pool", paths, projectSubdir, keep: keepOf(value.keep, err) };
+}
+
+/**
+ * `workspaces.keep`: gitignore patterns relative to the project's repository. They reach git only
+ * as `--exclude=<pattern>` values, but are held to the same shape as projectSubdir all the same, and
+ * a negation (`!`) is refused: it could make a file that git ignores removable.
+ */
+function keepOf(value: unknown, err: (message: string) => void): string[] {
+  if (!Array.isArray(value) || value.some((entry) => typeof entry !== "string")) {
+    err("workspaces.keep must be a list of patterns.");
+    return [];
+  }
+  const keep: string[] = [];
+  for (const pattern of value as string[]) {
+    if (pattern.trim() === "" || /[\0\r\n]/.test(pattern)) err(`workspaces.keep: "${pattern}" must be a non-empty pattern on one line.`);
+    else if (isAbsolute(pattern) || win32.isAbsolute(pattern) || /^[A-Za-z]:/.test(pattern) || pattern.split(/[\\/]/).includes("..")) {
+      err(`workspaces.keep: "${pattern}" must be relative to the project's repository, without "..".`);
+    } else if (pattern.includes("\\")) err(`workspaces.keep: "${pattern}" must use "/" between folders, as in .gitignore.`);
+    else if (pattern.startsWith("!")) err(`workspaces.keep: "${pattern}" may not start with "!": a pattern can only keep more, never less.`);
+    else keep.push(pattern);
+  }
+  return keep;
+}
+
+/**
+ * `setupWatch`: paths relative to the project's repository, "/" between folders, without ".."; `*` only inside one part of a
+ * path. Read as files whose content is hashed, never run or copied.
+ */
+function setupWatchOf(value: unknown, err: (message: string) => void): string[] | undefined {
+  if (!Array.isArray(value) || value.some((entry) => typeof entry !== "string")) {
+    err('setupWatch must be a list of files relative to the project\'s repository, for example ["pnpm-lock.yaml", "web/pnpm-lock.yaml"].');
+    return undefined;
+  }
+  const watch: string[] = [];
+  let bad = false;
+  for (const path of value as string[]) {
+    const fail = (why: string): void => {
+      bad = true;
+      err(`setupWatch: "${path}" ${why}`);
+    };
+    if (path.trim() === "" || /[\0\r\n]/.test(path)) fail("must be a non-empty path on one line.");
+    else if (isAbsolute(path) || win32.isAbsolute(path) || /^[A-Za-z]:/.test(path) || path.split(/[\\/]/).includes("..")) fail('must be relative to the project\'s repository, without "..".');
+    else if (path.includes("\\")) fail('must use "/" between folders.');
+    else if (path.includes("**")) fail('may use "*" only inside one part of the path, not "**".');
+    else watch.push(path);
+  }
+  return bad ? undefined : watch;
+}
+
+function norm(path: string): string {
+  const resolved = resolve(path);
+  // Windows paths compare without case.
+  return process.platform === "win32" ? resolved.toLowerCase() : resolved;
+}
+
+/** True when `inner` is `outer` or lies below it. Compares resolved paths as text. */
+export function within(outer: string, inner: string): boolean {
+  const a = norm(outer);
+  const b = norm(inner);
+  if (a === b) return true;
+  const sep = a.endsWith("/") || a.endsWith("\\") ? "" : process.platform === "win32" ? "\\" : "/";
+  return b.startsWith(a + sep);
+}
+
+/** True when either path contains the other. */
+export function overlaps(a: string, b: string): boolean {
+  return within(a, b) || within(b, a);
+}

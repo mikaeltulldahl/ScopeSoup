@@ -1,0 +1,101 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1040 664" width="1040" height="664" font-family="Segoe UI, -apple-system, Helvetica, Arial, sans-serif">
+<defs>
+  <marker id="head" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#475569"/></marker>
+  <marker id="tail" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#475569"/></marker>
+  <marker id="headBold" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#0f766e"/></marker>
+</defs>
+<rect width="1040" height="664" rx="18" fill="#ffffff"/>
+<rect x="20" y="20" width="220" height="600" rx="16" fill="#ede9fe" fill-opacity="0.35" stroke="#7c3aed" stroke-opacity="0.5" stroke-width="1.2" stroke-dasharray="5 4"/>
+<text x="36" y="42" font-size="13" font-weight="700" letter-spacing="0.6" fill="#7c3aed">YOU</text>
+<rect x="270" y="20" width="500" height="600" rx="16" fill="#fef3c7" fill-opacity="0.35" stroke="#d97706" stroke-opacity="0.5" stroke-width="1.2" stroke-dasharray="5 4"/>
+<text x="286" y="42" font-size="13" font-weight="700" letter-spacing="0.6" fill="#d97706">SCOPESOUP, ON YOUR LAPTOP</text>
+<rect x="290" y="380" width="460" height="160" rx="16" fill="#ccfbf1" fill-opacity="0.35" stroke="#0d9488" stroke-opacity="0.5" stroke-width="1.2" stroke-dasharray="5 4"/>
+<text x="306" y="402" font-size="13" font-weight="700" letter-spacing="0.6" fill="#0d9488">SCOPESOUP'S WORKING COPIES</text>
+<rect x="800" y="20" width="220" height="600" rx="16" fill="#dbeafe" fill-opacity="0.35" stroke="#2563eb" stroke-opacity="0.5" stroke-width="1.2" stroke-dasharray="5 4"/>
+<text x="816" y="42" font-size="13" font-weight="700" letter-spacing="0.6" fill="#2563eb">ORIGIN: THE GIT SERVER</text>
+<path d="M205,110 L370,110" fill="none" stroke="#475569" stroke-width="1.7"  marker-end="url(#head)" marker-start="url(#tail)" stroke-linejoin="round"/>
+<rect x="215" y="78" width="144" height="20" rx="10" fill="#ffffff" stroke="#e2e8f0"/>
+<text x="287" y="89" font-size="12" fill="#334155" text-anchor="middle" dominant-baseline="middle">view · answer · stop</text>
+<path d="M205,224 L410,134" fill="none" stroke="#475569" stroke-width="1.7"  marker-end="url(#head)"  stroke-linejoin="round"/>
+<rect x="224.7" y="172" width="150.6" height="20" rx="10" fill="#ffffff" stroke="#e2e8f0"/>
+<text x="300" y="183" font-size="12" fill="#334155" text-anchor="middle" dominant-baseline="middle">files and takes Items</text>
+<path d="M490,110 L580,110" fill="none" stroke="#475569" stroke-width="1.7"  marker-end="url(#head)" marker-start="url(#tail)" stroke-linejoin="round"/>
+<path d="M650,86 L650,62 L910,62 L910,76" fill="none" stroke="#475569" stroke-width="1.7"  marker-end="url(#head)" marker-start="url(#tail)" stroke-linejoin="round"/>
+<rect x="628.6" y="52" width="262.79999999999995" height="20" rx="10" fill="#ffffff" stroke="#e2e8f0"/>
+<text x="760" y="63" font-size="12" fill="#334155" text-anchor="middle" dominant-baseline="middle">syncs Items: meta branch or GitHub API</text>
+<path d="M650,134 L650,290" fill="none" stroke="#475569" stroke-width="1.7"  marker-end="url(#head)"  stroke-linejoin="round"/>
+<rect x="564.8" y="200" width="170.39999999999998" height="20" rx="10" fill="#ffffff" stroke="#e2e8f0"/>
+<text x="650" y="211" font-size="12" fill="#334155" text-anchor="middle" dominant-baseline="middle">starts · watches · stops</text>
+<path d="M500,340 L500,431" fill="none" stroke="#475569" stroke-width="1.7"  marker-end="url(#head)"  stroke-linejoin="round"/>
+<rect x="470.9" y="347" width="58.199999999999996" height="20" rx="10" fill="#ffffff" stroke="#e2e8f0"/>
+<text x="500" y="358" font-size="12" fill="#334155" text-anchor="middle" dominant-baseline="middle">commits</text>
+<path d="M400,465 L460,465" fill="none" stroke="#475569" stroke-width="1.7"  marker-end="url(#head)"  stroke-linejoin="round"/>
+<rect x="407.5" y="455" width="45" height="20" rx="10" fill="#ffffff" stroke="#e2e8f0"/>
+<text x="430" y="466" font-size="12" fill="#334155" text-anchor="middle" dominant-baseline="middle">makes</text>
+<path d="M565,433 L745,360 L835,330" fill="none" stroke="#475569" stroke-width="1.7"  marker-end="url(#head)"  stroke-linejoin="round"/>
+<rect x="635.8" y="386" width="38.4" height="20" rx="10" fill="#ffffff" stroke="#e2e8f0"/>
+<text x="655" y="397" font-size="12" fill="#334155" text-anchor="middle" dominant-baseline="middle">push</text>
+<path d="M880,362 L715,431" fill="none" stroke="#475569" stroke-width="1.7"  marker-end="url(#head)"  stroke-linejoin="round"/>
+<rect x="767.5" y="395" width="45" height="20" rx="10" fill="#ffffff" stroke="#e2e8f0"/>
+<text x="790" y="406" font-size="12" fill="#334155" text-anchor="middle" dominant-baseline="middle">batch</text>
+<path d="M730,475 L850,546" fill="none" stroke="#0f766e" stroke-width="3"  marker-end="url(#headBold)"  stroke-linejoin="round"/>
+<rect x="674.9" y="510" width="190.2" height="20" rx="10" fill="#ffffff" stroke="#e2e8f0"/>
+<text x="770" y="521" font-size="12" fill="#334155" text-anchor="middle" dominant-baseline="middle">check passed · fast-forward</text>
+<path d="M845,570 L345,570 L345,499" fill="none" stroke="#475569" stroke-width="1.7"  marker-end="url(#head)"  stroke-linejoin="round"/>
+<rect x="537.5" y="560" width="45" height="20" rx="10" fill="#ffffff" stroke="#e2e8f0"/>
+<text x="560" y="571" font-size="12" fill="#334155" text-anchor="middle" dominant-baseline="middle">fetch</text>
+<path d="M880,588 L880,604 L155,604 L155,594" fill="none" stroke="#475569" stroke-width="1.7" stroke-dasharray="6 5" marker-end="url(#head)"  stroke-linejoin="round"/>
+<rect x="387.6" y="594" width="64.8" height="20" rx="10" fill="#ffffff" stroke="#e2e8f0"/>
+<text x="420" y="605" font-size="12" fill="#334155" text-anchor="middle" dominant-baseline="middle">you pull</text>
+<path d="M100,590 L100,640 L1030,640 L1030,330 L987,330" fill="none" stroke="#7c3aed" stroke-width="1.7"  marker-end="url(#head)"  stroke-linejoin="round"/>
+<rect x="438.5" y="630" width="243" height="20" rx="10" fill="#ffffff" stroke="#e2e8f0"/>
+<text x="560" y="641" font-size="12" fill="#334155" text-anchor="middle" dominant-baseline="middle">your branch, pushed and handed back</text>
+<rect x="55" y="84" width="150" height="52" rx="10" fill="#ede9fe" stroke="#7c3aed" stroke-width="1.6"/>
+<text x="130" y="101.5" font-size="14" font-weight="600" fill="#2e1065" text-anchor="middle" dominant-baseline="middle">The board</text>
+<text x="130" y="118.5" font-size="12" font-weight="400" fill="#2e1065cc" text-anchor="middle" dominant-baseline="middle">in your browser</text>
+<rect x="55" y="204" width="150" height="52" rx="10" fill="#ede9fe" stroke="#7c3aed" stroke-width="1.6"/>
+<text x="130" y="221.5" font-size="14" font-weight="600" fill="#2e1065" text-anchor="middle" dominant-baseline="middle">You + Claude</text>
+<text x="130" y="238.5" font-size="12" font-weight="400" fill="#2e1065cc" text-anchor="middle" dominant-baseline="middle">plan and build with you</text>
+<path d="M50,534 v52 a80,8 0 0,0 160,0 v-52" fill="#ede9fe" stroke="#7c3aed" stroke-width="1.6"/>
+<ellipse cx="130" cy="534" rx="80" ry="8" fill="#ede9fe" stroke="#7c3aed" stroke-width="1.6"/>
+<text x="130" y="555.5" font-size="14" font-weight="600" fill="#2e1065" text-anchor="middle" dominant-baseline="middle">Your clone</text>
+<text x="130" y="572.5" font-size="12" font-weight="400" fill="#2e1065cc" text-anchor="middle" dominant-baseline="middle">Scope Soup never works here</text>
+<rect x="370" y="86" width="120" height="48" rx="10" fill="#fef3c7" stroke="#d97706" stroke-width="1.6"/>
+<text x="430" y="101.5" font-size="14" font-weight="600" fill="#451a03" text-anchor="middle" dominant-baseline="middle">Web server</text>
+<text x="430" y="118.5" font-size="12" font-weight="400" fill="#451a03cc" text-anchor="middle" dominant-baseline="middle">serves the board</text>
+<rect x="580" y="86" width="140" height="48" rx="10" fill="#fef3c7" stroke="#d97706" stroke-width="1.6"/>
+<text x="650" y="101.5" font-size="14" font-weight="600" fill="#451a03" text-anchor="middle" dominant-baseline="middle">The orchestrator</text>
+<text x="650" y="118.5" font-size="12" font-weight="400" fill="#451a03cc" text-anchor="middle" dominant-baseline="middle">runs the loop</text>
+<rect x="475" y="290" width="250" height="50" rx="10" fill="#ffedd5" stroke="#ea580c" stroke-width="1.6"/>
+<text x="600" y="306.5" font-size="14" font-weight="600" fill="#431407" text-anchor="middle" dominant-baseline="middle">Scope Soup's agents</text>
+<text x="600" y="323.5" font-size="12" font-weight="400" fill="#431407cc" text-anchor="middle" dominant-baseline="middle">triage · implement · review · fix</text>
+<path d="M285,435 v60 a60,8 0 0,0 120,0 v-60" fill="#ccfbf1" stroke="#0d9488" stroke-width="1.6"/>
+<ellipse cx="345" cy="435" rx="60" ry="8" fill="#ccfbf1" stroke="#0d9488" stroke-width="1.6"/>
+<text x="345" y="452" font-size="14" font-weight="600" fill="#042f2e" text-anchor="middle" dominant-baseline="middle">Main clone</text>
+<text x="345" y="469" font-size="12" font-weight="400" fill="#042f2ecc" text-anchor="middle" dominant-baseline="middle">code + Items</text>
+<text x="345" y="486" font-size="12" font-weight="400" fill="#042f2ecc" text-anchor="middle" dominant-baseline="middle">(meta branch)</text>
+<path d="M472,427 v52 a60,8 0 0,0 120,0 v-52" fill="#ccfbf1" stroke="#0d9488" stroke-width="1.4" stroke-opacity="0.7"/>
+<ellipse cx="532" cy="427" rx="60" ry="8" fill="#ccfbf1" stroke="#0d9488" stroke-width="1.4" stroke-opacity="0.7"/>
+<path d="M466,433 v52 a60,8 0 0,0 120,0 v-52" fill="#ccfbf1" stroke="#0d9488" stroke-width="1.4" stroke-opacity="0.7"/>
+<ellipse cx="526" cy="433" rx="60" ry="8" fill="#ccfbf1" stroke="#0d9488" stroke-width="1.4" stroke-opacity="0.7"/>
+<path d="M460,439 v52 a60,8 0 0,0 120,0 v-52" fill="#ccfbf1" stroke="#0d9488" stroke-width="1.6"/>
+<ellipse cx="520" cy="439" rx="60" ry="8" fill="#ccfbf1" stroke="#0d9488" stroke-width="1.6"/>
+<text x="520" y="460.5" font-size="14" font-weight="600" fill="#042f2e" text-anchor="middle" dominant-baseline="middle">Work clones</text>
+<text x="520" y="477.5" font-size="12" font-weight="400" fill="#042f2ecc" text-anchor="middle" dominant-baseline="middle">one per Item</text>
+<path d="M620,439 v52 a55,8 0 0,0 110,0 v-52" fill="#ccfbf1" stroke="#0d9488" stroke-width="1.6"/>
+<ellipse cx="675" cy="439" rx="55" ry="8" fill="#ccfbf1" stroke="#0d9488" stroke-width="1.6"/>
+<text x="675" y="460.5" font-size="14" font-weight="600" fill="#042f2e" text-anchor="middle" dominant-baseline="middle">queue clone</text>
+<text x="675" y="477.5" font-size="12" font-weight="400" fill="#042f2ecc" text-anchor="middle" dominant-baseline="middle">batches + check</text>
+<path d="M835,86 v48 a75,8 0 0,0 150,0 v-48" fill="#dbeafe" stroke="#2563eb" stroke-width="1.6"/>
+<ellipse cx="910" cy="86" rx="75" ry="8" fill="#dbeafe" stroke="#2563eb" stroke-width="1.6"/>
+<text x="910" y="105.5" font-size="14" font-weight="600" fill="#172554" text-anchor="middle" dominant-baseline="middle">Items</text>
+<text x="910" y="122.5" font-size="12" font-weight="400" fill="#172554cc" text-anchor="middle" dominant-baseline="middle">meta branch or Issues</text>
+<path d="M835,306 v48 a75,8 0 0,0 150,0 v-48" fill="#dbeafe" stroke="#2563eb" stroke-width="1.6"/>
+<ellipse cx="910" cy="306" rx="75" ry="8" fill="#dbeafe" stroke="#2563eb" stroke-width="1.6"/>
+<text x="910" y="325.5" font-size="14" font-weight="600" fill="#172554" text-anchor="middle" dominant-baseline="middle">Item branches</text>
+<text x="910" y="342.5" font-size="12" font-weight="400" fill="#172554cc" text-anchor="middle" dominant-baseline="middle">scopesoup/&lt;item></text>
+<path d="M845,540 v40 a65,8 0 0,0 130,0 v-40" fill="#dbeafe" stroke="#2563eb" stroke-width="1.6"/>
+<ellipse cx="910" cy="540" rx="65" ry="8" fill="#dbeafe" stroke="#2563eb" stroke-width="1.6"/>
+<text x="910" y="555.5" font-size="14" font-weight="600" fill="#172554" text-anchor="middle" dominant-baseline="middle">main</text>
+<text x="910" y="572.5" font-size="12" font-weight="400" fill="#172554cc" text-anchor="middle" dominant-baseline="middle">always passes</text>
+</svg>
