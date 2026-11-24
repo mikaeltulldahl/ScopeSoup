@@ -1954,6 +1954,39 @@ test("merging by queue: Stop ends a running check's drain; its waiting notice is
   assert.equal(calls.at(-1), "release");
 });
 
+test("merging by queue: a note the drain makes carries the time it was made and is logged then, so a push before Stop reads as before it", async () => {
+  const w = world(config(QUEUE), [item("1")]);
+  const queue = fakeQueue();
+  w.queue = queue;
+  w.mergeQueue = { async acquire() { return { held: true, until: "x" }; }, async release() {}, async peek() { return null; } };
+  queue.state = () => ({ entries: [{}], batches: [] }) as never;
+  await toHandOver(w);
+  let open: () => void = () => {};
+  const gate = new Promise<void>((resolve) => {
+    open = resolve;
+  });
+  let pushedAt = "";
+  queue.drain = async (sink) => {
+    pushedAt = new Date(w.clock.ms).toISOString();
+    sink.note("orchestrator.queue_pushed", "Batch 3: pushed.", { batch: 3 });
+    await gate;
+  };
+  const run = (): ReturnType<typeof tick> => tick({ ...w.depsFor(), queueWaitMs: 20 });
+  await run();
+  w.clock.ms += 3000;
+  press(w, "stop");
+  w.clock.ms += 7000;
+  open();
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  await run();
+  const all = w.events("");
+  const pushed = all.find((event) => event.kind === "orchestrator.queue_pushed");
+  const stopped = all.find((event) => event.kind === "control.stopped");
+  assert.ok(pushed && stopped);
+  assert.equal(pushed.at, pushedAt, "the push has the time it was noted, not the later tick's");
+  assert.ok(pushed.seq < stopped.seq, "and comes before the Stop that was pressed after it");
+});
+
 test("merging by queue: Pause merge queue lets a running check's drain finish; its notice is applied and the lease is given back", async () => {
   const w = world(config(QUEUE), [item("1")]);
   const queue = fakeQueue();
