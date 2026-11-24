@@ -1,6 +1,6 @@
 # Scope Soup
 
-Scope Soup is a program with a web board that works a project's backlog with coding agents. It asks a person only what only a person can answer.
+Scope Soup is a program with a web board that works a project's backlog with coding agents. It saves a person's attention for what only a person can decide.
 
 **Status: early, and changing fast.** See [What works today](#what-works-today).
 
