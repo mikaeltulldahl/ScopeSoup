@@ -21,6 +21,17 @@ export interface ProjectInfo {
   folders: Partial<Record<FolderName, string>>;
 }
 
+/** Which project a server serves, as `/api/health` says it: the name and repository, nothing personal (no paths). */
+export interface ProjectIdentity {
+  name: string;
+  repository: string | null;
+}
+
+/** Whether a server's project is the one asked for. A server that says nothing is not. */
+export function sameProject(wanted: ProjectIdentity, served: ProjectIdentity | null): boolean {
+  return served !== null && served.name === wanted.name && served.repository === wanted.repository;
+}
+
 const REPOSITORY_NAME = /^[\w.-]+\/[\w.-]+$/;
 
 /** The GitHub page of "owner/name", or null when it is not one. */

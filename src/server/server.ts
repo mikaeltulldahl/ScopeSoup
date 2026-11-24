@@ -1582,7 +1582,11 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
       }
       if (path === "/api/status") return sendJson(response, 200, toStatusView(boardNow()));
       // For a service monitor: reads only the store's last event number, not the board.
-      if (path === "/api/health") return sendJson(response, 200, { ok: true, seq: store.lastSeq(), now: now().toISOString() });
+      if (path === "/api/health") {
+        // Which project this server serves: the item commands use a server only for their own project.
+        const project = projectNow();
+        return sendJson(response, 200, { ok: true, seq: store.lastSeq(), now: now().toISOString(), ...(project ? { project: { name: project.name, repository: project.repository } } : {}) });
+      }
       if (path === "/api/config") return sendJson(response, 200, readConfigView(options.configFile, configOptions));
       if (path === "/api/offboard") {
         if (!options.offboard) return sendJson(response, 200, { now: now().toISOString(), available: false, reason: "This server has no project configuration, so Scope Soup has left nothing for this project." });

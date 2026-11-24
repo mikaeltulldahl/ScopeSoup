@@ -218,7 +218,7 @@ test("through the server: the same commands, and it refuses an item an agent ses
   cleanups.push(() => store.close());
   let synced = 0;
   const branches = remoteBranches(realGit, () => ({ repo: dir, remote: "origin", mainBranch: "main" }));
-  const server: ScopeSoupServer = createServer({ store, port: 0, items: { host: "metaBranch", write: host.write!, work: host.work }, branches, machine: "laptop-a", syncNow: async () => void synced++ });
+  const server: ScopeSoupServer = createServer({ store, port: 0, items: { host: "metaBranch", write: host.write!, work: host.work }, branches, machine: "laptop-a", syncNow: async () => void synced++, project: () => ({ name: "tides", repository: "origin", github: null, folders: {} }) });
   const where = await server.start();
   cleanups.push(() => server.stop());
 
@@ -276,6 +276,31 @@ test("through the server: the same commands, and it refuses an item an agent ses
   assert.match(c.out.at(-1)!, /^A-3 Third, taken at once\nState: todo/);
   assert.equal(await c.run("show", "A-99"), 1);
   assert.match(c.err.at(-1)!, /no item A-99/);
+});
+
+test("a server for another project is not used: the command falls back to the meta ref and says why", async () => {
+  const { dir } = project();
+  const asked: string[] = [];
+  const health = (project: unknown) => async (url: string | URL | Request): Promise<Response> => {
+    asked.push(String(url));
+    return new Response(JSON.stringify({ ok: true, seq: 1, now: "2026-01-01T00:00:00.000Z", ...(project === undefined ? {} : { project }) }));
+  };
+  for (const other of [{ name: "harbour", repository: "origin" }, { name: "tides", repository: "someone/else" }, null, undefined]) {
+    const c = cli(dir, { ...metaEnv(dir), SCOPESOUP_URL: "http://127.0.0.1:1" }, { fetch: health(other) as typeof fetch });
+    assert.equal(await c.run("list"), 0, c.err.join("\n"));
+    assert.deepEqual(asked.splice(0), ["http://127.0.0.1:1/api/health"]);
+    assert.equal(c.err.length, 1, c.err.join("\n"));
+    assert.match(c.err[0]!, /server at http:\/\/127\.0\.0\.1:1 serves .*, not tides \(origin\): not used; going to the meta ref/);
+  }
+  // The same project: the server is used, nothing is said.
+  const same = cli(dir, { ...metaEnv(dir), SCOPESOUP_URL: "http://127.0.0.1:1" }, {
+    fetch: (async (url: string | URL | Request) => {
+      if (String(url).endsWith("/api/health")) return new Response(JSON.stringify({ ok: true, project: { name: "tides", repository: "origin" } }));
+      return new Response(JSON.stringify({ rows: [] }));
+    }) as typeof fetch,
+  });
+  await same.run("list");
+  assert.deepEqual(same.err, []);
 });
 
 test("without the server: list --search finds by title and text, show prints the item in full", async () => {

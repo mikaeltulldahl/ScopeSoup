@@ -130,6 +130,19 @@ test("GET /api/health answers ok, the store's seq and the injected time", async 
   assert.equal(seq, before.seq + 1);
 });
 
+test("GET /api/health names the project the server serves, without paths", async () => {
+  const own = openStore(":memory:");
+  const server = createServer({ store: own, port: 0, project: () => ({ name: "tides", repository: "harbour/tides", github: null, folders: { config: "/home/someone/soup" } }) });
+  const where = await server.start();
+  try {
+    const body = (await (await fetch(`${where.url}/api/health`)).json()) as { project?: unknown };
+    assert.deepEqual(body.project, { name: "tides", repository: "harbour/tides" });
+  } finally {
+    await server.stop();
+    own.close();
+  }
+});
+
 test("GET /api/usage attributes readings to sessions, reads tokens from streams, and refuses a bad span", async () => {
   const own = openStore(":memory:");
   const streams = mkdtempSync(join(tmpdir(), "scopesoup-usage-"));

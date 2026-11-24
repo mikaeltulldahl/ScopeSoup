@@ -2,7 +2,7 @@
 // project configuration is present, the orchestrator. Everything here is wiring.
 //
 // Settings that belong to this installation (not to the project) come from the environment:
-//   SCOPESOUP_DATA           directory for the database (default ./data)
+//   SCOPESOUP_DATA           directory for the database (default: "data" beside the config file found, else ./data; refused inside a git working tree)
 //   SCOPESOUP_HOST           address to listen on (default 127.0.0.1)
 //   SCOPESOUP_PORT           port (default 4310)
 //   SCOPESOUP_ALLOW_LAN      "1" to allow an address other than loopback; there is no login yet
@@ -41,6 +41,7 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { startDataDir } from "./dataDir.ts";
 import { createConfigLoader } from "./config/loader.ts";
 import { findConfig } from "./config/locate.ts";
 import { metaSettings } from "./config/metaSettings.ts";
@@ -107,7 +108,14 @@ const home = checkout ? null : homeOf(root);
 const launched = env.SCOPESOUP_LAUNCHER === "1";
 
 async function main(): Promise<void> {
-  const dataDir = resolve(env.SCOPESOUP_DATA ?? "data");
+  // The configuration file is read first: its `host`, when present, wins over the environment.
+  // --config is not taken here; SCOPESOUP_CONFIG, ./scopesoup.config.json, else the config this machine knows for the repository.
+  const found = findConfig({ env, cwd: env.INIT_CWD ?? process.cwd() });
+  if (!found.ok) console.log(found.error);
+  const configFile = found.file;
+  const data = startDataDir(env, found.ok ? configFile : null);
+  if (!data.ok) throw new Error(data.error);
+  const dataDir = data.dir;
   mkdirSync(dataDir, { recursive: true });
   const storePath = join(dataDir, "scopesoup.sqlite");
   const store = openStore(storePath);
@@ -124,11 +132,6 @@ async function main(): Promise<void> {
     store.appendEvent({ kind: "scopesoup.store_migrated", actor: "scopesoup", data: { from, to, copy } }, iso());
   }
 
-  // The configuration file is read first: its `host`, when present, wins over the environment.
-  // --config is not taken here; SCOPESOUP_CONFIG, ./scopesoup.config.json, else the config this machine knows for the repository.
-  const found = findConfig({ env, cwd: env.INIT_CWD ?? process.cwd() });
-  if (!found.ok) console.log(found.error);
-  const configFile = found.file;
   // The shared settings are on the meta ref: fetched before the first read (a new clone does not have it), then every minute.
   const shared = metaSettings({ now: iso });
   const repository = existsSync(configFile) ? privateWhere(configFile) : null;
