@@ -23,6 +23,21 @@ function decisionWords(item: WorkItem): string {
   return "This item waits for your decision. The options and the discussion are on the host.";
 }
 
+/** The host's names for a person, by the host ids the adapters use ("github", "jira"); the meta branch has no page to link to. */
+const HOST_LINKS: Record<string, string> = { github: "Open on GitHub", jira: "Open in Jira" };
+
+/** The words of the link to the Item on its host: the host by name, else the address's site ("Open on forge.example"). */
+export function hostLinkWords(ref: Ref): string | undefined {
+  if (!ref.url) return undefined;
+  const named = HOST_LINKS[ref.host];
+  if (named) return named;
+  try {
+    return `Open on ${new URL(ref.url).hostname}`;
+  } catch {
+    return "Open on the host";
+  }
+}
+
 /**
  * Accepts a Ref or its refKey ("host:work:id"). Returns null when the item is not in the snapshot. `blocking`: the open Items
  * this one blocks as its host says (GitHub's dependencies); without it they are found in the snapshot.
@@ -69,11 +84,14 @@ export function buildItemPage(snapshot: Snapshot, ref: Ref | string, now: Date, 
       openChildren: item.openChildren,
       updatedAt: item.updatedAt,
       url: item.ref.url,
+      ...(item.ref.url ? { openWords: hostLinkWords(item.ref) } : {}),
     },
     lane: situation.lane,
     actor: turn.actor,
     ...(turn.actor === "person" && turn.person ? { person: { name: actorParts(turn.person).who, mine: isMyTurn(turn, self) } } : {}),
     reason: turn.reason,
+    ...(turn.waits ? { waits: turn.waits } : {}),
+    ...(item.holder ? { heldBy: item.holder.actor.bot ? item.holder.actor.name : actorParts(item.holder.actor).who } : {}),
     tone,
     unblocks: turn.unblocks ?? 0,
     decision: { needed: item.needsDecision === true, words: decisionWords(item) },

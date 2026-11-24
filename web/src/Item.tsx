@@ -4,14 +4,15 @@ import type { ConflictVersions, DecisionOption, ProposedPart, ParkedDraft } from
 import type { BoardView, DiffFile, DiffView, ItemPage, RoundRow, SessionDetailsView } from "./api.ts";
 import { useEffect, useId, useState } from "preact/hooks";
 import { fetchChat, fetchDiff, fetchItem, fetchItemBranch, fetchSession, postAnswers, postChat, postDraft, postEdit, postHandBack, postProposal, postRelease, postResolve, postStartOver, postClaim, useNow, usePerson, useView } from "./api.ts";
-import { actorClass, actorWords, VoteButtons } from "./Card.tsx";
+import { actorClass, actorWords, Mention, VoteButtons } from "./Card.tsx";
+import { placeText, statusText } from "./cardText.ts";
 import { ItemForm } from "./ItemForm.tsx";
 import { Assumptions } from "./Assumptions.tsx";
 import { Stepper } from "./Stepper.tsx";
 import { Markdown } from "./Markdown.tsx";
 import { BatchBox } from "./Batch.tsx";
 import { hostDiffers } from "../../src/core/lanes.ts";
-import { fill, itemNoun, words } from "./theme.ts";
+import { itemNoun, words } from "./theme.ts";
 import { ago, fromWords, laneWord, optionRows, span, stateFacts, unmatchedRecommendation } from "./format.ts";
 import { ProgressBar } from "./Progress.tsx";
 import { collapse, diffLines, hasChanges } from "./textDiff.ts";
@@ -244,7 +245,8 @@ function Chat({ itemKey, now, picked, setPicked, finished }: { itemKey: string; 
     const poll = window.setInterval(reload, 1000);
     return () => window.clearInterval(poll);
   }, [live]);
-  if (!data || data.sessions.length === 0) return null;
+  if (!data) return null;
+  if (data.sessions.length === 0) return <EmptyPanel id={CHAT_PANEL} title="Talk to a session" text="no session runs now" />;
   const chosen = data.sessions.find((session) => session.agentSession === picked) ?? data.sessions[0]!;
   const blocked = data.blocked;
   const send = () => {
@@ -303,9 +305,11 @@ function Chat({ itemKey, now, picked, setPicked, finished }: { itemKey: string; 
           ))}
         </ol>
       )}
-      {/* A finished Item takes no more messages: no box to write in, only the past turns and why. */}
+      {/* The box only while a session can be talked to: a finished Item, or a blocked chat, shows the past turns and why. */}
       {finished ? (
         <p class="reason chat-blocked">The {itemNoun(false, true)} is finished, so its sessions take no more messages.</p>
+      ) : blocked ? (
+        <p class="reason chat-blocked">{blocked}</p>
       ) : (
       <>
       <div class="answer">
@@ -314,17 +318,16 @@ function Chat({ itemKey, now, picked, setPicked, finished }: { itemKey: string; 
           id={`${id}-text`}
           rows={3}
           value={text}
-          disabled={sending || blocked !== undefined}
+          disabled={sending}
           onInput={(event) => setText((event.target as HTMLTextAreaElement).value)}
           onKeyDown={(event) => {
             if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) send();
           }}
         />
       </div>
-      {blocked && <p class="reason chat-blocked">{blocked}</p>}
       {error && <p class="notice notice-bad">{error}</p>}
       <div>
-        <button type="button" class="primary" onClick={send} disabled={sending || blocked !== undefined || !text.trim()}>
+        <button type="button" onClick={send} disabled={sending || !text.trim()}>
           {sending ? "Sending…" : "Send"}
         </button>
       </div>
@@ -457,7 +460,7 @@ function useHeld(itemKey: string, ids: readonly string[], start: () => Record<st
  * Send posts all of them at once (one write on the host); the item is picked up once, after them. Questions left unanswered
  * stay open. With a parked Item, the panel shows its title, why it is parked, and Start over.
  */
-function QuestionsPanel({ page, questions, now, reload }: { page: ItemPage; questions: PanelQuestion[]; now: number; reload: () => void }) {
+function QuestionsPanel({ page, questions, now, reload, primary }: { page: ItemPage; questions: PanelQuestion[]; now: number; reload: () => void; primary: boolean }) {
   const parked = page.parked && !page.parked.refine && !page.proposal ? page.parked : undefined;
   const canAnswer = parked ? parked.canAnswer : true;
   const ids = questions.map((question) => question.id);
@@ -482,7 +485,7 @@ function QuestionsPanel({ page, questions, now, reload }: { page: ItemPage; ques
       ) : !parked.decision && open.length === 0 ? (
         <p class="question">{parked.reason}</p>
       ) : null)}
-      {parked && <p class="muted">Put down {ago(parked.at, now)}.</p>}
+      {parked && <p class="muted">{asks(parked) ? "Asked" : "Since"} {ago(parked.at, now)}.</p>}
       {questions.length > 0 && <QuestionSteps questions={questions} held={held} send="answer" canAnswer={canAnswer} busy={busy} change={change} />}
       {canAnswer && open.length > 0 && (
         <div class="answer">
@@ -491,7 +494,7 @@ function QuestionsPanel({ page, questions, now, reload }: { page: ItemPage; ques
             {ready.length < open.length ? "Send what you have; the rest stay open. " : ""}
             Your picks are kept in this browser until you send them.
           </p>
-          <button type="button" class="primary" onClick={sendAll} disabled={busy || ready.length === 0}>
+          <button type="button" class={primary ? "primary" : undefined} onClick={sendAll} disabled={busy || ready.length === 0}>
             {busy ? "Sending…" : ready.length > 1 ? `Send ${ready.length} answers` : "Send"}
           </button>
           {error && <p class="error">{error}</p>}
@@ -508,6 +511,9 @@ function QuestionsPanel({ page, questions, now, reload }: { page: ItemPage; ques
     </section>
   );
 }
+
+/** The parked state asks the person something (a decision, questions, or why it waits for an answer), so it says when it asked. */
+const asks = (parked: NonNullable<ItemPage["parked"]>): boolean => parked.canAnswer || !!parked.decision || (parked.questions?.length ?? 0) > 0;
 
 /**
  * The item's open questions for the panel, in order: the parked state's (its several questions, its one decision, or why it waits
@@ -572,7 +578,8 @@ function useSend(): { busy: boolean; error: string | null; send: (write: () => P
  * Triage found the item too large and proposes its parts: each part's text, and Accept, Edit and Reject. Where the host can be
  * written here, accepting creates the parts as sub-items; otherwise the parts are text for a person to create by hand.
  */
-function SplitProposal({ page, proposal, parts, now, reload }: { page: ItemPage; proposal: NonNullable<ItemPage["proposal"]>; parts: ProposedPart[]; now: number; reload: () => void }) {
+function SplitProposal({ page, proposal, parts, now, reload, primary }: { page: ItemPage; proposal: NonNullable<ItemPage["proposal"]>; parts: ProposedPart[]; now: number; reload: () => void; primary: boolean }) {
+  const main = primary ? "primary" : undefined;
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<ProposedPart[]>(parts);
   const { busy, error, send } = useSend();
@@ -616,7 +623,7 @@ function SplitProposal({ page, proposal, parts, now, reload }: { page: ItemPage;
               <textarea id={`part-verification-${index}`} rows={2} value={part.verification} onInput={(event) => change(index, "verification", (event.target as HTMLTextAreaElement).value)} disabled={busy} />
             </div>
           ))}
-          <button type="button" class="primary" onClick={() => decide("edit")} disabled={busy || draft.some((part) => !part.title.trim())}>
+          <button type="button" class={main} onClick={() => decide("edit")} disabled={busy || draft.some((part) => !part.title.trim())}>
             {busy ? "Saving…" : "Accept my version"}
           </button>{" "}
           <button type="button" onClick={() => setEditing(false)} disabled={busy}>
@@ -626,7 +633,7 @@ function SplitProposal({ page, proposal, parts, now, reload }: { page: ItemPage;
       )}
       {!editing && (
         <p>
-          <button type="button" class="primary" onClick={() => decide("accept")} disabled={busy}>
+          <button type="button" class={main} onClick={() => decide("accept")} disabled={busy}>
             {busy ? "Working…" : "Accept"}
           </button>{" "}
           {created.length === 0 && (
@@ -702,7 +709,8 @@ function DraftDiff({ before, after }: { before: string; after: string }) {
  * are answered as in the questions panel, the picks are kept in this browser until a button sends them, and each button
  * sends everything in one write (on GitHub one comment: the answers and, keeping the recommendations, the decision).
  */
-function DraftPanel({ page, draft, reload }: { page: ItemPage; draft: ParkedDraft; reload: () => void }) {
+function DraftPanel({ page, draft, reload, primary }: { page: ItemPage; draft: ParkedDraft; reload: () => void; primary: boolean }) {
+  const main = primary ? "primary" : undefined;
   const parked = page.parked!;
   const questions: PanelQuestion[] = draft.questions.map((question, index) => ({
     id: `draft:${parked.at}:${index}`, question: question.question, options: question.options, recommendation: question.recommendation,
@@ -754,7 +762,7 @@ function DraftPanel({ page, draft, reload }: { page: ItemPage; draft: ParkedDraf
           <textarea id="draft-text" rows={10} value={text} onInput={(event) => setText((event.target as HTMLTextAreaElement).value)} disabled={busy} />
           <label for="draft-labels">Label changes (for example +bug, −question; empty for none)</label>
           <input id="draft-labels" type="text" value={labelText} onInput={(event) => setLabelText((event.target as HTMLInputElement).value)} disabled={busy} />
-          <button type="button" class="primary" onClick={() => decide("edit")} disabled={busy || text.trim() === ""}>
+          <button type="button" class={main} onClick={() => decide("edit")} disabled={busy || text.trim() === ""}>
             {busy ? "Saving…" : "Accept my version"}
           </button>{" "}
           <button type="button" onClick={() => setEditing(false)} disabled={busy}>Cancel</button>
@@ -762,14 +770,14 @@ function DraftPanel({ page, draft, reload }: { page: ItemPage; draft: ParkedDraf
       )}
       {!editing && keeps && (
         <p>
-          <button type="button" class="primary" onClick={() => decide("accept")} disabled={busy || !filled}>{busy ? "Working…" : "Accept the draft"}</button>{" "}
+          <button type="button" class={main} onClick={() => decide("accept")} disabled={busy || !filled}>{busy ? "Working…" : "Accept the draft"}</button>{" "}
           <button type="button" onClick={() => setEditing(true)} disabled={busy}>Edit</button>{" "}
           <button type="button" onClick={() => decide("reject")} disabled={busy || !filled}>Reject</button>
         </p>
       )}
       {!keeps && (
         <p>
-          <button type="button" class="primary" onClick={() => decide("accept")} disabled={busy || !filled}>{busy ? "Sending…" : "Send my answers"}</button>
+          <button type="button" class={main} onClick={() => decide("accept")} disabled={busy || !filled}>{busy ? "Sending…" : "Send my answers"}</button>
         </p>
       )}
       <p class="muted">
@@ -784,11 +792,13 @@ function DraftPanel({ page, draft, reload }: { page: ItemPage; draft: ParkedDraf
 
 const LINK_WORDS: Record<string, string> = { blockedBy: "Blocked by", blocks: "Blocks", duplicateOf: "Duplicate of", conflictsWith: "Conflicts with", related: "Related" };
 
-/** The triage's links to other Items. Only "blocked by" acted on anything; the rest is for reading. */
+/** The triage's links to other Items, in the Item section. Only "blocked by" acted on anything; the rest is for reading. */
 function Links({ links }: { links: NonNullable<ItemPage["links"]> }) {
   return (
-    <section class="panel">
-      <h3>Other {itemNoun(true, true)}, as the triage sees them</h3>
+    <div>
+      <p>
+        <b>Other {itemNoun(true, true)}, as the triage sees them</b>
+      </p>
       <ul class="rows">
         {links.map((link, index) => (
           <li class="row" key={index}>
@@ -798,12 +808,12 @@ function Links({ links }: { links: NonNullable<ItemPage["links"]> }) {
           </li>
         ))}
       </ul>
-    </section>
+    </div>
   );
 }
 
 /** The item's text was changed on two machines: both versions, and a box for the result. */
-function Conflict({ itemKey, conflict, reload }: { itemKey: string; conflict: ConflictVersions; reload: () => void }) {
+function Conflict({ itemKey, conflict, reload, primary }: { itemKey: string; conflict: ConflictVersions; reload: () => void; primary: boolean }) {
   const [text, setText] = useState("");
   const { busy, error, send } = useSend();
   const settle = (result: string) => send(() => postResolve(itemKey, result, conflict.aside.map((version) => version.id)).then(reload));
@@ -827,7 +837,7 @@ function Conflict({ itemKey, conflict, reload }: { itemKey: string; conflict: Co
       <div class="answer">
         <label for="conflict-result">The result, as the whole item.md.</label>
         <textarea id="conflict-result" rows={8} value={text} onInput={(event) => setText((event.target as HTMLTextAreaElement).value)} disabled={busy} />
-        <button type="button" class="primary" onClick={() => settle(text)} disabled={busy || text.trim() === ""}>
+        <button type="button" class={primary ? "primary" : undefined} onClick={() => settle(text)} disabled={busy || text.trim() === ""}>
           {busy ? "Saving…" : "Save the result"}
         </button>
         {error && <p class="error">{error}</p>}
@@ -863,7 +873,7 @@ function Command({ text }: { text: string }) {
  * apply, and why one cannot be pressed). The holder sees the Item's branch and the commands to work on it; Hand back is one
  * button: Scope Soup reads the branch from the remote and records its newest commit, or says why it cannot.
  */
-function Hold({ page, reload }: { page: ItemPage; reload: () => void }) {
+function Hold({ page, reload, claimPrimary }: { page: ItemPage; reload: () => void; claimPrimary: boolean }) {
   const { item } = page;
   const hold = page.hold ?? {};
   const branch = hold.branch;
@@ -944,8 +954,8 @@ function Hold({ page, reload }: { page: ItemPage; reload: () => void }) {
         </label>
       )}
       <div class="hold-buttons">
-        {button("Claim", hold.claim, `Claim the ${itemNoun(false, true)} as ${person}: Scope Soup leaves it alone until you hand it back or release it.`, () => run(postClaim(item.ref.id)), true)}
-        {button(handing ? "Reading the branch…" : "Hand back", hold.handBack, branch ? `Scope Soup fetches ${branch.name} from ${branch.remote} and hands back its newest commit; it reviews it next, then checks and merges it.` : "Hand the work back on its branch.", handBack, true)}
+        {button("Claim", hold.claim, `Claim the ${itemNoun(false, true)} as ${person}: Scope Soup leaves it alone until you hand it back or release it.`, () => run(postClaim(item.ref.id)), claimPrimary)}
+        {button(handing ? "Reading the branch…" : "Hand back", hold.handBack, branch ? `Scope Soup fetches ${branch.name} from ${branch.remote} and hands back its newest commit; it reviews it next, then checks and merges it.` : "Hand the work back on its branch.", handBack)}
         {button("Release", hold.release, `Release the hold as ${person}: Scope Soup may then start the ${itemNoun(false, true)}. The log says who released whose.`, () => run(postRelease(item.ref.id)))}
       </div>
       {why.map((text) => (
@@ -969,6 +979,54 @@ function waitingForUnit(id: string, resources: BoardView["resources"]): { name: 
   );
 }
 
+/** A section with nothing in it yet: its heading and one line ("Change: none yet"). */
+function EmptyPanel({ title, text, id }: { title: string; text: string; id?: string }) {
+  return (
+    <section class="panel panel-empty" {...(id ? { id } : {})}>
+      <h3>{title}:</h3>
+      <p class="empty">{text}</p>
+    </section>
+  );
+}
+
+/** The header's one status line: the card's short text ("held by @mira", "2 questions"), or the wait for a resource unit. */
+function Status({ page, waits, now }: { page: ItemPage; waits: { name: string; since: string }[]; now: number }) {
+  const viewer = usePerson();
+  const status = statusText(page, viewer, waits);
+  if (status.kind === "wait")
+    return (
+      <p class="reason reason-big">
+        Waits for a unit of <b>{status.resource}</b> <span class="muted num">since {ago(status.since, now)}</span>; all of them are in use. <a href="#/queue">Merge queue</a>
+      </p>
+    );
+  if (status.kind === "held")
+    return (
+      <p class="reason reason-big">
+        held by <Mention name={status.name} mine={status.mine} />
+      </p>
+    );
+  return status.kind === "text" ? <p class="reason reason-big">{status.text}</p> : null;
+}
+
+/** The backlog place in one line, with the score's why and Vote up / Vote down as ▲ ▼. */
+function Place({ page }: { page: ItemPage }) {
+  const { place, why } = placeText(page.why!);
+  return (
+    <div class="place">
+      <p>
+        <b>Place in backlog:</b> {place ? <span class="num">{place}</span> : null}
+        {place && why ? " — " : ""}
+        {why}
+      </p>
+      {page.canVote && <VoteButtons itemKey={page.item.key} off={page.voteOff} small />}
+      {page.canVote && (page.voteOff?.up || page.voteOff?.down) && <span class="vote-off">{[page.voteOff.up, page.voteOff.down].filter(Boolean).join(" ")}</span>}
+    </div>
+  );
+}
+
+/** "held by mira; Scope Soup leaves it alone until …": the explanation after the short text the header shows. */
+const holdWhy = (page: ItemPage): string | undefined => (page.heldBy && page.reason.startsWith("held by ") && page.reason.includes("; ") ? page.reason.slice(page.reason.indexOf("; ") + 2) : undefined);
+
 function Body({ page, reload, resources }: { page: ItemPage; reload: () => void; resources?: BoardView["resources"] }) {
   const now = useNow();
   const { item } = page;
@@ -976,6 +1034,24 @@ function Body({ page, reload, resources }: { page: ItemPage; reload: () => void;
   const [chatWith, setChatWith] = useState<string | null>(null);
   const headerState = item.hostState.split(";")[0] ?? "";
   const facts = stateFacts(page.lane, item.hostState, hostDiffers(page.lane, item.hostState));
+  const waits = waitingForUnit(item.ref.id, resources);
+
+  // What waits for the person, in page order; the first panel that has a button for it holds the page's one primary button.
+  const questions = panelQuestions(page, now);
+  const showQuestions = (page.parked && !page.proposal && !page.parked.refine) || questions.length > 0;
+  const questionsAsk = showQuestions && (page.parked ? page.parked.canAnswer : true) && questions.some((question) => question.answered === undefined);
+  const openDecisions = page.assumptions.some((decision) => !decision.settled) && page.canSettle === true;
+  const asking = [
+    page.parked?.refine ? "draft" : "",
+    questionsAsk ? "questions" : "",
+    openDecisions ? "decisions" : "",
+    page.proposal ? "split" : "",
+    page.conflict ? "conflict" : "",
+  ].filter(Boolean);
+  const primary = asking[0];
+  const holdWords = holdWhy(page);
+  const finished = item.state === "done" || item.state === "abandoned";
+
   return (
     <article class="item">
       <header class={`item-head tone-${page.tone}`}>
@@ -985,84 +1061,24 @@ function Body({ page, reload, resources }: { page: ItemPage; reload: () => void;
         <h2>
           <span class="ref num">{item.label}</span> {item.title}
         </h2>
-        <p class="reason reason-big">{page.reason}</p>
-        {page.why && <p class="why">{page.why}</p>}
-        {waitingForUnit(item.ref.id, resources).map((wait) => (
-          <p class="why" key={wait.name}>
-            Waits for a unit of <b>{wait.name}</b> <span class="muted num">since {ago(wait.since, now)}</span>; all of them are in use. <a href="#/queue">Merge queue</a>
-          </p>
-        ))}
-        {page.canVote && <VoteButtons itemKey={item.key} off={page.voteOff} />}
+        <Status page={page} waits={waits} now={now} />
         <div class="tags">
-          <span class="tag">{laneWord(page.lane)}</span>
-          {page.actor !== "nobody" && <span class={`tag ${actorClass(page)}`}>{page.actor === "anyone" || page.actor === "person" ? actorWords(page) : fill(words().turnOf, { name: page.actor })}</span>}
-          {item.priority && <span class={`tag tag-priority-${item.priority}`}>{item.priority}</span>}
+          {page.lane && <span class="tag">{laneWord(page.lane)}</span>}
+          {actorWords(page) && <span class={`tag ${actorClass(page)}`}>{actorWords(page)}</span>}
+          {item.priority && item.priority !== "major" && <span class={`tag tag-priority-${item.priority}`}>{item.priority}</span>}
           {page.unblocks > 0 && <span class="tag tag-unblocks">unblocks {page.unblocks}</span>}
           {item.labels.map((label) => (
             <span class="tag" key={label}>{label}</span>
           ))}
-          {item.url && (
+          {item.url && item.openWords && (
             <a class="tag tag-link" href={item.url} rel="noreferrer">
-              on the host
+              {item.openWords}
             </a>
           )}
         </div>
       </header>
 
-      {page.proposal && <SplitProposal key={page.proposal.at ?? "split"} page={page} proposal={page.proposal} parts={page.proposal.parts} now={now} reload={reload} />}
-
-      {page.parked?.refine && <DraftPanel key={page.parked.at} page={page} draft={page.parked.refine} reload={reload} />}
-
-      {(() => {
-        // Every open question of the item in one panel (a draft's are in the draft's own).
-        const questions = panelQuestions(page, now);
-        const isParked = page.parked && !page.proposal && !page.parked.refine;
-        return isParked || questions.length > 0 ? <QuestionsPanel key={`${page.parked?.at ?? ""}:${questions.map((question) => question.id).join(",")}`} page={page} questions={questions} now={now} reload={reload} /> : null;
-      })()}
-
-      {page.conflict && <Conflict itemKey={item.key} conflict={page.conflict} reload={reload} />}
-
-      {page.links && page.links.length > 0 && <Links links={page.links} />}
-
-
-      {page.answers.length > 0 && (
-        <section class="panel">
-          <h3>Your answers</h3>
-          <ul class="rows">
-            {page.answers.map((answer) => (
-              <li class="row">
-                {answer.question && <p class="muted">{answer.question}</p>}
-                <p>{answer.answer}</p>
-                <p class="muted num">{ago(answer.at, now)}</p>
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
-
-      {page.assumptions.length > 0 && (
-        // The questions' orange border while any decision waits for an answer.
-        <section class={`panel${page.assumptions.some((decision) => !decision.settled) ? " panel-yours" : ""}`}>
-          <h3>Decided by the implementor</h3>
-          <p class="muted">Cheap to change later, so the work went on. Pick Accept, or Overturn with your decision, for each (the arrows go to the others); nothing is recorded until you press Send.</p>
-          <Assumptions list={page.assumptions} now={now} canSettle={() => page.canSettle === true} onDone={reload} />
-        </section>
-      )}
-
-      {page.decision.needed && !page.parked && page.questions.length === 0 && !page.conflict && (
-        <section class="panel panel-yours">
-          <h3>Decision needed</h3>
-          <p>{page.decision.words}</p>
-          {item.url && (
-            <p>
-              <a href={item.url} rel="noreferrer">
-                Open the discussion
-              </a>
-            </p>
-          )}
-        </section>
-      )}
-
+      {/* The Item: what it is, what it waits behind, its place, and who holds it. */}
       {editing && (
         <section class="panel">
           <h3>Edit the {itemNoun()}</h3>
@@ -1105,38 +1121,6 @@ function Body({ page, reload, resources }: { page: ItemPage; reload: () => void;
             <b>Verification:</b> {item.verification}
           </p>
         )}
-        <dl class="facts">
-          <dt>State</dt>
-          <dd>{facts.state}</dd>
-          {facts.host !== null && (
-            <>
-              <dt>On the host</dt>
-              <dd>{facts.host}</dd>
-            </>
-          )}
-          {item.holder && (
-            <>
-              <dt>Held by</dt>
-              <dd>
-                {item.holder.actor.name}
-                {item.holder.actor.bot ? " (an agent)" : ""}
-                {item.holder.since ? `, since ${ago(item.holder.since, now)}` : ""}
-                {item.holder.from ? ` (${fromWords(item.holder.from)})` : ""}
-                {item.holder.quiet && <span class="tag tag-blocked">quiet for a while: ask, or release it</span>}
-                {item.holder.actor.bot && item.holder.until && Date.parse(item.holder.until) <= now && <span class="tag tag-blocked">claim ran out</span>}
-              </dd>
-            </>
-          )}
-          {item.openChildren > 0 && (
-            <>
-              <dt>Sub-{itemNoun(true)}</dt>
-              <dd>{item.openChildren} open</dd>
-            </>
-          )}
-          <dt>Updated</dt>
-          <dd class="num">{ago(item.updatedAt, now)}</dd>
-        </dl>
-        {page.hold && <Hold page={page} reload={reload} />}
         {(page.blockedBy.length > 0 || page.blocks.length > 0) && (
           <div class="links">
             {page.blockedBy.length > 0 && (
@@ -1162,57 +1146,129 @@ function Body({ page, reload, resources }: { page: ItemPage; reload: () => void;
             )}
           </div>
         )}
+        {page.links && page.links.length > 0 && <Links links={page.links} />}
+        {page.why && <Place page={page} />}
+        <dl class="facts">
+          <dt>State</dt>
+          <dd>{facts.state}</dd>
+          {facts.host !== null && (
+            <>
+              <dt>On the host</dt>
+              <dd>{facts.host}</dd>
+            </>
+          )}
+          {item.openChildren > 0 && (
+            <>
+              <dt>Sub-{itemNoun(true)}</dt>
+              <dd>{item.openChildren} open</dd>
+            </>
+          )}
+          <dt>Updated</dt>
+          <dd class="num">{ago(item.updatedAt, now)}</dd>
+          {item.holder && (
+            <>
+              <dt>Held by</dt>
+              <dd>
+                {item.holder.actor.name}
+                {item.holder.actor.bot ? " (an agent)" : ""}
+                {item.holder.since ? `, since ${ago(item.holder.since, now)}` : ""}
+                {item.holder.from ? ` (${fromWords(item.holder.from)})` : ""}
+                {item.holder.quiet && <span class="tag tag-blocked">quiet for a while: ask, or release it</span>}
+                {item.holder.actor.bot && item.holder.until && Date.parse(item.holder.until) <= now && <span class="tag tag-blocked">claim ran out</span>}
+              </dd>
+            </>
+          )}
+        </dl>
+        {holdWords && <p class="muted">{holdWords}.</p>}
+        {page.hold && <Hold page={page} reload={reload} claimPrimary={primary === undefined} />}
       </section>
 
-      <section class="panel">
-        <h3>Rounds</h3>
-        <Rounds
-          rows={page.rounds}
-          now={now}
-          onTalk={(agentSession) => {
-            setChatWith(agentSession);
-            document.getElementById(CHAT_PANEL)?.scrollIntoView({ behavior: "smooth", block: "start" });
-          }}
-        />
-      </section>
+      {/* What waits for you, each with the orange border while it is open. */}
+      {page.parked?.refine && <DraftPanel key={page.parked.at} page={page} draft={page.parked.refine} reload={reload} primary={primary === "draft"} />}
 
-      <Chat itemKey={item.key} now={now} picked={chatWith} setPicked={setChatWith} finished={item.state === "done" || item.state === "abandoned"} />
+      {showQuestions && <QuestionsPanel key={`${page.parked?.at ?? ""}:${questions.map((question) => question.id).join(",")}`} page={page} questions={questions} now={now} reload={reload} primary={primary === "questions"} />}
 
-      <section class="panel">
-        <h3>Change</h3>
-        {page.changes.length === 0 && <p class="empty">No change yet.</p>}
-        <ul class="rows">
-          {page.changes.map((change) => (
-            <li class="row" key={change.label}>
-              <div class="row-head">
-                <span class="row-title">{change.title}</span>
-                <span class="tag">{change.draft ? "draft" : change.state}</span>
-                {change.url ? (
-                  <a class="tag tag-link" href={change.url} rel="noreferrer">
-                    diff {change.label}
-                  </a>
-                ) : (
-                  <span class="tag num">{change.label}</span>
-                )}
-              </div>
-              <div class="tags">
-                {change.verdicts.length === 0 && <span class="muted">No verdicts yet.</span>}
-                {change.verdicts.map((verdict, index) => (
-                  <span key={index} class={`tag verdict verdict-${verdict.value}${verdict.stale ? " verdict-stale" : ""}`}>
-                    {verdict.dimension}: {verdict.value}
-                    {verdict.by ? ` · ${verdict.by.name}` : ""}
-                    {verdict.stale ? " · older revision" : ""}
-                  </span>
-                ))}
-              </div>
-              <p class="muted num">
-                into {change.target} · {change.revisions} revision{change.revisions === 1 ? "" : "s"} · {change.sha.slice(0, 9)} · by {change.author.name}
-              </p>
-              {change.blockers.length > 0 && <p class="reason">Cannot merge: {change.blockers.join("; ")}</p>}
-            </li>
-          ))}
-        </ul>
-      </section>
+      {page.assumptions.length > 0 && (
+        <section class={`panel${page.assumptions.some((decision) => !decision.settled) ? " panel-yours" : ""}`}>
+          <h3>Decided by the implementor</h3>
+          <p class="muted">Cheap to change later, so the work went on. Pick Accept, or Overturn with your decision, for each (the arrows go to the others); nothing is recorded until you press Send.</p>
+          <Assumptions list={page.assumptions} now={now} canSettle={() => page.canSettle === true} onDone={reload} primary={primary === "decisions"} />
+        </section>
+      )}
+
+      {page.decision.needed && !page.parked && page.questions.length === 0 && !page.conflict && (
+        <section class="panel panel-yours">
+          <h3>Decision needed</h3>
+          <p>{page.decision.words}</p>
+          {item.url && (
+            <p>
+              <a href={item.url} rel="noreferrer">
+                Open the discussion
+              </a>
+            </p>
+          )}
+        </section>
+      )}
+
+      {page.proposal && <SplitProposal key={page.proposal.at ?? "split"} page={page} proposal={page.proposal} parts={page.proposal.parts} now={now} reload={reload} primary={primary === "split"} />}
+
+      {page.conflict && <Conflict itemKey={item.key} conflict={page.conflict} reload={reload} primary={primary === "conflict"} />}
+
+      {/* The work: the rounds of agents, the change, and talking to a session. */}
+      {page.rounds.length === 0 ? (
+        <EmptyPanel title="Rounds" text="no agent has worked on this yet" />
+      ) : (
+        <section class="panel">
+          <h3>Rounds</h3>
+          <Rounds
+            rows={page.rounds}
+            now={now}
+            onTalk={(agentSession) => {
+              setChatWith(agentSession);
+              document.getElementById(CHAT_PANEL)?.scrollIntoView({ behavior: "smooth", block: "start" });
+            }}
+          />
+        </section>
+      )}
+
+      {page.changes.length === 0 ? (
+        <EmptyPanel title="Change" text="none yet" />
+      ) : (
+        <section class="panel">
+          <h3>Change</h3>
+          <ul class="rows">
+            {page.changes.map((change) => (
+              <li class="row" key={change.label}>
+                <div class="row-head">
+                  <span class="row-title">{change.title}</span>
+                  <span class="tag">{change.draft ? "draft" : change.state}</span>
+                  {change.url ? (
+                    <a class="tag tag-link" href={change.url} rel="noreferrer">
+                      diff {change.label}
+                    </a>
+                  ) : (
+                    <span class="tag num">{change.label}</span>
+                  )}
+                </div>
+                <div class="tags">
+                  {change.verdicts.length === 0 && <span class="muted">No verdicts yet.</span>}
+                  {change.verdicts.map((verdict, index) => (
+                    <span key={index} class={`tag verdict verdict-${verdict.value}${verdict.stale ? " verdict-stale" : ""}`}>
+                      {verdict.dimension}: {verdict.value}
+                      {verdict.by ? ` · ${verdict.by.name}` : ""}
+                      {verdict.stale ? " · older revision" : ""}
+                    </span>
+                  ))}
+                </div>
+                <p class="muted num">
+                  into {change.target} · {change.revisions} revision{change.revisions === 1 ? "" : "s"} · {change.sha.slice(0, 9)} · by {change.author.name}
+                </p>
+                {change.blockers.length > 0 && <p class="reason">Cannot merge: {change.blockers.join("; ")}</p>}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       <Diff itemKey={item.key} version={`${item.updatedAt}:${page.changes.map((change) => change.sha).join(",")}`} />
 
@@ -1230,42 +1286,66 @@ function Body({ page, reload, resources }: { page: ItemPage; reload: () => void;
         </section>
       )}
 
-      <section class="panel">
-        <h3>Log</h3>
-        {page.history.length === 0 && <p class="empty">Nothing is logged yet.</p>}
-        <ol class="rows history">
-          {page.history.map((line, index) => (
-            <li class="row" key={index}>
-              <p class="muted num">
-                {line.by.name}
-                {line.by.bot ? " (agent)" : ""} · <time dateTime={line.at} title={line.at}>{ago(line.at, now)}</time>
-              </p>
-              <p class="history-text">{line.text}</p>
-            </li>
-          ))}
-        </ol>
-      </section>
+      {page.runs.length === 0 ? (
+        <EmptyPanel title="Runs" text="no CI run yet" />
+      ) : (
+        <section class="panel">
+          <h3>Runs</h3>
+          <ul class="rows">
+            {page.runs.map((run) => (
+              <li class="row" key={run.ref.id}>
+                <div class="row-head">
+                  <span class="row-title">{run.pipeline}</span>
+                  <span class={`tag run-${run.status}`}>{run.status}</span>
+                  <span class="muted num">
+                    {run.sha.slice(0, 9)}
+                    {run.runner ? ` · ${run.runner}` : ""}
+                    {run.startedAt ? ` · started ${ago(run.startedAt, now)}` : ""}
+                  </span>
+                </div>
+                {run.progress.state === "finished" ? <p class="muted num">{run.progress.words}</p> : <ProgressBar progress={run.progress} />}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
-      <section class="panel">
-        <h3>Runs</h3>
-        {page.runs.length === 0 && <p class="empty">No CI run yet.</p>}
-        <ul class="rows">
-          {page.runs.map((run) => (
-            <li class="row" key={run.ref.id}>
-              <div class="row-head">
-                <span class="row-title">{run.pipeline}</span>
-                <span class={`tag run-${run.status}`}>{run.status}</span>
-                <span class="muted num">
-                  {run.sha.slice(0, 9)}
-                  {run.runner ? ` · ${run.runner}` : ""}
-                  {run.startedAt ? ` · started ${ago(run.startedAt, now)}` : ""}
-                </span>
-              </div>
-              {run.progress.state === "finished" ? <p class="muted num">{run.progress.words}</p> : <ProgressBar progress={run.progress} />}
-            </li>
-          ))}
-        </ul>
-      </section>
+      <Chat itemKey={item.key} now={now} picked={chatWith} setPicked={setChatWith} finished={finished} />
+
+      {/* History: what you answered, and the Item's log. */}
+      {page.answers.length > 0 && (
+        <section class="panel">
+          <h3>Your answers</h3>
+          <ul class="rows">
+            {page.answers.map((answer) => (
+              <li class="row">
+                {answer.question && <p class="muted">{answer.question}</p>}
+                <p>{answer.answer}</p>
+                <p class="muted num">{ago(answer.at, now)}</p>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      {page.history.length === 0 ? (
+        <EmptyPanel title="Log" text="nothing yet" />
+      ) : (
+        <section class="panel">
+          <h3>Log</h3>
+          <ol class="rows history">
+            {page.history.map((line, index) => (
+              <li class="row" key={index}>
+                <p class="muted num">
+                  {line.by.name}
+                  {line.by.bot ? " (agent)" : ""} · <time dateTime={line.at} title={line.at}>{ago(line.at, now)}</time>
+                </p>
+                <p class="history-text">{line.text}</p>
+              </li>
+            ))}
+          </ol>
+        </section>
+      )}
     </article>
   );
 }
