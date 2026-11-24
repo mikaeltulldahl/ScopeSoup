@@ -1,7 +1,8 @@
 import { h, render } from "preact";
 import type { ComponentChildren } from "preact";
-import { useEffect, useRef, useState } from "preact/hooks";
+import { useCallback, useState } from "preact/hooks";
 import { fetchBoard, post, usePerson, useView } from "./api.ts";
+import { Dialog } from "./Dialog.tsx";
 import { PersonPicker } from "./PersonPicker.tsx";
 import { ProjectHeader, useProjectTab } from "./ProjectHeader.tsx";
 import { History } from "./History.tsx";
@@ -22,38 +23,13 @@ import "./styles.css";
 
 /** The item as a dialog over the view it was opened from. Esc, the close button and the backdrop close it. */
 function ItemDialog({ closeHref, children }: { closeHref: string; children: ComponentChildren }) {
-  const panel = useRef<HTMLDivElement>(null);
-  const close = () => {
+  const close = useCallback(() => {
     location.hash = closeHref;
-  };
-  useEffect(() => {
-    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    panel.current?.focus({ preventScroll: true });
-    document.body.classList.add("dialog-open");
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") location.hash = closeHref;
-    };
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("keydown", onKey);
-      document.body.classList.remove("dialog-open");
-      opener?.focus({ preventScroll: true });
-    };
   }, [closeHref]);
   return (
-    <div
-      class="dialog-backdrop"
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget) close();
-      }}
-    >
-      <div class="dialog" role="dialog" aria-modal="true" aria-label="Item" tabIndex={-1} ref={panel}>
-        <button type="button" class="dialog-close" aria-label="Close" onClick={close}>
-          ×
-        </button>
-        {children}
-      </div>
-    </div>
+    <Dialog label="Item" onClose={close}>
+      {children}
+    </Dialog>
   );
 }
 
