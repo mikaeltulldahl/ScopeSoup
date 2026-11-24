@@ -13,7 +13,7 @@ import { itemHref } from "./route.ts";
 import { itemNoun, words } from "./theme.ts";
 import { useTheme } from "./useTheme.ts";
 import { postItem } from "./api.ts";
-import { laneMutedBy, laneSwitch, switchesAt, switchPath, switchTitle, SWITCH_WORDS } from "./switches.ts";
+import { laneMutedBy, laneSwitch, switchPath, switchTitle, SWITCH_WORDS } from "./switches.ts";
 import type { SwitchName, SwitchState } from "./switches.ts";
 
 const STORE_KEY = "scopesoup.closedLanes";
@@ -35,11 +35,9 @@ interface LaneControl {
   states: Record<SwitchName, SwitchState>;
   busy: boolean;
   onSwitch: (path: ControlPath) => void;
-  /** Some lane has a switch at this level: each lane has the row, empty where it has none. */
-  row: boolean;
 }
 
-function Lane({ lane, board, closed, toggle, onAdd, control }: { lane: LaneView; board: BoardView; closed: boolean; toggle: () => void; onAdd?: () => void; control: LaneControl }) {
+function Lane({ lane, board, closed, toggle, control }: { lane: LaneView; board: BoardView; closed: boolean; toggle: () => void; control: LaneControl }) {
   // Checking, items are drawn as their batches: the box is what moves.
   const batches = lane.lane === "checking" ? board.queue.batches : [];
   const boxed = new Set(batches.flatMap((batch) => batch.members.flatMap((member) => member.items.map((item) => item.key))));
@@ -50,47 +48,39 @@ function Lane({ lane, board, closed, toggle, onAdd, control }: { lane: LaneView;
   const { own, mutedBy, states } = control;
   const paused = mutedBy !== null && states[mutedBy] !== "started";
   const ownState = own ? states[own] : null;
+  // Checking counts its batches (the boxes), and any card not in one.
+  const count = lane.lane === "checking" ? batches.length + cards.length : lane.total;
   return (
     <section class={`lane lane-${lane.lane}${closed ? " lane-closed" : ""}${paused ? " lane-paused" : ""}`}>
+      {/* The switch sits on the title row, after the count: a lane without one has no extra row, so the columns line up. */}
       <h2>
         <button type="button" class="lane-toggle" aria-expanded={!closed} onClick={toggle}>
           <span class="chevron" aria-hidden="true" />
           {laneIcon(lane.lane)}{laneLabel(lane.lane)}
-          <span class="count num">{lane.total}</span>
+          <span class="count num">{count}</span>
         </button>
-
-        {onAdd && (
-          <button type="button" class="lane-add" title={`New ${words().itemOne}`} aria-label={`New ${words().itemOne}`} onClick={onAdd}>
-            +
+        {/* On its own lane the Pause / Resume button says it all; only a stopped switch is also named. Checking names the merge queue. */}
+        {paused && mutedBy && !(own && states[mutedBy] === "paused") && (
+          <span class="lane-state" title={switchTitle(mutedBy, states[mutedBy])}>
+            {own ? states[mutedBy] : `${SWITCH_WORDS[mutedBy]} ${states[mutedBy]}`}
+          </span>
+        )}
+        {own && ownState && (
+          <button
+            type="button"
+            class={`lane-switch${ownState === "started" ? "" : " primary"}`}
+            id={`switch-${own}`}
+            disabled={control.busy}
+            title={switchTitle(own, ownState)}
+            aria-label={`${ownState === "started" ? "Pause" : "Resume"} ${SWITCH_WORDS[own].toLowerCase()}`}
+            onClick={() => control.onSwitch(switchPath(own, ownState))}
+          >
+            {ownState === "started" ? "Pause" : "Resume"}
           </button>
         )}
       </h2>
-      {/* The switch's row under the title; lanes without one keep an empty row on a wide screen, so the columns line up. */}
-      {control.row && (
-        <div class={`lane-control${own || paused ? "" : " lane-control-empty"}`}>
-          {/* On its own lane the Pause / Resume button says it all; only a stopped switch is also named. Checking names the merge queue. */}
-          {paused && mutedBy && !(own && states[mutedBy] === "paused") && (
-            <span class="lane-state" title={switchTitle(mutedBy, states[mutedBy])}>
-              {own ? states[mutedBy] : `${SWITCH_WORDS[mutedBy]} ${states[mutedBy]}`}
-            </span>
-          )}
-          {own && ownState && (
-            <button
-              type="button"
-              class={`lane-switch${ownState === "started" ? "" : " primary"}`}
-              id={`switch-${own}`}
-              disabled={control.busy}
-              title={switchTitle(own, ownState)}
-              aria-label={`${ownState === "started" ? "Pause" : "Resume"} ${SWITCH_WORDS[own].toLowerCase()}`}
-              onClick={() => control.onSwitch(switchPath(own, ownState))}
-            >
-              {ownState === "started" ? "Pause" : "Resume"}
-            </button>
-          )}
-        </div>
-      )}
       <div class="lane-body">
-        {lane.total === 0 && <p class="empty">{words().emptyLane}</p>}
+        {count === 0 && <p class="empty">{words().emptyLane}</p>}
         {batches.map((batch) => (
           <BatchMini key={batch.key} batch={batch} />
         ))}
@@ -141,7 +131,7 @@ export function Overview({ board, busy, onSwitch }: { board: BoardView; busy: bo
   const [dirty, setDirty] = useState(false);
   const level = board.status.level;
   const states = { triage: board.status.triage, implement: board.status.implement, review: board.status.review, mergeQueue: board.status.mergeQueue };
-  const control = (lane: string): LaneControl => ({ own: laneSwitch(lane, level), mutedBy: laneMutedBy(lane, level), states, busy, onSwitch, row: switchesAt(level).length > 0 });
+  const control = (lane: string): LaneControl => ({ own: laneSwitch(lane, level), mutedBy: laneMutedBy(lane, level), states, busy, onSwitch });
   const close = () => {
     setWriting(false);
     setDirty(false);
@@ -216,7 +206,7 @@ export function Overview({ board, busy, onSwitch }: { board: BoardView; busy: bo
       </section>
       <div class="lanes">
         {board.lanes.map((lane) => (
-          <Lane key={lane.lane} lane={lane} board={board} closed={closed.includes(lane.lane)} toggle={() => toggle(lane.lane)} control={control(lane.lane)} onAdd={lane.lane === "backlog" && board.canWrite ? () => setWriting(true) : undefined} />
+          <Lane key={lane.lane} lane={lane} board={board} closed={closed.includes(lane.lane)} toggle={() => toggle(lane.lane)} control={control(lane.lane)} />
         ))}
       </div>
     </>

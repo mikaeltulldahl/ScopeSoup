@@ -141,7 +141,9 @@ a.status-item { text-decoration: underline; text-decoration-color: var(--line); 
 .card:hover { border-color: var(--accent); }
 .card-head { display: flex; gap: 7px; align-items: baseline; min-width: 0; }
 .card-head > .num { flex: none; white-space: nowrap; }
-.card-title { font-weight: 600; font-size: 0.92rem; min-width: 0; }
+.card-title { font-weight: 600; font-size: 0.92rem; min-width: 0; flex: 1; }
+.mention { display: inline-block; padding: 0 6px; border-radius: 999px; border: 1px solid var(--line); background: var(--sunken); color: var(--text); font-weight: 600; line-height: 1.35; }
+.mention-mine { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
 .reason { font-size: 0.84rem; color: var(--muted); }
 .tone-moving { border-left-color: var(--moving); }
 .tone-yours { border-left-color: var(--yours); }
@@ -162,25 +164,23 @@ a.status-item { text-decoration: underline; text-decoration-color: var(--line); 
 /* --- Lanes: stacked on a phone, columns when there is room --- */
 .lanes { display: grid; gap: var(--gap); grid-template-columns: minmax(0, 1fr); align-items: start; }
 .lane { min-width: 0; }
-.lane h2 { display: flex; align-items: center; gap: 4px; }
-.lane-add { flex: none; width: 34px; padding: 0; font-size: 1.1rem; line-height: 1; }
-.lane-control { display: flex; align-items: center; gap: 6px; min-height: 30px; margin: 0 0 6px; padding: 0 4px; }
-.lane-control-empty { display: none; }
-.lane-state { font-size: 0.8rem; font-weight: 650; color: var(--muted); }
-.lane-switch { flex: none; margin-left: auto; min-height: 28px; padding: 2px 9px; font-size: 0.78rem; }
+.lane h2 { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
+.lane-state { flex: none; font-size: 0.74rem; font-weight: 650; color: var(--muted); text-transform: none; letter-spacing: 0; }
+.lane-switch { flex: none; min-height: 26px; padding: 1px 8px; font-size: 0.74rem; text-transform: none; letter-spacing: 0; }
 .lane-paused > h2 .lane-toggle { opacity: 0.55; }
 .lane-paused .lane-body { opacity: 0.8; }
 .lane-toggle { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; padding: 6px 4px; min-height: 36px; border: 0; background: none; color: inherit; font: inherit; letter-spacing: inherit; text-transform: inherit; text-align: left; }
 .lane-toggle:hover:not(:disabled) { background: none; }
-@media (min-width: 720px) { .lane-control-empty { display: flex; } }
 .lane-toggle .count { margin-left: auto; }
 .chevron { width: 7px; height: 7px; border-right: 2px solid currentColor; border-bottom: 2px solid currentColor; transform: rotate(45deg); transition: transform 0.15s; margin: 0 3px 3px 2px; }
 .lane-closed .chevron { transform: rotate(-45deg); margin-bottom: 0; }
-.lane-body { display: grid; gap: 8px; grid-template-columns: minmax(0, 1fr); }
+.lane-body { display: grid; gap: 8px; grid-template-columns: minmax(0, 1fr); align-content: start; }
 .lane-closed .lane-body { display: none; }
 
 @media (min-width: 720px) {
   .lanes { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  /* Title rows share one height across a row of lanes (a long title that wraps), so the cards start level. */
+  .lane { display: grid; grid-row: span 2; grid-template-rows: subgrid; row-gap: 0; align-self: stretch; align-content: start; }
   .lane-closed .lane-body { display: grid; }
   .lane-toggle { cursor: default; pointer-events: none; }
   .chevron { display: none; }
@@ -272,6 +272,11 @@ a.member:hover { border-color: var(--accent); }
 .vote { display: inline-flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .vote-off { font-size: 0.75rem; opacity: 0.75; }
 .vote-button { font-size: 0.8rem; padding: 2px 9px; min-height: 28px; }
+.vote-small { flex: none; flex-direction: column; flex-wrap: nowrap; gap: 2px; align-self: flex-start; }
+.vote-small .vote-button { width: 24px; min-height: 18px; padding: 0; font-size: 0.6rem; line-height: 1; color: var(--muted); }
+.vote-small .vote-button:hover:not(:disabled) { color: var(--accent); border-color: var(--accent); }
+.vote-small .vote-button:disabled { opacity: 0.35; cursor: default; }
+.vote-problem { font-size: 0.75rem; font-weight: 700; text-align: center; color: var(--blocked); }
 .reason-big { font-size: 0.95rem; }
 .panel { display: grid; gap: 8px; padding: 10px 12px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); min-width: 0; }
 .panel h3 { font-size: 0.78rem; letter-spacing: 0.05em; text-transform: uppercase; color: var(--muted); }
