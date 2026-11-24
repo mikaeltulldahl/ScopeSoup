@@ -35,7 +35,7 @@ A server program with a web board that runs a project's work loop with coding ag
 - **Agent-CLI specifics live in `src/orchestrator/providers/<name>/`** behind `AgentProvider` (`src/orchestrator/agent.ts`); a test fails if anything else names `claude` or its event format.
 - **What Scope Soup creates outside its config folder goes on the manifest** (`recordInManifest`, `src/config/manifest.ts`), so offboarding can list and remove it.
 - **Commands that read this machine's config get its path from `findConfig`** (`src/config/locate.ts`: `--config`, `SCOPESOUP_CONFIG`, `./scopesoup.config.json`, then the list in Scope Soup's home matched to the current repository); never resolve the config path anywhere else.
-- **Releases are cut with `pnpm release` on a clean tree**: it checks the exact commit it would tag and prints the tag commands; never tag a commit by hand that the check did not pass on, and never put a versioned install path in a committed file.
+- **Releases are cut with `pnpm release` on a clean tree**: it checks the exact commit and builds the zip and the .exe; `pnpm release:publish` tags that commit and publishes it, only after a person said yes. Never tag a commit by hand that the check did not pass on, and never put a versioned install path in a committed file.
 
 ## Work on this project is run with Scope Soup
 
