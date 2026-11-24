@@ -6,7 +6,6 @@ import { useState } from "preact/hooks";
 import type { BoardView, ControlPath, LaneView } from "./api.ts";
 import { BatchMini } from "./Batch.tsx";
 import { Card } from "./Card.tsx";
-import { Resources } from "./Resources.tsx";
 import { ItemForm } from "./ItemForm.tsx";
 import { laneIcon, laneLabel } from "./format.ts";
 import { itemHref } from "./route.ts";
@@ -216,7 +215,6 @@ export function Overview({ board, busy, onSwitch }: { board: BoardView; busy: bo
           </div>
         )}
       </section>
-      {board.resources && <Resources resources={board.resources} />}
       <div class="lanes">
         {board.lanes.map((lane) => (
           <Lane key={lane.lane} lane={lane} board={board} closed={closed.includes(lane.lane)} toggle={() => toggle(lane.lane)} control={control(lane.lane)} onAdd={lane.lane === "backlog" && board.canWrite && !writing ? openFromLane : undefined} />

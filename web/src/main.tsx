@@ -148,7 +148,7 @@ function App() {
       <VersionFooter />
       {current.view === "item" && (
         <ItemDialog closeHref={belowHash}>
-          <Item key={current.key} refKey={current.key} />
+          <Item key={current.key} refKey={current.key} resources={board?.resources} />
         </ItemDialog>
       )}
     </>
