@@ -17,6 +17,7 @@ import { openStore } from "../store/store.ts";
 import type { Store } from "../store/store.ts";
 import { compareItems, readyItems } from "./candidates.ts";
 import { backoffMs } from "./cycle.ts";
+import { followUpMark, isFollowUp } from "./followUp.ts";
 import type { MergeQueue } from "./mergeQueue.ts";
 import { createLoop } from "./loop.ts";
 import { workspaceKey } from "./paths.ts";
@@ -1187,6 +1188,28 @@ test("an approval with should findings files one follow-up Item naming them and 
   assert.deepEqual([w.job("1")?.merge, roles(w).at(-1)], [true, "implement"]);
 });
 
+test("the review of a follow-up Item files no follow-up of its own: its should finding stays in its review line, and the merge goes on", async () => {
+  // As in the trial: A-14 was filed for a should finding of A-9, which itself followed up A-3.
+  const body = `The review of #9 ("Item 9") approved its change at 1234567 and said this finding should still change:
+
+- Add a test.
+
+${followUpMark(item("9"), "1".repeat(40))}`;
+  const w = world(config({ rules: STAGE1, settings: { persistence: { value: 4, reason: "test" } } }), [item("1", { body })]);
+  w.store.addUsageSample(usage(0.1, 0.1));
+  w.runner.paths = ["src/a.ts"];
+  await w.run();
+  await step(w, "1", "succeeded", TRIAGE_OK);
+  await step(w, "1", "succeeded", IMPLEMENT_OK);
+  await step(w, "1", "succeeded", { verdict: "approve", findings: [{ severity: "should", file: "src/a.ts", text: "Name the helper after what it returns." }] });
+  assert.deepEqual(w.followUps, []);
+  assert.deepEqual(w.reasons("orchestrator.follow_up_filed"), []);
+  assert.match(w.reasons("orchestrator.follow_up_skipped")[0] ?? "", /^The review approved with 1 `should` finding\(s\), but 1 is itself a follow-up, so no further follow-up Item is filed; the finding\(s\) stay in its review line, and the merge goes on: src\/a\.ts: Name the helper/);
+  assert.ok(w.calls.some((call) => call.startsWith("appendLog 1 review") && call.includes("[should] src/a.ts: Name the helper after what it returns.")));
+  assert.deepEqual([w.job("1")?.merge, roles(w).at(-1)], [true, "implement"]);
+  assert.equal(isFollowUp(item("1")), false);
+});
+
 test("a follow-up the host refuses is an event; the merge goes on, and an approval with no should finding files nothing", async () => {
   const w = await toReview(["src/a.ts"]);
   w.followUpResult = "throw";
@@ -1350,7 +1373,7 @@ function logCalls(w: World): string[] {
   return w.calls.filter((call) => call.startsWith("appendLog"));
 }
 
-test("a branch with no commits over main is never reviewed or merged: the item goes back to implement, and the event says why", async () => {
+test("a first build with nothing committed is \"nothing to change\" for a person; a branch with no commits over main is never reviewed or merged", async () => {
   const w = world(config(QUEUE), [item("1")]);
   const queue = fakeQueue();
   w.queue = queue;
@@ -1361,11 +1384,18 @@ test("a branch with no commits over main is never reviewed or merged: the item g
   await w.run();
   await step(w, "1", "succeeded", TRIAGE_OK);
 
-  // Implemented with nothing committed: the step failed and is retried; no review starts.
-  await step(w, "1", "succeeded", IMPLEMENT_OK);
+  // Implemented with nothing committed on the first build: nothing to change, for a person to close; no retry and no review.
+  await step(w, "1", "succeeded", { done: true, summary: "Item 1 is already done on main." });
   assert.deepEqual(roles(), ["triage", "implement"]);
-  assert.match(w.reasons("orchestrator.retry_scheduled")[0] ?? "", /reported the work done, but: The branch scopesoup\/1 has no commits over main/);
+  assert.equal(w.job("1")?.parked?.as, "escalated");
+  assert.equal(w.job("1")?.failures, 0);
+  assert.deepEqual(w.reasons("orchestrator.retry_scheduled"), []);
+  assert.match(w.reasons("orchestrator.escalated")[0] ?? "", /^Nothing to change: the implementer reported the work done, but The branch scopesoup\/1 has no commits over main, .* It said: Item 1 is already done on main\. If that is right, close the Item; answer here to have it try again\.$/);
   w.clock.ms += 10_000;
+  await w.run();
+  assert.deepEqual(roles(), ["triage", "implement"], "it waits for a person");
+  // A person answers instead of closing it: the implement step runs again.
+  assert.ok(releaseJob(w.store, ref("1"), "Ada", new Date(w.clock.ms).toISOString(), "Try again."));
   await w.run();
   assert.deepEqual(roles(), ["triage", "implement", "implement"]);
 
