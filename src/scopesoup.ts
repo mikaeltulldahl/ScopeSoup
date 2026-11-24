@@ -13,6 +13,8 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 export const COMMANDS: Readonly<Record<string, string>> = {
   start: "src/main.ts",
   item: "src/item.ts",
+  open: "src/open.ts",
+  shortcut: "src/shortcut.ts",
   "config:check": "src/config/check.ts",
   "config:register": "src/config/register.ts",
   "config:setup": "src/config/setupScript.ts",
@@ -25,11 +27,13 @@ const USAGE = [
   "usage: scopesoup <command> [...]",
   "  start           start Scope Soup (the board on http://127.0.0.1:4310)",
   "  item ...        file, claim, hand back and list Items",
+  "  open            start Scope Soup for the project in the background if it is not running, and open the board in the browser",
+  "  shortcut        make a Start menu shortcut (--desktop, --startup too) that does `open` (Windows)",
   "  config:check    check this machine's scopesoup.config.json",
   "  config:register put a project's scopesoup.config.json on this machine's list, so commands run in its repository find it",
   "  version         print the version that runs",
   "  setup-home      make this release Scope Soup's current version and write the launcher (once, after unpacking)",
-  `  also: ${Object.keys(COMMANDS).filter((name) => !["start", "item", "config:check", "config:register"].includes(name)).join(", ")}`,
+  `  also: ${Object.keys(COMMANDS).filter((name) => !["start", "item", "open", "shortcut", "config:check", "config:register"].includes(name)).join(", ")}`,
 ].join("\n");
 
 async function main(args: string[]): Promise<void> {

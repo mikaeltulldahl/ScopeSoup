@@ -15,6 +15,8 @@
     "start": "node --disable-warning=ExperimentalWarning src/main.ts",
     "demo": "node --disable-warning=ExperimentalWarning src/server/demo.ts",
     "item": "node --disable-warning=ExperimentalWarning src/item.ts",
+    "open": "node --disable-warning=ExperimentalWarning src/open.ts",
+    "shortcut": "node --disable-warning=ExperimentalWarning src/shortcut.ts",
     "offboard": "node --disable-warning=ExperimentalWarning src/offboard/cli.ts",
     "release": "node --disable-warning=ExperimentalWarning src/release.ts",
     "standin": "node --disable-warning=ExperimentalWarning src/standin.ts",

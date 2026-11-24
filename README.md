@@ -78,7 +78,7 @@ To put a project under Scope Soup, use the Claude Code plugin in a session in th
 /scopesoup:scopesoup-onboard
 ```
 
-It asks three things, shows one summary and acts on one yes. The project starts at level 0, where nothing runs. You raise the level on the board's Settings page. To join a project that already runs Scope Soup, run the same skill in your own clone. See [`docs/ONBOARDING.md`](docs/ONBOARDING.md) and [`docs/RUNNING.md`](docs/RUNNING.md). Leaving is as easy: `/scopesoup:scopesoup-offboard` lists what it created and removes what you do not keep.
+It asks three things, shows one summary and acts on one yes (and can add a Start menu shortcut, "Scope Soup – <project>", that starts Scope Soup and opens the board; by hand: `scopesoup shortcut`, `scopesoup open`). The project starts at level 0, where nothing runs. You raise the level on the board's Settings page. To join a project that already runs Scope Soup, run the same skill in your own clone. See [`docs/ONBOARDING.md`](docs/ONBOARDING.md) and [`docs/RUNNING.md`](docs/RUNNING.md). Leaving is as easy: `/scopesoup:scopesoup-offboard` lists what it created and removes what you do not keep.
 
 ## Where the data lives
 

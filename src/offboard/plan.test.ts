@@ -111,3 +111,14 @@ test("a config on this machine's list is taken off it, first in the machine grou
   assert.match(planText(offboardPlan(found({ registered }))).join("\n"), /on this machine's list of configs, \/opt\/configs\.json/);
   assert.equal(offboardPlan(found()).groups.find((group) => group.group === "machine")!.entries.some((entry) => entry.key === "registered"), false);
 });
+
+describe("shortcuts on the manifest", () => {
+  test("a shortcut file is listed on this machine and deleted by default", () => {
+    const lnk = "C:/Users/x/Start Menu/Programs/Scope Soup – shop.lnk";
+    const folders = [...found().folders, { path: lnk, what: "a Scope Soup shortcut (Start menu) that starts Scope Soup and opens the board", exists: true }];
+    const machine = offboardPlan(found({ folders })).groups.find((group) => group.group === "machine")!;
+    const entry = machine.entries.find((each) => each.key === `folder ${lnk}`);
+    assert.equal(entry?.default, "remove");
+    assert.deepEqual(entry?.action, { do: "delete-path", path: lnk });
+  });
+});
