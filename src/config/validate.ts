@@ -4,9 +4,9 @@
 import { isAbsolute, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { SessionRole } from "../model/types.ts";
-import { defaultClaude, defaultRoles, defaultSettings, expandScopesoup, MACHINE_NAME } from "./defaults.ts";
-import type { Level, ProjectConfig, RoleConfig, SettingName, Settings } from "./types.ts";
-import { LEVELS, ROLES } from "./types.ts";
+import { COPILOT_DEFAULT_AUTO_TIER, COPILOT_DEFAULT_MODEL, defaultClaude, defaultCopilot, defaultRoles, defaultSettings, expandScopesoup, MACHINE_NAME } from "./defaults.ts";
+import type { Level, ProjectConfig, ProviderName, RoleConfig, SettingName, Settings } from "./types.ts";
+import { LEVELS, PROVIDER_NAMES, ROLES } from "./types.ts";
 import { CHECK_ROLES, withCheckRules } from "./checkRule.ts";
 import { proposeCheckCommand } from "./mergeQueue.ts";
 import { migrateConfig } from "./migrate.ts";
@@ -56,7 +56,7 @@ const LEGACY_SETTINGS = ["reserveFiveHour", "reserveSevenDay"];
 const TOP_KEYS = [
   "workspaces", "remoteUrl", "checkCommand", "rerunFilesCommand", "setupCommand", "setupWatch",
   "version", "project", "repoPath", "ownClone", "mainBranch", "remote", "realPaths", "level", "keepAwake", "machineName", "workspacesDir",
-  "streamsDir", "promptsDir", "bugLabels", "claude", "settings", "roles", "host", "mergeQueue", "resources", "sharedResources",
+  "streamsDir", "promptsDir", "bugLabels", "claude", "copilot", "settings", "roles", "host", "mergeQueue", "resources", "sharedResources",
 ];
 
 function isObj(value: unknown): value is Obj {
@@ -207,6 +207,19 @@ export function validateConfig(given: unknown, baseDir: string): ConfigResult {
     }
   }
 
+  // --- copilot ---
+  const copilot = defaultCopilot();
+  if (raw.copilot !== undefined) {
+    if (!isObj(raw.copilot)) err("copilot must be an object.");
+    else {
+      unknownKeys(raw.copilot, Object.keys(copilot), "copilot");
+      copilot.path = str(raw.copilot, "path", "copilot.", copilot.path);
+      if (/[\\/]/.test(copilot.path)) copilot.path = path(copilot.path);
+      copilot.prefixArgs = strList(raw.copilot, "prefixArgs", "copilot.", copilot.prefixArgs);
+      copilot.extraArgs = strList(raw.copilot, "extraArgs", "copilot.", copilot.extraArgs);
+    }
+  }
+
   // --- settings ---
   const settings: Settings = defaultSettings();
   if (raw.settings !== undefined) {
@@ -247,9 +260,17 @@ export function validateConfig(given: unknown, baseDir: string): ConfigResult {
           err(`${where} must be an object.`);
           continue;
         }
-        unknownKeys(given, ["model", "maxTurns", "allowedTools", "permissionMode"], where);
+        unknownKeys(given, ["provider", "model", "autoTier", "maxTurns", "allowedTools", "permissionMode"], where);
         const target = roles[role];
-        target.model = str(given, "model", `${where}.`, target.model);
+        const provider = given.provider;
+        if (provider !== undefined && !PROVIDER_NAMES.includes(provider as ProviderName)) {
+          err(`${where}.provider must be one of ${PROVIDER_NAMES.map((name) => `"${name}"`).join(", ")}.`);
+        } else if (provider !== undefined) target.provider = provider as ProviderName;
+        // The default models are Claude's; a Copilot role that names none runs on Fusion, with its Auto routing profile.
+        const copilotRole = target.provider === "copilot";
+        target.model = str(given, "model", `${where}.`, copilotRole ? COPILOT_DEFAULT_MODEL : target.model);
+        if (given.autoTier !== undefined) target.autoTier = str(given, "autoTier", `${where}.`, COPILOT_DEFAULT_AUTO_TIER);
+        else if (copilotRole) target.autoTier = COPILOT_DEFAULT_AUTO_TIER;
         if (given.maxTurns !== undefined) target.maxTurns = num(given.maxTurns, `${where}.maxTurns`, 1, 1000, true, target.maxTurns);
         target.allowedTools = strList(given, "allowedTools", `${where}.`, target.allowedTools);
         const mode = str(given, "permissionMode", `${where}.`, target.permissionMode);
@@ -318,7 +339,7 @@ export function validateConfig(given: unknown, baseDir: string): ConfigResult {
       ...(setupCommand === undefined ? {} : { setupCommand }), ...(setupWatch === undefined ? {} : { setupWatch }),
       ...(mergeQueue === undefined ? {} : { mergeQueue }),
       ...(resources.length > 0 ? { resources } : {}),
-      claude, settings, roles,
+      claude, copilot, settings, roles,
     },
   };
 }

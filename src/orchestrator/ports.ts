@@ -43,6 +43,9 @@ export interface SessionResultRecord {
   malformedLines?: number;
   /** Commands (or tools) the permission check refused during the run. */
   denied?: string[];
+  /** Premium requests and AI credits the agent's session used so far, when its provider says. */
+  premiumRequests?: number;
+  aiCredits?: number;
 }
 
 export interface AgentRunner {

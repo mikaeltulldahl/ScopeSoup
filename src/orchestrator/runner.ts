@@ -186,6 +186,8 @@ export function createRunner(deps: RunnerDeps): Runner {
     if (summary.result?.turns !== undefined) record.turns = summary.result.turns;
     if (summary.result?.subtype !== undefined) record.subtype = summary.result.subtype;
     if (summary.result?.denied) record.denied = summary.result.denied;
+    if (summary.result?.premiumRequests !== undefined) record.premiumRequests = summary.result.premiumRequests;
+    if (summary.result?.aiCredits !== undefined) record.aiCredits = summary.result.aiCredits;
 
     let status: SessionStatus;
     let endReason: string;
@@ -347,15 +349,21 @@ export function createRunner(deps: RunnerDeps): Runner {
     if (provider.commandLimit !== "allowlist") {
       return stillborn(request, `Refused: the agent provider ${provider.name} cannot hold a session to the role's allowedTools (it limits commands with a ${provider.commandLimit} only), and whether that is enough is a person's decision.`);
     }
+    const refusal = provider.refuses?.(config, request.role);
+    if (refusal) return stillborn(request, refusal);
+    const id = newId();
+    const streamPath = join(config.streamsDir, `${id}.ndjson`);
     let cwd: string;
     let command: Launch;
     let hasSchema: boolean;
+    let schema: string | undefined;
     try {
       if (request.chat && !(request.resume && request.message)) throw new Error("a chat turn needs the session to resume and a person's message");
       const role = loadRole(config.promptsDir, request.role);
       // A chat turn keeps the role's model, permission mode and tools but not its answer schema: the reply is free text.
       const spec = request.chat ? { role: role.role, template: role.template } : role;
       hasSchema = spec.schema !== undefined;
+      schema = spec.schema;
       cwd = await prepareWorkspace(config, request.subject, request.workspace, request.branch);
       const base = await freshBase(config, cwd);
       // A fresh worktree gets back the edits the item's last session left uncommitted; the session is told.
@@ -374,7 +382,7 @@ export function createRunner(deps: RunnerDeps): Runner {
       const rendered = request.resume && request.message ? request.message : renderTemplate(spec.template, { setup: setupPromptLine(config), decisions: NO_DECISIONS, recheck: "", ...request.vars, base });
       const prompt = request.message && rendered !== request.message ? `${rendered}\n\n${request.message}` : rendered;
       command = provider.launch({
-        config, role: spec.role, prompt: restored ? `${prompt}\n\n${restored}\n` : prompt, partial: request.chat === true, env: { ...(deps.env ?? process.env) },
+        config, role: spec.role, prompt: restored ? `${prompt}\n\n${restored}\n` : prompt, partial: request.chat === true, env: { ...(deps.env ?? process.env) }, streamPath,
         ...(spec.schema ? { schema: spec.schema } : {}), ...(request.resume ? { resume: request.resume } : {}),
       });
       mkdirSync(config.streamsDir, { recursive: true });
@@ -383,9 +391,7 @@ export function createRunner(deps: RunnerDeps): Runner {
       return stillborn(request, error instanceof PathRefused ? `Refused: ${message}` : error instanceof NoFreeClone ? message : `Could not prepare the session: ${message}`);
     }
 
-    const id = newId();
     const startedMs = now();
-    const streamPath = join(config.streamsDir, `${id}.ndjson`);
     const session: Session = {
       ref: { host: SESSION_HOST, kind: "session", id },
       role: request.role,
@@ -421,7 +427,7 @@ export function createRunner(deps: RunnerDeps): Runner {
 
     const entry: Live = {
       session, child, provider, env, workspace: request.workspace, hasSchema, startedMs,
-      parser: provider.reader(() => iso(now()), cwd),
+      parser: provider.reader(() => iso(now()), cwd, schema),
       file: createWriteStream(streamPath, { flags: "a" }),
       lastEventMs: startedMs, lastWriteMs: 0, stderrTail: "", over: false, done, settle,
     };

@@ -30,7 +30,7 @@ export function streamTokens(path: string | undefined, provider?: string): numbe
   } catch {
     return undefined;
   }
-  return providerNamed(provider).tokensIn(text);
+  return providerNamed(provider).tokensIn(text, path);
 }
 
 export function buildUsageView(store: Store, sessions: readonly Session[], span: { span: string; ms: number }, now: Date): UsageView {

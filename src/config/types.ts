@@ -44,8 +44,17 @@ export interface Settings {
 
 export type SettingName = keyof Settings;
 
+/** The agent CLIs a role can run on (`src/orchestrator/providers/`). */
+export const PROVIDER_NAMES = ["claude", "copilot"] as const;
+export type ProviderName = (typeof PROVIDER_NAMES)[number];
+
 export interface RoleConfig {
+  /** The agent CLI the role's sessions run on. Absent: "claude". */
+  provider?: ProviderName;
+  /** The model, in the words of the role's provider. */
   model: string;
+  /** Copilot only: the Auto routing profile (`--auto-tier`) when the model is "fusion" or "auto". Absent there: "balance". */
+  autoTier?: string;
   maxTurns: number;
   /** Permission rules passed as `--allowedTools`. */
   allowedTools: string[];
@@ -63,6 +72,15 @@ export interface ClaudeConfig {
   promptVia: "stdin" | "arg";
   /** Remove ANTHROPIC_API_KEY from the child's environment so sessions draw from the subscription. */
   dropApiKeyEnv: boolean;
+}
+
+export interface CopilotConfig {
+  /** The executable. Spawned directly, never through a shell (on Windows: copilot.exe, not a .cmd). */
+  path: string;
+  /** Arguments placed before Scope Soup's own, for running the CLI through `node <script>`. */
+  prefixArgs: string[];
+  /** Arguments placed after Scope Soup's own. */
+  extraArgs: string[];
 }
 
 /**
@@ -269,6 +287,8 @@ export interface ProjectConfig {
   /** This machine's resources (`resources`) and the shared ones (`sharedResources`), in that order. Absent: none. */
   resources?: ResourceConfig[];
   claude: ClaudeConfig;
+  /** The Copilot CLI, for roles whose provider is "copilot". Absent: `defaultCopilot()`. */
+  copilot?: CopilotConfig;
   settings: Settings;
   roles: Record<SessionRole, RoleConfig>;
 }
