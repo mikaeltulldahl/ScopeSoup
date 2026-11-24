@@ -1010,7 +1010,7 @@ function Body({ page, reload }: { page: ItemPage; reload: () => void }) {
       {page.assumptions.length > 0 && (
         <section class="panel">
           <h3>Decided by the implementor</h3>
-          <p class="muted">Cheap to change later, so the work went on. Accept each, or overturn it with your decision.</p>
+          <p class="muted">Cheap to change later, so the work went on. Pick Accept, or Overturn with your decision, for each; nothing is recorded until you press Send.</p>
           <Assumptions list={page.assumptions} now={now} showItem={false} canSettle={() => page.canSettle === true} onDone={reload} />
         </section>
       )}

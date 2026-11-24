@@ -14,6 +14,7 @@ import { overturnsFor } from "../orchestrator/overturns.ts";
 import { openStore } from "../store/store.ts";
 import { metaSettings } from "../config/metaSettings.ts";
 import { createDemoChat, demoAssumptionHost, demoConfigOptions, seedDemo, tickDemo, writeDemoConfig } from "./demo.ts";
+import { createServer } from "./server.ts";
 import { loadSnapshot } from "./snapshot.ts";
 
 test("the demo data covers every lane, one batch being bisected, the triages' questions and a live session", () => {
@@ -127,12 +128,21 @@ test("the demo's item 63 has two decisions its implementor took itself, open on 
   const host = demoAssumptionHost(store);
   // The page lists them newest first: both have the session's time, so the second one comes first.
   const [second, first] = page!.assumptions;
-  await host.accept(ref("work", 63), first!.id, "po");
-  const made = await host.overturn(ref("work", 63), second!.id, "Mixed in by score", "po");
+  // Both picks in one Send: nothing is settled before it.
+  const server = createServer({ store, port: 0, now: () => now, assumptions: [host] });
+  const base = (await server.start()).url;
+  let sent: { settled: { id: string; verdict: string; work?: boolean }[] };
+  try {
+    const response = await fetch(`${base}/api/decisions`, { method: "POST", headers: { "Content-Type": "application/json", "X-ScopeSoup-Person": "po" }, body: JSON.stringify({ ref: refKey(ref("work", 63)), decisions: [{ id: first!.id, action: "accept" }, { id: second!.id, action: "overturn", answer: "Mixed in by score" }] }) });
+    assert.equal(response.status, 200);
+    sent = (await response.json()) as typeof sent;
+  } finally {
+    await server.stop();
+  }
   const after = store.get<WorkItem>(ref("work", 63))!;
   assert.deepEqual(after.assumptions?.map((each) => each.settled?.verdict), ["accepted", "overturned"]);
   // Its change has not merged: no new Item, the answer is kept for its implementor, and the verdict says so.
-  assert.equal(made, "work");
+  assert.deepEqual(sent.settled.map((each) => [each.verdict, each.work]), [["accepted", undefined], ["overturned", true]]);
   assert.equal(after.assumptions?.[1]?.settled?.work, true);
   assert.deepEqual(overturnsFor(store, refKey(ref("work", 63))).map((each) => each.answer), ["Mixed in by score"]);
   store.close();

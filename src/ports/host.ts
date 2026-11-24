@@ -357,10 +357,11 @@ export interface WritePort {
    */
   postAssumptions?(work: Ref, decisions: AssumptionWrite[]): Promise<{ id: string }>;
   /**
-   * A person's verdict on decision `id` (`<comment id>-<n>`), written into its comment's marker; the label goes once no
-   * decision on the item is open. Throws `AlreadyAnswered` when it is settled already, and when the decision is not there.
+   * A person's verdicts on decisions (`<comment id>-<n>`), sent together: each written into its comment's marker, one edit per
+   * comment; the label goes once no decision on the item is open. Throws `AlreadyAnswered`, before anything is written, when one is
+   * settled already or not there.
    */
-  settleAssumption?(work: Ref, id: string, settled: AssumptionSettled): Promise<void>;
+  settleAssumptions?(work: Ref, settles: { id: string; settled: AssumptionSettled }[]): Promise<void>;
   /**
    * Closes an item as done, after the comment is written; on a host whose items are issues. With `merged` the comment
    * carries the `merged` marker (GitHub, with the conventions on).

@@ -95,7 +95,7 @@ function Decisions({ board }: { board: BoardView }) {
       <h2 id="decisions-title">
         Decided by implementors <span class="count num">{open}</span>
       </h2>
-      <p class="muted">Cheap to change later, so the work went on: nothing waits on these. Accept each, or overturn it with your decision.</p>
+      <p class="muted">Cheap to change later, so the work went on: nothing waits on these. Pick Accept, or Overturn with your decision, for each; nothing is recorded until you press Send.</p>
       <Assumptions list={board.assumptions} now={now} showItem canSettle={(each) => settles.has(each.item.ref.host)} />
     </section>
   );

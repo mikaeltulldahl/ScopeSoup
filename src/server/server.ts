@@ -22,7 +22,7 @@ import { buildItemPage } from "../core/item-page.ts";
 import { toStatusView } from "../core/status.ts";
 import { PRIORITIES, isPriority } from "../model/priority.ts";
 import type { CommitView, DiffView, HistoryView, HoldingsView, ItemBranchState, ItemPage } from "../core/views.ts";
-import type { CreatedPart, LabelChange, LogWriter, OpenQuestion, Priority, ProposedPart, Ref, Parked, ParkedQuestion, TextProposal, WorkItem, WorkState } from "../model/types.ts";
+import type { Assumption, CreatedPart, LabelChange, LogWriter, OpenQuestion, Priority, ProposedPart, Ref, Parked, ParkedQuestion, TextProposal, WorkItem, WorkState } from "../model/types.ts";
 import { asParts, refKey } from "../model/types.ts";
 import { applyChange, asLabelChange, changeText, isEmptyChange } from "../model/labels.ts";
 import { planOrder } from "../orchestrator/candidates.ts";
@@ -52,6 +52,8 @@ import { itemTextHash, optionTexts } from "../core/answerReuse.ts";
 import type { Store } from "../store/store.ts";
 import { hostParts, loadSnapshot } from "./snapshot.ts";
 import { inertText } from "../orchestrator/hostText.ts";
+import type { AssumptionOutcome, AssumptionPick } from "../orchestrator/assumptions.ts";
+import { keepOverturn } from "../orchestrator/overturns.ts";
 import { createEventStreams } from "./sse.ts";
 import { serveStatic } from "./static.ts";
 import { sessionDetails } from "./sessionDetails.ts";
@@ -156,9 +158,9 @@ export interface ServerOptions {
   /** A person's chat with the Item's sessions (`src/orchestrator/chat.ts`). Absent in board-only mode. */
   chat?: Pick<Chat, "view" | "send">;
   /**
-   * The hosts where a person accepts or overturns a decision an implementor took itself (`hostActions`): Accept writes the
-   * verdict; Overturn gives the answer to the running work while the change has not merged ("work"), or makes a new
-   * Item with it, and then writes the verdict. Each throws when the host refuses.
+   * The hosts where a person accepts or overturns decisions an implementor took itself (`hostActions`), the picks of one Send
+   * together: Overturn gives the answer to the running work while the change has not merged ("work"), or makes a new Item with
+   * it; then all verdicts are one write. Throws when the host refuses.
    */
   assumptions?: AssumptionHost[];
   /**
@@ -174,11 +176,13 @@ export interface ServerOptions {
   upgrade?: Pick<Upgrader, "view" | "check" | "getLatest" | "goBack" | "cancel">;
 }
 
-/** One host's Accept and Overturn of the decisions implementors took themselves. */
+/**
+ * One host's Accept and Overturn of the decisions implementors took themselves: the picks of one Send, written together
+ * (`Actions.settleAssumptions`). Throws `AlreadyAnswered`, before anything is written, when one is settled already.
+ */
 export interface AssumptionHost {
   host: string;
-  accept(item: Ref, id: string, by: string): Promise<unknown>;
-  overturn(item: Ref, id: string, answer: string, by: string): Promise<Ref | "work" | null>;
+  settle(item: Ref, picks: AssumptionPick[], by: string): Promise<AssumptionOutcome[]>;
 }
 
 /** One of the answers: its text, and the question it names (`to`: a log question; `index`: one of the parked state's several). */
@@ -1203,49 +1207,75 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
   }
 
   /**
-   * `{ ref, id, action: "accept" | "overturn", answer? }`: a person's verdict on a decision an implementor took itself.
-   * Accept closes it; Overturn (with the answer) makes a new Item linked to it that carries the answer as the decision.
-   * Refused when the decision is not open (any more). Written through on the item's host, then the store is brought up to date.
+   * A person's picks on an Item's decisions that its implementor took itself, held in the browser and sent together:
+   * `{ ref, decisions: [{ id, action: "accept" | "overturn", answer? }] }`. Accept closes a decision; Overturn (with the answer)
+   * puts it into the running work while the change has not merged, else makes a new Item that carries it. All are refused when one
+   * is gone (404) or settled already (409): nothing is written. Decisions not in the list stay open. On the host the verdicts are one
+   * write (GitHub: one edit of the decisions' comment; the meta branch: one commit); then one store transaction records them, an
+   * event per decision, with the overturns kept for the running work.
    */
-  async function settleAssumption(request: IncomingMessage, response: ServerResponse): Promise<void> {
+  async function settleDecisions(request: IncomingMessage, response: ServerResponse): Promise<void> {
     let body: Record<string, unknown>;
     try {
       body = await readJson(request);
     } catch (error) {
       return sendError(response, 400, "BAD_BODY", error instanceof Error ? error.message : "The body is not JSON.");
     }
-    const { ref, id, action, answer } = body;
-    if (typeof ref !== "string" || typeof id !== "string" || (action !== "accept" && action !== "overturn")) {
-      return sendError(response, 400, "BAD_FIELD", 'Give { "ref": "host:work:id", "id": "the decision", "action": "accept" | "overturn", "answer"?: "..." }.');
+    const { ref } = body;
+    const given = Array.isArray(body.decisions) ? (body.decisions as unknown[]) : null;
+    const usage = 'Give { "ref": "host:work:id", "decisions": [{ "id": "the decision", "action": "accept" | "overturn", "answer"?: "..." }] }.';
+    if (typeof ref !== "string" || given === null || given.length === 0) return sendError(response, 400, "BAD_FIELD", usage);
+    const picks: AssumptionPick[] = [];
+    for (const each of given) {
+      const { id, action, answer } = (typeof each === "object" && each !== null ? each : {}) as Record<string, unknown>;
+      if (typeof id !== "string" || (action !== "accept" && action !== "overturn")) return sendError(response, 400, "BAD_FIELD", usage);
+      if (action === "overturn" && (typeof answer !== "string" || answer.trim() === "")) return sendError(response, 400, "ANSWER_MISSING", "Overturn needs your answer: the decision that replaces the implementor's.");
+      if (picks.some((pick) => pick.id === id)) return sendError(response, 400, "DUPLICATE_DECISION", "Give one pick for each decision.");
+      picks.push({ id, action, ...(action === "overturn" ? { answer: (answer as string).trim() } : {}) });
     }
-    if (action === "overturn" && (typeof answer !== "string" || answer.trim() === "")) return sendError(response, 400, "ANSWER_MISSING", "Overturn needs your answer: the decision the new Item carries.");
     const item = loadSnapshot(store).works.find((work) => refKey(work.ref) === ref);
     if (!item) return sendError(response, 404, "ITEM_NOT_FOUND", `No item ${ref}.`);
-    const decision = item.assumptions?.find((each) => each.id === id);
-    if (!decision) return sendError(response, 404, "DECISION_NOT_FOUND", `No decision ${id} on ${ref}.`);
-    if (decision.settled) return sendError(response, 409, "ALREADY_SETTLED", `That decision is ${decision.settled.verdict} already: reload the item.`);
+    const decisions: Assumption[] = [];
+    for (const pick of picks) {
+      const decision = item.assumptions?.find((each) => each.id === pick.id);
+      if (!decision) return sendError(response, 404, "DECISION_NOT_FOUND", `No decision ${pick.id} on ${ref}.`);
+      if (decision.settled) return sendError(response, 409, "ALREADY_SETTLED", `"${decision.question}" is ${decision.settled.verdict} already: reload the item. Nothing was sent.`);
+      decisions.push(decision);
+    }
     const target = assumptionHost(item.ref);
     if (!target) return sendError(response, 403, "READ_ONLY", `Decisions on ${item.ref.host} cannot be settled here: writes to it are off.`);
-    const at = now().toISOString();
+    const who = by().who;
+    let outcomes: AssumptionOutcome[];
     try {
-      if (action === "accept") {
-        await target.accept(item.ref, id, by().who);
-        store.appendEvent({ kind: "person.assumption_accepted", subject: ref, actor: by().who, data: { reason: `${by().who} accepted the implementor's decision: ${decision.question} ${decision.chosen}.`, id } }, at);
-        await options.syncNow?.();
-        return sendJson(response, 200, { settled: "accepted" });
-      }
-      const outcome = await target.overturn(item.ref, id, (answer as string).trim(), by().who);
-      const work = outcome === "work";
-      const made = work ? null : outcome;
-      const tail = work ? ` It went into the running work of ${item.ref.id}.` : made ? ` ${made.id} reworks it.` : "";
-      store.appendEvent({ kind: "person.assumption_overturned", subject: ref, actor: by().who, data: { reason: `${by().who} overturned the implementor's decision (${decision.question} ${decision.chosen}) with: ${(answer as string).trim()}${tail}`, id, ...(made ? { item: refKey(made) } : {}), ...(work ? { work: true } : {}) } }, at);
-      await options.syncNow?.();
-      return sendJson(response, 200, { settled: "overturned", ...(made ? { item: refKey(made) } : {}), ...(work ? { work: true } : {}) });
+      outcomes = await target.settle(item.ref, picks, who);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      store.appendEvent({ kind: "orchestrator.host_write_failed", subject: ref, actor: by().who, data: { reason: `Could not ${action} decision ${id} on ${item.ref.host}: ${message}` } }, at);
-      return sendError(response, error instanceof AlreadyAnswered ? 409 : 400, "WRITE_REFUSED", message);
+      if (error instanceof AlreadyAnswered) return sendError(response, 409, "ALREADY_SETTLED", `${message} Nothing was sent: reload the item.`);
+      store.appendEvent({ kind: "orchestrator.host_write_failed", subject: ref, actor: who, data: { reason: `Could not settle ${picks.length === 1 ? `decision ${picks[0]!.id}` : `${picks.length} decisions`} on ${item.ref.id} on ${item.ref.host}: ${message}` } }, now().toISOString());
+      return sendError(response, 400, "WRITE_REFUSED", message);
     }
+    const at = now().toISOString();
+    // One transaction: an event per decision, and the overturns that go into the running work kept for the cycle.
+    store.tx(() => {
+      outcomes.forEach((outcome, index) => {
+        const decision = decisions[index]!;
+        const pick = picks[index]!;
+        if (outcome.verdict === "accepted") {
+          store.appendEvent({ kind: "person.assumption_accepted", subject: ref, actor: who, data: { reason: `${who} accepted the implementor's decision: ${decision.question} ${decision.chosen}.`, id: decision.id } }, at);
+          return;
+        }
+        const answer = pick.answer ?? "";
+        if (outcome.work) keepOverturn(store, item, decision, answer, who, at);
+        if (outcome.reused && outcome.item) {
+          store.appendEvent({ kind: "orchestrator.overturn_reused", subject: ref, actor: "orchestrator", data: { reason: `${outcome.item.id} was filed for decision ${decision.id} on ${item.ref.id} before; it is reused, and only the verdict is written now.` } }, at);
+        }
+        const tail = outcome.work ? ` It went into the running work of ${item.ref.id}.` : outcome.item ? ` ${outcome.item.id} reworks it.` : "";
+        store.appendEvent({ kind: "person.assumption_overturned", subject: ref, actor: who, data: { reason: `${who} overturned the implementor's decision (${decision.question} ${decision.chosen}) with: ${answer}${tail}`, id: decision.id, ...(outcome.item ? { item: refKey(outcome.item) } : {}), ...(outcome.work ? { work: true } : {}) } }, at);
+      });
+    });
+    await options.syncNow?.();
+    options.onRefresh?.();
+    return sendJson(response, 200, { settled: outcomes.map((outcome) => ({ id: outcome.id, verdict: outcome.verdict, ...(outcome.item ? { item: refKey(outcome.item) } : {}), ...(outcome.work ? { work: true } : {}) })) });
   }
 
   /** `{ ref, title?, body?, state?, verification?, labels?, blockedBy? }`: changes what is given, and logs what changed. */
@@ -1431,7 +1461,7 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
   };
 
   /** The POST endpoints that record who did it; the board names its picked person, or the request is refused. */
-  const NEEDS_PERSON = new Set(["/api/answer", "/api/answers", "/api/proposal", "/api/draft", "/api/start-over", "/api/chat", "/api/assumption", "/api/item/edit", "/api/item/vote", "/api/item/resolve"]);
+  const NEEDS_PERSON = new Set(["/api/answer", "/api/answers", "/api/proposal", "/api/draft", "/api/start-over", "/api/chat", "/api/decisions", "/api/item/edit", "/api/item/vote", "/api/item/resolve"]);
 
   async function handle(request: IncomingMessage, response: ServerResponse): Promise<void> {
     const person = readPersonHeader(request.headers[PERSON_HEADER]);
@@ -1458,7 +1488,7 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
         if (path === "/api/start-over") return startOver(request, response);
         if (path === "/api/chat") return chatSend(request, response);
         if (path === "/api/items") return createItem(request, response);
-        if (path === "/api/assumption") return settleAssumption(request, response);
+        if (path === "/api/decisions") return settleDecisions(request, response);
         if (path === "/api/item/edit") return editItem(request, response);
         if (path === "/api/item/vote") return vote(request, response);
         if (path === "/api/item/resolve") return resolve(request, response);

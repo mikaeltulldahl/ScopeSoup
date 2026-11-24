@@ -12,15 +12,20 @@ import { readMarker } from "../hosts/github/conventions.ts";
 import { fakeIssues, ISSUES_API } from "../hosts/github/fakeIssues.ts";
 import { parseLog, foldLog } from "../hosts/metaBranch/log.ts";
 import { assumptionsOf } from "../hosts/metaBranch/map.ts";
+import { createMetaBranchHost } from "../hosts/metaBranch/index.ts";
+import { createTestRepo } from "../hosts/metaBranch/testRepo.ts";
 import type { Assumption, Ref, WorkItem } from "../model/types.ts";
 import { refKey } from "../model/types.ts";
 import { createServer } from "../server/server.ts";
 import type { AssumptionHost } from "../server/server.ts";
 import { loadSnapshot } from "../server/snapshot.ts";
 import { openStore } from "../store/store.ts";
+import { AlreadyAnswered } from "../ports/host.ts";
 import { overturnItem, splitAssumptionId } from "./assumptions.ts";
 import { createHostActions } from "./hostActions.ts";
-import { overturnsFor } from "./overturns.ts";
+import { keepOverturn, overturnsFor } from "./overturns.ts";
+import type { Actions } from "./ports.ts";
+import type { Store } from "../store/store.ts";
 import { saveJobs } from "./jobs.ts";
 
 const DECISIONS = [
@@ -35,6 +40,17 @@ const config = (() => {
 })();
 
 const labelsOf = (fake: ReturnType<typeof fakeIssues>, id: string): string[] => fake.issues.get(id)!.labels.map((label) => (typeof label === "string" ? label : label.name));
+
+/** One Accept sent on its own, as the board's Send does with one pick. */
+const accept = async (actions: Actions, item: Ref, id: string) => (await actions.settleAssumptions!(item, [{ id, action: "accept" }], "robin"))?.[0];
+
+/** One Overturn sent on its own; an answer that goes into the running work is kept, as the server does in its transaction. */
+async function overturn(actions: Actions, store: Store, item: Ref, id: string, answer: string): Promise<Ref | "work" | null> {
+  const before = store.get<WorkItem>(item)!;
+  const outcome = (await actions.settleAssumptions!(item, [{ id, action: "overturn", answer }], "robin"))?.[0];
+  if (outcome?.work) keepOverturn(store, before, before.assumptions!.find((each) => each.id === id)!, answer, "robin", new Date().toISOString());
+  return outcome?.work ? "work" : outcome?.item ?? null;
+}
 
 test("on GitHub two decisions are one comment with the scopesoup:assumption label, which does not block; Accept and Overturn settle them", async () => {
   const fake = fakeIssues("harbour/tides", [1]);
@@ -55,15 +71,15 @@ test("on GitHub two decisions are one comment with the scopesoup:assumption labe
   assert.equal(read.needsDecision, undefined);
   const [first, second] = read.assumptions!;
 
-  assert.equal(await actions.acceptAssumption!(item, first!.id, "robin"), true);
+  assert.deepEqual(await accept(actions, item, first!.id), { id: first!.id, verdict: "accepted" });
   read = store.get<WorkItem>(item)!;
   assert.equal(read.assumptions?.[0]?.settled?.verdict, "accepted");
   assert.equal(read.assumptions?.[0]?.settled?.by, "robin");
   // One is still open: the label stays. A second Accept is refused.
   assert.deepEqual(labelsOf(fake, "1"), ["scopesoup:assumption"]);
-  await assert.rejects(actions.acceptAssumption!(item, first!.id, "robin"), /accepted already/);
+  await assert.rejects(accept(actions, item, first!.id), /accepted already/);
 
-  const made = await actions.overturnAssumption!(item, second!.id, "By distance from the user's harbour", "robin");
+  const made = await overturn(actions, store, item, second!.id, "By distance from the user's harbour");
   assert.equal((made as Ref | null)?.id, "2");
   const issue = fake.issues.get("2")!;
   assert.match(issue.title, /^Overturned in #1: Sort harbours by\?/);
@@ -131,7 +147,7 @@ test("an overturn's new Item carries the answer as the decision: rework before t
   assert.match(revert.body, /A-3's change has merged\. Change the code to follow a person's decision, or revert/);
 });
 
-test("the board lists open and recent decisions newest first, outside your turn; POST /api/assumption accepts and overturns", async () => {
+test("the board lists open and recent decisions newest first, outside your turn; POST /api/decisions sends the picks of an Item together", async () => {
   const store = openStore(":memory:");
   const now = new Date("2026-11-22T12:00:00Z");
   const decision = (id: string, at: string, settled?: Assumption["settled"]): Assumption => ({ id, at, question: `Q ${id}?`, chosen: "x", others: [], why: "", ...(settled ? { settled } : {}) });
@@ -144,35 +160,77 @@ test("the board lists open and recent decisions newest first, outside your turn;
   assert.deepEqual(board.yourTurn, []);
   assert.deepEqual(buildItemPage(loadSnapshot(store), "fake:work:2", now)?.assumptions.map((each) => each.id), ["b", "c"]);
 
+  // A third Item with three open decisions, sent together; its change is under way, so an overturn goes into the work.
+  store.put(item("3", [decision("d", "2026-11-22T09:00:00Z"), decision("e", "2026-11-22T09:01:00Z"), decision("f", "2026-11-22T09:02:00Z")]), "sync", now.toISOString());
   const calls: string[] = [];
+  let refuse = false;
   const settles: AssumptionHost = {
     host: "fake",
-    async accept(subject, id, by) {
-      calls.push(`accept ${subject.id} ${id} ${by}`);
+    async settle(subject, picks, by) {
+      if (refuse) throw new AlreadyAnswered("Decision e is accepted already.");
+      calls.push(`${subject.id} ${picks.map((pick) => `${pick.action} ${pick.id}${pick.answer ? ` ${pick.answer}` : ""}`).join(", ")} by ${by}`);
+      return picks.map((pick) => (pick.action === "accept" ? { id: pick.id, verdict: "accepted" as const } : pick.id === "f" ? { id: pick.id, verdict: "overturned" as const, work: true as const } : { id: pick.id, verdict: "overturned" as const, item: { host: "fake", kind: "work" as const, id: "9" } }));
     },
-    async overturn(subject, id, answer, by) {
-      calls.push(`overturn ${subject.id} ${id} ${answer} ${by}`);
-      return { host: "fake", kind: "work", id: "3" };
-    },
+  };
+  // Which events are written inside one top-level store transaction: each Send must be one.
+  let transactions = 0;
+  let depth = 0;
+  const realTx = store.tx.bind(store);
+  store.tx = <T>(fn: () => T): T => {
+    if (depth === 0) transactions += 1;
+    depth += 1;
+    try {
+      return realTx(fn);
+    } finally {
+      depth -= 1;
+    }
+  };
+  const outside: string[] = [];
+  const realAppend = store.appendEvent.bind(store);
+  store.appendEvent = (event, at) => {
+    if (depth === 0) outside.push(event.kind);
+    return realAppend(event, at);
   };
   const server = createServer({ store, port: 0, now: () => now, assumptions: [settles] });
   const base = (await server.start()).url;
   const post = async (body: unknown) => {
-    const response = await fetch(`${base}/api/assumption`, { method: "POST", headers: { "Content-Type": "application/json", "X-ScopeSoup-Person": "Ada" }, body: JSON.stringify(body) });
+    const response = await fetch(`${base}/api/decisions`, { method: "POST", headers: { "Content-Type": "application/json", "X-ScopeSoup-Person": "Ada" }, body: JSON.stringify(body) });
     return { status: response.status, body: (await response.json()) as Record<string, unknown> };
   };
+  const personEvents = () => store.eventsAfter(0, 100).filter((event) => event.kind.startsWith("person.assumption_")).map((event) => `${event.kind} ${(event.data as { id: string }).id}`);
   try {
     const shown = (await (await fetch(`${base}/api/board`)).json()) as { settles?: string[] };
     assert.deepEqual(shown.settles, ["fake"]);
     const page = (await (await fetch(`${base}/api/item?ref=fake:work:1`)).json()) as { canSettle?: boolean };
     assert.equal(page.canSettle, true);
-    assert.deepEqual(await post({ ref: "fake:work:1", id: "a", action: "accept" }), { status: 200, body: { settled: "accepted" } });
-    assert.equal((await post({ ref: "fake:work:2", id: "b", action: "overturn" })).status, 400);
-    assert.deepEqual(await post({ ref: "fake:work:2", id: "b", action: "overturn", answer: " Use y " }), { status: 200, body: { settled: "overturned", item: refKey({ host: "fake", kind: "work", id: "3" }) } });
-    assert.equal((await post({ ref: "fake:work:2", id: "c", action: "accept" })).status, 409);
-    assert.equal((await post({ ref: "fake:work:2", id: "nope", action: "accept" })).status, 404);
-    assert.deepEqual(calls, ["accept 1 a Ada", "overturn 2 b Use y Ada"]);
-    assert.deepEqual(store.eventsAfter(0, 100).filter((event) => event.kind.startsWith("person.assumption_")).map((event) => event.kind), ["person.assumption_accepted", "person.assumption_overturned"]);
+    // Malformed picks are refused before anything is looked at.
+    assert.equal((await post({ ref: "fake:work:2", decisions: [{ id: "b", action: "overturn" }] })).status, 400);
+    assert.equal((await post({ ref: "fake:work:2", decisions: [{ id: "b", action: "accept" }, { id: "b", action: "accept" }] })).status, 400);
+    assert.equal((await post({ ref: "fake:work:2", decisions: [] })).status, 400);
+    // One settled already (c) refuses the whole Send, b with it: nothing reaches the host, nothing is recorded.
+    const refused = await post({ ref: "fake:work:2", decisions: [{ id: "b", action: "accept" }, { id: "c", action: "accept" }] });
+    assert.equal(refused.status, 409);
+    assert.match(JSON.stringify(refused.body), /ALREADY_SETTLED/);
+    assert.equal((await post({ ref: "fake:work:2", decisions: [{ id: "nope", action: "accept" }] })).status, 404);
+    // The host refuses (settled meanwhile on the host): 409, and nothing is recorded either.
+    refuse = true;
+    assert.equal((await post({ ref: "fake:work:3", decisions: [{ id: "d", action: "accept" }, { id: "e", action: "accept" }] })).status, 409);
+    refuse = false;
+    assert.deepEqual(calls, []);
+    assert.deepEqual(personEvents(), []);
+    assert.equal(transactions, 0);
+
+    // Two accepts and an overturn sent together: one host call, one store transaction with an event for each and the overturn kept.
+    const sent = await post({ ref: "fake:work:3", decisions: [{ id: "d", action: "accept" }, { id: "e", action: "accept" }, { id: "f", action: "overturn", answer: " Use y " }] });
+    assert.deepEqual(sent, { status: 200, body: { settled: [{ id: "d", verdict: "accepted" }, { id: "e", verdict: "accepted" }, { id: "f", verdict: "overturned", work: true }] } });
+    assert.deepEqual(calls, ["3 accept d, accept e, overturn f Use y by Ada"]);
+    assert.equal(transactions, 1);
+    assert.deepEqual(outside, []);
+    assert.deepEqual(personEvents(), ["person.assumption_accepted d", "person.assumption_accepted e", "person.assumption_overturned f"]);
+    assert.deepEqual(overturnsFor(store, "fake:work:3").map((each) => [each.id, each.answer]), [["f", "Use y"]]);
+    // A partial Send: one of the open decisions; the others stay open.
+    assert.deepEqual(await post({ ref: "fake:work:1", decisions: [{ id: "a", action: "overturn", answer: "z" }] }), { status: 200, body: { settled: [{ id: "a", verdict: "overturned", item: "fake:work:9" }] } });
+    assert.equal(transactions, 2);
   } finally {
     await server.stop();
     store.close();
@@ -190,20 +248,19 @@ test("Overturn is safe to press twice: when the verdict write fails, the second 
 
   // The verdict is an edit of the decision's comment: it fails once, after the new issue was filed.
   fake.fail((call) => call.startsWith("PATCH ") && call.includes("/issues/comments/"), 422, { times: 1 });
-  await assert.rejects(actions.overturnAssumption!(item, decision.id, "By distance", "robin"));
+  await assert.rejects(overturn(actions, store, item, decision.id, "By distance"));
   assert.deepEqual([...fake.issues.keys()].sort(), ["1", "2"]);
   assert.equal(store.get<WorkItem>(item)!.assumptions![1]!.settled, undefined);
   // The filed issue carries the decision's mark, and the store has it already.
   assert.match(fake.issues.get("2")!.body ?? "", /<!-- scopesoup:overturns \{"item":"github:work:1","decision":"\d+-1"\} -->/);
 
-  const again = await actions.overturnAssumption!(item, decision.id, "By distance", "robin");
+  const again = await overturn(actions, store, item, decision.id, "By distance");
   assert.equal((again as Ref | null)?.id, "2");
   assert.deepEqual([...fake.issues.keys()].sort(), ["1", "2"]);
   const settled = store.get<WorkItem>(item)!.assumptions![1]!.settled;
   assert.deepEqual([settled?.verdict, settled?.item?.id], ["overturned", "2"]);
-  assert.equal(store.eventsAfter(0, 100).filter((event) => event.kind === "orchestrator.overturn_reused").length, 1);
   // The other decision's Overturn is not taken for this one: it files its own Item.
-  const other = await actions.overturnAssumption!(item, store.get<WorkItem>(item)!.assumptions![0]!.id, "sea", "robin");
+  const other = await overturn(actions, store, item, store.get<WorkItem>(item)!.assumptions![0]!.id, "sea");
   assert.equal((other as Ref | null)?.id, "3");
   store.close();
 });
@@ -219,10 +276,12 @@ test("on GitHub an Overturn while the change has not merged goes into the runnin
   saveJobs(store, { [refKey(item)]: { item, workspace: "w", branch: "scopesoup/1", step: "review", failures: 0, fixRounds: 0, agentSession: "agent-1", startedAt: "2026-11-22T10:00:00.000Z" } });
   const [first, second] = store.get<WorkItem>(item)!.assumptions!;
 
-  // The verdict fails once: the answer is kept for the work already, and the second press keeps it once and writes the verdict.
+  // The verdict fails once: nothing is kept for the work; the second Send writes the verdict, and the answer is kept once.
   fake.fail((call) => call.startsWith("PATCH ") && call.includes("/issues/comments/"), 422, { times: 1 });
-  await assert.rejects(actions.overturnAssumption!(item, second!.id, "By distance", "robin"));
-  assert.equal(await actions.overturnAssumption!(item, second!.id, "By distance", "robin"), "work");
+  await assert.rejects(overturn(actions, store, item, second!.id, "By distance"));
+  // Nothing was kept for the work: the Send was refused whole.
+  assert.deepEqual(overturnsFor(store, refKey(item)), []);
+  assert.equal(await overturn(actions, store, item, second!.id, "By distance"), "work");
   assert.deepEqual([...fake.issues.keys()], ["1"]);
   assert.deepEqual(overturnsFor(store, refKey(item)).map((each) => [each.id, each.answer]), [[second!.id, "By distance"]]);
   assert.match(fake.comments.get("1")![0]!.body!, /_Overturned by robin: By distance It went into the running work\._/);
@@ -231,7 +290,7 @@ test("on GitHub an Overturn while the change has not merged goes into the runnin
 
   // Merged: the Item is closed as done, so an Overturn files a new Item that changes or reverts it, as before.
   Object.assign(fake.issues.get("1")!, { state: "closed", state_reason: "completed" });
-  const made = await actions.overturnAssumption!(item, first!.id, "sea", "robin");
+  const made = await overturn(actions, store, item, first!.id, "sea");
   assert.equal((made as Ref | null)?.id, "2");
   assert.match(fake.issues.get("2")!.body ?? "", /#1's change has merged\./);
   // An overturn that went into the work but reached it too late gets its Item once, found again by its mark.
@@ -249,4 +308,71 @@ test("on the meta branch an overturned line with `work` settles the decision as 
   ].join("\n"))).lines;
   const [decision] = assumptionsOf(lines, { host: "metaBranch", target: "main", fallbackTime: at });
   assert.deepEqual([decision?.settled?.verdict, decision?.settled?.work, decision?.settled?.item], ["overturned", true, undefined]);
+});
+
+const THREE = [...DECISIONS, { question: "Round depths to?", chosen: "10 cm", others: ["5 cm"], why: "As the tables do." }];
+
+test("on GitHub two accepts and an overturn sent together are one edit of the decisions' comment; one settled already refuses them all before any write", async () => {
+  const fake = fakeIssues("harbour/tides", [1]);
+  const host = createGitHubHost({ token: "t", repo: "harbour/tides", apiUrl: ISSUES_API, fetchImpl: fake.fetch, allowWrites: true, conventions: true, login: "scopesoup-bot" });
+  const store = openStore(":memory:");
+  const actions = createHostActions({ host, git: async () => ({ code: 0, stdout: "", stderr: "" }), config: () => config, store });
+  const item: Ref = { host: "github", kind: "work", id: "1" };
+  await actions.appendLog(item, "assumption", { decisions: THREE });
+  saveJobs(store, { [refKey(item)]: { item, workspace: "w", branch: "scopesoup/1", step: "review", failures: 0, fixRounds: 0, agentSession: "agent-1", startedAt: "2026-11-22T10:00:00.000Z" } });
+  const [a, b, c] = store.get<WorkItem>(item)!.assumptions!;
+  const edits = () => fake.calls.filter((call) => call.startsWith("PATCH ") && call.includes("/issues/comments/")).length;
+  const posts = () => fake.calls.filter((call) => call.startsWith("POST ")).length;
+
+  // Accept a on its own first; then a Send of b, c and a (settled already) is refused whole: no edit, no post.
+  await accept(actions, item, a!.id);
+  const editsBefore = edits();
+  const postsBefore = posts();
+  await assert.rejects(actions.settleAssumptions!(item, [{ id: b!.id, action: "accept" }, { id: c!.id, action: "overturn", answer: "5 cm" }, { id: a!.id, action: "accept" }], "robin"), /accepted already/);
+  assert.equal(edits(), editsBefore);
+  assert.equal(posts(), postsBefore);
+  assert.deepEqual(store.get<WorkItem>(item)!.assumptions!.map((each) => each.settled?.verdict), ["accepted", undefined, undefined]);
+
+  // b accepted and c overturned (into the running work) in one Send: one edit, no new comment or issue.
+  const outcomes = await actions.settleAssumptions!(item, [{ id: b!.id, action: "accept" }, { id: c!.id, action: "overturn", answer: "5 cm" }], "robin");
+  assert.deepEqual(outcomes, [{ id: b!.id, verdict: "accepted" }, { id: c!.id, verdict: "overturned", work: true }]);
+  assert.equal(edits(), editsBefore + 1);
+  assert.equal(posts(), postsBefore);
+  assert.deepEqual([...fake.issues.keys()], ["1"]);
+  assert.equal(fake.comments.get("1")!.length, 1);
+  assert.deepEqual(store.get<WorkItem>(item)!.assumptions!.map((each) => [each.settled?.verdict, each.settled?.by]), [["accepted", "robin"], ["accepted", "robin"], ["overturned", "robin"]]);
+  // None is open any more: the label goes.
+  assert.deepEqual(labelsOf(fake, "1"), []);
+  store.close();
+});
+
+test("on the meta branch two accepts and an overturn sent together are one commit of three lines", async () => {
+  const repo = createTestRepo();
+  repo.commit("refs/heads/main", { "README.md": "The project.\n" }, "2026-11-17T08:00:00Z");
+  let ms = Date.parse("2026-11-20T09:00:00Z");
+  const host = createMetaBranchHost({ repoDir: repo.dir, allowWrites: true, remote: null, person: { name: "Ada", email: "ada@example.invalid" }, machine: "laptop-a", idPrefix: "A", now: () => new Date((ms += 1000)).toISOString() });
+  const store = openStore(":memory:");
+  try {
+    const actions = createHostActions({ host, git: async () => ({ code: 0, stdout: "", stderr: "" }), config: () => config, store });
+    const item = (await host.write!.createWork!({ title: "Tide table" })).work;
+    await actions.appendLog(item, "assumption", { decisions: THREE });
+    const decisions = (await host.work.getWork(item))!.assumptions!;
+    assert.equal(decisions.length, 3);
+    saveJobs(store, { [refKey(item)]: { item, workspace: "w", branch: "scopesoup/A-1", step: "review", failures: 0, fixRounds: 0, agentSession: "agent-1", startedAt: "2026-11-22T10:00:00.000Z" } });
+    const commits = () => Number(repo.git(["rev-list", "--count", "refs/scopesoup/meta"]));
+    const before = commits();
+    const outcomes = await actions.settleAssumptions!(item, [{ id: decisions[0]!.id, action: "accept" }, { id: decisions[1]!.id, action: "accept" }, { id: decisions[2]!.id, action: "overturn", answer: "5 cm" }], "robin");
+    assert.deepEqual(outcomes?.map((each) => [each.verdict, each.work]), [["accepted", undefined], ["accepted", undefined], ["overturned", true]]);
+    assert.equal(commits(), before + 1);
+    const lines = repo.git(["cat-file", "-p", `refs/scopesoup/meta:items/${item.id}/log.jsonl`]).split("\n").map((line) => JSON.parse(line) as { kind: string });
+    assert.deepEqual(lines.slice(-3).map((line) => line.kind), ["accepted", "accepted", "overturned"]);
+    assert.deepEqual((await host.work.getWork(item))!.assumptions!.map((each) => each.settled?.verdict), ["accepted", "accepted", "overturned"]);
+    // Sent again: refused before anything is written.
+    await assert.rejects(actions.settleAssumptions!(item, [{ id: decisions[0]!.id, action: "accept" }], "robin"), /accepted already/);
+    assert.equal(commits(), before + 1);
+  } finally {
+    store.close();
+    await host.stop();
+    repo.cleanup();
+  }
 });

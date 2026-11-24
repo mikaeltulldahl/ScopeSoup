@@ -518,6 +518,8 @@ main > .decisions-panel, .decisions-panel { max-width: none; margin: 0 0 var(--g
 .decision-overturn textarea { font: inherit; width: 100%; box-sizing: border-box; padding: 8px 10px; border-radius: 6px; border: 1px solid var(--line); background: var(--surface); color: var(--text); resize: vertical; }
 .tag-accepted { color: var(--moving); border-color: currentColor; }
 .tag-overturned { color: var(--yours); border-color: currentColor; }
+.tag-picked { color: var(--text); border-style: dashed; border-color: currentColor; }
+.decision-picked { border-left: 3px dashed var(--line); padding-left: 8px; }
 /* --- claim, hand back and release on the Item page --- */
 .hold { display: grid; gap: 8px; margin-top: 12px; border-top: 1px solid var(--line); padding-top: 12px; }
 .hold p { margin: 0; overflow-wrap: anywhere; }
