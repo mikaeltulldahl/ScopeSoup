@@ -47,6 +47,10 @@ export function checkConfigFile(file: string, readFile: (path: string) => string
     `  project ${JSON.stringify(config.project)}, repoPath ${config.repoPath}, main branch ${config.mainBranch} on ${config.remote}`,
     `  host ${config.host?.kind ?? "(from the environment)"}, workspaces ${config.workspaces.kind}, level ${config.level}${config.level >= 4 ? " (merges through the merge queue)" : ""}`,
   ];
+  if (config.host?.kind === "jira") {
+    const jira = config.host;
+    lines.push(`  Jira ${jira.deployment === "cloud" ? "Cloud" : "Data Center"} ${jira.site}, project ${jira.project}: read-only (Scope Soup shows its Items and writes nothing to Jira); token from SCOPESOUP_JIRA_TOKEN${jira.deployment === "cloud" ? ` with ${jira.email ?? "no email"}` : " (a personal access token)"}`);
+  }
   // The setup of a fresh clone, as onboarding wrote it.
   if (config.setupCommand) lines.push(`  setup ${config.setupCommand.join(" ")}, again when ${config.setupWatch ? config.setupWatch.join(", ") || "nothing (it runs once per folder)" : "a lockfile"} changes`);
   // The check only reads: an older format is migrated, and written, when Scope Soup starts.

@@ -50,7 +50,11 @@ function ownNeeds(level: Level, config: ProjectConfig, found: (command: string) 
       // Level 1 starts triages; the provider they run on names its program.
       const provider = providerFor(config, "triage");
       const program = provider.program(config);
-      return found(program) ? [] : [{ text: `${provider.label} (the program "${program}" was not found)` }];
+      return [
+        // The Jira host only reads in this version, so Scope Soup can show a Jira project and do nothing more.
+        ...(config.host?.kind === "jira" ? [{ text: "a host Scope Soup can write to (the Jira host is read-only in this version)" }] : []),
+        ...(found(program) ? [] : [{ text: `${provider.label} (the program "${program}" was not found)` }]),
+      ];
     }
     case 4:
       return [

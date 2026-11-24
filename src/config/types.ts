@@ -111,7 +111,30 @@ export type HostConfig =
     /** The remote the meta ref is shared with (`remote`); null for none. */
     remote: string | null;
     fetchSeconds: number;
-  };
+  }
+  | JiraHostConfig;
+
+/**
+ * A Jira project, Cloud or Data Center. Read-only in this version (`write` is always false). The token is SCOPESOUP_JIRA_TOKEN:
+ * Cloud an API token with the account's `email` (this machine's `jira.email`), Data Center a personal access token.
+ */
+export interface JiraHostConfig {
+  kind: "jira";
+  /** `https://example.atlassian.net`, or the Data Center base URL; no trailing slash. */
+  site: string;
+  /** The project key, `DEMO`. */
+  project: string;
+  deployment: "cloud" | "datacenter";
+  write: false;
+  /** Cloud: the account's email, from this machine's private file (`jira.email`). */
+  email?: string;
+  /** Jira priority name -> Scope Soup priority; replaces the defaults (Jira's default names) when given. */
+  priorities?: Record<string, "blocker" | "critical" | "major" | "minor">;
+  /** Resolutions that make a done issue abandoned; replaces the defaults when given. */
+  abandonedResolutions?: string[];
+  /** The issue link type read as "is blocked by". Default "Blocks". */
+  blocksLink?: string;
+}
 
 /**
  * What checks a batch of the merge queue. "local" (the default): `checkCommand` in the queue's clone. "github": the
