@@ -99,3 +99,13 @@ The limits and the starting numbers are settings (`queueMinBatch`, `queueMaxBatc
 The tests (`src/queue/pure.test.ts`) check the table above (optimal `n` within 1 and throughput within 0.02 for `s = 0` and `s = 0.5`), `n = 1` against the no-batching column, that a higher `p` never gives a larger `n`, the bounds, the fallback, and that more flakes do not raise `n`. With the default cap of 12 and floor of 0.03 the model and the rule mostly agree; the model differs when `q` or `f` are not the defaults.
 
 Open: whether to wait for a batch to fill. The rate `s` is the mapping's hit rate, which is a stand-in for how often the log names the culprit.
+
+Measured on the stand-in with real sessions (`docs/TRIALS.md`, 2026-11-24, #10), too few samples to set defaults from:
+
+| Value | Measured | Samples | Note |
+|---|---|---|---|
+| d(n) | about 20.2 s for every n from 1 to 8; fitted slope -4 ms per change | 12 timed runs, lengths 1, 4, 6, 7, 8 | A check dominated by one slow test; the line does not rise, so the model keeps counting runs as equal |
+| f | 1.00 (mixed with the default: 0.51) | 3 reruns | No `rerunFilesCommand`, so each rerun is the whole check, as the table above expects |
+| s | 0 of 2 (mixed: 0.33) | 2 culprit batches, one of them the same change checked twice (#40) | The failing files were other changes' tests; the culprit's file appeared only in the stack traces, which the mapping does not read |
+
+Open as well: whether the mapping should read file names from stack traces, which would have named the culprit in both batches.
