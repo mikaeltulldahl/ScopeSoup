@@ -22,12 +22,13 @@ function fakeRelease(dir: string, version: string, options: { exe?: boolean; rec
 }
 
 /** A fake git and gh: records every call; `state` says which tags exist and what fails. */
-function fakeRun(state: { localTag?: boolean; remoteTag?: boolean; unknownCommit?: boolean; pushFails?: boolean } = {}): { run: Run; calls: string[] } {
+function fakeRun(state: { localTag?: boolean; remoteTag?: boolean; unknownCommit?: boolean; offMain?: boolean; pushFails?: boolean } = {}): { run: Run; calls: string[] } {
   const calls: string[] = [];
   const run: Run = (command, args) => {
     calls.push(`${command} ${args.join(" ")}`);
     const ok = (stdout = ""): { code: number; stdout: string; stderr: string } => ({ code: 0, stdout, stderr: "" });
     if (command === "git" && args[0] === "cat-file") return state.unknownCommit ? { code: 1, stdout: "", stderr: "bad object" } : ok();
+    if (command === "git" && args[0] === "merge-base" && state.offMain) return { code: 1, stdout: "", stderr: "" };
     if (command === "git" && args[0] === "tag" && args[1] === "--list") return ok(state.localTag ? `${args[2]}\n` : "");
     if (command === "git" && args[0] === "ls-remote") return ok(state.remoteTag ? `${COMMIT}\t${args[3]}\n` : "");
     if (command === "git" && args[0] === "push" && state.pushFails) return { code: 1, stdout: "", stderr: "rejected" };
@@ -56,6 +57,8 @@ describe("publishing a release", { concurrency: 3 }, () => {
       assert.equal(result.commit, COMMIT);
       assert.deepEqual(calls, [
         `git cat-file -e ${COMMIT}^{commit}`,
+        "git fetch --quiet origin main",
+        `git merge-base --is-ancestor ${COMMIT} FETCH_HEAD`,
         "git tag --list v1.2.3",
         "git ls-remote --tags origin refs/tags/v1.2.3",
         `git tag -a v1.2.3 ${COMMIT} -m Scope Soup 1.2.3`,
@@ -99,6 +102,9 @@ describe("publishing a release", { concurrency: 3 }, () => {
       refuse("1.2.3", notes, fake.run, /already a tag here/);
       fake = fakeRun({ remoteTag: true });
       refuse("1.2.3", notes, fake.run, /already a tag on origin/);
+      fake = fakeRun({ offMain: true });
+      refuse("1.2.3", notes, fake.run, /not on origin's main/);
+      assert.deepEqual(mutating(fake.calls), []);
       fake = fakeRun({ unknownCommit: true });
       refuse("1.2.3", notes, fake.run, /not in/);
       assert.deepEqual(mutating(fake.calls), []);

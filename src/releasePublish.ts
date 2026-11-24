@@ -82,6 +82,11 @@ export function publishRelease(options: PublishOptions): { tag: string; commit: 
 
   const known = run("git", ["cat-file", "-e", `${commit}^{commit}`], root);
   if (known.code !== 0) throw new Error(`The checked commit ${commit} is not in ${root}: run this in the clone that built the release.`);
+  // The tag push would carry an unmerged commit along: only a commit already on origin's main is released.
+  const fetched = run("git", ["fetch", "--quiet", "origin", "main"], root);
+  if (fetched.code !== 0) throw new Error(`Could not fetch origin's main: ${fetched.stderr.trim()}`);
+  const onMain = run("git", ["merge-base", "--is-ancestor", commit, "FETCH_HEAD"], root);
+  if (onMain.code !== 0) throw new Error(`The checked commit ${commit.slice(0, 7)} is not on origin's main: merge it first; nothing was done.`);
   const local = run("git", ["tag", "--list", tag], root);
   if (local.code !== 0) throw new Error(`git tag failed: ${local.stderr.trim()}`);
   if (local.stdout.trim() !== "") throw new Error(`${tag} is already a tag here: nothing was done.`);
