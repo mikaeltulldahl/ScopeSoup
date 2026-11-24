@@ -63,6 +63,25 @@ test("an Item that waits for a paused triage says so, not that it waits for a sl
   assert.equal(turnWith(snap, 1, ["demo:work:1"]).reason, "ready; waiting for a free agent slot");
 });
 
+test("a ready Item whose next step is implement says so when implementors are paused", () => {
+  const snap = snapshot({ works: [work(1), work(2)] });
+  const paused = { ...snap, implement: "paused" as const };
+  const turnWith = (s: Snapshot, id: number, notTriaged: string[]) => {
+    const item = s.works.find((each) => each.ref.id === String(id))!;
+    const index = buildIndex(s);
+    const found = assess(situate(item, index), turnContext(index, now, new Set(notTriaged)));
+    return { ...found.turn, tone: found.tone };
+  };
+  const words = "ready, but implementors are paused (Resume on In progress)";
+  const triaged = turnWith(paused, 2, ["demo:work:1"]);
+  assert.equal(triaged.reason, words);
+  assert.equal(triaged.tone, "blocked");
+  assert.equal(triaged.actor, "nobody");
+  // One still to triage waits for triage, which runs; implementors do not matter yet.
+  assert.equal(turnWith(paused, 1, ["demo:work:1"]).reason, "ready; waiting for a free agent slot");
+  assert.equal(turnWith(snap, 2, ["demo:work:1"]).reason, "ready; waiting for a free agent slot");
+});
+
 test("an item parked as too large leaves Your turn once split, and says so when all parts are done", () => {
   const parkedList = [{ subject: ref("work", 1), as: "not-ready" as const, reason: "Triage: too large for one change.", at: T0 }];
   const single = snapshot({ works: [work(1)], parked: parkedList });

@@ -88,46 +88,41 @@ export function Queue({ board }: { board: BoardView }) {
       {board.queue.mergeQueue && <MergeLease lease={board.queue.mergeQueue} />}
       {board.resources && <Resources resources={board.resources} />}
       {empty && <p class="empty">The queue is empty.</p>}
-      {batches.length > 0 && (
+      {waiting.length + forming.length > 0 && (
         <section>
           <h2>
-            Batches <span class="count num">{batches.length}</span>
+            Queued <span class="count num">{waiting.length + forming.length}</span>
           </h2>
-          {batches.map((batch) => (
-            <BatchBox key={batch.key} batch={batch} />
-          ))}
-        </section>
-      )}
-      {forming.length > 0 && (
-        <section>
-          <h2>
-            Forming <span class="count num">{forming.length}</span>
-          </h2>
+          {waiting.length > 0 && (
+            <ol class="waiting">
+              {waiting.map((entry) => {
+                const item = entry.items[0];
+                return (
+                  <li key={entry.change.label}>
+                    <a class="waiting-row" href={item ? itemHref(item.key) : "#/queue"}>
+                      <span class="order num">{entry.position}</span>
+                      <span class="ref num">{item?.label ?? entry.change.label}</span>
+                      <span class="waiting-title">{item?.title ?? entry.change.title}</span>
+                      <span class="when num">queued {ago(entry.since, now)}</span>
+                    </a>
+                  </li>
+                );
+              })}
+            </ol>
+          )}
           {forming.map((batch) => (
             <BatchBox key={batch.key} batch={batch} />
           ))}
         </section>
       )}
-      {waiting.length > 0 && (
+      {batches.length > 0 && (
         <section>
           <h2>
-            Waiting <span class="count num">{waiting.length}</span>
+            Checking <span class="count num">{batches.length}</span>
           </h2>
-          <ol class="waiting">
-            {waiting.map((entry) => {
-              const item = entry.items[0];
-              return (
-                <li key={entry.change.label}>
-                  <a class="waiting-row" href={item ? itemHref(item.key) : "#/queue"}>
-                    <span class="order num">{entry.position}</span>
-                    <span class="ref num">{item?.label ?? entry.change.label}</span>
-                    <span class="waiting-title">{item?.title ?? entry.change.title}</span>
-                    <span class="when num">queued {ago(entry.since, now)}</span>
-                  </a>
-                </li>
-              );
-            })}
-          </ol>
+          {batches.map((batch) => (
+            <BatchBox key={batch.key} batch={batch} />
+          ))}
         </section>
       )}
       {recent.length > 0 && (
