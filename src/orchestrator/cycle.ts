@@ -15,7 +15,7 @@ import { persistenceLimits } from "../config/persistence.ts";
 import type { Context } from "./context.ts";
 import { ACTOR, errorText } from "./context.ts";
 import type { AskedText, Decision, ItemLinkAnswer, Job, ParkedAs, Proposal, ReviewAnswer, TakenDecision, TriageAnswer } from "./jobs.ts";
-import { ASK_PERSON, asImplement, asReview, asTriage, formatFindings, keepsRecommendations, picks, questionsSettled, releaseIn, parkedDraft } from "./jobs.ts";
+import { ASK_PERSON, asImplement, asReview, asTriage, formatFindings, hasMarkup, recoverFields, keepsRecommendations, picks, questionsSettled, releaseIn, parkedDraft } from "./jobs.ts";
 import { providerFor } from "./providers/index.ts";
 import type { Actions, SessionResultRecord } from "./ports.ts";
 import type { QuestionWrite } from "../ports/host.ts";
@@ -742,7 +742,9 @@ async function writeSession(ctx: Context, job: Job, session: Session, record: Se
   const output = (typeof record.output === "object" && record.output !== null ? record.output : {}) as Record<string, unknown>;
   const triage = session.role === "triage" && session.status === "succeeded" && typeof output.ready === "boolean";
   const summary =
-    typeof output.summary === "string" && output.summary.trim() ? output.summary
+    // An answer refused for its markup: the markup is not written to the host.
+    typeof output.summary === "string" && hasMarkup(output.summary) ? "The answer had tool-call markup inside its summary and was not taken."
+    : typeof output.summary === "string" && output.summary.trim() ? output.summary
     : typeof output.verdict === "string" ? `${output.verdict}, ${Array.isArray(output.findings) ? output.findings.length : 0} finding(s)`
     : triage ? triageWords(output)
     // A failed setup's line says where and how, never its output (it is on the board, on this machine).
@@ -824,6 +826,14 @@ async function settleStep(ctx: Context, job: Job, session: Session | null, recor
     return;
   }
 
+  // Fields the model ran into a string as tool-call markup are taken out first; markup that is left makes the answer malformed.
+  // The session line on the host is written from the same answer, so it never carries the markup.
+  const repaired = recoverFields(record.output);
+  if (repaired.recovered.length > 0) {
+    record.output = repaired.value;
+    ctx.commit("orchestrator.answer_repaired", `The ${job.step} answer had ${repaired.recovered.join(", ")} run into another field as tool-call markup; taken out and read as part of the answer.`, key, { fields: repaired.recovered });
+  }
+
   if (job.step === "triage") {
     const answer = asTriage(record.output);
     if (!answer) return failed(ctx, job, `The triage answer does not have the expected shape, has tool-call markup inside a string, or gives no reason for "not ready" or no question for "needs decision". The answer was: ${JSON.stringify(record.output ?? null).slice(0, 4000)}`);
@@ -857,7 +867,7 @@ async function settleStep(ctx: Context, job: Job, session: Session | null, recor
     const answer = asImplement(record.output);
     // The implementor's own session: findings and merging failures resume it.
     if (session.agentSessionId) job.agentSession = session.agentSessionId;
-    if (!answer) return failed(ctx, job, "The implementer's answer does not have the expected shape.");
+    if (!answer) return failed(ctx, job, "The implementer's answer does not have the expected shape, or has tool-call markup inside a string.");
     job.implement = answer;
     keepAboutOthers(ctx, job, "implement", answer.aboutOthers);
     // The decisions it took itself go on the Item first, whether it finished or stopped to ask.
@@ -890,7 +900,7 @@ async function settleStep(ctx: Context, job: Job, session: Session | null, recor
 
   if (job.step === "review") {
     const answer = asReview(record.output);
-    if (!answer) return failed(ctx, job, "The reviewer's answer does not have the expected shape.");
+    if (!answer) return failed(ctx, job, "The reviewer's answer does not have the expected shape, or has tool-call markup inside a string.");
     job.review = answer;
     await writeReview(ctx, job, answer);
     const must = answer.findings.filter((finding) => finding.severity === "must");

@@ -606,7 +606,7 @@ function asDecision(value: unknown): Decision | undefined {
  * Tool-call markup inside a string: the model ran fields together. Only `<parameter name=` or a closing tag named
  * after a field of the triage answer counts; an HTML closing tag such as `</summary>` in a reason is ordinary text.
  */
-const MARKUP = /<parameter\s+name\s*=|<\/(?:ready|notReadyReason|size|paths|blockers|questions|hidesDecision|decisions|decision|question|options|recommendation|context|proposal|parts|title|description|verification|reason|risk|riskReason|draft|links|aboutOthers)\s*>/;
+const MARKUP = /<parameter\s+name\s*=|<\/(?:ready|notReadyReason|size|paths|blockers|questions|hidesDecision|decisions|decision|question|options|recommendation|context|proposal|parts|title|description|verification|reason|risk|riskReason|draft|links|aboutOthers|done|mergedAs|chosen|others|why|verdict|findings|severity|parameter)\s*>/;
 
 /** True when any string anywhere in the value holds tool-call markup. */
 export function hasMarkup(value: unknown): boolean {
@@ -614,6 +614,66 @@ export function hasMarkup(value: unknown): boolean {
   if (Array.isArray(value)) return value.some(hasMarkup);
   if (isObj(value)) return Object.values(value).some(hasMarkup);
   return false;
+}
+
+const PARAMETER = /^<parameter\s+name\s*=\s*"([A-Za-z]+)"\s*>/;
+
+/**
+ * The fields run into one string, as `<parameter name="x">value</parameter>` blocks; null unless the whole text is such blocks
+ * (the last may be unclosed) with distinct names. A value that starts with `[` or `{` must be JSON.
+ */
+function parameterBlocks(text: string): Map<string, unknown> | null {
+  const fields = new Map<string, unknown>();
+  let rest = text;
+  while (rest.trim()) {
+    rest = rest.trimStart();
+    const open = PARAMETER.exec(rest);
+    if (!open || fields.has(open[1]!)) return null;
+    const name = open[1]!;
+    rest = rest.slice(open[0].length);
+    const close = rest.search(/<\/parameter\s*>|<parameter\s+name\s*=/);
+    const end = close < 0 ? rest.length : close;
+    // A block may end in the field's own closing tag instead of `</parameter>`.
+    const raw = rest.slice(0, end).replace(new RegExp(`</${name}\\s*>\\s*$`), "").trim();
+    rest = rest.slice(end).replace(/^<\/parameter\s*>/, "");
+    if (raw.startsWith("[") || raw.startsWith("{")) {
+      try {
+        fields.set(name, JSON.parse(raw));
+      } catch {
+        return null;
+      }
+    } else fields.set(name, raw);
+  }
+  return fields;
+}
+
+/** A field the answer leaves empty, so one recovered from markup may fill it. */
+function emptyField(value: unknown): boolean {
+  return value === undefined || value === null || value === "" || (Array.isArray(value) && value.length === 0);
+}
+
+/**
+ * An answer whose fields the model ran into one of its top-level strings: the string ends in tool-call markup such as
+ * `</summary>\n<parameter name="decisions">[...]`. The fields are taken out of the string into the answer, where they are
+ * checked like any other. Only when the whole tail reads as such blocks, every one fills a field the answer leaves empty, and the
+ * text before them has no markup; otherwise the string is left as it is, and the answer's markup makes it malformed.
+ * `recovered` names the fields taken out (for a log line; their text is never logged).
+ */
+export function recoverFields(value: unknown): { value: unknown; recovered: string[] } {
+  if (!isObj(value)) return { value, recovered: [] };
+  let out: Obj = value;
+  const recovered: string[] = [];
+  for (const [key, text] of Object.entries(value)) {
+    if (typeof text !== "string") continue;
+    const start = text.search(/<parameter\s+name\s*=/);
+    if (start < 0) continue;
+    const fields = parameterBlocks(text.slice(start));
+    const head = text.slice(0, start).replace(new RegExp(`</${key}\\s*>\\s*$`), "").trimEnd();
+    if (!fields || MARKUP.test(head) || [...fields.keys()].some((name) => name === key || !emptyField(out[name]))) continue;
+    out = { ...out, [key]: head, ...Object.fromEntries(fields) };
+    recovered.push(...fields.keys());
+  }
+  return { value: out, recovered };
 }
 
 export function asTriage(value: unknown): TriageAnswer | null {
@@ -688,6 +748,9 @@ export function asLinks(value: unknown): ItemLinkAnswer[] {
 
 export function asImplement(value: unknown): ImplementAnswer | null {
   if (!isObj(value) || typeof value.done !== "boolean") return null;
+  // Markup left inside a string (`recoverFields` could not take the fields out): the fields cannot be trusted to be complete.
+  // An `aboutOthers` entry with markup is dropped alone (`asAboutOthers`).
+  if (hasMarkup({ ...value, aboutOthers: undefined })) return null;
   const answer: ImplementAnswer = { done: value.done, summary: typeof value.summary === "string" ? value.summary : "" };
   // `question`, or `decision` from an older answer or a fix session that was running at the upgrade.
   const decision = asDecision(value.question) ?? asDecision(value.decision);
@@ -726,6 +789,7 @@ export function takenText(decisions: readonly TakenDecision[]): string {
 
 export function asReview(value: unknown): ReviewAnswer | null {
   if (!isObj(value) || (value.verdict !== "approve" && value.verdict !== "changes") || !Array.isArray(value.findings)) return null;
+  if (hasMarkup(value)) return null;
   const findings: Finding[] = [];
   for (const entry of value.findings as unknown[]) {
     if (!isObj(entry) || typeof entry.text !== "string") return null;

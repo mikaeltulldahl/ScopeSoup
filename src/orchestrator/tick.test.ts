@@ -1021,7 +1021,8 @@ test("a triage answer with markup in a string is retried and the failure carries
   const w = world(config(), [item("1")]);
   w.store.addUsageSample(usage(0.1, 0.1));
   await w.run();
-  const broken = { ...TRIAGE_OK, ready: false, riskReason: 'r</riskReason>\n<parameter name="notReadyReason">Size is large</notReadyReason>' };
+  // Markup that is not whole `<parameter>` blocks: nothing can be taken out of it.
+  const broken = { ...TRIAGE_OK, ready: false, riskReason: "r</notReadyReason>\nSize is large" };
   w.runner.end("1", "succeeded", broken);
   await w.run();
   assert.equal(w.job("1")?.parked, undefined);
@@ -2115,6 +2116,37 @@ async function toQueueAfterPause(w: World, queue: ReturnType<typeof fakeQueue>):
   assert.equal(w.job("1")?.parked?.as, "queued");
   assert.equal(w.job("1")?.queued, HEAD);
 }
+
+test("merging by queue: an approved change waiting through many ticks for a paused merge queue writes its review and session lines once", async () => {
+  const w = world(config(QUEUE), [item("1")]);
+  const queue = fakeQueue();
+  w.queue = queue;
+  w.store.addUsageSample(usage(0.1, 0.1));
+  await w.run();
+  await step(w, "1", "succeeded", TRIAGE_OK);
+  await step(w, "1", "succeeded", IMPLEMENT_OK);
+  w.store.setValue(KEYS.mergeQueue, "paused");
+  await step(w, "1", "succeeded", { verdict: "approve", findings: [{ severity: "should", text: "Name the constant." }] });
+  const reviews = () => logCalls(w).filter((call) => call.startsWith("appendLog 1 review"));
+  const reviewSessions = () => w.lines.filter((line) => line.startsWith("1 session") && line.includes('"role":"review"'));
+  const followUps = w.followUps.length;
+  const events = w.events().length;
+  for (let tick = 0; tick < 20; tick++) {
+    w.clock.ms += 30_000;
+    await w.run();
+  }
+  assert.equal(reviews().length, 1, reviews().join("\n"));
+  assert.equal(reviewSessions().length, 1, reviewSessions().join("\n"));
+  assert.equal(w.runner.requests.filter((request) => request.role === "review").length, 1);
+  assert.equal(w.followUps.length, followUps, "nothing more is filed while it waits");
+  assert.ok(w.events().length - events <= 2, w.events().slice(events).map((event) => event.kind).join(", "));
+  assert.deepEqual(queue.enqueued, []);
+  // Once the queue is started, it takes the change; still one review line.
+  w.store.setValue(KEYS.mergeQueue, "started");
+  await w.run();
+  assert.equal(w.job("1")?.parked?.as, "queued");
+  assert.equal(reviews().length, 1);
+});
 
 const SEND_BACKS = {
   culprit: { kind: "send-back" as const, change: ref("1"), sha: HEAD, batch: 1, reason: { kind: "culprit" as const, prefix: 1, chainSha: SHA2, files: ["test/sum.test.js"], excerpt: "1 test failed: sums metres" } },
@@ -3527,6 +3559,50 @@ test("a question of the expensive kind still parks the Item, and the decisions t
   assert.equal(w.lines.filter((line) => line.includes(" question ")).length, 1);
 });
 
+
+// Shortened from real implement answers: the fields after the summary ran into its string as tool-call markup.
+const MARKUP_DECISIONS = `Added the helper and its test.</summary>\n<parameter name="decisions">${JSON.stringify(TAKEN)}`;
+const MARKUP_QUESTION = `Fixed the docstring; the Item still says 6.</summary>\n<parameter name="question">${JSON.stringify({ question: "Which value should the Item use?", options: [{ label: "Keep 0.06", description: "Square metres." }, { label: "Return 6", description: "Not square metres." }], recommendation: "Keep 0.06" })}</parameter>\n<parameter name="decisions">${JSON.stringify([TAKEN[0]])}`;
+
+test("an implement answer with its decisions run into the summary as markup: the decisions are recorded, and no log line carries the markup", async () => {
+  const w = world(config({ rules: { ...STAGE1 } }), [item("1")]);
+  await w.run();
+  await step(w, "1", "succeeded", TRIAGE_OK);
+  await step(w, "1", "succeeded", { done: true, summary: MARKUP_DECISIONS, aboutOthers: [] });
+  assert.match(w.reasons("orchestrator.answer_repaired")[0] ?? "", /^The implement answer had decisions run into another field as tool-call markup/);
+  const lines = w.lines.filter((line) => line.includes(" assumption "));
+  assert.equal(lines.length, 1);
+  assert.deepEqual(JSON.parse(lines[0]!.slice("1 assumption ".length)).decisions, TAKEN);
+  assert.equal(w.job("1")?.implement?.summary, "Added the helper and its test.");
+  assert.match(w.runner.requests[2]?.vars.decisions ?? "", /1\. Which name for the helper\? Chose: roundHeight\./);
+  assert.ok(w.hostWrites.some((write) => write.includes("appendLog 1 session") && write.includes("Added the helper and its test.")), w.hostWrites.join("\n"));
+  assert.deepEqual(w.hostWrites.filter((write) => /<parameter|<\/summary>/.test(write)), []);
+  assert.deepEqual(roles(w), ["triage", "implement", "review"]);
+});
+
+test("an implement question run into the summary as markup is asked with its options and recommendation", async () => {
+  const w = world(config(), [item("1")]);
+  await w.run();
+  await step(w, "1", "succeeded", TRIAGE_OK);
+  await step(w, "1", "succeeded", { done: false, summary: MARKUP_QUESTION });
+  assert.equal(w.job("1")?.parked?.as, "needs-decision");
+  assert.deepEqual(w.job("1")?.decision?.options, [{ label: "Keep 0.06", description: "Square metres." }, { label: "Return 6", description: "Not square metres." }]);
+  assert.equal(w.job("1")?.decision?.recommendation, "Keep 0.06");
+  assert.equal(w.lines.filter((line) => line.includes(" assumption ")).length, 1);
+  assert.deepEqual(w.hostWrites.filter((write) => /<parameter|<\/summary>/.test(write)), []);
+});
+
+test("an implement answer whose markup cannot be taken out is retried as malformed, and the markup is not written to the host", async () => {
+  const w = world(config(), [item("1")]);
+  await w.run();
+  await step(w, "1", "succeeded", TRIAGE_OK);
+  w.runner.end("1", "succeeded", { done: true, summary: 'Done.</summary>\n<parameter name="decisions">[{"question":' });
+  await w.run();
+  assert.equal(w.job("1")?.parked, undefined);
+  assert.match(w.reasons("orchestrator.retry_scheduled")[0] ?? "", /implement step failed \(1 of 3\): The implementer's answer does not have the expected shape, or has tool-call markup inside a string\./);
+  assert.ok(w.hostWrites.some((write) => write.includes("appendLog 1 session") && write.includes("tool-call markup inside its summary and was not taken")), w.hostWrites.join("\n"));
+  assert.deepEqual(w.hostWrites.filter((write) => /<parameter|<\/summary>/.test(write)), []);
+});
 test("the reviewer's send-back for a decision that should have been a question resumes the implementor, told to stop and ask it", async () => {
   const w = world(config({ rules: { ...STAGE1 } }), [item("1")]);
   await w.run();
