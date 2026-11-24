@@ -712,22 +712,34 @@ export function createGitHubHost(config: GitHubConfig): GitHubHost {
       return { id: String(posted.id) };
     },
     /**
-     * The verdict goes into the decision's comment, edited in place (an edit notifies nobody), after a fresh look that it is
-     * still open; the answer must carry it. Then the label goes once no decision on the issue is open.
+     * The verdicts of one Send go into their decisions' comments, each comment edited once in place (an edit notifies nobody;
+     * the decisions of one implementor step share one comment), after one fresh look that every one is still open: one that is not
+     * refuses them all before anything is written. The answer must carry them. Then the label goes once no decision is open.
      */
-    async settleAssumption(subject, id, settled) {
+    async settleAssumptions(subject, settles) {
       const { comments, thread } = await threadOf(subject);
-      const found = thread.assumptions.find((each) => each.id === id);
-      if (!found) throw new AlreadyAnswered(`There is no decision ${id} on #${subject.id} (its comment may have been deleted).`);
-      if (found.settled) throw new AlreadyAnswered(`Decision ${id} on #${subject.id} is ${found.settled.verdict} already.`);
-      const [commentId, n] = id.split("-");
-      const comment = comments.find((each) => String(each.id) === commentId);
-      const marker = readMarker(comment?.body);
-      if (!comment || marker?.kind !== "assumption") throw new AlreadyAnswered(`The comment of decision ${id} on #${subject.id} is gone.`);
-      const decisions = (Array.isArray(marker.data.decisions) ? marker.data.decisions : []) as { question: string; chosen: string; others: string[]; why: string }[];
-      const verdicts = [...readVerdicts(marker.data.settled), { n: Number(n), verdict: settled.verdict, at: settled.at, by: settled.by, ...(settled.answer ? { answer: settled.answer } : {}), ...(settled.item ? { item: settled.item.id } : {}), ...(settled.work ? { work: true as const } : {}) }];
-      const sent = await client.send<RestComment>("PATCH", r(`/issues/comments/${comment.id}`), { body: assumptionBody(decisions, verdicts) });
-      if (readVerdicts(readMarker(sent?.body)?.data.settled).length !== verdicts.length) throw new Error(`GitHub took the verdict on decision ${id} of #${subject.id} but does not show it.`);
+      const byComment = new Map<string, { comment: RestComment; marker: NonNullable<ReturnType<typeof readMarker>>; verdicts: ReturnType<typeof readVerdicts> }>();
+      for (const { id, settled } of settles) {
+        const found = thread.assumptions.find((each) => each.id === id);
+        if (!found) throw new AlreadyAnswered(`There is no decision ${id} on #${subject.id} (its comment may have been deleted).`);
+        if (found.settled) throw new AlreadyAnswered(`Decision ${id} on #${subject.id} is ${found.settled.verdict} already.`);
+        const [commentId, n] = id.split("-");
+        let entry = byComment.get(commentId!);
+        if (!entry) {
+          const comment = comments.find((each) => String(each.id) === commentId);
+          const marker = readMarker(comment?.body);
+          if (!comment || marker?.kind !== "assumption") throw new AlreadyAnswered(`The comment of decision ${id} on #${subject.id} is gone.`);
+          entry = { comment, marker, verdicts: readVerdicts(marker.data.settled) };
+          byComment.set(commentId!, entry);
+        }
+        if (entry.verdicts.some((each) => each.n === Number(n))) throw new AlreadyAnswered(`Decision ${id} on #${subject.id} is settled already.`);
+        entry.verdicts.push({ n: Number(n), verdict: settled.verdict, at: settled.at, by: settled.by, ...(settled.answer ? { answer: settled.answer } : {}), ...(settled.item ? { item: settled.item.id } : {}), ...(settled.work ? { work: true as const } : {}) });
+      }
+      for (const { comment, marker, verdicts } of byComment.values()) {
+        const decisions = (Array.isArray(marker.data.decisions) ? marker.data.decisions : []) as { question: string; chosen: string; others: string[]; why: string }[];
+        const sent = await client.send<RestComment>("PATCH", r(`/issues/comments/${comment.id}`), { body: assumptionBody(decisions, verdicts) });
+        if (readVerdicts(readMarker(sent?.body)?.data.settled).length !== verdicts.length) throw new Error(`GitHub took the verdicts on the decisions of #${subject.id} but does not show them.`);
+      }
       const after = (await threadOf(subject)).thread;
       if (after.assumptions.some((each) => !each.settled)) return;
       const label = hasLabel(labelNames((await reread(subject)).labels), ASSUMPTION_LABEL);

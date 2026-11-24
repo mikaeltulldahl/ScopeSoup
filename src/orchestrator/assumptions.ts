@@ -2,7 +2,7 @@
 // An overturned decision becomes a new Item that carries the answer as the decision: the change is reworked, or
 // reverted where it has merged already.
 
-import type { Assumption, WorkItem } from "../model/types.ts";
+import type { Assumption, Ref, WorkItem } from "../model/types.ts";
 import { refKey } from "../model/types.ts";
 
 /** The new Item an overturn makes: its title, description and verification. Agent and person text inside it is data. */
@@ -59,4 +59,22 @@ export function overturnItem(item: WorkItem, assumption: Assumption, answer: str
 export function splitAssumptionId(id: string): { record: string; n: number } | null {
   const match = /^(.+)[#-](\d+)$/.exec(id);
   return match ? { record: match[1]!, n: Number(match[2]) } : null;
+}
+
+/** A person's pick on one decision, sent with the others of the Item: Accept, or Overturn with a person's decision. */
+export interface AssumptionPick {
+  id: string;
+  action: "accept" | "overturn";
+  /** With "overturn": a person's decision. */
+  answer?: string;
+}
+
+/** What a pick came to on the host: the verdict, the Item an overturn filed (or reused), or `work` when it went into the running work. */
+export interface AssumptionOutcome {
+  id: string;
+  verdict: "accepted" | "overturned";
+  item?: Ref;
+  /** The Item was filed for this decision before (a Send whose verdicts could not be written): reused, no second one filed. */
+  reused?: true;
+  work?: true;
 }

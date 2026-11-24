@@ -21,13 +21,15 @@ import { actorOf, describeLine } from "../hosts/metaBranch/map.ts";
 import type { Assumption, Change, LogRecord, LogWriter, Ref, Run, Runner, Session, WorkItem } from "../model/types.ts";
 import type { RemoteBranches } from "../items/remoteBranch.ts";
 import type { LogLineInput, WorkPort, WriteOutcome, WritePort } from "../ports/host.ts";
+import type { AssumptionOutcome } from "../orchestrator/assumptions.ts";
 import { overturnedBy, overturnItem } from "../orchestrator/assumptions.ts";
-import { overturnIntoWork } from "../orchestrator/overturns.ts";
+import { overturnsFor, takesOverturn } from "../orchestrator/overturns.ts";
+import { AlreadyAnswered } from "../ports/host.ts";
 import { refKey } from "../model/types.ts";
 import type { Chat, ChatRunner, ChatTurn } from "../orchestrator/chat.ts";
 import { chatKey, createChat } from "../orchestrator/chat.ts";
 import type { Decision, Job, Jobs } from "../orchestrator/jobs.ts";
-import { saveJobs } from "../orchestrator/jobs.ts";
+import { loadJobs, saveJobs } from "../orchestrator/jobs.ts";
 import { workspaceKey } from "../orchestrator/paths.ts";
 import { applyControl } from "../store/control.ts";
 import type { Store } from "../store/store.ts";
@@ -107,43 +109,54 @@ function demoAssumptions63(at: (minutes: number) => string): Assumption[] {
 }
 
 /**
- * Accept and Overturn in the demo: the store's item is changed in place. An overturn while the work runs (item 63 is in
- * review) goes into it, kept for the cycle; otherwise it files a new demo item.
+ * Accept and Overturn in the demo, the picks of one Send together: the store's item is changed in place, in one put. An overturn
+ * while the work runs (item 63 is in review) goes into it (the server keeps it for the cycle); otherwise it files a new demo item.
  */
 export function demoAssumptionHost(store: Store): AssumptionHost {
-  const settle = (item: Ref, id: string, settled: NonNullable<Assumption["settled"]>): void => {
-    const work = store.get<WorkItem>(item);
-    if (!work) throw new Error(`No item ${item.id}.`);
-    const assumptions = (work.assumptions ?? []).map((each) => (each.id === id ? { ...each, settled } : each));
-    store.put({ ...work, assumptions }, "demo", settled.at);
-  };
   return {
     host: "demo",
-    async accept(item, id, by) {
-      settle(item, id, { verdict: "accepted", at: new Date().toISOString(), by });
-    },
-    async overturn(item, id, answer, by) {
+    async settle(item, picks, by) {
       const work = store.get<WorkItem>(item);
-      const decision = work?.assumptions?.find((each) => each.id === id);
-      if (!work || !decision) throw new Error(`No decision ${id} on ${item.id}.`);
-      // As on a real host: an Item already filed for this decision is reused.
-      const before = overturnedBy(store.list<WorkItem>("work"), work, decision);
-      if (before) {
-        settle(item, id, { verdict: "overturned", at: new Date().toISOString(), by, answer, item: before.ref });
-        return before.ref;
-      }
-      if (overturnIntoWork(store, work, decision, answer, by, new Date().toISOString())) {
-        settle(item, id, { verdict: "overturned", at: new Date().toISOString(), by, answer, work: true });
-        return "work";
-      }
-      const made = overturnItem(work, decision, answer);
-      const next = Math.max(...store.list<WorkItem>("work").map((each) => Number(each.ref.id)).filter(Number.isFinite)) + 1;
+      if (!work) throw new Error(`No item ${item.id}.`);
       const at = new Date().toISOString();
-      const ref: Ref = { host: work.ref.host, kind: "work", id: String(next) };
-      const filed: WorkItem = { ref, title: made.title, body: made.body, verification: made.verification, state: "todo", hostState: "open", labels: [], blockedBy: made.merged ? [] : [item], openChildren: 0, updatedAt: at };
-      store.put(filed, "demo", at);
-      settle(item, id, { verdict: "overturned", at, by, answer, item: ref });
-      return ref;
+      const key = refKey(item);
+      const job = loadJobs(store)[key];
+      const kept = new Set(overturnsFor(store, key).map((each) => each.id));
+      const outcomes: AssumptionOutcome[] = [];
+      const settled = new Map<string, NonNullable<Assumption["settled"]>>();
+      for (const pick of picks) {
+        const decision = work.assumptions?.find((each) => each.id === pick.id);
+        if (!decision) throw new AlreadyAnswered(`No decision ${pick.id} on ${item.id}.`);
+        if (decision.settled) throw new AlreadyAnswered(`Decision ${pick.id} on ${item.id} is ${decision.settled.verdict} already.`);
+      }
+      for (const pick of picks) {
+        const decision = work.assumptions!.find((each) => each.id === pick.id)!;
+        if (pick.action === "accept") {
+          outcomes.push({ id: pick.id, verdict: "accepted" });
+          settled.set(pick.id, { verdict: "accepted", at, by });
+          continue;
+        }
+        const answer = pick.answer ?? "";
+        // As on a real host: an Item already filed for this decision is reused.
+        const before = overturnedBy(store.list<WorkItem>("work"), work, decision);
+        let outcome: AssumptionOutcome;
+        if (before) outcome = { id: pick.id, verdict: "overturned", item: before.ref, reused: true };
+        else if (kept.has(pick.id) || takesOverturn(job, work)) outcome = { id: pick.id, verdict: "overturned", work: true };
+        else {
+          const made = overturnItem(work, decision, answer);
+          const next = Math.max(...store.list<WorkItem>("work").map((each) => Number(each.ref.id)).filter(Number.isFinite)) + 1;
+          const ref: Ref = { host: work.ref.host, kind: "work", id: String(next) };
+          const filed: WorkItem = { ref, title: made.title, body: made.body, verification: made.verification, state: "todo", hostState: "open", labels: [], blockedBy: made.merged ? [] : [item], openChildren: 0, updatedAt: at };
+          store.put(filed, "demo", at);
+          outcome = { id: pick.id, verdict: "overturned", item: ref };
+        }
+        outcomes.push(outcome);
+        settled.set(pick.id, { verdict: "overturned", at, by, answer, ...(outcome.item ? { item: outcome.item } : {}), ...(outcome.work ? { work: true as const } : {}) });
+      }
+      // The verdicts in one write, as a real host does.
+      const assumptions = (work.assumptions ?? []).map((each) => (settled.has(each.id) ? { ...each, settled: settled.get(each.id)! } : each));
+      store.put({ ...work, assumptions }, "demo", at);
+      return outcomes;
     },
   };
 }

@@ -5,11 +5,13 @@
 import { createHash } from "node:crypto";
 import type { ProjectConfig } from "../config/types.ts";
 import type { Assumption, AssumptionSettled, DecisionOption, LabelChange, Ref, WorkItem } from "../model/types.ts";
+import type { AssumptionOutcome, AssumptionPick } from "./assumptions.ts";
 import { overturnedBy, overturnItem, splitAssumptionId } from "./assumptions.ts";
-import { overturnIntoWork } from "./overturns.ts";
+import { overturnsFor, takesOverturn } from "./overturns.ts";
 import { holdStands } from "../model/people.ts";
 import { refKey } from "../model/types.ts";
 import type { AnswerWrite, AssumptionWrite, DraftWrite, Host, QuestionWrite, WorkPatch } from "../ports/host.ts";
+import { AlreadyAnswered } from "../ports/host.ts";
 import type { Store } from "../store/store.ts";
 import type { Actions } from "./ports.ts";
 import type { FollowUpItem } from "./followUp.ts";
@@ -101,15 +103,24 @@ export function createHostActions(deps: HostActionsDeps): Actions {
       deps.store.appendEvent({ kind: "orchestrator.host_write_failed", subject: refKey(item), actor: "orchestrator", data: { reason } }, new Date().toISOString());
     }
   };
-  /** The verdict on a decision: into its comment (GitHub), or an `accepted` / `overturned` line naming it (meta branch). */
-  const settleAssumption = async (item: Ref, id: string, settled: AssumptionSettled): Promise<void> => {
-    if (write?.settleAssumption) return write.settleAssumption(item, id, { ...settled, by: inertText(settled.by), ...(settled.answer ? { answer: inertText(settled.answer) } : {}) });
-    const place = splitAssumptionId(id);
-    if (!write?.appendLog || !place) throw new Error(`Decision ${id} cannot be settled on ${item.host}.`);
-    await write.appendLog(item, {
-      kind: settled.verdict, by: { who: settled.by, agent: false },
-      fields: { to: place.record, n: place.n, ...(settled.answer ? { answer: settled.answer } : {}), ...(settled.item ? { item: settled.item.id } : {}), ...(settled.work ? { work: true } : {}) },
+  /**
+   * The verdicts of one Send in one write: into their decisions' comment (GitHub), or one commit of `accepted` / `overturned` lines
+   * naming them (meta branch).
+   */
+  const settleAll = async (item: Ref, settles: { id: string; settled: AssumptionSettled }[]): Promise<void> => {
+    if (write?.settleAssumptions) {
+      return write.settleAssumptions(item, settles.map(({ id, settled }) => ({ id, settled: { ...settled, by: inertText(settled.by), ...(settled.answer ? { answer: inertText(settled.answer) } : {}) } })));
+    }
+    const lines = settles.map(({ id, settled }) => {
+      const place = splitAssumptionId(id);
+      if (!write?.appendLog || !place) throw new Error(`Decision ${id} cannot be settled on ${item.host}.`);
+      return {
+        kind: settled.verdict, by: { who: settled.by, agent: false },
+        fields: { to: place.record, n: place.n, ...(settled.answer ? { answer: settled.answer } : {}), ...(settled.item ? { item: settled.item.id } : {}), ...(settled.work ? { work: true } : {}) },
+      };
     });
+    if (lines.length > 1 && write?.appendLogs) await write.appendLogs(item, lines);
+    else for (const line of lines) await write!.appendLog!(item, line);
   };
   /** The machine Scope Soup's claims name: a log per machine (meta branch), or claim comments (GitHub). */
   const claimMachine = host.info.machine ?? host.info.claimMachine;
@@ -329,73 +340,77 @@ export function createHostActions(deps: HostActionsDeps): Actions {
       }
       : {}),
 
-    // A person's Accept and Overturn of a decision an implementor took itself, where the host keeps them.
-    ...(write?.settleAssumption || write?.appendLog
-      ? {
-        async acceptAssumption(item: Ref, id: string, by: string) {
-          if (!mine(item)) return false;
-          await settleAssumption(item, id, { verdict: "accepted", at: new Date().toISOString(), by });
-          await reread(item);
-          return true;
-        },
-        ...(write.createWork
-          ? (() => {
-            const onLog = write.appendLog !== undefined;
-            /** The item as the host has it now, and its decision `id`. */
-            const decisionOf = async (item: Ref, id: string): Promise<{ current: WorkItem; decision: Assumption }> => {
-              const current = (await host.work?.getWork(item)) ?? deps.store.get<WorkItem>(item);
-              const decision = current?.assumptions?.find((each) => each.id === id);
-              if (!current || !decision) throw new Error(`There is no decision ${id} on ${item.id}.`);
-              return { current, decision };
-            };
-            /** The Item an overturn files, into the store at once, so a second press finds it by its mark. */
-            const fileOverturn = async (current: WorkItem, decision: Assumption, answer: string, by: string): Promise<Ref> => {
-              const item = current.ref;
-              const made = overturnItem(current, decision, answer);
-              const created = await write.createWork!({
-                title: inertText(made.title), body: inertText(made.body), verification: inertText(made.verification),
-                // The rework waits for the change it reworks (metaBranch: a blocker in the item; GitHub: the issue dependency below).
-                ...(onLog && !made.merged ? { blockedBy: [item] } : {}),
-                ...(onLog ? { log: [{ kind: "created", by: { who: by, agent: false } }] } : {}),
-              });
-              const ref = created.work;
-              await reread(ref);
-              if (!onLog && !made.merged && write.addBlockers) {
-                try {
-                  await write.addBlockers(ref, [item]);
-                } catch (error) {
-                  deps.store.appendEvent({ kind: "orchestrator.host_write_failed", subject: refKey(ref), actor: "orchestrator", data: { reason: `Could not write ${ref.id} blocked by ${item.id}: ${error instanceof Error ? error.message : String(error)}` } }, new Date().toISOString());
-                }
-              }
-              return ref;
-            };
-            return {
-              async overturnAssumption(item: Ref, id: string, answer: string, by: string): Promise<Ref | "work" | null> {
-                if (!mine(item)) return null;
-                const { current, decision } = await decisionOf(item, id);
-                if (decision.settled) throw new Error(`Decision ${id} on ${item.id} is ${decision.settled.verdict} already.`);
-                const verdict = (more: Pick<AssumptionSettled, "item" | "work">) => settleAssumption(item, id, { verdict: "overturned", at: new Date().toISOString(), by, answer, ...more });
-                // Pressed again after the verdict could not be written: the Item filed then (its body carries the decision's mark, and
-                // the store has it, re-read right after it was made or synced since) is reused, so no second one is filed.
-                const filed = overturnedBy(deps.store.list<WorkItem>("work", host.info.id), current, decision);
-                if (filed) {
-                  deps.store.appendEvent({ kind: "orchestrator.overturn_reused", subject: refKey(item), actor: "orchestrator", data: { reason: `${filed.ref.id} was filed for decision ${id} on ${item.id} before; it is reused, and only the verdict is written now.` } }, new Date().toISOString());
-                  await verdict({ item: filed.ref });
-                  await reread(item);
-                  return filed.ref;
-                }
-                // The change has not merged: the answer goes into the running work, kept once however often this is pressed.
-                if (overturnIntoWork(deps.store, current, decision, answer, by, new Date().toISOString())) {
-                  await verdict({ work: true });
-                  await reread(item);
-                  return "work";
-                }
-                const ref = await fileOverturn(current, decision, answer, by);
-                await verdict({ item: ref });
-                await reread(item);
-                await reread(ref);
-                return ref;
-              },
+    // A person's Accept and Overturn of decisions an implementor took itself, sent together, where the host keeps them.
+    ...(write?.settleAssumptions || write?.appendLog
+      ? (() => {
+        const onLog = write.appendLog !== undefined;
+        /** The item as the host has it now, and its decision `id`. */
+        const decisionOf = async (item: Ref, id: string): Promise<{ current: WorkItem; decision: Assumption }> => {
+          const current = (await host.work?.getWork(item)) ?? deps.store.get<WorkItem>(item);
+          const decision = current?.assumptions?.find((each) => each.id === id);
+          if (!current || !decision) throw new Error(`There is no decision ${id} on ${item.id}.`);
+          return { current, decision };
+        };
+        /** The Item an overturn files, into the store at once, so a second Send finds it by its mark. */
+        const fileOverturn = async (current: WorkItem, decision: Assumption, answer: string, by: string): Promise<Ref> => {
+          const item = current.ref;
+          const made = overturnItem(current, decision, answer);
+          const created = await write.createWork!({
+            title: inertText(made.title), body: inertText(made.body), verification: inertText(made.verification),
+            // The rework waits for the change it reworks (metaBranch: a blocker in the item; GitHub: the issue dependency below).
+            ...(onLog && !made.merged ? { blockedBy: [item] } : {}),
+            ...(onLog ? { log: [{ kind: "created", by: { who: by, agent: false } }] } : {}),
+          });
+          const ref = created.work;
+          await reread(ref);
+          if (!onLog && !made.merged && write.addBlockers) {
+            try {
+              await write.addBlockers(ref, [item]);
+            } catch (error) {
+              deps.store.appendEvent({ kind: "orchestrator.host_write_failed", subject: refKey(ref), actor: "orchestrator", data: { reason: `Could not write ${ref.id} blocked by ${item.id}: ${error instanceof Error ? error.message : String(error)}` } }, new Date().toISOString());
+            }
+          }
+          return ref;
+        };
+        return {
+          async settleAssumptions(item: Ref, picks: AssumptionPick[], by: string): Promise<AssumptionOutcome[] | null> {
+            if (!mine(item)) return null;
+            const current = (await host.work?.getWork(item)) ?? deps.store.get<WorkItem>(item);
+            if (!current) throw new AlreadyAnswered(`There is no item ${item.id}.`);
+            // One that is gone or settled refuses them all, before anything is written.
+            const decisions = picks.map((pick) => {
+              const decision = current.assumptions?.find((each) => each.id === pick.id);
+              if (!decision) throw new AlreadyAnswered(`There is no decision ${pick.id} on ${item.id}.`);
+              if (decision.settled) throw new AlreadyAnswered(`Decision ${pick.id} on ${item.id} is ${decision.settled.verdict} already.`);
+              return decision;
+            });
+            const key = refKey(item);
+            const job = loadJobs(deps.store)[key];
+            const kept = new Set([...overturnsFor(deps.store, key).map((each) => each.id), ...(job?.overturned ?? [])]);
+            const outcomes: AssumptionOutcome[] = picks.map((pick, index): AssumptionOutcome => {
+              if (pick.action === "accept") return { id: pick.id, verdict: "accepted" };
+              const decision = decisions[index]!;
+              // Sent again after the verdicts could not be written: the Item filed then (its body carries the decision's mark, and the
+              // store has it, re-read right after it was made or synced since) is reused, so no second one is filed.
+              const filed = overturnedBy(deps.store.list<WorkItem>("work", host.info.id), current, decision);
+              if (filed) return { id: pick.id, verdict: "overturned", item: filed.ref, reused: true };
+              // The change has not merged: the answer goes into the running work; the caller keeps it with the picks.
+              if (kept.has(decision.id) || takesOverturn(job, current)) return { id: pick.id, verdict: "overturned", work: true };
+              return { id: pick.id, verdict: "overturned" };
+            });
+            const toFile = outcomes.flatMap((outcome, index) => (outcome.verdict === "overturned" && !outcome.item && !outcome.work ? [index] : []));
+            if (toFile.length > 0 && !write.createWork) throw new Error(`${item.host} cannot file the Item an Overturn makes once the change is out of the implementor's hands.`);
+            for (const index of toFile) outcomes[index]!.item = await fileOverturn(current, decisions[index]!, picks[index]!.answer ?? "", by);
+            const at = new Date().toISOString();
+            await settleAll(item, outcomes.map((outcome, index) => ({
+              id: outcome.id,
+              settled: { verdict: outcome.verdict, at, by, ...(outcome.verdict === "overturned" ? { answer: (picks[index]!.answer ?? "").trim() } : {}), ...(outcome.item ? { item: outcome.item } : {}), ...(outcome.work ? { work: true as const } : {}) },
+            })));
+            await reread(item);
+            return outcomes;
+          },
+          ...(write.createWork
+            ? {
               async reworkOverturn(item: Ref, id: string, answer: string, by: string): Promise<Ref | null> {
                 if (!mine(item)) return null;
                 const { current, decision } = await decisionOf(item, id);
@@ -403,10 +418,10 @@ export function createHostActions(deps: HostActionsDeps): Actions {
                 if (filed) return filed.ref;
                 return fileOverturn(current, decision, answer, by);
               },
-            };
-          })()
-          : {}),
-      }
+            }
+            : {}),
+        };
+      })()
       : {}),
 
     // A follow-up Item for the `should` findings of an approved change, found again by its mark.

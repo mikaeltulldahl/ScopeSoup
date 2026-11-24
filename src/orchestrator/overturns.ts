@@ -61,17 +61,31 @@ export function overturnIntoWork(store: Store, item: WorkItem, decision: Assumpt
   return store.tx(() => {
     const key = refKey(item.ref);
     const job = loadJobs(store)[key];
+    const kept = (readOverturns(store)[key] ?? []).some((each) => each.id === decision.id) || job?.overturned?.includes(decision.id) === true;
+    if (!kept && !takesOverturn(job, item)) return false;
+    keepOverturn(store, item, decision, answer, by, at);
+    return true;
+  });
+}
+
+/**
+ * Keeps a person's overturn for the Item's running work, with its event, without asking `takesOverturn` again: the verdict on the
+ * host says so already. Call it inside the caller's transaction. One kept or handed to the work already is not kept twice; a change
+ * that merged before the work was told gets its rework Item from the cycle (`reworkOverturn`).
+ */
+export function keepOverturn(store: Store, item: WorkItem, decision: Assumption, answer: string, by: string, at: string): void {
+  store.tx(() => {
+    const key = refKey(item.ref);
+    const job = loadJobs(store)[key];
     const pending = readOverturns(store);
     const list = pending[key] ?? [];
-    if (list.some((each) => each.id === decision.id) || job?.overturned?.includes(decision.id)) return true;
-    if (!takesOverturn(job, item)) return false;
+    if (list.some((each) => each.id === decision.id) || job?.overturned?.includes(decision.id)) return;
     pending[key] = [...list, { id: decision.id, question: decision.question, chosen: decision.chosen, answer: answer.trim(), by, at }];
     writeOverturns(store, pending);
     store.appendEvent({
       kind: "orchestrator.overturn_kept", subject: key, actor: "orchestrator",
       data: { reason: `A person overturned a decision on ${item.ref.id} while its change has not merged: it goes into the running work, and the implementor's own session is told before the next step. No new Item is filed.`, id: decision.id },
     }, at);
-    return true;
   });
 }
 

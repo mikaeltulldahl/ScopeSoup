@@ -223,7 +223,17 @@ async function main(): Promise<void> {
     if (writable && actions.replaceDescription) description = { host: writable.info.id, replace: actions.replaceDescription };
     if (writable && actions.editItem) hostEdit = { host: writable.info.id, edit: actions.editItem };
     if (writable && actions.changeLabels) labels = { host: writable.info.id, change: actions.changeLabels };
-    if (writable && actions.acceptAssumption && actions.overturnAssumption) assumptions = [{ host: writable.info.id, accept: actions.acceptAssumption, overturn: actions.overturnAssumption }];
+    const settleAssumptions = actions.settleAssumptions;
+    if (writable && settleAssumptions) {
+      assumptions = [{
+        host: writable.info.id,
+        async settle(item, picks, by) {
+          const outcomes = await settleAssumptions(item, picks, by);
+          if (!outcomes) throw new Error(`${item.id} is not an item of ${writable.info.id}.`);
+          return outcomes;
+        },
+      }];
+    }
     if (writable && actions.answerQuestion) questions = { host: writable.info.id, answer: actions.answerQuestion, ...(actions.answerQuestions ? { answerMany: actions.answerQuestions } : {}), ...(actions.checkDraft ? { checkDraft: actions.checkDraft } : {}) };
     // Windows: the machine is kept from sleeping while sessions run or work waits (the project can switch it off).
     const awake = createKeepAwake({

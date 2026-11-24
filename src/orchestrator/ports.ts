@@ -3,6 +3,7 @@
 import type { LabelChange, Ref, RepoLabel, Session, SessionRole } from "../model/types.ts";
 import type { AnswerWrite, DraftWrite, QuestionWrite, WorkPatch } from "../ports/host.ts";
 import type { FollowUpItem } from "./followUp.ts";
+import type { AssumptionOutcome, AssumptionPick } from "./assumptions.ts";
 
 export interface SessionRequest {
   role: SessionRole;
@@ -186,18 +187,15 @@ export interface Actions {
    */
   closeDuplicate?(item: Ref, of: Ref): Promise<boolean>;
   /**
-   * A person accepts a decision an implementor took itself (`id` as the item's `assumptions` name it): GitHub writes it
-   * into the decision's comment (and the `scopesoup:assumption` label goes once none is open), meta branch an `accepted` line. The
-   * re-read goes into the store. Throws when the host refuses; false when the item is not this host's.
+   * A person's picks on decisions an implementor took itself (`id` as the item's `assumptions` name it), sent together. After one
+   * fresh look that every one is still open (else it throws before anything is written), each overturn that does not go into the
+   * running work gets its Item first (rework, or revert where the change merged; one filed for it before, found by its mark, is
+   * reused). Then all verdicts in one write: GitHub edits the decisions' comment (and the `scopesoup:assumption` label goes once none
+   * is open), meta branch one commit of `accepted` / `overturned` lines. The re-read goes into the store. An overturn that goes into
+   * the running work (the change has not merged and is in the implementor's hands) comes back as `work`: the caller keeps it for the
+   * cycle (`keepOverturn`) in the transaction that records the picks. Throws when the host refuses; null when the item is not this host's.
    */
-  acceptAssumption?(item: Ref, id: string, by: string): Promise<boolean>;
-  /**
-   * A person overturns it with `answer`. While the change has not merged and is in the implementor's hands, the answer
-   * goes into the running work (kept for the cycle, `overturns.ts`) and the verdict says so: returns "work". Otherwise a new Item on
-   * the same host, linked to the decision by name and carrying the answer as its decision (rework, or revert where the change
-   * merged), then the verdict naming that Item: returns the new Item. Null when the item is not this host's.
-   */
-  overturnAssumption?(item: Ref, id: string, answer: string, by: string): Promise<Ref | "work" | null>;
+  settleAssumptions?(item: Ref, picks: AssumptionPick[], by: string): Promise<AssumptionOutcome[] | null>;
   /**
    * An overturn went into the work, but the change merged before the implementor was told: the new Item an Overturn after
    * merging files, for a decision settled already. An Item filed for it before (its mark) is returned instead. Null when the
