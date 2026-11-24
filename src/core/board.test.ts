@@ -276,3 +276,14 @@ test("the item page and the item list say a waiting Item waits for a paused tria
   const list = buildItemList(snap, {}, now, undefined, notTriaged);
   assert.deepEqual(list.items.map((row) => [row.label, row.reason]).sort(), [["#1", words], ["#2", "ready; waiting for a free agent slot"]]);
 });
+
+test("the item page lists the implementor's decisions oldest first, open and answered alike; the same time goes by id", () => {
+  const decision = (id: string, minutes: number, accepted?: true) => ({
+    id, at: at(minutes), question: `Q ${id}?`, chosen: "x", others: [], why: "",
+    ...(accepted ? { settled: { verdict: "accepted" as const, at: at(minutes + 1), by: "robin" } } : {}),
+  });
+  // Two open ones minutes old, listed first in the Item, and three answered hours ago.
+  const item = work(1, { state: "doing", assumptions: [decision("new-b", -5), decision("new-a", -5), decision("old-3", -180, true), decision("old-1", -240, true), decision("old-2", -200, true)] });
+  const page = buildItemPage(snapshot({ works: [item] }), ref("work", 1), now)!;
+  assert.deepEqual(page.assumptions.map((each) => each.id), ["old-1", "old-2", "old-3", "new-a", "new-b"]);
+});

@@ -792,6 +792,19 @@ test("the job cycle: triage, implement, review, the implementor resumed with the
   assert.equal(w.runner.requests.length, 6);
 });
 
+test("level 2: Scope Soup's claim is released once the implementing session merged", async () => {
+  const w = world(config({}), [item("1")]);
+  w.claims = true;
+  w.store.addUsageSample(usage(0.1, 0.1));
+  await w.run();
+  await step(w, "1", "succeeded", TRIAGE_OK);
+  assert.ok(!w.calls.includes("release 1"));
+  await step(w, "1", "succeeded", IMPLEMENT_OK);
+  assert.equal(w.job("1")?.merged, HEAD);
+  assert.equal(w.calls.filter((call) => call === "release 1").length, 1);
+  assert.ok(w.hostWrites.includes("release 1 merged on main as 3333333"), w.hostWrites.join(" | "));
+});
+
 async function toHandOver(w: World): Promise<void> {
   w.store.addUsageSample(usage(0.1, 0.1));
   await w.run();
@@ -2071,6 +2084,19 @@ test("merging by queue: the merged item is closed on its host once", async () =>
   await w.run();
   assert.deepEqual(w.closes, [`1 ${SHA2} 3`]);
   assert.match(w.reasons("orchestrator.item_closed")[0] ?? "", /1 was closed on its host.*bbbbbbb/);
+});
+
+test("merging by queue: Scope Soup's claim is released once the queue merged the change", async () => {
+  const w = world(config(QUEUE), [item("1")]);
+  w.claims = true;
+  const queue = fakeQueue();
+  w.queue = queue;
+  await toHandOver(w);
+  assert.ok(!w.calls.includes("release 1"), "held while it waits in the queue");
+  queue.notices.push({ kind: "mark-merged", batch: 3, tested: SHA2, members: [{ change: ref("1"), sha: SHA2, head: SHA }] });
+  await w.run();
+  assert.equal(w.calls.filter((call) => call === "release 1").length, 1);
+  assert.ok(w.hostWrites.includes("release 1 merged on main as bbbbbbb"), w.hostWrites.join(" | "));
 });
 
 test("merging by queue: when the close fails the item is not started again; with writes off the board says to close it by hand", async () => {

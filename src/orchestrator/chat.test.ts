@@ -280,6 +280,13 @@ describe("chat", { concurrency: 4 }, () => {
   });
 });
 
+test("a merged Item takes no more messages: it says so, not that it is queued", async () => {
+  const w = world({ parked: { as: "queued" as const, reason: "Merged.", at: "2026-11-18T09:30:00.000Z" }, merged: "b".repeat(40) });
+  assert.equal(w.chat.view(KEY).blocked, "The Item is merged, so its sessions take no more messages.");
+  const sent = await w.chat.send(KEY, "agent-impl", "Hello?");
+  assert.equal(!sent.ok && sent.status, 409);
+});
+
 // --- A pool of clones: the turn runs in the clone the session ran in (`claude` keeps a session per folder) ---
 
 interface PoolWorld {

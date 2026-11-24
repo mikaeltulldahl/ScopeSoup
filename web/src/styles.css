@@ -311,6 +311,7 @@ button.choice-mark:hover:not(:disabled) { background: none; }
 .answer { display: grid; gap: 8px; margin-top: 12px; }
 .answer label { font-size: 0.87rem; color: var(--muted); }
 .answer textarea { font: inherit; width: 100%; box-sizing: border-box; padding: 8px 10px; border-radius: 6px; border: 1px solid var(--line); background: var(--surface); color: var(--text); resize: vertical; }
+.answer textarea:disabled { background: var(--sunken); color: var(--muted); cursor: not-allowed; }
 .answer button { justify-self: start; }
 .version { margin: 10px 0; }
 .version-text { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 0.85rem; padding: 8px; border: 1px solid var(--line); border-radius: 6px; margin: 4px 0 6px; max-height: 18rem; overflow: auto; }
@@ -517,8 +518,11 @@ body.dialog-open { overflow: hidden; }
 .decision-overturn { display: grid; gap: 6px; }
 .decision-overturn label { display: grid; gap: 4px; }
 .decision-overturn textarea { font: inherit; width: 100%; box-sizing: border-box; padding: 8px 10px; border-radius: 6px; border: 1px solid var(--line); background: var(--surface); color: var(--text); resize: vertical; }
-.tag-accepted { color: var(--moving); border-color: currentColor; }
-.tag-overturned { color: var(--yours); border-color: currentColor; }
+/* The answered verdict is quiet; the choice still waiting is what stands out. */
+.decision-verdict .tag { color: var(--muted); border-color: var(--line); background: none; }
+.decision-choices { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
+button.decision-choice { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+button.decision-choice:hover:not(:disabled) { background: var(--accent-soft); filter: brightness(0.95); }
 .tag-picked { color: var(--text); border-style: dashed; border-color: currentColor; }
 .decision-picked { border-left: 3px dashed var(--line); padding-left: 8px; }
 /* --- claim, hand back and release on the Item page --- */
@@ -560,8 +564,9 @@ body.dialog-open { overflow: hidden; }
 .stepper-arrow { min-width: 34px; padding: 4px 8px; line-height: 1; }
 .stepper-arrow[aria-disabled="true"] { opacity: 0.45; cursor: default; }
 .stepper-dots { display: inline-flex; flex-wrap: wrap; gap: 4px; margin-left: auto; }
-.stepper-dot { min-width: 26px; min-height: 26px; padding: 0 6px; font-size: 0.75rem; font-weight: 550; border-radius: 999px; border-style: dashed; color: var(--muted); background: var(--surface); }
-.stepper-dot-done { border-style: solid; border-color: var(--accent); background: var(--accent-soft); color: var(--text); }
+/* Still open: active (the accent). Answered: muted grey. The current one has its own outline either way. */
+.stepper-dot { min-width: 26px; min-height: 26px; padding: 0 6px; font-size: 0.75rem; font-weight: 550; border-radius: 999px; border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
+.stepper-dot-done { border-color: var(--line); background: var(--surface); color: var(--muted); font-weight: 400; }
 .stepper-dot-current { outline: 2px solid var(--text); outline-offset: 1px; }
 .stepper .parked-question { margin-top: 6px; padding-top: 0; border-top: 0; }
 .stepper .decisions { margin-top: 8px; }

@@ -95,6 +95,13 @@ const DRAFT_TEXT = [
 /** The two decisions item 63's implementor took itself, open on the board. */
 function demoAssumptions63(at: (minutes: number) => string): Assumption[] {
   return [
+    // Answered at an earlier step of the same work: the page lists it first and opens on the first open one.
+    {
+      id: `${at(-150)}#0`, at: at(-150), question: "Which list of harbour names does the search read?",
+      chosen: "The one the map already loads", others: ["A new list from the harbour office"],
+      why: "It is loaded anyway, and a second list could disagree with the map.",
+      settled: { verdict: "accepted", at: at(-120), by: "robin" },
+    },
     {
       id: `${at(-58)}#0`, at: at(-58), question: "How many typos may a harbour name have and still match?",
       chosen: "Two for names of eight letters or more, one below", others: ["Always one", "Always two"],
@@ -368,6 +375,8 @@ export function seedDemo(store: Store, now: Date, dir?: string): void {
       item(id, title, { state: "done", hostState: "closed", ...(id === 36 ? { log: roundsLog36(at) } : {}) });
       changeFor(id, title, { state: "merged", verdicts: approved });
     }
+    // Item 36's last implementor session, kept: its page shows the session with no box to write in, as the Item is done.
+    put(session("s-36", ref("work", 36), { status: "succeeded", model: "sonnet", agentSessionId: "agent-s-36", startedAt: at(-775), finishedAt: at(-760), endReason: "succeeded", attempt: 2 }));
 
     saveJobs(store, jobs);
 
