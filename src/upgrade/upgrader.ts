@@ -161,7 +161,7 @@ export function createUpgrader(deps: UpgraderDeps): Upgrader {
     let getLatest: UpgradeView["getLatest"];
     if (blocked) getLatest = { can: false, why: blocked };
     else if (active()) getLatest = { can: false, why: "A switch is under way." };
-    else if (!available) getLatest = { can: false, why: latest ? `No newer release when it last looked (${latest.version}).` : "No newer release is known." };
+    else if (!available) getLatest = { can: false, why: latest ? `This is the newest release (${latest.version}).` : "No newer release is known." };
     else if (!latest?.zip) getLatest = { can: false, why: `The release ${latest?.version} has no scopesoup-${latest?.version}.zip attached.` };
     else getLatest = { can: true };
     const previous = home && !deps.checkout ? previousFolder(home) : null;

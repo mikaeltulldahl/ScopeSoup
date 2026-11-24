@@ -1,4 +1,4 @@
-// The board reads Scope Soup's version and the update check from `GET /api/upgrade`, and presses Look again, Get latest,
+// The board reads Scope Soup's version and the update check from `GET /api/upgrade`, and presses Check now, Get latest,
 // Go back and Cancel through `POST /api/upgrade/*`. Here over the demo's made-up release: no network, no files.
 
 import assert from "node:assert/strict";
