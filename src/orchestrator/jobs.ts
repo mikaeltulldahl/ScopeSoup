@@ -255,6 +255,11 @@ export interface Job {
   merged?: string;
   /** Level 4: the head of the branch that was handed to the queue. */
   queued?: string;
+  /**
+   * Level 4: the head the merge queue sent back (its check failed with it, or it conflicted). That revision is never handed to the
+   * queue again: the implementor's fix round makes a new one first. Cleared when a new revision is handed over.
+   */
+  sentBack?: string;
   /** The Item's text as the running triage was given it, kept for `triaged` when its answer is taken. */
   triaging?: TriagedText;
   /** What the newest triage saw, so a waiting Item whose triage is out of date gets one again (`staleTriage`). */

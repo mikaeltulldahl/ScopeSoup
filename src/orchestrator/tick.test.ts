@@ -91,6 +91,8 @@ interface FakeRunner extends AgentRunner {
   merges: boolean;
   /** Where the remote's main is now. */
   main: string;
+  /** The branch head the fake reports, when a test moves it (a commit); HEAD otherwise. */
+  headSha?: string;
   /** Ends the newest session of an item. */
   end(itemId: string, status: SessionStatus, output?: unknown, extra?: { resumeAt?: string; endReason?: string; denied?: string[]; costUsd?: number; setupFailed?: true; setupOutcome?: string; cwd?: string }): void;
 }
@@ -175,7 +177,7 @@ function world(cfg: ProjectConfig | ConfigSource, items: WorkItem[] = []): World
       return runner.paths;
     },
     async head() {
-      return HEAD;
+      return runner.headSha ?? HEAD;
     },
     async fetchMain() {
       return { repo: "/srv/clone", main: runner.main };
@@ -1739,13 +1741,15 @@ function fakeQueue(): QueueDriver & { enqueued: string[]; notices: Notice[]; kep
   const fake = {
     resumed: [] as string[], paused: null as string | null, missing: null as string | null,
     enqueued: [] as string[], notices: [] as Notice[], kept: [] as string[][], failWith: undefined as string | undefined,
+    // The head the real driver reads from the branch; SHA unless a test gives the branch's head.
+    sha: undefined as (() => string) | undefined,
     repos: [] as (string | null)[],
     // Like the real driver: no repository holding the branch, no hand-over.
     async enqueue(target: Ref, branch: string, repo: string | null) {
       fake.repos.push(repo);
       if (!repo) return { ok: false as const, reason: `the item has no workspace holding ${branch}` };
       fake.enqueued.push(`${target.id} ${branch}`);
-      return fake.failWith ? { ok: false as const, reason: fake.failWith } : { ok: true as const, sha: SHA };
+      return fake.failWith ? { ok: false as const, reason: fake.failWith } : { ok: true as const, sha: fake.sha?.() ?? SHA };
     },
     reconcile(keep: ReadonlySet<string>) {
       fake.kept.push([...keep]);
@@ -2087,6 +2091,120 @@ test("merging by queue: a conflict in the batch is sent back with the rebase adv
   await w.run();
   assert.match(w.runner.requests.at(-1)?.message ?? "", /conflicts with 7.*git rebase origin\/main/s);
   assert.ok(!logCalls(w).some((call) => call.startsWith("appendLog 1 check")), "a conflict is not a check");
+});
+
+/** The branch's head after the implementor's fix round: a new revision. */
+const FIXED = "c".repeat(40);
+
+/**
+ * As in the trial: the review approves while the merge queue is paused, the hand-over waits for it, and the queue takes the
+ * change once it is resumed. The queue reads the branch's head, as the real driver does.
+ */
+async function toQueueAfterPause(w: World, queue: ReturnType<typeof fakeQueue>): Promise<void> {
+  (queue as unknown as { sha: () => string }).sha = () => w.runner.headSha ?? HEAD;
+  w.store.addUsageSample(usage(0.1, 0.1));
+  await w.run();
+  await step(w, "1", "succeeded", TRIAGE_OK);
+  await step(w, "1", "succeeded", IMPLEMENT_OK);
+  w.store.setValue(KEYS.mergeQueue, "paused");
+  await step(w, "1", "succeeded", REVIEW_OK);
+  await w.run();
+  assert.equal(w.reasons("orchestrator.merge_queue_paused").length, 1, "the hand-over waits, said once: the review session is not settled again each tick");
+  w.store.setValue(KEYS.mergeQueue, "started");
+  await w.run();
+  assert.equal(w.job("1")?.parked?.as, "queued");
+  assert.equal(w.job("1")?.queued, HEAD);
+}
+
+const SEND_BACKS = {
+  culprit: { kind: "send-back" as const, change: ref("1"), sha: HEAD, batch: 1, reason: { kind: "culprit" as const, prefix: 1, chainSha: SHA2, files: ["test/sum.test.js"], excerpt: "1 test failed: sums metres" } },
+  conflict: { kind: "send-back" as const, change: ref("1"), sha: HEAD, batch: 1, reason: { kind: "conflict" as const, with: ref("7"), ahead: [ref("7")], base: SHA2 } },
+};
+
+for (const kind of ["culprit", "conflict"] as const) {
+  for (const implementors of ["paused", "started"] as const) {
+    test(`merging by queue: a change sent back as the ${kind}, implementors ${implementors}, is not queued again until its fix round made a new revision, reviewed`, async () => {
+      const w = world(config(QUEUE), [item("1")]);
+      const queue = fakeQueue();
+      w.queue = queue;
+      await toQueueAfterPause(w, queue);
+      const enqueued = queue.enqueued.length;
+      const queued = w.events("orchestrator.queued").length;
+      const retries = w.reasons("orchestrator.handover_retry").length;
+      const started = w.runner.requests.length;
+      if (implementors === "paused") w.store.setValue(KEYS.implement, "paused");
+      queue.notices.push(SEND_BACKS[kind]);
+      for (let tick = 0; tick < 4; tick++) {
+        await w.run();
+        w.clock.ms += 30_000;
+      }
+      // Back with its implementor: the same revision is not handed to the queue again, nor escalated as the same failure twice.
+      assert.equal(queue.enqueued.length, enqueued, "the revision the queue sent back is not handed to it again");
+      assert.equal(w.events("orchestrator.queued").length, queued);
+      assert.equal(w.reasons("orchestrator.handover_retry").length, retries);
+      assert.deepEqual(w.reasons("orchestrator.escalated"), []);
+      assert.equal(w.job("1")?.step, "implement");
+      assert.equal(w.job("1")?.fixRounds, 1);
+      if (implementors === "paused") {
+        assert.equal(w.runner.requests.length, started, "no implementor runs while implementors are paused");
+        w.store.setValue(KEYS.implement, "started");
+        await w.run();
+      }
+      // The implementor's own session is resumed with what the queue found.
+      const fix = w.runner.requests.at(-1);
+      assert.equal(w.runner.requests.length, started + 1);
+      assert.equal(fix?.role, "implement");
+      assert.equal(fix?.resume, "agent-s2");
+      assert.match(fix?.message ?? "", kind === "culprit" ? /Merging failed:.*test\/sum\.test\.js.*sums metres/s : /Merging failed:.*conflicts with 7/s);
+      // Its fix is a new revision, reviewed (level 3 and up) and only then queued again.
+      w.runner.headSha = FIXED;
+      await step(w, "1", "succeeded", IMPLEMENT_OK);
+      assert.equal(w.runner.requests.at(-1)?.role, "review");
+      assert.equal(queue.enqueued.length, enqueued);
+      await step(w, "1", "succeeded", REVIEW_OK);
+      assert.equal(queue.enqueued.length, enqueued + 1);
+      assert.equal(w.job("1")?.queued, FIXED);
+      assert.equal(w.job("1")?.parked?.as, "queued");
+    });
+  }
+}
+
+test("merging by queue: the same failure again after a fix round that made a new revision still ends the run", async () => {
+  const w = world(config(QUEUE), [item("1")]);
+  const queue = fakeQueue();
+  w.queue = queue;
+  await toQueueAfterPause(w, queue);
+  queue.notices.push(SEND_BACKS.culprit);
+  await w.run();
+  w.clock.ms += 1000;
+  await w.run();
+  w.runner.headSha = FIXED;
+  await step(w, "1", "succeeded", IMPLEMENT_OK);
+  await step(w, "1", "succeeded", REVIEW_OK);
+  assert.equal(w.job("1")?.queued, FIXED);
+  queue.notices.push({ ...SEND_BACKS.culprit, sha: FIXED });
+  await w.run();
+  assert.equal(w.job("1")?.parked?.as, "escalated");
+  assert.match(w.reasons("orchestrator.escalated").at(-1) ?? "", /the same failure as at the merge before/);
+  assert.equal(w.job("1")?.fixRounds, 1);
+});
+
+test("merging by queue: a fix round that commits nothing is a failed attempt of the implement step, not a review or a hand-over of the same revision", async () => {
+  const w = world(config(QUEUE), [item("1")]);
+  const queue = fakeQueue();
+  w.queue = queue;
+  await toQueueAfterPause(w, queue);
+  const enqueued = queue.enqueued.length;
+  queue.notices.push(SEND_BACKS.conflict);
+  await w.run();
+  w.clock.ms += 1000;
+  await w.run();
+  await step(w, "1", "succeeded", IMPLEMENT_OK);
+  assert.equal(w.job("1")?.step, "implement");
+  assert.equal(w.job("1")?.failures, 1);
+  assert.match(w.reasons("orchestrator.retry_scheduled").at(-1) ?? "", /still at 3333333, the revision the merge queue sent back: nothing new was committed/);
+  assert.equal(queue.enqueued.length, enqueued);
+  assert.notEqual(w.runner.requests.at(-1)?.role, "review");
 });
 
 const GITHUB_CI = { ...QUEUE, checkCommand: undefined, host: { kind: "github", repo: "acme/widgets", write: true }, mergeQueue: { ci: "github" } };
