@@ -1,4 +1,4 @@
-// The status line: runners, usage windows, the queue, the last sync.
+// The status line: runners, usage windows, the last sync. The lanes and the Merge queue page say what the queue does.
 
 import type { StatusLine as Status } from "./api.ts";
 import { useLive, useNow } from "./api.ts";
@@ -16,9 +16,7 @@ function Meter({ value }: { value: number }) {
 export function StatusLine({ status }: { status: Status }) {
   const now = useNow();
   const live = useLive();
-  const { runners, usage, queue, sync } = status;
-  // A batch being prepared (its changes merged onto main) is the one about to be checked: there is only ever one.
-  const checking = queue.testing + queue.forming;
+  const { runners, usage, sync } = status;
   return (
     <section class="status" aria-label="Status">
       <div class="status-group">
@@ -50,14 +48,6 @@ export function StatusLine({ status }: { status: Status }) {
           </span>
         ))}
         {usage?.status === "rejected" && <span class="tag tag-blocked">limit reached</span>}
-      </div>
-      <div class="status-group">
-        <span class="status-name">Merge queue</span>
-        <a class="status-item" href="#/queue">
-          <span class="num">
-            {queue.waiting} waiting · {checking} checking{queue.bisecting > 0 ? ` · ${queue.bisecting} bisecting` : ""}
-          </span>
-        </a>
       </div>
       <div class="status-group">
         <span class="status-name">Sync</span>
