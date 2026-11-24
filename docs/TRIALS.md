@@ -243,3 +243,13 @@ Not shown: a real agent session running the Item, the skill run by a `claude` se
 - Go back switched to 0.1.0 the same way; it offered "Return to 0.2.0".
 - About 20 s in all. Not run: a real GitHub release (none was made: the owner asked to wait with releases), the sh launcher (the test picks it on macOS and Linux), and an upgrade across a format change.
 
+
+## 2026-11-24: the Windows .exe on a machine without Node (#9)
+
+Run by hand on the owner's Windows laptop from branch `scopesoup/9`, synthetic data only, in a temporary folder. Node was taken off the PATH for every process of the trial (PATH: `C:\Windows\System32` and Git's `cmd` folder; `where node` found nothing).
+
+- `scopesoup-0.6.0-win-x64.exe --home <trial>\home` (a test build, 141 MB, Node 26.13 inside): unpacked `scopesoup-0.6.0/` and `node/node.exe`, ran `setup-home`, printed the next steps. Run again: left both as they were.
+- A synthetic project `harbour`: a local bare remote with two commits on `main`, the person's clone, and Scope Soup's own clone in the config folder `harbour-scopesoup/`. Through `home\bin\scopesoup.cmd`, as onboarding runs them: `config:check --shared` (valid, metaBranch, level 0), `settings:init` (the shared settings written to `refs/scopesoup/meta` and pushed), `config:check`, `config:register` (on the home's `configs.json`). In the clone: `item new --title "Two words title" --as "Sam Example"` filed A-1 on the meta ref, and `item list` showed it.
+- `scopesoup start` through the launcher in the clone, with `SCOPESOUP_PORT=4312` and `SCOPESOUP_UPDATE_CHECK=off`: "Scope Soup 0.6.0 from <home>", listening on 4312; `/api/health` answered `ok`, the page's title was "Scope Soup", and `item list` through the server showed A-1. The process was `<home>\node\node.exe`. Stopped by its own process tree.
+
+Found on the way, not from the .exe: `scopesoup start` run in the clone writes its database to `./data` in the clone (the default `SCOPESOUP_DATA`); and `item` commands use any server that answers on the default port, even one of another project (before the trial board was up, `item list` showed another project's Item from the board on 4310). Not shown: a laptop that never had Node, a real `claude` session, the onboarding skill run by a session.

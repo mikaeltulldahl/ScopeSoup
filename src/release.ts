@@ -4,10 +4,11 @@
 //
 //   pnpm release            refuses a dirty tree or a version already tagged, runs `pnpm check` on the commit, builds
 //   pnpm release --no-check a test build: no check, and its release.json says so (never tag one)
+//   pnpm release --exe      also the Windows .exe that sets Scope Soup up without Node (src/exe/build.ts)
 //
-// Writes release/scopesoup-<version>/, release/scopesoup-<version>.zip and its .sha256 (git-ignored), and prints the commands
-// that tag exactly the commit that was checked. It never tags, pushes or publishes anything itself. A single .exe
-// is later work.
+// Writes release/scopesoup-<version>/, release/scopesoup-<version>.zip and its .sha256 (git-ignored), with --exe also
+// release/scopesoup-<version>-win-x64.exe and its .sha256, and prints the commands that tag exactly the commit that was
+// checked. It never tags, pushes or publishes anything itself.
 
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -18,6 +19,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { CONFIG_VERSION } from "./config/migrate.ts";
 import { META_FORMAT } from "./hosts/metaBranch/format.ts";
 import { STORE_VERSION } from "./store/schema.ts";
+import { buildExe } from "./exe/build.ts";
 import { zipTar } from "./upgrade/unpack.ts";
 import { versionOf } from "./upgrade/version.ts";
 
@@ -194,7 +196,7 @@ export function zipFolder(folder: string): string | null {
   return null;
 }
 
-/** Writes `<zip>.sha256` ("<hex>  <name>"), which the upgrade checks the download against. Returns the hex. */
+/** Writes `<file>.sha256` ("<hex>  <name>"), which the upgrade checks the zip against. Returns the hex. */
 export function writeChecksum(zip: string): string {
   const hex = createHash("sha256").update(readFileSync(zip)).digest("hex");
   writeFileSync(`${zip}.sha256`, `${hex}  ${zip.slice(dirname(zip).length + 1)}\n`);
@@ -211,6 +213,8 @@ export interface CutOptions {
   outDir?: string;
   /** The built web app; default `<root>/web/dist` (`pnpm check` builds it). */
   webDist?: string;
+  /** Also build the Windows .exe from the release folder. */
+  exe?: boolean;
   print?: (line: string) => void;
 }
 
@@ -218,7 +222,7 @@ export interface CutOptions {
  * Cuts a release: refuses a dirty tree or a tagged version, runs the check on the exact commit, makes sure the
  * tree and HEAD did not change meanwhile, builds and zips. Prints the commands that tag that commit; runs none of them.
  */
-export function cutRelease(options: CutOptions = {}): { out: string; zip: string | null; commit: string } {
+export function cutRelease(options: CutOptions = {}): { out: string; zip: string | null; exe: string | null; commit: string } {
   const root = options.root ?? SCOPESOUP_ROOT;
   const git = options.git ?? realGitSync;
   const print = options.print ?? console.log;
@@ -237,6 +241,12 @@ export function cutRelease(options: CutOptions = {}): { out: string; zip: string
   const hex = zip ? writeChecksum(zip) : null;
   print(`Release folder: ${out}`);
   print(zip ? `Zip: ${zip} (SHA-256 ${hex}, also in ${zip}.sha256)` : "No zip tool found (tar, PowerShell or zip): only the folder was made.");
+  let exe: string | null = null;
+  if (options.exe) {
+    const built = buildExe({ releaseFolder: out });
+    exe = built.exe;
+    print(`Exe: ${exe} (${(built.bytes / 1e6).toFixed(0)} MB, Node ${process.version} inside, SHA-256 ${writeChecksum(exe)}, also in ${exe}.sha256)`);
+  }
   print(`Formats: config ${CONFIG_VERSION}, meta branch ${META_FORMAT}, database ${STORE_VERSION}. Say in the notes whether any changed since the last release.`);
   if (options.noCheck) {
     print("This is a test build (--no-check): do not tag or publish it.");
@@ -244,14 +254,15 @@ export function cutRelease(options: CutOptions = {}): { out: string; zip: string
     print("To publish it, tag exactly the commit that was checked and attach the zip and its .sha256 (docs/RUNNING.md, \"Cutting a release\"):");
     print(`  git tag -a ${first.tag} ${first.commit} -m "Scope Soup ${first.version}"`);
     print(`  git push origin ${first.tag}`);
-    if (zip) print(`  gh release create ${first.tag} "${zip}" "${zip}.sha256" --title "Scope Soup ${first.version}" --notes-file <notes.md>`);
+    const exeFiles = exe ? ` "${exe}" "${exe}.sha256"` : "";
+    if (zip) print(`  gh release create ${first.tag} "${zip}" "${zip}.sha256"${exeFiles} --title "Scope Soup ${first.version}" --notes-file <notes.md>`);
   }
-  return { out, zip, commit: first.commit };
+  return { out, zip, exe, commit: first.commit };
 }
 
 function main(): void {
   try {
-    cutRelease({ noCheck: process.argv.includes("--no-check") });
+    cutRelease({ noCheck: process.argv.includes("--no-check"), exe: process.argv.includes("--exe") });
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
     process.exitCode = 1;

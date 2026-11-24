@@ -59,7 +59,7 @@ You need:
 
 - **Windows 11.** That is where it is built and tried. It is plain Node and git, so macOS and Linux may work, but nobody has tried them.
 - **Claude Code** (the `claude` command), signed in with a Claude subscription. Agents run through it.
-- **Node 22.18 or newer**, **git** and **pnpm**.
+- **Node 22.18 or newer**, **git** and **pnpm**. Or, on Windows without Node: run `scopesoup-<version>-win-x64.exe` from a release, which sets Scope Soup up with its own Node (no admin rights; [`docs/RUNNING.md`](docs/RUNNING.md), "Installing and upgrading").
 - For a GitHub project: a token that can read the repository (and write, if Scope Soup should comment on and close issues).
 
 Try the board on made-up data:
