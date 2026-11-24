@@ -272,7 +272,7 @@ export function offboardPlan(found: Found): OffboardPlan {
     machine: machineGroup(found),
   };
   const notes = [
-    "Pausing is not leaving: Pause agents, Pause merge queue and Stop on the board, or level 0, stop Scope Soup's work and can be undone. Nothing below is needed for that.",
+    "Pausing is not leaving: Pause on the overview's lanes and Stop on the board, or level 0, stop Scope Soup's work and can be undone. Nothing below is needed for that.",
     "Stop Scope Soup (Stop on the board, then end the program) before anything is removed.",
     "The project's history is never rewritten: merged commits, closed issues and pull requests, and comments stay.",
   ];

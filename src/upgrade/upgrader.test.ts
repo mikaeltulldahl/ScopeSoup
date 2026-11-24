@@ -47,7 +47,7 @@ function rig(work: string, options: { digest?: "right" | "wrong" | "none"; launc
   let saved: string | null = null;
   let resume: string | null = null;
   let note: string | null = null;
-  const was: Resume = { agents: false, mergeQueue: false };
+  const was: Resume = { triage: false, implement: false, review: false, mergeQueue: false };
   const resumed: Resume[] = [];
   const deps: UpgraderDeps = {
     root, version: "0.1.0", home, checkout: false, now: () => clock.now,
@@ -104,17 +104,19 @@ async function upgradeAndRestart(r: Rig) {
   return createUpgrader({ ...r.deps, root: join(r.home, "scopesoup-0.2.0"), version: "0.2.0" });
 }
 
-describe("agents and the merge queue after a switch", { concurrency: 2 }, () => {
+describe("the four switches after a switch", { concurrency: 2 }, () => {
   test("running before Get latest: running after the restart, and the board says so", withWork(async (work) => {
     const r = rig(work);
-    r.was.agents = true;
+    r.was.triage = true;
+    r.was.implement = true;
+    r.was.review = true;
     r.was.mergeQueue = true;
     const next = await upgradeAndRestart(r);
     assert.equal(next.view().note, null);
     next.restore();
-    assert.deepEqual(r.resumed, [{ agents: true, mergeQueue: true }]);
-    assert.equal(next.view().note?.text, "Upgraded to 0.2.0; agents and the merge queue started again as before");
-    assert.ok(r.events.some((e) => e.kind === "scopesoup.resumed" && e.data.agents === true && e.data.mergeQueue === true));
+    assert.deepEqual(r.resumed, [{ triage: true, implement: true, review: true, mergeQueue: true }]);
+    assert.equal(next.view().note?.text, "Upgraded to 0.2.0; triage, implementors, review and the merge queue started again as before");
+    assert.ok(r.events.some((e) => e.kind === "scopesoup.resumed" && e.data.triage === true && e.data.implement === true && e.data.review === true && e.data.mergeQueue === true));
     // Once only: a later start does not start them again.
     next.restore();
     assert.equal(r.resumed.length, 1);
@@ -131,41 +133,50 @@ describe("agents and the merge queue after a switch", { concurrency: 2 }, () => 
     const next = await upgradeAndRestart(r);
     next.restore();
     assert.equal(r.resumed.length, 0);
-    assert.equal(next.view().note?.text, "Upgraded to 0.2.0; agents and the merge queue were paused before and stay paused");
+    assert.equal(next.view().note?.text, "Upgraded to 0.2.0; triage, implementors, review and the merge queue were paused before and stay paused");
   }));
 
-  test("each of the two comes back as it was", withWork(async (work) => {
+  test("each of the four comes back as it was", withWork(async (work) => {
     const agentsOnly = rig(join(work, "a"));
-    agentsOnly.was.agents = true;
+    agentsOnly.was.implement = true;
     const a = await upgradeAndRestart(agentsOnly);
     a.restore();
-    assert.deepEqual(agentsOnly.resumed, [{ agents: true, mergeQueue: false }]);
-    assert.match(a.view().note?.text ?? "", /; agents started again as before$/);
+    assert.deepEqual(agentsOnly.resumed, [{ triage: false, implement: true, review: false, mergeQueue: false }]);
+    assert.match(a.view().note?.text ?? "", /; implementors started again as before$/);
     const queueOnly = rig(join(work, "q"));
     queueOnly.was.mergeQueue = true;
     const q = await upgradeAndRestart(queueOnly);
     q.restore();
-    assert.deepEqual(queueOnly.resumed, [{ agents: false, mergeQueue: true }]);
+    assert.deepEqual(queueOnly.resumed, [{ triage: false, implement: false, review: false, mergeQueue: true }]);
     assert.match(q.view().note?.text ?? "", /; the merge queue started again as before$/);
+    const triageAndReview = rig(join(work, "tr"));
+    triageAndReview.was.triage = true;
+    triageAndReview.was.review = true;
+    const t = await upgradeAndRestart(triageAndReview);
+    t.restore();
+    assert.deepEqual(triageAndReview.resumed, [{ triage: true, implement: false, review: true, mergeQueue: false }]);
+    assert.match(t.view().note?.text ?? "", /; triage and review started again as before$/);
   }));
 
   test("Go back restores them too", withWork(async (work) => {
     const r = rig(work);
     const next = await upgradeAndRestart(r);
     next.restore();
-    r.was.agents = true;
+    r.was.implement = true;
     next.goBack();
     await next.settled();
     assert.equal(readPointer(r.home), "scopesoup-0.1.0");
     const old = createUpgrader({ ...r.deps, root: join(r.home, "scopesoup-0.1.0"), version: "0.1.0" });
     old.restore();
-    assert.deepEqual(r.resumed, [{ agents: true, mergeQueue: false }]);
-    assert.equal(old.view().note?.text, "Went back to 0.1.0; agents started again as before");
+    assert.deepEqual(r.resumed, [{ triage: false, implement: true, review: false, mergeQueue: false }]);
+    assert.equal(old.view().note?.text, "Went back to 0.1.0; implementors started again as before");
   }));
 
   test("a failed switch starts them again at once; a version that did not start is named", withWork(async (work) => {
     const r = rig(work);
-    r.was.agents = true;
+    r.was.triage = true;
+    r.was.implement = true;
+    r.was.review = true;
     r.was.mergeQueue = true;
     const failing = createUpgrader({ ...r.deps, backup: () => { throw new Error("disk full"); } });
     await failing.check();
@@ -173,24 +184,24 @@ describe("agents and the merge queue after a switch", { concurrency: 2 }, () => 
     await failing.settled();
     assert.equal(failing.view().task?.state, "failed");
     assert.equal(readPointer(r.home), "scopesoup-0.1.0");
-    assert.deepEqual(r.resumed, [{ agents: true, mergeQueue: true }]);
+    assert.deepEqual(r.resumed, [{ triage: true, implement: true, review: true, mergeQueue: true }]);
     // Nothing is left for a later start.
     createUpgrader(r.deps).restore();
     assert.equal(r.resumed.length, 1);
 
     // The switch went through but 0.2.0 could not start and the pointer went back: 0.1.0 starts them again.
     const r2 = rig(join(work, "again"));
-    r2.was.agents = true;
+    r2.was.implement = true;
     await upgradeAndRestart(r2);
     const old = createUpgrader(r2.deps);
     old.restore();
-    assert.deepEqual(r2.resumed, [{ agents: true, mergeQueue: false }]);
-    assert.equal(old.view().note?.text, "Version 0.2.0 did not start; back on 0.1.0; agents started again as before");
+    assert.deepEqual(r2.resumed, [{ triage: false, implement: true, review: false, mergeQueue: false }]);
+    assert.equal(old.view().note?.text, "Version 0.2.0 did not start; back on 0.1.0; implementors started again as before");
   }));
 
   test("a remembered state from long ago is not used, and Cancel forgets it", withWork(async (work) => {
     const r = rig(work);
-    r.was.agents = true;
+    r.was.implement = true;
     const next = await upgradeAndRestart(r);
     r.clock.now = new Date(r.clock.now.getTime() + 2 * 60 * 60 * 1000);
     next.restore();
@@ -198,7 +209,7 @@ describe("agents and the merge queue after a switch", { concurrency: 2 }, () => 
     assert.equal(next.view().note, null);
 
     const c = rig(join(work, "cancel"));
-    c.was.agents = true;
+    c.was.implement = true;
     const upgrader = createUpgrader(c.deps);
     await upgrader.check();
     c.busy.why = "1 session still running";

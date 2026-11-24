@@ -1493,13 +1493,12 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
         if (path === "/api/config") return changeConfig(request, response);
         if (path === "/api/open-folder") return openProjectFolder(request, response);
         request.resume();
-        if (path === "/api/agents/start") return sendJson(response, 200, control("agents.start", "board"));
-        if (path === "/api/agents/pause") return sendJson(response, 200, control("agents.pause", "board"));
-        if (path === "/api/merge-queue/start") return sendJson(response, 200, control("mergeQueue.start", "board"));
-        if (path === "/api/merge-queue/pause") return sendJson(response, 200, control("mergeQueue.pause", "board"));
+        // Each switch on its lane: /api/{triage,implement,review,merge-queue}/{start,pause}; /api/agents/... is the three roles at once.
+        const switched = /^\/api\/(triage|implement|review|merge-queue|agents)\/(start|pause)$/.exec(path);
+        if (switched) return sendJson(response, 200, control(`${switched[1] === "merge-queue" ? "mergeQueue" : switched[1] as "triage" | "implement" | "review" | "agents"}.${switched[2] as "start" | "pause"}`, "board"));
         if (path === "/api/stop") return sendJson(response, 200, control("stop", "board"));
-        // The old stop switch, kept for scripts: pause is Pause agents and Pause merge queue (running sessions finish their step);
-        // resume is Start agents and Start merge queue. Stop is the one that ends sessions.
+        // The old stop switch, kept for scripts: pause pauses all four switches (running sessions finish their step);
+        // resume resumes all four. Stop is the one that ends sessions.
         if (path === "/api/pause") return sendJson(response, 200, control("pause", "/api/pause"));
         if (path === "/api/resume") return sendJson(response, 200, control("resume", "/api/resume"));
         if (path === "/api/queue/resume") {

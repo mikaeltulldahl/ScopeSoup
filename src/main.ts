@@ -84,7 +84,7 @@ import type { ProjectInfo } from "./server/project.ts";
 import { gitRemoteUrl } from "./config/mergeQueue.ts";
 import type { AssumptionHost } from "./server/server.ts";
 import { createChat } from "./orchestrator/chat.ts";
-import { agentsState, applyControl, mergeQueueOn, mergeQueueStopped, readControl } from "./store/control.ts";
+import { mergeQueueOn, mergeQueueStopped, pauseRemembering, roleStopped, startAgain } from "./store/control.ts";
 import { KEYS } from "./store/keys.ts";
 import { NEWER_STORE, STORE_VERSION } from "./store/schema.ts";
 import { openStore } from "./store/store.ts";
@@ -203,7 +203,7 @@ async function main(): Promise<void> {
     resources = units;
     await units.recover();
     // A session's item commands (the triage's search) read this project's configuration, wherever the session runs.
-    runner = createRunner({ store, config: current, env: { ...env, SCOPESOUP_CONFIG: configFile }, onFinished: () => loop?.refresh(), stopped: () => agentsState(store) === "stopped", resources: units });
+    runner = createRunner({ store, config: current, env: { ...env, SCOPESOUP_CONFIG: configFile }, onFinished: () => loop?.refresh(), stopped: (role) => roleStopped(store, role), resources: units });
     // Without a host that may be written to, finished work stays on its local branch.
     // A host that can push branches and open changes; writing items (meta branch) is not that.
     // A host that keeps items' logs itself (meta branch) gets the check and merging lines.
@@ -316,15 +316,8 @@ async function main(): Promise<void> {
       const parts = [sessions > 0 ? `${sessions} session${sessions === 1 ? "" : "s"}` : "", batches > 0 ? `${batches} queue batch${batches === 1 ? "" : "es"}` : ""].filter(Boolean);
       return parts.length > 0 ? `${parts.join(" and ")} still running` : null;
     },
-    pause: () => {
-      const before = readControl(store);
-      applyControl(store, "pause", iso(), "upgrade", "scopesoup");
-      return { agents: before.agents === "started", mergeQueue: before.mergeQueue === "started" };
-    },
-    resume: (what) => {
-      if (what.agents) applyControl(store, "agents.start", iso(), "upgrade", "scopesoup");
-      if (what.mergeQueue) applyControl(store, "mergeQueue.start", iso(), "upgrade", "scopesoup");
-    },
+    pause: () => pauseRemembering(store, iso(), "upgrade", "scopesoup"),
+    resume: (what) => startAgain(store, what, iso(), "upgrade", "scopesoup"),
     backup: (dir) => {
       const copies: string[] = [];
       const db = join(dir, "scopesoup.sqlite");

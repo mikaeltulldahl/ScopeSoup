@@ -24,8 +24,8 @@ export function StopUsing({ stopped, busy, onStop }: { stopped: boolean; busy: b
         </div>
         <h4>Pausing is not leaving</h4>
         <p>
-          To stop Scope Soup's work and keep everything, press Stop (it ends running sessions and pauses agents and the merge queue), or set level 0 on the Settings page.
-          {" "}Both are undone with Start agents, or by raising the level. Nothing below is needed for that.
+          To stop Scope Soup's work and keep everything, press Stop (it ends running sessions and pauses triage, implementors, review and the merge queue), or set level 0 on the Settings page.
+          {" "}Both are undone with Resume on the lanes of the overview, or by raising the level. Nothing below is needed for that.
         </p>
         <p>
           <button type="button" class="stop" disabled={busy || stopped} onClick={onStop}>{stopped ? "Stopped" : "Stop"}</button>

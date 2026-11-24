@@ -15,6 +15,7 @@ import { StopUsing } from "./StopUsing.tsx";
 import { UpgradeNote, VersionFooter } from "./Version.tsx";
 import { useRoute } from "./route.ts";
 import { StatusLine } from "./StatusLine.tsx";
+import { allPaused, switchesAt } from "./switches.ts";
 import { THEMES, taglineAt } from "./theme.ts";
 import { startThemes, useThemeId } from "./useTheme.ts";
 import "./styles.css";
@@ -78,11 +79,10 @@ function App() {
   const status = board?.status;
   // No level: board only (no project configuration), so there is no orchestrator to start.
   const level = status?.level;
-  const agents = status?.agents ?? "paused";
-  const merging = status?.mergeQueue ?? "paused";
-  const agentsWhy = level === 0 ? "Level 0 (Watch) starts no agents. Raise the level on the Settings page." : null;
-  const mergeQueueWhy = level !== undefined && level < 4 ? `Autopilot is level 4 (the merge queue merges reviewed changes). This project is at level ${level}.` : null;
-  const stopped = agents === "stopped";
+  const switches = { triage: status?.triage ?? "paused", implement: status?.implement ?? "paused", review: status?.review ?? "paused", mergeQueue: status?.mergeQueue ?? "paused" } as const;
+  // Stop is pressed once per stop: all four read "stopped" until each is resumed.
+  const allStopped = Object.values(switches).every((state) => state === "stopped");
+  const anyStopped = Object.values(switches).some((state) => state === "stopped");
   const working = board ? board.status.runners.list.filter((runner) => runner.online && runner.busy).length + board.status.queue.testing : 0;
 
   return (
@@ -108,58 +108,23 @@ function App() {
         <div class="actions">
           <button type="button" disabled={busy} onClick={() => act("/api/refresh")}>Sync now</button>
           {level !== undefined && (
-            <>
-              <button
-                type="button"
-                id="agents-switch"
-                class={agents === "started" ? undefined : "primary"}
-                disabled={busy || agentsWhy !== null}
-                title={agentsWhy ?? (agents === "started" ? "Agents: sessions on items. Pause lets running sessions finish their step and starts nothing new." : "Agents: let Scope Soup start sessions on items again.")}
-                onClick={() => act(agents === "started" ? "/api/agents/pause" : "/api/agents/start")}
-              >
-                {agents === "started" ? "Pause agents" : "Start agents"}
-              </button>
-              <button
-                type="button"
-                id="merge-queue-switch"
-                class={merging === "started" || mergeQueueWhy ? undefined : "primary"}
-                disabled={busy || mergeQueueWhy !== null}
-                title={mergeQueueWhy ?? (merging === "started" ? "Merge queue: merges reviewed changes on main. Pause lets a merge under way finish and starts no new one." : "Merge queue: merge reviewed changes on main again.")}
-                onClick={() => act(merging === "started" ? "/api/merge-queue/pause" : "/api/merge-queue/start")}
-              >
-                {merging === "started" ? "Pause merge queue" : "Start merge queue"}
-              </button>
-              <button
-                type="button"
-                id="stop-switch"
-                class="stop"
-                disabled={busy || (stopped && merging === "stopped")}
-                title="The stop switch: pauses agents and the merge queue at once, ends running sessions and cuts off a merge under way before it pushes. Start agents (and Start merge queue) must be pressed again."
-                onClick={() => act("/api/stop")}
-              >
-                Stop
-              </button>
-            </>
+            <button
+              type="button"
+              id="stop-switch"
+              class="stop"
+              disabled={busy || allStopped}
+              title="The stop switch: pauses triage, implementors, review and the merge queue at once, ends running sessions and cuts off a merge under way before it pushes. Each must be resumed on its lane again."
+              onClick={() => act("/api/stop")}
+            >
+              Stop
+            </button>
           )}
         </div>
       </header>
-      {level !== undefined && level > 0 && (stopped || agents === "paused") && (
+      {/* One switch paused shows on its lane; only when everything is paused does the board say so here. */}
+      {allPaused(switches, level) && (
         <p class="notice notice-paused" role="status" id="paused-banner">
-          {stopped ? (
-            <>
-              <b>Stopped.</b> Running sessions were ended; agents and the merge queue are paused. Press Start agents{level >= 4 ? " and Start merge queue" : ""} to go on.
-            </>
-          ) : (
-            <>
-              <b>Agents are paused.</b> Nothing new starts; running sessions finish their step. Press Start agents to go on.
-              {level >= 4 && merging !== "started" ? " The merge queue is paused too: no new merge starts." : ""}
-            </>
-          )}
-        </p>
-      )}
-      {level !== undefined && level >= 4 && agents === "started" && merging !== "started" && (
-        <p class="notice notice-paused" role="status" id="merge-queue-banner">
-          <b>The merge queue is paused.</b> A merge under way finishes; reviewed changes then wait and no new merge starts. Press Start merge queue to go on.
+          {anyStopped ? <b>Stopped.</b> : <b>Everything is paused.</b>} {anyStopped ? "Running sessions were ended; nothing new starts." : "Nothing new starts; running sessions finish their step."} Press Resume on {switchesAt(level).length > 1 ? "the lanes" : "the Backlog"} to go on.
         </p>
       )}
       {!person && (
@@ -172,11 +137,11 @@ function App() {
       <main>
         {board && route.view !== "settings" && route.view !== "stop" && route.view !== "history" && route.view !== "usage" && route.view !== "items" && <StatusLine status={board.status} />}
         {!board && !error && route.view !== "settings" && route.view !== "stop" && route.view !== "history" && route.view !== "usage" && route.view !== "items" && <p class="empty">Loading…</p>}
-        {board && route.view === "overview" && <Overview board={board} />}
+        {board && route.view === "overview" && <Overview board={board} busy={busy} onSwitch={act} />}
         {board && route.view === "queue" && <Queue board={board} />}
         {route.view === "items" && <ItemList key={route.query} query={route.query} />}
         {route.view === "settings" && <Settings project={board?.project} />}
-        {route.view === "stop" && <StopUsing stopped={stopped && merging === "stopped"} busy={busy} onStop={() => act("/api/stop")} />}
+        {route.view === "stop" && <StopUsing stopped={allStopped} busy={busy} onStop={() => act("/api/stop")} />}
         {route.view === "history" && <History />}
         {route.view === "usage" && <Usage />}
       </main>

@@ -12,8 +12,7 @@ import type { ProjectConfig } from "../config/types.ts";
 import { validateConfig } from "../config/validate.ts";
 import type { Ref, SessionRole, WorkItem } from "../model/types.ts";
 import { refKey } from "../model/types.ts";
-import { agentsState } from "../store/control.ts";
-import { KEYS } from "../store/keys.ts";
+import { agentsState, setRolesForTest } from "../store/control.ts";
 import { openStore } from "../store/store.ts";
 import type { Store } from "../store/store.ts";
 import type { Job } from "./jobs.ts";
@@ -78,7 +77,7 @@ function world(level: 2 | 3, env: Record<string, string>): World {
   if (!result.ok) assert.fail(result.errors.join("\n"));
   const config = result.config;
   const store = openStore(":memory:");
-  store.setValue(KEYS.agents, "started");
+  setRolesForTest(store, "started");
   const clock = { ms: T0 };
   const now = () => new Date(clock.ms).toISOString();
   const item: WorkItem = { ref: ITEM, title: "Item 1", state: "todo", hostState: "open", labels: [], blockedBy: [], openChildren: 0, updatedAt: "2026-11-01T00:00:00Z" };
@@ -158,7 +157,7 @@ describe("merging by the session", { concurrency: 7 }, () => {
     const said = w.events("orchestrator.main_rewritten");
     assert.equal(said.length, 1, said.join("\n"));
     assert.match(said[0]!, new RegExp(`it was at ${before.slice(0, 7)} and is now at ${git(w.remote, "rev-parse", "main").slice(0, 7)}.*Agents are paused`));
-    assert.equal(w.store.eventsAfter(0, 10_000).filter((event) => event.kind === "control.agents_paused").length, 1);
+    assert.equal(w.store.eventsAfter(0, 10_000).filter((event) => event.kind === "control.implement_paused").length, 1);
     // The session forced main and did not merge the branch: no `merged`, and a person gets the reason.
     assert.equal(w.job()?.parked?.as, "escalated");
     assert.match(w.job()?.parked?.reason ?? "", /does not contain scopesoup\/1/);

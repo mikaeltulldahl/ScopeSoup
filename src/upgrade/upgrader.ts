@@ -4,7 +4,7 @@
 // - "Get latest" downloads the release zip, checks it, unpacks it into its own folder in the home, pauses agents and
 //   merging and waits until no session and no queue batch runs (a running check is never cut), copies the database and
 //   the config, switches the pointer and asks the launcher to start the new version (exit code 75).
-// - Pausing is only for the wait: what was running (agents, the merge queue) is remembered, kept across the restart in the
+// - Pausing is only for the wait: what was running (each of triage, implementors, review, the merge queue) is remembered, kept across the restart in the
 //   store, and started again once the version that comes up is listening; what was paused stays paused. The board says so.
 // - "Go back to X.Y.Z" waits the same way and switches the pointer one step back, to the version the last switch left.
 // - At most two versions on disk: the older one goes at the next upgrade, or once the current one ran cleanly for a day.
@@ -21,7 +21,7 @@ import { compareVersions, folderOf, versionOfFolder } from "./version.ts";
 
 export const CHECK_EVERY_MS = 24 * 60 * 60 * 1000;
 const LOOK_EVERY_MS = 60 * 60 * 1000;
-/** How long the note "Upgraded to ...; agents started again as before" stays on the board. */
+/** How long the note "Upgraded to ...; triage and implementors started again as before" stays on the board. */
 export const NOTE_FOR_MS = 60 * 60 * 1000;
 /** A remembered state older than this is not restored: it belongs to a switch that did not lead to a restart. */
 const RESUME_FOR_MS = 60 * 60 * 1000;
@@ -31,8 +31,24 @@ import type { TaskState, UpgradeTask, UpgradeView } from "./view.ts";
 
 /** What was running when Get latest or Go back paused: the switches to start again afterwards. */
 export interface Resume {
-  agents: boolean;
+  triage: boolean;
+  implement: boolean;
+  review: boolean;
   mergeQueue: boolean;
+}
+
+const RESUME_SWITCHES = ["triage", "implement", "review", "mergeQueue"] as const;
+const RESUME_WORDS: Record<keyof Resume, string> = { triage: "triage", implement: "implementors", review: "review", mergeQueue: "the merge queue" };
+
+function listWords(words: readonly string[]): string {
+  return words.length > 1 ? `${words.slice(0, -1).join(", ")} and ${words.at(-1)}` : words[0] ?? "";
+}
+
+/** "triage and review started again as before", or that all four stay paused. */
+export function resumeWords(what: Resume): string {
+  const started = RESUME_SWITCHES.filter((name) => what[name]).map((name) => RESUME_WORDS[name]);
+  if (started.length === 0) return `${listWords(RESUME_SWITCHES.map((name) => RESUME_WORDS[name]))} were paused before and stay paused`;
+  return `${listWords(started)} started again as before`;
 }
 
 interface Remembered extends Resume {
@@ -54,9 +70,9 @@ export interface UpgraderDeps {
   checkOff?: string;
   /** Null when no session and no queue batch runs; otherwise what is still running. */
   busy: () => string | null;
-  /** Pauses agents and the merge queue, so nothing new starts while it waits; says which of them were running. */
+  /** Pauses the agent roles and the merge queue, so nothing new starts while it waits; says which of the four were running. */
   pause: () => Resume;
-  /** Starts agents and/or the merge queue again (the ones that are true). */
+  /** Starts again the switches that are true. */
   resume: (what: Resume) => void;
   /** Copies the database and the config into `dir`; returns the copies. */
   backup: (dir: string) => string[];
@@ -338,14 +354,14 @@ export function createUpgrader(deps: UpgraderDeps): Upgrader {
     let kept: Remembered;
     try {
       kept = JSON.parse(raw) as Remembered;
-      if (typeof kept.to !== "string" || typeof kept.at !== "string" || typeof kept.agents !== "boolean" || typeof kept.mergeQueue !== "boolean") return;
+      if (typeof kept.to !== "string" || typeof kept.at !== "string" || RESUME_SWITCHES.some((name) => typeof kept[name] !== "boolean")) return;
     } catch {
       return;
     }
     if (deps.now().getTime() - Date.parse(kept.at) > RESUME_FOR_MS) return;
-    const what: Resume = { agents: kept.agents, mergeQueue: kept.mergeQueue };
-    if (what.agents || what.mergeQueue) deps.resume(what);
-    const started = what.agents && what.mergeQueue ? "agents and the merge queue started again as before" : what.agents ? "agents started again as before" : what.mergeQueue ? "the merge queue started again as before" : "agents and the merge queue were paused before and stay paused";
+    const what: Resume = { triage: kept.triage, implement: kept.implement, review: kept.review, mergeQueue: kept.mergeQueue };
+    if (RESUME_SWITCHES.some((name) => what[name])) deps.resume(what);
+    const started = resumeWords(what);
     const lead = deps.version === kept.to ? `${kept.kind === "back" ? "Went back to" : "Upgraded to"} ${kept.to}` : `Version ${kept.to} did not start; back on ${deps.version}`;
     const text = `${lead}; ${started}`;
     deps.record("scopesoup.resumed", { ...what, version: deps.version, text });

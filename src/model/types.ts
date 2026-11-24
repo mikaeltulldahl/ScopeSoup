@@ -562,7 +562,7 @@ export interface ScopeSoupEvent {
   data: unknown;
 }
 
-/** The people's switch over the orchestrator: Start agents, Pause agents, or Stop (store/control.ts). */
+/** One of the people's switches over an agent role (triage, implementors, review): Resume, Pause, or Stop (store/control.ts). */
 export type AgentsState = "started" | "paused" | "stopped";
-/** The people's switch over mergeQueue: Start merge queue, Pause merge queue (a merge under way finishes), or Stop (it is cut off). */
+/** The people's switch over mergeQueue: Resume, Pause (a merge under way finishes), or Stop (it is cut off). */
 export type MergeQueueState = "started" | "paused" | "stopped";

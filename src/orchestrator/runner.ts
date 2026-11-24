@@ -9,7 +9,8 @@ import type { WriteStream } from "node:fs";
 import { join } from "node:path";
 import type { ProjectConfig } from "../config/types.ts";
 import { refKey } from "../model/types.ts";
-import type { Ref, Session, SessionStatus, UsageSample } from "../model/types.ts";
+import type { Ref, Session, SessionRole, SessionStatus, UsageSample } from "../model/types.ts";
+import { ROLES } from "../store/control.ts";
 import type { Store } from "../store/store.ts";
 import { resetAfterRejection } from "./usageCheck.ts";
 import { identityEnv, sessionIdentity } from "./identity.ts";
@@ -53,8 +54,8 @@ export interface RunnerDeps {
   storeWriteIntervalMs?: number;
   /** Runs `setupCommand`. Default: a check runner over `processes` with `setupEnv` of `env`. */
   runSetup?: RunCheck;
-  /** True once a person pressed Stop: a setup under way is ended. */
-  stopped?: () => boolean;
+  /** True once a person pressed Stop and the role was not resumed since: a setup under way for its session is ended. */
+  stopped?: (role: SessionRole) => boolean;
   /** The agent provider for a session. Default: `providerFor` (`providers/index.ts`); tests give a fake. */
   provider?: (config: ProjectConfig, request: SessionRequest) => AgentProvider;
   /** The limited resources: the units the caller took for a session are given back here once it is over, however it ended. */
@@ -121,7 +122,8 @@ export function createRunner(deps: RunnerDeps): Runner {
 
   const runSetup = deps.runSetup ?? createCheckRunner(processes, setupEnv(deps.env ?? process.env), now, SETUP_ADVICE);
   /** Raised by every Stop: a setup under way ends when it changes. */
-  let stops = 0;
+  /** Counts the stops per role, so a setup under way sees one that happened meanwhile. */
+  const stops: Record<SessionRole, number> = { triage: 0, implement: 0, review: 0 };
   const iso = (ms: number): string => new Date(ms).toISOString();
   const poolDeps = (config: ProjectConfig): PoolDeps => ({ store, config, git, at: iso(now()), processes });
 
@@ -295,9 +297,9 @@ export function createRunner(deps: RunnerDeps): Runner {
   async function setUp(config: ProjectConfig, request: SessionRequest, cwd: string): Promise<Session | null> {
     if (!config.setupCommand || request.role === "triage") return null;
     const key = refKey(request.subject);
-    const begun = stops;
+    const begun = stops[request.role];
     const result = await ensureSetup({
-      git, run: runSetup, timeoutMs: config.settings.checkTimeoutMinutes.value * 60_000, stop: () => stops !== begun || deps.stopped?.() === true, now: () => iso(now()),
+      git, run: runSetup, timeoutMs: config.settings.checkTimeoutMinutes.value * 60_000, stop: () => stops[request.role] !== begun || deps.stopped?.(request.role) === true, now: () => iso(now()),
     }, config, cwd);
     if (result.kind === "ran") {
       store.appendEvent({ kind: "orchestrator.setup_ran", subject: key, actor: ACTOR, data: { cwd, ms: result.ms, reason: `The setup ran in ${cwd} before the ${request.role} session (${result.why}) and passed in ${Math.round(result.ms / 1000)} s.` } }, iso(now()));
@@ -498,11 +500,11 @@ export function createRunner(deps: RunnerDeps): Runner {
     start,
     reconcile,
 
-    stopAll(reason) {
-      stops++;
+    stopAll(reason, roles) {
+      for (const role of roles ?? ROLES) stops[role]++;
       let stopped = 0;
       for (const entry of live.values()) {
-        if (entry.kill || entry.over) continue;
+        if (entry.kill || entry.over || (roles && !roles.includes(entry.session.role))) continue;
         kill(entry, "cancelled", reason);
         stopped++;
       }

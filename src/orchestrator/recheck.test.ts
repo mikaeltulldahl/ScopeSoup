@@ -15,6 +15,7 @@ import { refKey } from "../model/types.ts";
 import { openStore } from "../store/store.ts";
 import type { Store } from "../store/store.ts";
 import { KEYS } from "../store/keys.ts";
+import { setRolesForTest } from "../store/control.ts";
 import { itemTextHash } from "../core/answerReuse.ts";
 import type { Actions, AgentRunner, SessionRequest } from "./ports.ts";
 import { adoptWritten, loadJobs, saveJobs } from "./jobs.ts";
@@ -65,7 +66,7 @@ function world(cfg: ProjectConfig, items: WorkItem[], withCommits = true): World
   const store = openStore(":memory:");
   const clock = { ms: T0 };
   const now = () => new Date(clock.ms).toISOString();
-  store.setValue(KEYS.agents, "started");
+  setRolesForTest(store, "started");
   store.setValue(KEYS.mergeQueue, "started");
   for (const entry of items) store.put(entry, "sync", now());
   let count = 0;

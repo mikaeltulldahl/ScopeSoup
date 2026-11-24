@@ -13,6 +13,7 @@ import { validateConfig } from "../config/validate.ts";
 import type { LogRecord, Ref, Session, WorkItem } from "../model/types.ts";
 import { refKey } from "../model/types.ts";
 import { KEYS } from "../store/keys.ts";
+import { setRolesForTest } from "../store/control.ts";
 import { openStore as openStoreAs } from "../store/store.ts";
 import type { Store } from "../store/store.ts";
 import { PathRefused, workBranch, workspaceKey } from "./paths.ts";
@@ -31,7 +32,7 @@ import { execFileSyncRetrying } from "../hosts/spawnRetry.ts";
 /** A store with agents and the merge queue started, as after a person pressed both Start buttons. */
 const openStore = (path: string): ReturnType<typeof openStoreAs> => {
   const store = openStoreAs(path);
-  store.setValue(KEYS.agents, "started");
+  setRolesForTest(store, "started");
   store.setValue(KEYS.mergeQueue, "started");
   return store;
 };

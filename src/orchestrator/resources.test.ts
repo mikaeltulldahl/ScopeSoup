@@ -9,7 +9,7 @@ import { validateConfig } from "../config/validate.ts";
 import type { Ref, Session, WorkItem } from "../model/types.ts";
 import { refKey } from "../model/types.ts";
 import { openStore } from "../store/store.ts";
-import { KEYS } from "../store/keys.ts";
+import { setRolesForTest } from "../store/control.ts";
 import { dryActions } from "./ports.ts";
 import type { AgentRunner, SessionRequest } from "./ports.ts";
 import { CHECK_HOLDER, createResources, readResourceState, resourcesView } from "./resources.ts";
@@ -83,7 +83,7 @@ describe("resources", { concurrency: 4 }, () => {
 
   test("the tick: two triages that need the rig run one after the other, while an implement that does not need it starts", async () => {
     const store = openStore(":memory:");
-    store.setValue(KEYS.agents, "started");
+    setRolesForTest(store, "started");
     // A usage reading well within the budget, so the budget lets several sessions start.
     store.addUsageSample({
       at: new Date(T0).toISOString(), status: "allowed",

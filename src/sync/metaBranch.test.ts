@@ -11,14 +11,14 @@ import type { TestRepo } from "../hosts/metaBranch/testRepo.ts";
 import { createTestRepo, itemMd, jsonl } from "../hosts/metaBranch/testRepo.ts";
 import type { WorkItem } from "../model/types.ts";
 import { loadSnapshot } from "../server/snapshot.ts";
-import { KEYS } from "../store/keys.ts";
+import { setRolesForTest } from "../store/control.ts";
 import { openStore } from "../store/store.ts";
 import { createSync } from "./sync.ts";
 
 /** A store with agents started, as after a person pressed Start agents: the turns then read as Scope Soup's. */
 function startedStore(): ReturnType<typeof openStore> {
   const store = openStore(":memory:");
-  store.setValue(KEYS.agents, "started");
+  setRolesForTest(store, "started");
   return store;
 }
 

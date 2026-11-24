@@ -1,5 +1,5 @@
 // The overview's one line at level 0 (replacing an earlier offer): "N Items have no triage: set level 1 and press
-// Start agents." Level 1 with agents started runs a triage on every Item without one; nothing else runs them. From level 1
+// Resume on the Backlog." Level 1 with triage started runs a triage on every Item without one; nothing else runs them. From level 1
 // the backlog has a divider (replacing "Triage done for N of M Items"): the Items not triaged yet are below it.
 
 import type { Change, WorkItem } from "../model/types.ts";
