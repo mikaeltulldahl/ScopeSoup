@@ -734,7 +734,7 @@ export function tickDemo(store: Store, now: Date, step: number): void {
  * in package.json, "finds" the next minor version, and Get latest and Go back walk through the steps on timers (the
  * restart is pretended: the demo's server stays up and only says it runs the other version).
  */
-export function demoUpgrader(now: () => Date = () => new Date(), stepMs = 2500): Pick<Upgrader, "view" | "check" | "getLatest" | "goBack" | "cancel"> {
+export function demoUpgrader(now: () => Date = () => new Date(), stepMs = 2500): Pick<Upgrader, "view" | "check" | "getLatest" | "goBack" | "cancel" | "dismissNote"> {
   const own = versionOf(resolve(dirname(fileURLToPath(import.meta.url)), "../.."));
   const [major, minor] = own.split(".").map(Number);
   const next = `${major}.${(minor ?? 0) + 1}.0`;
@@ -764,6 +764,7 @@ export function demoUpgrader(now: () => Date = () => new Date(), stepMs = 2500):
       getLatest: active() ? { can: false, why: "A switch is under way." } : available ? { can: true } : { can: false, why: "No newer release is known." },
       back: previous ? { version: previous, newer: previous === next, ...(active() ? { can: false, why: "A switch is under way." } : { can: true }) } : null,
       task,
+      note: null,
       lastSwitch: previous ? { from: `scopesoup-${previous}`, to: `scopesoup-${version}`, at: now().toISOString(), backup: "C:/Users/sam/scopesoup/backups/before-scopesoup-" + next } : null,
     };
   };
@@ -781,7 +782,7 @@ export function demoUpgrader(now: () => Date = () => new Date(), stepMs = 2500):
     ["waiting", "Waiting until nothing runs: 1 session still running. Agents and merging are paused, so nothing new starts."],
     ["switching", `Switching to ${to}.`],
     ["restarting", `Restarting on ${to}. The board comes back in a moment.`],
-    ["done", `Scope Soup ${to} runs now${kind === "upgrade" ? `; ${version} stays for Go back` : ""}. It came back paused: press Start agents to go on.`],
+    ["done", `Scope Soup ${to} runs now${kind === "upgrade" ? `; ${version} stays for Go back` : ""}. Agents and the merge queue start again as they were.`],
   ];
   return {
     view,
@@ -809,6 +810,7 @@ export function demoUpgrader(now: () => Date = () => new Date(), stepMs = 2500):
       }
       return view();
     },
+    dismissNote: view,
   };
 }
 

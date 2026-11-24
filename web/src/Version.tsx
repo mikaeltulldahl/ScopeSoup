@@ -33,6 +33,32 @@ function useUpgrade(): [UpgradeView | null, (next: UpgradeView) => void] {
   return [view, setView];
 }
 
+/** After an upgrade or a going back: what was started again, until it is dismissed or an hour has passed. */
+export function UpgradeNote() {
+  const [note, setNote] = useState<UpgradeView["note"]>(null);
+  useEffect(() => {
+    let gone = false;
+    const read = () => fetchUpgrade().then((next) => !gone && next && setNote(next.note), () => undefined);
+    read();
+    const timer = setInterval(read, 30_000);
+    return () => {
+      gone = true;
+      clearInterval(timer);
+    };
+  }, []);
+  if (!note) return null;
+  const dismiss = () => {
+    setNote(null);
+    postUpgrade("dismiss").catch(() => undefined);
+  };
+  return (
+    <p class="notice notice-person upgrade-note" role="status" id="upgrade-note">
+      {note.text}.{" "}
+      <button type="button" onClick={dismiss}>Dismiss</button>
+    </p>
+  );
+}
+
 export function VersionFooter() {
   const [view] = useUpgrade();
   if (!view) return null;

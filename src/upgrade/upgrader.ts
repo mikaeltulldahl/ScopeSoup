@@ -4,6 +4,8 @@
 // - "Get latest" downloads the release zip, checks it, unpacks it into its own folder in the home, pauses agents and
 //   merging and waits until no session and no queue batch runs (a running check is never cut), copies the database and
 //   the config, switches the pointer and asks the launcher to start the new version (exit code 75).
+// - Pausing is only for the wait: what was running (agents, the merge queue) is remembered, kept across the restart in the
+//   store, and started again once the version that comes up is listening; what was paused stays paused. The board says so.
 // - "Go back to X.Y.Z" waits the same way and switches the pointer one step back, to the version the last switch left.
 // - At most two versions on disk: the older one goes at the next upgrade, or once the current one ran cleanly for a day.
 //
@@ -19,9 +21,26 @@ import { compareVersions, folderOf, versionOfFolder } from "./version.ts";
 
 export const CHECK_EVERY_MS = 24 * 60 * 60 * 1000;
 const LOOK_EVERY_MS = 60 * 60 * 1000;
+/** How long the note "Upgraded to ...; agents started again as before" stays on the board. */
+export const NOTE_FOR_MS = 60 * 60 * 1000;
+/** A remembered state older than this is not restored: it belongs to a switch that did not lead to a restart. */
+const RESUME_FOR_MS = 60 * 60 * 1000;
 
 export type { TaskState, UpgradeTask, UpgradeView } from "./view.ts";
 import type { TaskState, UpgradeTask, UpgradeView } from "./view.ts";
+
+/** What was running when Get latest or Go back paused: the switches to start again afterwards. */
+export interface Resume {
+  agents: boolean;
+  mergeQueue: boolean;
+}
+
+interface Remembered extends Resume {
+  kind: "upgrade" | "back";
+  /** The version switched to. */
+  to: string;
+  at: string;
+}
 
 export interface UpgraderDeps {
   /** The folder this version runs from. */
@@ -35,8 +54,10 @@ export interface UpgraderDeps {
   checkOff?: string;
   /** Null when no session and no queue batch runs; otherwise what is still running. */
   busy: () => string | null;
-  /** Pauses agents and the merge queue, so nothing new starts while it waits. */
-  pause: () => void;
+  /** Pauses agents and the merge queue, so nothing new starts while it waits; says which of them were running. */
+  pause: () => Resume;
+  /** Starts agents and/or the merge queue again (the ones that are true). */
+  resume: (what: Resume) => void;
   /** Copies the database and the config into `dir`; returns the copies. */
   backup: (dir: string) => string[];
   /** Stops Scope Soup and exits with RESTART_EXIT_CODE; null when it was not started by the launcher, which owns the restart. */
@@ -46,6 +67,12 @@ export interface UpgraderDeps {
   /** The last check, kept across restarts (the store's small values). */
   loadCheck: () => string | null;
   saveCheck: (value: string) => void;
+  /** What to start again after the restart (JSON), kept in the store; "" when there is none. */
+  loadResume: () => string | null;
+  saveResume: (value: string) => void;
+  /** The note on the board about it (JSON), kept in the store; "" when there is none. */
+  loadNote: () => string | null;
+  saveNote: (value: string) => void;
   pollMs?: number;
   setTimer?: (run: () => void, ms: number) => unknown;
   clearTimer?: (handle: unknown) => void;
@@ -58,6 +85,10 @@ export interface Upgrader {
   goBack(): UpgradeView;
   /** Stops waiting for idle. What was unpacked stays; agents and the merge queue stay paused. */
   cancel(): UpgradeView;
+  /** After the orchestrator came up paused: starts again what the switch paused, and puts the note on the board. */
+  restore(): void;
+  /** Takes the note off the board. */
+  dismissNote(): UpgradeView;
   /** Marks this version as started, cleans up, and checks once a day. */
   start(): void;
   stop(): void;
@@ -90,6 +121,8 @@ export function createUpgrader(deps: UpgraderDeps): Upgrader {
   let waitTimer: unknown;
   let lookTimer: unknown;
   let cancelled = false;
+  /** What was running before the pause of the switch under way. */
+  let remembered: Resume | null = null;
 
   const install = deps.checkout ? "checkout" : deps.home ? "release" : "folder";
   const active = (): boolean => task !== null && task.state !== "done" && task.state !== "failed";
@@ -135,8 +168,20 @@ export function createUpgrader(deps: UpgraderDeps): Upgrader {
       getLatest,
       back,
       task,
+      note: readNote(),
       lastSwitch: state ? { from: state.from, to: state.to, at: state.at, ...(state.failedStart ? { failedStart: state.failedStart } : {}), ...(state.backup ? { backup: state.backup } : {}) } : null,
     };
+  }
+
+  function readNote(): { text: string; at: string } | null {
+    try {
+      const raw = deps.loadNote();
+      const note = raw ? (JSON.parse(raw) as { text?: unknown; at?: unknown }) : null;
+      if (!note || typeof note.text !== "string" || typeof note.at !== "string") return null;
+      return deps.now().getTime() - Date.parse(note.at) < NOTE_FOR_MS ? { text: note.text, at: note.at } : null;
+    } catch {
+      return null;
+    }
   }
 
   async function check(): Promise<UpgradeView> {
@@ -164,7 +209,7 @@ export function createUpgrader(deps: UpgraderDeps): Upgrader {
   /** Pauses, waits until nothing runs, then copies and switches. */
   function switchWhenIdle(to: string, kind: "upgrade" | "back", resolve: () => void): void {
     const home = deps.home!;
-    deps.pause();
+    remembered = deps.pause();
     const look = (): void => {
       waitTimer = undefined;
       if (cancelled) return resolve();
@@ -188,6 +233,8 @@ export function createUpgrader(deps: UpgraderDeps): Upgrader {
           writeFileSync(join(backup, "from.txt"), `${folder}\n${copies.join("\n")}\n`);
         }
         const state = switchPointer(home, to, iso(), backup);
+        // Kept for the version that starts: it starts what was running, once it listens.
+        deps.saveResume(JSON.stringify({ ...remembered!, kind, to: versionOfFolder(to) ?? to, at: iso() } satisfies Remembered));
         deps.record(kind === "upgrade" ? "scopesoup.upgraded" : "scopesoup.went_back", { from: state.from, to: state.to, ...(backup ? { backup } : {}) });
         if (deps.restart) {
           setTask("restarting", `Restarting on ${versionOfFolder(to)}. The board comes back in a moment.`);
@@ -209,6 +256,12 @@ export function createUpgrader(deps: UpgraderDeps): Upgrader {
     const text = `${task?.kind === "back" ? "Going back" : "Get latest"} stopped: ${error instanceof Error ? error.message : String(error)}`;
     setTask("failed", text);
     deps.record("scopesoup.upgrade_failed", { reason: text });
+    // Nothing switched, so nothing restarts: start again what the wait paused.
+    if (remembered) {
+      deps.resume(remembered);
+      deps.record("scopesoup.resumed", { ...remembered, why: "the switch failed" });
+      remembered = null;
+    }
   }
 
   function getLatest(): UpgradeView {
@@ -266,9 +319,41 @@ export function createUpgrader(deps: UpgraderDeps): Upgrader {
       cancelled = true;
       if (waitTimer !== undefined) clearTimer(waitTimer);
       waitTimer = undefined;
+      remembered = null;
       setTask("failed", `Cancelled. Agents and merging stay paused: press Start to go on.`);
       deps.record("scopesoup.upgrade_cancelled", { to: task.to });
     }
+    return view();
+  }
+
+  function restore(): void {
+    let raw: string | null = null;
+    try {
+      raw = deps.loadResume();
+    } catch {
+      raw = null;
+    }
+    if (!raw) return;
+    deps.saveResume("");
+    let kept: Remembered;
+    try {
+      kept = JSON.parse(raw) as Remembered;
+      if (typeof kept.to !== "string" || typeof kept.at !== "string" || typeof kept.agents !== "boolean" || typeof kept.mergeQueue !== "boolean") return;
+    } catch {
+      return;
+    }
+    if (deps.now().getTime() - Date.parse(kept.at) > RESUME_FOR_MS) return;
+    const what: Resume = { agents: kept.agents, mergeQueue: kept.mergeQueue };
+    if (what.agents || what.mergeQueue) deps.resume(what);
+    const started = what.agents && what.mergeQueue ? "agents and the merge queue started again as before" : what.agents ? "agents started again as before" : what.mergeQueue ? "the merge queue started again as before" : "agents and the merge queue were paused before and stay paused";
+    const lead = deps.version === kept.to ? `${kept.kind === "back" ? "Went back to" : "Upgraded to"} ${kept.to}` : `Version ${kept.to} did not start; back on ${deps.version}`;
+    const text = `${lead}; ${started}`;
+    deps.record("scopesoup.resumed", { ...what, version: deps.version, text });
+    deps.saveNote(JSON.stringify({ text, at: iso() }));
+  }
+
+  function dismissNote(): UpgradeView {
+    deps.saveNote("");
     return view();
   }
 
@@ -293,6 +378,8 @@ export function createUpgrader(deps: UpgraderDeps): Upgrader {
     getLatest,
     goBack,
     cancel,
+    restore,
+    dismissNote,
     start() {
       if (deps.home && !deps.checkout) markStarted(deps.home, folder, iso());
       look();

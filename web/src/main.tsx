@@ -12,7 +12,7 @@ import { Overview } from "./Overview.tsx";
 import { Queue } from "./Queue.tsx";
 import { Settings } from "./Settings.tsx";
 import { StopUsing } from "./StopUsing.tsx";
-import { VersionFooter } from "./Version.tsx";
+import { UpgradeNote, VersionFooter } from "./Version.tsx";
 import { useRoute } from "./route.ts";
 import { StatusLine } from "./StatusLine.tsx";
 import { THEMES, taglineAt } from "./theme.ts";
@@ -167,6 +167,7 @@ function App() {
           <b>Who are you?</b> Pick your name at the top (or add it). People are equals here: anyone answers Scope Soup's questions, takes and releases Items, and the log records who did.
         </p>
       )}
+      <UpgradeNote />
       {(error || failed) && <p class="notice notice-bad" role="alert">{failed ?? `Cannot reach the server: ${error}`}</p>}
       <main>
         {board && route.view !== "settings" && route.view !== "stop" && route.view !== "history" && route.view !== "usage" && route.view !== "items" && <StatusLine status={board.status} />}

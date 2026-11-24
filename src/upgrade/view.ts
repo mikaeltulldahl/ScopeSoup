@@ -28,5 +28,7 @@ export interface UpgradeView {
   /** "Go back": the version the last switch left, while its folder is kept. `newer` when that one is newer than this. */
   back: { version: string; newer: boolean; can: boolean; why?: string } | null;
   task: UpgradeTask | null;
+  /** After a restart on another version: what was started again (shown for a while, or until dismissed). */
+  note: { text: string; at: string } | null;
   lastSwitch: { from: string; to: string; at: string; failedStart?: string; backup?: string } | null;
 }

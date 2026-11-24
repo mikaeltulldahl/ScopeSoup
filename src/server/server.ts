@@ -172,7 +172,7 @@ export interface ServerOptions {
   /** The offboarding plan for "Stop using Scope Soup" on the Settings page. Reads only; never removes anything. */
   offboard?: () => Promise<OffboardView>;
   /** Scope Soup's version, the update check, Get latest and Go back (`src/upgrade/upgrader.ts`). */
-  upgrade?: Pick<Upgrader, "view" | "check" | "getLatest" | "goBack" | "cancel">;
+  upgrade?: Pick<Upgrader, "view" | "check" | "getLatest" | "goBack" | "cancel" | "dismissNote">;
 }
 
 /**
@@ -1513,6 +1513,7 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
           if (path === "/api/upgrade/get") return sendJson(response, 202, upgrade.getLatest());
           if (path === "/api/upgrade/back") return sendJson(response, 202, upgrade.goBack());
           if (path === "/api/upgrade/cancel") return sendJson(response, 200, upgrade.cancel());
+          if (path === "/api/upgrade/dismiss") return sendJson(response, 200, upgrade.dismissNote());
         }
         if (path === "/api/refresh") {
           options.onRefresh?.();
