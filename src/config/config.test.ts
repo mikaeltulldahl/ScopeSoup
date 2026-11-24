@@ -385,7 +385,7 @@ test("host: a github host takes the repository and the write switch", () => {
 
 test("host: mistakes are refused in words", () => {
   const base = { project: "p", machineName: "laptop-a", repoPath: "/srv/clone" };
-  assert.match(bad({ ...base, host: "metaBranch" }), /host must be an object with "kind": "github" or "metaBranch"/);
+  assert.match(bad({ ...base, host: "metaBranch" }), /host must be an object with "kind": "github", "metaBranch" or "jira"/);
   assert.match(bad({ ...base, host: { kind: "gitlab" } }), /host must be an object with "kind"/);
   assert.match(bad({ ...base, host: { kind: "github" } }), /host.repo must be the repository as "owner\/name"/);
   assert.match(bad({ ...base, host: { kind: "github", repo: "name-only" } }), /host.repo \(name-only\) must be/);

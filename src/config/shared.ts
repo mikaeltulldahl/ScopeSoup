@@ -23,7 +23,7 @@ export const SHARED_WHERE = `the project's shared settings (${SETTINGS_FILE} on 
 /** Top-level keys of the private file. `settings` is split by name below; `meta` is this machine's part of a meta branch host. */
 export const PRIVATE_KEYS: readonly string[] = [
   "version", "machineName", "repoPath", "remote", "remoteUrl", "realPaths", "ownClone", "keepAwake", "workspacesDir", "workspaces",
-  "streamsDir", "promptsDir", "claude", "meta", "settings", "resources",
+  "streamsDir", "promptsDir", "claude", "meta", "jira", "settings", "resources",
 ];
 /** Top-level keys of the shared settings. */
 export const SHARED_KEYS: readonly string[] = [
@@ -39,6 +39,8 @@ export const SHARED_SETTINGS: readonly string[] = [
 ];
 /** A meta branch host's keys that belong to one machine or person: in the private file as `meta.<key>`, never in the shared `host`. */
 export const META_KEYS: readonly string[] = ["authorName", "authorEmail", "prefix"];
+/** A Jira host's keys that belong to one person: in the private file as `jira.<key>`. The Cloud account's email is personal. */
+export const JIRA_PRIVATE_KEYS: readonly string[] = ["email"];
 
 type Obj = Record<string, unknown>;
 
@@ -63,6 +65,15 @@ export function combineFiles(privateRaw: Obj, sharedRaw: Obj): { combined: Obj; 
   const host = sharedRaw.host;
   if (isObj(host)) {
     for (const key of META_KEYS) if (Object.hasOwn(host, key)) errors.push(`host.${key} belongs to one machine: it goes in that machine's ${PRIVATE_NAME} as meta.${key}, not in ${SHARED_WHERE}, which every machine shares.`);
+    if (host.kind === "jira") for (const key of JIRA_PRIVATE_KEYS) if (Object.hasOwn(host, key)) errors.push(`host.${key} belongs to one person: it goes in that machine's ${PRIVATE_NAME} as jira.${key}, not in ${SHARED_WHERE}, which every machine shares.`);
+  }
+  const jira = privateRaw.jira;
+  if (jira !== undefined) {
+    if (!isObj(jira)) errors.push(`jira must be an object: this machine's part of a Jira host (${JIRA_PRIVATE_KEYS.join(", ")}).`);
+    else {
+      for (const key of Object.keys(jira)) if (!JIRA_PRIVATE_KEYS.includes(key)) errors.push(/token/i.test(key) ? `jira.${key}: a token is never kept in the configuration file. Set SCOPESOUP_JIRA_TOKEN in the environment.` : `jira: unknown key "${key}". Known keys: ${JIRA_PRIVATE_KEYS.join(", ")}.`);
+      if (!isObj(host) || host.kind !== "jira") errors.push(`jira is this machine's part of a Jira host, but the host in ${SHARED_WHERE} is not "jira". Remove jira.`);
+    }
   }
   const meta = privateRaw.meta;
   if (meta !== undefined) {
@@ -74,9 +85,10 @@ export function combineFiles(privateRaw: Obj, sharedRaw: Obj): { combined: Obj; 
   }
 
   const combined: Obj = {};
-  for (const [key, value] of Object.entries(privateRaw)) if (key !== "meta" && key !== "settings") combined[key] = value;
+  for (const [key, value] of Object.entries(privateRaw)) if (key !== "meta" && key !== "jira" && key !== "settings") combined[key] = value;
   for (const [key, value] of Object.entries(sharedRaw)) if (key !== "settings" && !Object.hasOwn(combined, key)) combined[key] = value;
   if (isObj(host) && host.kind === "metaBranch" && isObj(meta)) combined.host = { ...host, ...meta };
+  if (isObj(host) && host.kind === "jira" && isObj(jira)) combined.host = { ...host, ...Object.fromEntries(Object.entries(jira).filter(([key]) => JIRA_PRIVATE_KEYS.includes(key))) };
   if (privateRaw.settings !== undefined || sharedRaw.settings !== undefined) {
     if (privateRaw.settings !== undefined && !isObj(privateRaw.settings)) errors.push(`settings in ${PRIVATE_NAME} must be an object.`);
     if (sharedRaw.settings !== undefined && !isObj(sharedRaw.settings)) errors.push(`settings in ${SHARED_WHERE} must be an object.`);

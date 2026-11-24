@@ -10,7 +10,7 @@ import { LEVELS, ROLES } from "./types.ts";
 import { CHECK_ROLES, withCheckRules } from "./checkRule.ts";
 import { proposeCheckCommand } from "./mergeQueue.ts";
 import { migrateConfig } from "./migrate.ts";
-import type { HostConfig, MergeQueueConfig, ResourceConfig, ResourceUser, WorkspacesConfig } from "./types.ts";
+import type { HostConfig, JiraHostConfig, MergeQueueConfig, ResourceConfig, ResourceUser, WorkspacesConfig } from "./types.ts";
 import { RESOURCE_USERS } from "./types.ts";
 import { DEFAULT_CI_TIMEOUT_MINUTES } from "./types.ts";
 import { win32 } from "node:path";
@@ -275,6 +275,9 @@ export function validateConfig(given: unknown, baseDir: string): ConfigResult {
   if (mergeQueue?.ci === "github" && host !== undefined && host.kind !== "github") {
     err(`mergeQueue.ci is "github", but the host is ${host.kind}: Scope Soup waits for CI on GitHub only for a project whose host is GitHub. Remove mergeQueue.ci, or set it to "local" to run checkCommand.`);
   }
+  if (host?.kind === "jira" && level > 0) {
+    err(`level is ${level}, but the Jira host is read-only in this version: Scope Soup can only show a Jira project's Items. Set level to 0 (Watch).`);
+  }
 
   // --- core rule 1 ---
   for (const real of realPaths) {
@@ -366,6 +369,8 @@ function resourcesOf(value: unknown, shared: boolean, err: (message: string) => 
 }
 
 const GITHUB_KEYS = ["kind", "repo", "write"];
+const JIRA_KEYS = ["kind", "site", "project", "deployment", "write", "email", "priorities", "abandonedResolutions", "blocksLink"];
+const PRIORITY_NAMES = ["blocker", "critical", "major", "minor"] as const;
 /** `mergeQueue`, the object form: what checks the merge queue's batches, and how long a check on GitHub may stay pending. */
 function mergeQueueOf(value: Obj, err: (message: string) => void): MergeQueueConfig {
   for (const key of Object.keys(value)) {
@@ -388,13 +393,51 @@ function mergeQueueOf(value: Obj, err: (message: string) => void): MergeQueueCon
 // The meta ref is refs/scopesoup/meta in repoPath, shared with remote (both from this machine's file): no ref, folder or remote here.
 const META_BRANCH_KEYS = ["kind", "write", "authorName", "authorEmail", "prefix", "fetchSeconds"];
 
+/** `host` of kind "jira": a Jira project, read-only in this version. */
+function jiraHostOf(value: Obj, write: boolean, text: (key: string) => string | undefined, err: (message: string) => void): JiraHostConfig {
+  const site = text("site")?.replace(/\/+$/, "");
+  if (site === undefined) err(`host.site must be the Jira site's address, as "https://example.atlassian.net" (Cloud) or your Data Center's base URL.`);
+  else if (!/^https?:\/\/[^\s/?#]+(\/[^\s?#]*)?$/.test(site)) err(`host.site (${site}) must be an http or https address with no query, as "https://example.atlassian.net".`);
+  const project = text("project");
+  if (project === undefined) err(`host.project must be the Jira project key, as "DEMO".`);
+  else if (!/^[A-Z][A-Z0-9_]+$/.test(project)) err(`host.project (${project}) must be a Jira project key: capital letters, digits and "_", starting with a letter, as "DEMO".`);
+  const deployment = value.deployment;
+  if (deployment !== "cloud" && deployment !== "datacenter") err(`host.deployment must be "cloud" (Jira Cloud, an API token with the account's email) or "datacenter" (self-hosted Jira, a personal access token).`);
+  if (write) err("host.write is true, but the Jira host is read-only in this version: Scope Soup reads the project and writes nothing to Jira. Set host.write to false or leave it out.");
+  const email = text("email");
+  if (deployment === "cloud" && email === undefined) err(`host.deployment is "cloud", so the account's email is required with the API token: set jira.email in this machine's scopesoup.config.json.`);
+  if (deployment === "datacenter" && email !== undefined) err("host.deployment is \"datacenter\": a personal access token needs no email. Remove jira.email.");
+  const config: JiraHostConfig = { kind: "jira", site: site ?? "", project: project ?? "", deployment: deployment === "datacenter" ? "datacenter" : "cloud", write: false };
+  if (email !== undefined) config.email = email;
+  if (value.priorities !== undefined) {
+    if (!isObj(value.priorities) || Object.keys(value.priorities).length === 0) err(`host.priorities must be an object from Jira priority names to ${PRIORITY_NAMES.join(", ")}, as { "Highest": "blocker" }.`);
+    else {
+      const map: Record<string, (typeof PRIORITY_NAMES)[number]> = {};
+      for (const [name, given] of Object.entries(value.priorities)) {
+        const found = PRIORITY_NAMES.find((priority) => priority === given);
+        if (found) map[name] = found;
+        else err(`host.priorities.${name} must be one of ${PRIORITY_NAMES.join(", ")}.`);
+      }
+      config.priorities = map;
+    }
+  }
+  if (value.abandonedResolutions !== undefined) {
+    const given = value.abandonedResolutions;
+    if (!Array.isArray(given) || !given.every((entry) => typeof entry === "string" && entry.trim() !== "")) err(`host.abandonedResolutions must be a list of resolution names, as ["Won't Do", "Duplicate"].`);
+    else config.abandonedResolutions = given.map((entry: string) => entry.trim());
+  }
+  const blocksLink = text("blocksLink");
+  if (blocksLink !== undefined) config.blocksLink = blocksLink;
+  return config;
+}
+
 /** `host`: where the items live. No token here; tokens stay in the environment. */
 function hostOf(value: unknown, repoPath: string, remote: string, err: (message: string) => void): HostConfig | undefined {
-  if (!isObj(value) || (value.kind !== "github" && value.kind !== "metaBranch")) {
-    err('host must be an object with "kind": "github" or "metaBranch".');
+  if (!isObj(value) || (value.kind !== "github" && value.kind !== "metaBranch" && value.kind !== "jira")) {
+    err('host must be an object with "kind": "github", "metaBranch" or "jira".');
     return undefined;
   }
-  const known = value.kind === "github" ? GITHUB_KEYS : META_BRANCH_KEYS;
+  const known = value.kind === "github" ? GITHUB_KEYS : value.kind === "jira" ? JIRA_KEYS : META_BRANCH_KEYS;
   for (const key of Object.keys(value)) {
     if (/token/i.test(key)) err(`host.${key}: a token is never kept in the configuration file. Set it in the environment.`);
     else if (!known.includes(key)) err(`host: unknown key "${key}" for kind "${value.kind}". Known keys: ${known.join(", ")}.`);
@@ -420,6 +463,8 @@ function hostOf(value: unknown, repoPath: string, remote: string, err: (message:
     else if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) err(`host.repo (${repo}) must be the repository as "owner/name".`);
     return { kind: "github", repo: repo ?? "", write };
   }
+
+  if (value.kind === "jira") return jiraHostOf(value, write, text, err);
 
   const authorName = text("authorName");
   const authorEmail = text("authorEmail");
