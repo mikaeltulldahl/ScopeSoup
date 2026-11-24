@@ -15,6 +15,7 @@ import { openStore } from "../store/store.ts";
 import { metaSettings } from "../config/metaSettings.ts";
 import { createDemoChat, demoAssumptionHost, demoConfigOptions, seedDemo, tickDemo, writeDemoConfig } from "./demo.ts";
 import { createServer } from "./server.ts";
+import { buildUsageView } from "./usage.ts";
 import { loadSnapshot } from "./snapshot.ts";
 
 test("the demo data covers every lane, one batch being bisected, the triages' questions and a live session", () => {
@@ -43,6 +44,21 @@ test("the demo data covers every lane, one batch being bisected, the triages' qu
   const before = store.lastSeq();
   tickDemo(store, new Date(now.getTime() + 20_000), 1);
   assert.ok(store.lastSeq() > before);
+  store.close();
+});
+
+test("the demo's usage on the 30-day span has several 5-hour resets, a weekly reset and use by all four roles", () => {
+  const store = openStore(":memory:");
+  const now = new Date(T0);
+  seedDemo(store, now);
+  const view = buildUsageView(store, loadSnapshot(store), { span: "30d", ms: 30 * 24 * 3600_000 }, now);
+  const five = view.windows[0]!;
+  const week = view.windows[1]!;
+  assert.ok(five.resets >= 10, `${five.resets} 5-hour resets`);
+  assert.ok(week.resets >= 1, `${week.resets} weekly resets`);
+  for (const key of ["implement", "review", "triage", "outside"] as const) assert.ok(five.shares[key] > 0.05, key);
+  assert.ok(five.current && five.current.utilization > 0 && Date.parse(five.current.resetsAt) > now.getTime());
+  assert.ok(five.plot.firstAt && Date.parse(five.plot.firstAt) > now.getTime() - 31 * 24 * 3600_000);
   store.close();
 });
 

@@ -2,10 +2,14 @@
 // session streams (read by each session's agent provider), then attributes with core.
 
 import { readFileSync } from "node:fs";
-import { attributeUsage } from "../core/usage.ts";
+import { forecastWindow } from "../core/forecast.ts";
+import { buildIndex } from "../core/snapshot.ts";
+import type { Snapshot } from "../core/snapshot.ts";
+import { forecastLoad } from "../core/status.ts";
+import { attributeUsage, forecastLine, usagePlot } from "../core/usage.ts";
 import type { UsageSession } from "../core/usage.ts";
-import type { UsageView } from "../core/views.ts";
-import type { Session } from "../model/types.ts";
+import type { UsageView, UsagePageWindow } from "../core/views.ts";
+import type { Session, UsageWindowKind } from "../model/types.ts";
 import type { Store } from "../store/store.ts";
 import { providerNamed } from "../orchestrator/providers/index.ts";
 
@@ -33,21 +37,47 @@ export function streamTokens(path: string | undefined, provider?: string): numbe
   return providerNamed(provider).tokensIn(text);
 }
 
-export function buildUsageView(store: Store, sessions: readonly Session[], span: { span: string; ms: number }, now: Date): UsageView {
+/** How many even steps a span's plot is sampled in: about one per pixel column's worth, at most a few hundred. */
+function plotSteps(ms: number): number {
+  if (ms <= 5 * HOUR) return 150;
+  if (ms <= 24 * HOUR) return 288;
+  return Math.min(720, Math.round(ms / HOUR));
+}
+
+/**
+ * The Usage page: per window the newest reading with the status line's forecast (planned with the snapshot's sessions, pause
+ * and planned sessions), the reserve, how full it got over the span by role, and the share each role used.
+ */
+export function buildUsageView(store: Store, snapshot: Snapshot, span: { span: string; ms: number }, now: Date, reserve?: Record<UsageWindowKind, number>): UsageView {
   const to = now.getTime();
   const from = to - span.ms;
-  const mine = sessions.filter((session) => {
+  // Readings from before the span too, so the first step of the span has its start and the plot knows who filled the
+  // window since its last reset; the sessions of that time too.
+  const since = from - 8 * 24 * HOUR;
+  const ran = (session: Session, start: number) => {
     const end = session.finishedAt === undefined ? to : Date.parse(session.finishedAt);
-    return Date.parse(session.startedAt) < to && end > from;
-  });
-  const usage: UsageSession[] = mine.map((session) => {
+    return Date.parse(session.startedAt) < to && end > start;
+  };
+  const usage: UsageSession[] = snapshot.sessions.filter((session) => ran(session, since)).map((session) => {
     const tokens = session.finishedAt === undefined ? undefined : streamTokens(session.streamPath, session.provider);
     return { ref: session.ref, role: session.role, startedAt: session.startedAt, ...(session.finishedAt ? { finishedAt: session.finishedAt } : {}), ...(tokens ? { tokens } : {}) };
   });
-  // Readings from before the span too, so the first step of the span has its start.
-  const samples = store.usageSamplesSince(new Date(from - 8 * 24 * HOUR).toISOString()).filter((sample) => Date.parse(sample.at) <= to);
-  const days = span.ms / (24 * HOUR);
-  const buckets = span.ms <= 5 * HOUR ? 20 : days <= 7 ? Math.round(days) * 4 : Math.round(days);
-  const windows = (["five_hour", "seven_day"] as const).map((kind) => attributeUsage(samples, usage, kind, { from, to, buckets }));
-  return { now: now.toISOString(), span: span.span, from: new Date(from).toISOString(), to: now.toISOString(), windows, sessions: usage.length, withTokens: usage.filter((session) => session.tokens !== undefined).length };
+  const inSpan = usage.filter((session) => (session.finishedAt === undefined ? to : Date.parse(session.finishedAt)) > from);
+  const samples = store.usageSamplesSince(new Date(since).toISOString()).filter((sample) => Date.parse(sample.at) <= to);
+  const latest = samples.at(-1);
+  const load = forecastLoad(buildIndex(snapshot));
+  const windows = (["five_hour", "seven_day"] as const).map((kind): UsagePageWindow => {
+    const attribution = attributeUsage(samples, usage, kind, { from, to });
+    const plot = usagePlot(samples, usage, kind, { from, to, steps: plotSteps(span.ms) });
+    const reading = latest?.windows.find((window) => window.kind === kind);
+    const view: UsagePageWindow = { ...attribution, plot, forecastLine: [] };
+    if (reserve) view.reserve = reserve[kind];
+    if (latest && reading?.utilization !== undefined) {
+      const forecast = forecastWindow(samples, kind, now, load) ?? undefined;
+      view.current = { utilization: reading.utilization, resetsAt: reading.resetsAt, at: latest.at, ...(forecast ? { forecast } : {}) };
+      view.forecastLine = forecastLine(to, reading.utilization, Date.parse(reading.resetsAt), forecast);
+    }
+    return view;
+  });
+  return { now: now.toISOString(), span: span.span, from: new Date(from).toISOString(), to: now.toISOString(), windows, sessions: inSpan.length, withTokens: inSpan.filter((session) => session.tokens !== undefined).length };
 }

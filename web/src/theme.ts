@@ -68,6 +68,8 @@ const STANDARD_WORDS = { turnYours: "your turn", turnOf: "{name}'s turn", emptyL
 export const COLOUR_VARS = [
   "bg", "surface", "sunken", "line", "text", "muted", "accent", "accent-soft", "moving", "moving-soft", "yours", "yours-soft", "yours-line",
   "blocked", "blocked-soft", "done", "bar", "bar-text", "bar-muted", "bar-line", "brand", "glow",
+  // The Usage page's roles: implement, review, triage, outside Scope Soup (a neutral grey: nobody of Scope Soup's).
+  "use-implement", "use-review", "use-triage", "use-outside",
 ] as const;
 export type ColourVar = (typeof COLOUR_VARS)[number];
 export type Palette = Readonly<Record<ColourVar, string>>;
@@ -91,6 +93,7 @@ export interface Theme {
 }
 
 const DEFAULT_LIGHT: Palette = {
+  "use-implement": "#3a6fc0", "use-review": "#d07a2a", "use-triage": "#9a4f9e", "use-outside": "#8a8f98",
   bg: "#f4f2ee", surface: "#ffffff", sunken: "#ebe8e2", line: "#d9d5cc", text: "#1f2328", muted: "#5d6470",
   accent: "#1f5f8b", "accent-soft": "#e3eef6", moving: "#2b7a4b", "moving-soft": "#e2f1e7",
   yours: "#85500a", "yours-soft": "#fbefd5", "yours-line": "#e0b252", blocked: "#b3372c", "blocked-soft": "#fae6e3", done: "#7b8088",
@@ -98,6 +101,7 @@ const DEFAULT_LIGHT: Palette = {
 };
 
 const PLAIN_LIGHT: Palette = {
+  "use-implement": "#3a6fc0", "use-review": "#d07a2a", "use-triage": "#9a4f9e", "use-outside": "#8a8f98",
   bg: "#f5f5f6", surface: "#ffffff", sunken: "#ebebed", line: "#d6d7da", text: "#202124", muted: "#5b5e66",
   accent: "#3b5f86", "accent-soft": "#e6edf4", moving: "#2f7a52", "moving-soft": "#e4f1ea",
   yours: "#7a5a12", "yours-soft": "#f6efdc", "yours-line": "#d3b968", blocked: "#b03a32", "blocked-soft": "#f8e7e5", done: "#7c8086",
@@ -121,6 +125,7 @@ export const THEMES: Readonly<Record<ThemeId, Theme>> = {
     },
     light: DEFAULT_LIGHT,
     dark: {
+      "use-implement": "#5b8ad0", "use-review": "#c97a35", "use-triage": "#a874c0", "use-outside": "#61676f",
       bg: "#15171a", surface: "#1e2125", sunken: "#191b1f", line: "#33383f", text: "#e4e6e9", muted: "#9aa2ad", accent: "#7db8e0",
       "accent-soft": "#1d2f3d", moving: "#6cc08b", "moving-soft": "#1b3024", yours: "#e9b656", "yours-soft": "#35290f", "yours-line": "#7d5f1f",
       blocked: "#f08a7e", "blocked-soft": "#3a1d1a", done: "#7f8690", bar: "#0d1824", glow: "rgba(233, 182, 86, 0.2)",
@@ -149,6 +154,7 @@ export const THEMES: Readonly<Record<ThemeId, Theme>> = {
     },
     light: PLAIN_LIGHT,
     dark: {
+      "use-implement": "#5b8ad0", "use-review": "#c97a35", "use-triage": "#a874c0", "use-outside": "#61676f",
       bg: "#17181b", surface: "#212226", sunken: "#1b1c1f", line: "#34363b", text: "#e6e7ea", muted: "#9ca0a8", accent: "#8db4dc",
       "accent-soft": "#212e3b", moving: "#72c096", "moving-soft": "#1c2e25", yours: "#dcbb6a", "yours-soft": "#322a14", "yours-line": "#7a6428",
       blocked: "#ee8f86", "blocked-soft": "#3a1f1c", done: "#80858d", bar: "#101114", glow: "rgba(150, 170, 200, 0.16)",
@@ -198,12 +204,14 @@ export const THEMES: Readonly<Record<ThemeId, Theme>> = {
       abandonedIcon: "❄",
     },
     light: {
+      "use-implement": "#3a6fc0", "use-review": "#d07a2a", "use-triage": "#9a4f9e", "use-outside": "#8a8f98",
       bg: "#eeedf1", surface: "#ffffff", sunken: "#e3e1e8", line: "#cfccd8", text: "#1e1d26", muted: "#5a5768",
       accent: "#4b4a8f", "accent-soft": "#e7e6f5", moving: "#2c7a5a", "moving-soft": "#e1f1ea",
       yours: "#7d4a12", "yours-soft": "#f7ecd9", "yours-line": "#d8aa62", blocked: "#a8343f", "blocked-soft": "#f8e5e7", done: "#7a7886",
       bar: "#1a1a2e", "bar-text": "#e9e8f2", "bar-muted": "#b7b5cc", "bar-line": "#4a4a6a", brand: "#e8e2b0", glow: "rgba(190, 180, 230, 0.14)",
     },
     dark: {
+      "use-implement": "#5b8ad0", "use-review": "#c97a35", "use-triage": "#a874c0", "use-outside": "#61676f",
       bg: "#14131b", surface: "#1d1c27", sunken: "#181720", line: "#33324a", text: "#e6e5ee", muted: "#9d9bb2", accent: "#a3a2f0",
       "accent-soft": "#25244a", moving: "#6cc4a0", "moving-soft": "#1a2e27", yours: "#e6b86a", "yours-soft": "#342914", "yours-line": "#7d5f27",
       blocked: "#f08a94", "blocked-soft": "#3a1d22", done: "#807e92", bar: "#0c0c17", glow: "rgba(190, 180, 240, 0.2)",

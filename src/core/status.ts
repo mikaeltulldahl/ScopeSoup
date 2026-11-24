@@ -23,6 +23,19 @@ function runnerView(runner: RunnerState, index: Index, now: Date): RunnerView {
   return view;
 }
 
+/** What the usage forecast plans with: the planned sessions, the pause, and whether work is ready. Undefined without a plan. */
+export function forecastLoad(index: Index): ForecastLoad | undefined {
+  const { snapshot } = index;
+  if (snapshot.plannedSessions === undefined) return undefined;
+  const workReady =
+    snapshot.sessions.some(isLive) ||
+    snapshot.works.some((item) => {
+      const lane = laneOf(item, index);
+      return lane === "backlog" || lane === "in-progress";
+    });
+  return { sessions: snapshot.sessions, planned: snapshot.plannedSessions, paused: snapshot.paused, workReady };
+}
+
 export function buildStatusLine(index: Index, queue: QueueView, now: Date): StatusLine {
   const { snapshot } = index;
   const list = snapshot.runners.map((runner) => runnerView(runner, index, now));
@@ -34,14 +47,7 @@ export function buildStatusLine(index: Index, queue: QueueView, now: Date): Stat
     bisecting: queue.batches.filter((batch) => batch.status === "bisecting").length,
   };
   const alerts: string[] = [];
-  const workReady =
-    snapshot.sessions.some(isLive) ||
-    snapshot.works.some((item) => {
-      const lane = laneOf(item, index);
-      return lane === "backlog" || lane === "in-progress";
-    });
-  const load: ForecastLoad | undefined =
-    snapshot.plannedSessions === undefined ? undefined : { sessions: snapshot.sessions, planned: snapshot.plannedSessions, paused: snapshot.paused, workReady };
+  const load = forecastLoad(index);
   const work = counts.waiting + counts.forming + counts.testing + counts.bisecting;
   if (list.length > 0 && online === 0 && work > 0) alerts.push("No runner is online and work is waiting for one.");
   for (const batch of queue.batches) {
