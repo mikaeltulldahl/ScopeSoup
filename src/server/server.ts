@@ -287,6 +287,13 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
   const configOptions = { programFound: options.programFound, checkCommandProblem: options.checkCommandProblem, mergeQueue: options.mergeQueue, shared: options.sharedSettings };
   const { store } = options;
   const now = options.now ?? (() => new Date());
+  /** For the Item page and list: the snapshot with the project's level, and the Items not triaged yet (from level 1, with a configuration). */
+  const triageView = (): { snapshot: ReturnType<typeof loadSnapshot>; notTriaged?: Set<string> } => {
+    const snapshot = loadSnapshot(store);
+    const level = options.planning?.().level;
+    if (level !== undefined) snapshot.level = level;
+    return { snapshot, ...(options.configFile !== undefined && (level ?? 0) >= 1 ? { notTriaged: withoutTriageKeys(snapshot.works, loadJobs(store)) } : {}) };
+  };
   /** The board, with the backlog in the orchestrator's planned order. */
   const boardNow = () => {
     const snapshot = loadSnapshot(store);
@@ -1531,7 +1538,7 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
         const project = projectNow();
         return sendJson(response, 200, { ...boardNow(), ...(project ? { project: projectView(project) } : {}), canWrite: items?.write.createWork !== undefined, people: knownPeople(snapshot.works, loadAnswers(store)), ...(without > 0 ? { withoutTriage: without } : {}) });
       }
-      if (path === "/api/items") return sendJson(response, 200, buildItemList(loadSnapshot(store), parseListQuery(url.searchParams), now(), picked()));
+      if (path === "/api/items") return sendJson(response, 200, (({ snapshot, notTriaged }) => buildItemList(snapshot, parseListQuery(url.searchParams), now(), picked(), notTriaged))(triageView()));
       // The item commands' list: who holds what, as one person sees it (`?as=name`).
       if (path === "/api/item/rows") {
         const who = url.searchParams.get("as")?.trim();
@@ -1628,13 +1635,13 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
       if (path === "/api/item") {
         const ref = url.searchParams.get("ref");
         if (!ref) return sendError(response, 400, "REF_MISSING", "Give the item as ?ref=host:work:id.");
-        const snapshot = loadSnapshot(store);
-        let page = buildItemPage(snapshot, ref, now(), undefined, self());
+        const { snapshot, notTriaged } = triageView();
+        let page = buildItemPage(snapshot, ref, now(), undefined, self(), notTriaged);
         if (!page) return sendError(response, 404, "ITEM_NOT_FOUND", `No item ${ref}.`);
         if (options.blocking && page.item.ref.host === options.blocking.host) {
           // One request; when it fails, the page shows what the store's items say.
           const blocking = await options.blocking.list(page.item.ref).catch(() => undefined);
-          if (blocking) page = buildItemPage(snapshot, ref, now(), blocking, self()) ?? page;
+          if (blocking) page = buildItemPage(snapshot, ref, now(), blocking, self(), notTriaged) ?? page;
         }
         const ours = items !== undefined && page.item.ref.host === items.host;
         if (ours && items.write.conflictVersions && page.item.hostState.includes("conflict:")) {

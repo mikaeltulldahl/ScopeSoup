@@ -68,9 +68,9 @@ function matchesText(item: WorkItem, query: string): boolean {
  * `me` is who "me" is: `createdBy=me` means items whose log starts with a line by that person.
  * A done item's "when" is its last change, as the item does not record when it was closed.
  */
-export function buildItemList(snapshot: Snapshot, query: ItemListQuery, now: Date, me?: string): ItemListView {
+export function buildItemList(snapshot: Snapshot, query: ItemListQuery, now: Date, me?: string, notTriaged?: ReadonlySet<string>): ItemListView {
   const index = buildIndex(snapshot);
-  const ctx = turnContext(index, now);
+  const ctx = turnContext(index, now, notTriaged);
   const labels = new Set<string>();
   const rows: (ItemListRow & { time: number })[] = [];
   const wantedKeys = query.keys ? new Set(query.keys) : undefined;

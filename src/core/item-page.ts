@@ -28,12 +28,12 @@ function decisionWords(item: WorkItem): string {
  * this one blocks as its host says (GitHub's dependencies); without it they are found in the snapshot.
  */
 /** `self`: this board's person, so a person's turn says whether it is theirs. */
-export function buildItemPage(snapshot: Snapshot, ref: Ref | string, now: Date, blocking?: Ref[], self?: Self): ItemPage | null {
+export function buildItemPage(snapshot: Snapshot, ref: Ref | string, now: Date, blocking?: Ref[], self?: Self, notTriaged?: ReadonlySet<string>): ItemPage | null {
   const index = buildIndex(snapshot);
   const key = typeof ref === "string" ? ref : refKey(ref);
   const item = index.work.get(key);
   if (!item) return null;
-  const { turn, tone, situation } = assess(situate(item, index), turnContext(index, now));
+  const { turn, tone, situation } = assess(situate(item, index), turnContext(index, now, notTriaged));
 
   const changes = [...(index.changesByWork.get(key) ?? [])].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   const changeKeys = new Set(changes.map((change) => refKey(change.ref)));

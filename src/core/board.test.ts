@@ -3,6 +3,7 @@ import { test } from "node:test";
 import type { Batch } from "../model/types.ts";
 import { bisectState } from "./bisect.ts";
 import { buildBoard } from "./board.ts";
+import { buildItemList } from "./item-list.ts";
 import { buildItemPage } from "./item-page.ts";
 import type { Snapshot } from "./snapshot.ts";
 import { toStatusView } from "./status.ts";
@@ -264,4 +265,14 @@ test("the item page names whose turn it is", () => {
   const snap = snapshot({ works: [work(1, { holder: { actor: { id: "bob@b", name: "bob on b" } } })] });
   assert.deepEqual(buildItemPage(snap, ref("work", 1), now, undefined, { person: "alice", machine: "a" })?.person, { name: "bob", mine: false });
   assert.deepEqual(buildItemPage(snap, ref("work", 1), now, undefined, { person: "bob", machine: "b" })?.person, { name: "bob", mine: true });
+});
+
+test("the item page and the item list say a waiting Item waits for a paused triage", () => {
+  const snap = { ...snapshot({ works: [work(1), work(2)] }), triage: "paused" as const };
+  const notTriaged = new Set(["demo:work:1"]);
+  const words = "ready, but triage is paused (Resume on Backlog)";
+  assert.equal(buildItemPage(snap, "demo:work:1", now, undefined, undefined, notTriaged)!.reason, words);
+  assert.equal(buildItemPage(snap, "demo:work:1", now)!.reason, "ready; waiting for a free agent slot");
+  const list = buildItemList(snap, {}, now, undefined, notTriaged);
+  assert.deepEqual(list.items.map((row) => [row.label, row.reason]).sort(), [["#1", words], ["#2", "ready; waiting for a free agent slot"]]);
 });
