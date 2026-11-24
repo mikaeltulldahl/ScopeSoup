@@ -2,6 +2,7 @@
 // that a held item is left alone. The runner and the hosts are fakes; no agent is started. Synthetic data.
 
 import { KEYS } from "../store/keys.ts";
+import { setRolesForTest } from "../store/control.ts";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { fixedConfig } from "../config/loader.ts";
@@ -37,7 +38,7 @@ function item(id: string, over: Partial<WorkItem> = {}): WorkItem {
 
 function world(items: WorkItem[], changes: Change[] = [], cfg = config(), branchHead: string | Error = SHA) {
   const store = openStore(":memory:");
-  store.setValue(KEYS.agents, "started");
+  setRolesForTest(store, "started");
   store.setValue(KEYS.mergeQueue, "started");
   for (const each of items) store.put(each, "sync", T0);
   for (const each of changes) store.put(each, "sync", T0);
@@ -142,8 +143,8 @@ test("a hand-back waits while the item is held, the branch is not here, the stop
   assert.match((missing.events("orchestrator.handback_waits")[0]!.data as { reason: string }).reason, /not there/);
 
   const paused = world([item("A-1", { log: [HANDBACK] })]);
-  // Agents paused: a hand-back starts a review, so it waits for Start agents.
-  paused.store.setValue(KEYS.agents, "paused");
+  // Implementors paused at level 2: the hand-back leads to the hand-over, so it waits for them to be resumed.
+  setRolesForTest(paused.store, "paused");
   await paused.run();
   assert.equal(paused.job("A-1"), undefined);
 

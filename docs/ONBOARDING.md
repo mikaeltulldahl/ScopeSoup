@@ -33,13 +33,13 @@ The skill does not ask for a check command, the remote's URL or anything else a 
 
 ## 2. Level 0: Watch
 
-Scope Soup starts and the board fills. Nothing runs: no session, no write on its own. A person can still create and edit Items from the board when the host is writable. When there are ready Items without a triage, the overview says so: "N Items have no triage: set level 1 and press Start agents."
+Scope Soup starts and the board fills. Nothing runs: no session, no write on its own. A person can still create and edit Items from the board when the host is writable. When there are ready Items without a triage, the overview says so: "N Items have no triage: set level 1 and press Resume on the Backlog."
 
 ## 3. Raising the level
 
 On the Settings page the levels are five rows, each with one sentence of what Scope Soup does and what it needs. A level whose needs are missing is shown but cannot be picked, with what is missing. Picking level 4 asks for the check command and the remote's URL right there: "What command decides a change is OK — the one you would want green before anything merges?", with the candidates Scope Soup found in the repository (`package.json` scripts, CI workflow files, `Makefile` targets) to pick from. It runs in a fresh clone after the setup.
 
-The level is a project setting, the same on every machine: saving it is one commit on the meta ref, named after the person picked at the top of the board, in effect at once here and on the other machines at their next fetch. After a level is saved, the person presses Start agents; at level 4 also Start merge queue. Scope Soup comes up paused after every start-up, so both are pressed again after a restart.
+The level is a project setting, the same on every machine: saving it is one commit on the meta ref, named after the person picked at the top of the board, in effect at once here and on the other machines at their next fetch. After a level is saved, the person presses Resume on the lanes: triage on Backlog, from level 2 implementors on In progress, from level 3 review on In review, at level 4 the merge queue on Queued. Scope Soup comes up paused after every start-up, so they are resumed again after a restart (an upgrade from the board restores them itself).
 
 A typical order:
 
@@ -63,7 +63,7 @@ There is nothing to read, so the first Items are the skeleton: the repository la
 
 Everything Scope Soup adds is a file or state that reads without Scope Soup: a configuration file outside the repository, the shared settings and Items on the meta ref (or issues, labels and comments on GitHub), merged commits. Offboarding (decision 75) lists and removes what Scope Soup left, so trying Scope Soup and deciding against it is easy and safe.
 
-**Pausing is not leaving.** Stop on the board (it ends running sessions and pauses agents and the merge queue), or level 0, stops Scope Soup's work and keeps everything; Start agents, or a higher level, undoes it. Nothing below is needed for that.
+**Pausing is not leaving.** Stop on the board (it ends running sessions and pauses triage, implementors, review and the merge queue), or level 0, stops Scope Soup's work and keeps everything; Resume on the lanes, or a higher level, undoes it. Nothing below is needed for that.
 
 **A record from the start.** Onboarding, and Scope Soup while it runs, append to a manifest in the config folder (`scopesoup.manifest.jsonl`) what they made or changed outside it: Scope Soup's clone and folders, the meta ref, the `scopesoup/onboard` branch, the setup script, the CLAUDE.md section, the plugin lines and the labels Scope Soup created on GitHub. Offboarding works from it and from Scope Soup's own names (`refs/scopesoup/*`, `scopesoup/*` branches, its labels, the `.v*` copies); nothing else of the person's is listed.
 

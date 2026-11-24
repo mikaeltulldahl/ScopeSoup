@@ -167,55 +167,83 @@ const post = async (path: string): Promise<{ status: number; body: Record<string
 const controlEvents = (after: number): [string, string, unknown][] =>
   store.eventsAfter(after, 50).filter((event) => event.kind.startsWith("control.")).map((event) => [event.kind, event.actor, (event.data as { via?: string } | undefined)?.via]);
 
-test("Start agents and Pause agents set the agents switch and write one control event each; a repeat changes nothing", async () => {
+/** The switches' part of a control answer. */
+const sw = (triage: string, implement: string, review: string, mergeQueue: string, changed: boolean) => {
+  const roles = [triage, implement, review];
+  const agents = roles.includes("started") ? "started" : roles.every((state) => state === "stopped") ? "stopped" : "paused";
+  return { triage, implement, review, mergeQueue, agents, changed, paused: agents !== "started" };
+};
+
+test("each role's switch is set on its own and writes one control event per change; a repeat changes nothing", async () => {
   const before = store.lastSeq();
-  assert.deepEqual(await post("/api/agents/start"), { status: 200, body: { agents: "started", mergeQueue: "paused", changed: true, paused: false } });
-  assert.deepEqual((await post("/api/agents/start")).body.changed, false);
-  assert.equal((await (await fetch(`${base}/api/status`)).json() as StatusView).agents, "started");
-  assert.deepEqual(await post("/api/agents/pause"), { status: 200, body: { agents: "paused", mergeQueue: "paused", changed: true, paused: true } });
-  assert.deepEqual((await post("/api/agents/pause")).body.changed, false);
-  assert.deepEqual(controlEvents(before), [["control.agents_started", "board", "board"], ["control.agents_paused", "board", "board"]]);
+  assert.deepEqual(await post("/api/triage/start"), { status: 200, body: sw("started", "paused", "paused", "paused", true) });
+  assert.deepEqual((await post("/api/triage/start")).body.changed, false);
+  assert.deepEqual((await post("/api/review/start")).body, sw("started", "paused", "started", "paused", true));
+  const status = (await (await fetch(`${base}/api/status`)).json()) as StatusView;
+  assert.deepEqual([status.triage, status.implement, status.review, status.agents], ["started", "paused", "started", "started"]);
+  assert.deepEqual((await post("/api/triage/pause")).body, sw("paused", "paused", "started", "paused", true));
+  assert.deepEqual((await post("/api/implement/start")).body, sw("paused", "started", "started", "paused", true));
+  assert.deepEqual((await post("/api/implement/pause")).body, sw("paused", "paused", "started", "paused", true));
+  assert.deepEqual((await post("/api/review/pause")).body, sw("paused", "paused", "paused", "paused", true));
+  assert.equal((await post("/api/nonsense/pause")).status, 404);
+  assert.deepEqual(controlEvents(before), [
+    ["control.triage_started", "board", "board"], ["control.review_started", "board", "board"], ["control.triage_paused", "board", "board"],
+    ["control.implement_started", "board", "board"], ["control.implement_paused", "board", "board"], ["control.review_paused", "board", "board"],
+  ]);
+});
+
+test("/api/agents/start and /pause set the three roles at once, one event each that changed", async () => {
+  await post("/api/review/start");
+  const before = store.lastSeq();
+  assert.deepEqual(await post("/api/agents/start"), { status: 200, body: sw("started", "started", "started", "paused", true) });
+  assert.deepEqual(await post("/api/agents/pause"), { status: 200, body: sw("paused", "paused", "paused", "paused", true) });
+  assert.deepEqual(controlEvents(before), [
+    ["control.triage_started", "board", "board"], ["control.implement_started", "board", "board"],
+    ["control.triage_paused", "board", "board"], ["control.implement_paused", "board", "board"], ["control.review_paused", "board", "board"],
+  ]);
 });
 
 test("Start merge queue and Pause merge queue set the merge switch and write one control event each", async () => {
   const before = store.lastSeq();
-  assert.deepEqual(await post("/api/merge-queue/start"), { status: 200, body: { agents: "paused", mergeQueue: "started", changed: true, paused: true } });
+  assert.deepEqual(await post("/api/merge-queue/start"), { status: 200, body: sw("paused", "paused", "paused", "started", true) });
   const board = (await (await fetch(`${base}/api/board`)).json()) as BoardView;
   assert.deepEqual([board.status.agents, board.status.mergeQueue], ["paused", "started"]);
-  assert.deepEqual((await post("/api/merge-queue/pause")).body, { agents: "paused", mergeQueue: "paused", changed: true, paused: true });
+  assert.deepEqual((await post("/api/merge-queue/pause")).body, sw("paused", "paused", "paused", "paused", true));
   assert.deepEqual((await post("/api/merge-queue/pause")).body.changed, false);
   assert.deepEqual(controlEvents(before), [["control.merge_queue_started", "board", "board"], ["control.merge_queue_paused", "board", "board"]]);
 });
 
-test("Stop sets agents and the merge queue to 'stopped' at once, in one event; Pause agents and Pause merge queue keep it stopped; Start agents and Start merge queue are both needed again", async () => {
+test("Stop sets all four to 'stopped' at once, in one event; a pause keeps it stopped; each must be resumed again", async () => {
   await post("/api/agents/start");
   await post("/api/merge-queue/start");
   const before = store.lastSeq();
-  assert.deepEqual(await post("/api/stop"), { status: 200, body: { agents: "stopped", mergeQueue: "stopped", changed: true, paused: true } });
+  assert.deepEqual(await post("/api/stop"), { status: 200, body: sw("stopped", "stopped", "stopped", "stopped", true) });
   const stopped = store.eventsAfter(before, 10);
-  assert.deepEqual(stopped.map((event) => [event.kind, event.actor, event.data]), [["control.stopped", "board", { via: "board", agents: "started", mergeQueue: "started" }]]);
+  assert.deepEqual(stopped.map((event) => [event.kind, event.actor, event.data]), [["control.stopped", "board", { via: "board", triage: "started", implement: "started", review: "started", mergeQueue: "started" }]]);
   assert.deepEqual((await post("/api/stop")).body.changed, false);
-  assert.deepEqual((await post("/api/agents/pause")).body, { agents: "stopped", mergeQueue: "stopped", changed: false, paused: true });
-  assert.deepEqual((await post("/api/merge-queue/pause")).body, { agents: "stopped", mergeQueue: "stopped", changed: false, paused: true }, "Pause merge queue does not undo Stop");
+  assert.deepEqual((await post("/api/agents/pause")).body, sw("stopped", "stopped", "stopped", "stopped", false));
+  assert.deepEqual((await post("/api/review/pause")).body, sw("stopped", "stopped", "stopped", "stopped", false));
+  assert.deepEqual((await post("/api/merge-queue/pause")).body, sw("stopped", "stopped", "stopped", "stopped", false), "Pause merge queue does not undo Stop");
   assert.equal(((await (await fetch(`${base}/api/status`)).json()) as StatusView).mergeQueue, "stopped");
   assert.equal(((await (await fetch(`${base}/api/status`)).json()) as StatusView).agents, "stopped");
-  assert.deepEqual((await post("/api/merge-queue/start")).body, { agents: "stopped", mergeQueue: "started", changed: true, paused: true });
-  assert.deepEqual((await post("/api/agents/start")).body, { agents: "started", mergeQueue: "started", changed: true, paused: false });
+  assert.deepEqual((await post("/api/merge-queue/start")).body, sw("stopped", "stopped", "stopped", "started", true));
+  assert.deepEqual((await post("/api/triage/start")).body, sw("started", "stopped", "stopped", "started", true));
+  assert.deepEqual((await post("/api/agents/start")).body, sw("started", "started", "started", "started", true));
   await post("/api/merge-queue/pause");
   await post("/api/agents/pause");
 });
 
-test("the old /api/pause and /api/resume still work: pause is Pause agents and Pause merge queue, resume is Start agents and Start merge queue", async () => {
+test("the old /api/pause and /api/resume still work: pause pauses all four, resume resumes all four", async () => {
   const before = store.lastSeq();
   const resumed = await post("/api/resume");
-  assert.deepEqual(resumed, { status: 200, body: { agents: "started", mergeQueue: "started", changed: true, paused: false } });
+  assert.deepEqual(resumed, { status: 200, body: sw("started", "started", "started", "started", true) });
   const paused = await post("/api/pause");
-  assert.deepEqual(paused, { status: 200, body: { agents: "paused", mergeQueue: "paused", changed: true, paused: true } });
-  assert.deepEqual((await post("/api/pause")).body, { agents: "paused", mergeQueue: "paused", changed: false, paused: true });
+  assert.deepEqual(paused, { status: 200, body: sw("paused", "paused", "paused", "paused", true) });
+  assert.deepEqual((await post("/api/pause")).body, sw("paused", "paused", "paused", "paused", false));
   assert.equal(((await (await fetch(`${base}/api/board`)).json()) as BoardView).status.paused, true);
   assert.deepEqual(controlEvents(before), [
-    ["control.agents_started", "board", "/api/resume"], ["control.merge_queue_started", "board", "/api/resume"],
-    ["control.agents_paused", "board", "/api/pause"], ["control.merge_queue_paused", "board", "/api/pause"],
+    ["control.triage_started", "board", "/api/resume"], ["control.implement_started", "board", "/api/resume"], ["control.review_started", "board", "/api/resume"], ["control.merge_queue_started", "board", "/api/resume"],
+    ["control.triage_paused", "board", "/api/pause"], ["control.implement_paused", "board", "/api/pause"], ["control.review_paused", "board", "/api/pause"], ["control.merge_queue_paused", "board", "/api/pause"],
   ]);
 });
 

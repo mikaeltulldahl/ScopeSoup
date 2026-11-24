@@ -3,6 +3,7 @@
 // runner is a fake, so no agent is started. All names and texts are synthetic.
 
 import { KEYS } from "../store/keys.ts";
+import { setRolesForTest } from "../store/control.ts";
 import assert from "node:assert/strict";
 import { after, describe, test } from "node:test";
 import { fixedConfig } from "../config/loader.ts";
@@ -77,7 +78,7 @@ interface Laptop {
 function start(host: MetaBranchHost): Laptop {
   const store = openStore(":memory:");
   // As after a person pressed Start agents and Start merge queue.
-  store.setValue(KEYS.agents, "started");
+  setRolesForTest(store, "started");
   store.setValue(KEYS.mergeQueue, "started");
   const sync = createSync({ store, hosts: [host], intervalMs: 60_000, useWatch: false });
   const clock = { ms: Date.parse("2026-11-18T10:00:00Z") };

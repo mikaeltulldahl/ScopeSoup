@@ -12,6 +12,7 @@ import type { PickEntry } from "./heldDecisions.ts";
 export type { ProjectConfig };
 export type { BoardView, DiffView, ItemPage };
 export type * from "../../src/core/views.ts";
+import type { SwitchPath } from "./switches.ts";
 
 /** Every request names the board's picked person, so the server shows that person's "Your turn" and records who acted. */
 function call(path: string, init: RequestInit = {}): Promise<Response> {
@@ -92,8 +93,8 @@ export async function postUpgrade(what: "check" | "get" | "back" | "cancel" | "d
   return body;
 }
 
-/** The switches (Start/Pause agents, Start/Pause merge queue, Stop) and Sync now. */
-export type ControlPath = "/api/agents/start" | "/api/agents/pause" | "/api/merge-queue/start" | "/api/merge-queue/pause" | "/api/stop";
+/** The switches (Resume/Pause on each lane, Stop) and Sync now. */
+export type ControlPath = SwitchPath | "/api/stop";
 
 export async function post(path: ControlPath | "/api/refresh"): Promise<void> {
   const response = await call(path, { method: "POST" });

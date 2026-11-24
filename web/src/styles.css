@@ -164,8 +164,15 @@ a.status-item { text-decoration: underline; text-decoration-color: var(--line); 
 .lane { min-width: 0; }
 .lane h2 { display: flex; align-items: center; gap: 4px; }
 .lane-add { flex: none; width: 34px; padding: 0; font-size: 1.1rem; line-height: 1; }
+.lane-control { display: flex; align-items: center; gap: 6px; min-height: 30px; margin: 0 0 6px; padding: 0 4px; }
+.lane-control-empty { display: none; }
+.lane-state { font-size: 0.8rem; font-weight: 650; color: var(--muted); }
+.lane-switch { flex: none; margin-left: auto; min-height: 28px; padding: 2px 9px; font-size: 0.78rem; }
+.lane-paused > h2 .lane-toggle { opacity: 0.55; }
+.lane-paused .lane-body { opacity: 0.8; }
 .lane-toggle { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; padding: 6px 4px; min-height: 36px; border: 0; background: none; color: inherit; font: inherit; letter-spacing: inherit; text-transform: inherit; text-align: left; }
 .lane-toggle:hover:not(:disabled) { background: none; }
+@media (min-width: 720px) { .lane-control-empty { display: flex; } }
 .lane-toggle .count { margin-left: auto; }
 .chevron { width: 7px; height: 7px; border-right: 2px solid currentColor; border-bottom: 2px solid currentColor; transform: rotate(45deg); transition: transform 0.15s; margin: 0 3px 3px 2px; }
 .lane-closed .chevron { transform: rotate(-45deg); margin-bottom: 0; }

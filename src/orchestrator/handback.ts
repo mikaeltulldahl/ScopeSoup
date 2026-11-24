@@ -6,7 +6,7 @@
 // would have left it: built, with the branch and its head. Nothing here starts a session.
 
 import { HANDBACK_LABEL, holdStands } from "../model/people.ts";
-import { agentsOn } from "../store/control.ts";
+import { roleOn } from "../store/control.ts";
 import type { Change, Ref, WorkItem } from "../model/types.ts";
 import { refKey } from "../model/types.ts";
 import type { Context } from "./context.ts";
@@ -70,7 +70,7 @@ function seenKeys(ctx: Context): Set<string> {
  * Takes on the hand-backs not seen yet: a job at the end of implement, then the next step of the
  * cycle (the review from level 3, else the hand-over).
  * Waits when the item is still held (the person has not released it, or an agent of another machine took
- * it), when a session runs on it, when agents are not started (Pause agents, Stop, start-up) or the level is below 2 (Implement), and when the branch is not here.
+ * it), when a session runs on it, when the role of its next step is not started (review from level 3, else implementors: paused, Stop, start-up) or the level is below 2 (Implement), and when the branch is not here.
  * Returns the items whose hand-back still waits: the tick does not start them as new items meanwhile.
  */
 export async function adoptHandbacks(ctx: Context, items: readonly WorkItem[], changes: readonly Change[]): Promise<Set<string>> {
@@ -82,7 +82,7 @@ export async function adoptHandbacks(ctx: Context, items: readonly WorkItem[], c
   const fresh = candidates.filter((candidate) => !seen.has(candidate.key));
   for (const handed of fresh) pending.add(refKey(handed.item.ref));
   if (fresh.length === 0) return pending;
-  if (ctx.config.level < 2 || !agentsOn(store)) return pending;
+  if (ctx.config.level < 2 || !roleOn(store, ctx.config.level >= 3 ? "review" : "implement")) return pending;
   for (const handed of fresh) {
     const { item } = handed;
     const key = refKey(item.ref);

@@ -180,7 +180,7 @@ function backlogTurn(situation: Situation, ctx: TurnContext): Draft {
   if (item.state === "waiting") return { actor: "nobody", tone: "blocked", reason: `waiting on the host (status "${item.hostState}")` };
   // A held item is not waiting for a free slot here: a person works on it, or another machine's agent does.
   if (item.holder && holdStands(item.holder, ctx.now.getTime())) return heldTurn(item, ctx);
-  if (ctx.index.snapshot.paused) return { actor: "nobody", tone: "blocked", reason: "ready, but agents are paused (Start agents)" };
+  if (ctx.index.snapshot.paused) return { actor: "nobody", tone: "blocked", reason: "ready, but agents are paused (Resume on the lanes)" };
   if (ctx.index.snapshot.usage?.status === "rejected") return { actor: "nobody", tone: "blocked", reason: `ready, but the usage limit is reached${resetWords(ctx)}` };
   return { actor: "agent", tone: "waiting", reason: "ready; waiting for a free agent slot" };
 }
@@ -213,7 +213,7 @@ function reviewTurn(situation: Situation, change: Change, ctx: TurnContext): Dra
   if (change.verdicts.some((verdict) => verdict.stale && verdict.dimension === "review")) {
     return { actor: "agent", tone: "waiting", since: change.updatedAt, reason: "it has a new revision since the last review; waiting for a reviewer session" };
   }
-  const paused = ctx.index.snapshot.paused ? ", and agents are paused (Start agents)" : "";
+  const paused = ctx.index.snapshot.review !== "started" ? ", and review is paused (Resume on In review)" : "";
   return { actor: "agent", tone: paused ? "blocked" : "waiting", since: change.updatedAt, reason: `waiting for a reviewer session${paused}` };
 }
 

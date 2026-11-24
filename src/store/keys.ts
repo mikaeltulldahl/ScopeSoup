@@ -1,11 +1,15 @@
 // Names of the small values (kv) that more than one part reads or writes.
 
-/** The board reads these. The sync writes `runners` and `sync`; the switches (store/control.ts) write `agents` and `mergeQueue`. */
+/** The board reads these. The sync writes `runners` and `sync`; the switches (store/control.ts) write `triage`, `implement`, `review` and `mergeQueue`. */
 export const KEYS = {
   /** JSON array of runners (model `Runner`, plus an optional `since`). */
   runners: "runners",
-  /** "started", "paused" or "stopped" (by Stop): whether the orchestrator starts sessions. Missing reads as paused. The old `paused` key is not read. */
-  agents: "control.agents",
+  /** "started", "paused" or "stopped" (by Stop): whether triage sessions start. Missing reads as paused. */
+  triage: "control.triage",
+  /** The same for implementor sessions. */
+  implement: "control.implement",
+  /** The same for review sessions (and taking on hand-backs). */
+  review: "control.review",
   /** "started", "paused" or "stopped" (by Stop): whether Scope Soup merges (level 4). Missing reads as paused. */
   mergeQueue: "control.mergeQueue",
   /** JSON `{ "lastAt"?: string, "error"?: string }`. */
@@ -18,7 +22,7 @@ export const KEYS = {
   idle: "orchestrator.idle_reason",
   /** JSON: the last update check (when, the newest release, a problem), so a restart does not ask again within the day. */
   updateCheck: "scopesoup.update_check",
-  /** JSON: what Get latest or Go back paused and the next start is to start again (`{ agents, mergeQueue, kind, to, at }`); "" when none. */
+  /** JSON: what Get latest or Go back paused and the next start is to start again (`{ triage, implement, review, mergeQueue, kind, to, at }`); "" when none. */
   upgradeResume: "scopesoup.upgrade_resume",
   /** JSON `{ text, at }`: the note on the board after that ("Upgraded to 0.6.0; agents started again as before"); "" when none. */
   upgradeNote: "scopesoup.upgrade_note",

@@ -53,8 +53,8 @@ export interface AgentRunner {
   start(request: SessionRequest): Promise<Session>;
   /** Kills stalled and overdue sessions; settles sessions the store calls running that no process backs. */
   reconcile(): Promise<void>;
-  /** Stops every running session. Returns how many were told to stop. */
-  stopAll(reason: string): number;
+  /** Stops every running session, or only those of `roles` (and their setups under way). Returns how many were told to stop. */
+  stopAll(reason: string, roles?: readonly SessionRole[]): number;
   /** Sessions with a live process. */
   running(): number;
   /**

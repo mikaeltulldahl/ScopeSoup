@@ -10,7 +10,7 @@ import type { ProjectConfig } from "../config/types.ts";
 import type { ChatSessionView, ChatTurnView, ChatView } from "../core/views.ts";
 import { refKey } from "../model/types.ts";
 import type { Ref, Session, SessionRole, WorkItem } from "../model/types.ts";
-import { agentsState } from "../store/control.ts";
+import { roleStopped, SWITCH_WORDS } from "../store/control.ts";
 import type { Resources } from "./resources.ts";
 import type { Store } from "../store/store.ts";
 import { errorText } from "./context.ts";
@@ -189,7 +189,7 @@ export function createChat(deps: ChatDeps): Chat {
     if (job.parked?.as === "queued" || job.queued !== undefined || job.owes === "hand-over") {
       return "The Item is queued for merging (or being merged); talk to its sessions once it merges or comes back.";
     }
-    if (agentsState(store) === "stopped") return "Stop was pressed: no session runs until you press Start agents.";
+    if (roleStopped(store, job.step)) return `Stop was pressed: no ${job.step} session runs until you press Resume ${SWITCH_WORDS[job.step]}.`;
     const turns = readTurns(store, item);
     if (pending.has(item) || turns.some((turn) => !turn.finishedAt && isLive(session(turn.session)))) return "Your last message is still being answered.";
     const live = store.list<Session>("session").find((each) => refKey(each.subject) === item && isLive(each));

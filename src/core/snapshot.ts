@@ -47,9 +47,14 @@ export interface Snapshot {
   usage: UsageSample | null;
   /** Recent readings, for the forecast. Absent when only the latest is known. */
   usageHistory?: UsageSample[];
-  /** Agents are not started (paused or stopped): no new session starts. */
+  /** No agent role is started (paused or stopped): no new session starts. */
   paused: boolean;
+  /** The three agent roles together: "started" while any is (store/control.ts). */
   agents: AgentsState;
+  /** Each role's switch, on its lane: triage (Backlog), implementors (In progress), review (In review). */
+  triage: AgentsState;
+  implement: AgentsState;
+  review: AgentsState;
   mergeQueue: MergeQueueState;
   /** The project's level; absent with no project configuration (board only). */
   level?: number;
@@ -70,7 +75,7 @@ export interface Snapshot {
 }
 
 export function emptySnapshot(): Snapshot {
-  return { works: [], changes: [], runs: [], batches: [], sessions: [], runners: [], usage: null, paused: false, agents: "started", mergeQueue: "started", sync: {} };
+  return { works: [], changes: [], runs: [], batches: [], sessions: [], runners: [], usage: null, paused: false, agents: "started", triage: "started", implement: "started", review: "started", mergeQueue: "started", sync: {} };
 }
 
 /** Lookups over a snapshot, built once per view. */

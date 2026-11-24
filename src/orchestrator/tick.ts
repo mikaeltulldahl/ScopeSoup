@@ -6,7 +6,8 @@
 import { budgetReserve } from "../config/budgetReserve.ts";
 import { clearWithoutTriage } from "../core/statedSize.ts";
 import { answersText, knownAnswers } from "../store/answers.ts";
-import { agentsState, mergeQueueOn } from "../store/control.ts";
+import { mergeQueueOn, ROLES, SWITCH_WORDS, switchState } from "../store/control.ts";
+import type { SwitchState } from "../store/control.ts";
 import { KEYS } from "../store/keys.ts";
 import type { Level, ProjectConfig } from "../config/types.ts";
 import { levelName } from "../config/types.ts";
@@ -53,7 +54,7 @@ export interface TickReport {
   running: number;
   /** Items whose next step is ready but did not start (no slot, no budget, no clone). */
   queued: number;
-  /** Agents are not started (paused, or stopped by Stop): no session starts. Running ones may still finish (Pause agents). */
+  /** No agent role is started (paused, or stopped by Stop): no session starts. Running ones may still finish (Pause). */
   paused?: boolean;
 }
 
@@ -404,11 +405,17 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
   let queuedCount = 0;
   // Entries waiting for a clone of the pool (a running session or a person frees one): not work to stay awake for.
   let heldForClone = 0;
+  // The roles paused (or stopped) at this level, and how many steps wait for each: named first in the idle reason.
+  const off: SessionRole[] = [];
+  const waitsFor: Record<SessionRole, number> = { triage: 0, implement: 0, review: 0 };
   const finish = (): TickReport => {
     report.running = running;
-    report.queued = Math.max(0, queuedCount - heldForClone - report.started.length);
+    // Steps waiting for a paused role are not work to stay awake for either.
+    report.queued = Math.max(0, queuedCount - heldForClone - waitsFor.triage - waitsFor.implement - waitsFor.review - report.started.length);
     if (report.started.length === 0) {
-      report.idle = `Nothing was started because ${reasons.length > 0 ? reasons.join("; ") : "no item is ready"}.`;
+      const paused = off.map((role) => `${SWITCH_WORDS[role]} ${role === "implement" ? "are" : "is"} paused${waitsFor[role] > 0 ? ` (${waitsFor[role]} item(s) wait for ${role === "implement" ? "them" : "it"})` : ""}`);
+      const all = [...paused, ...reasons];
+      report.idle = `Nothing was started because ${all.length > 0 ? all.join("; ") : "no item is ready"}.`;
       ctx.say("orchestrator.idle", report.idle, undefined, { running });
       // The board's status line shows the same words; this mirrors the latest event.
       if (store.getValue(KEYS.idle) !== report.idle) store.setValue(KEYS.idle, report.idle);
@@ -416,23 +423,29 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
     return report;
   };
 
-  // 3. Start agents, Pause agents, Stop (store/control.ts). Paused, running sessions finish their step and are settled above;
-  // nothing new starts. Stopped (the stop switch), running sessions are ended too.
-  const agents = agentsState(store);
-  if (agents !== "started") {
-    if (agents === "stopped") {
-      const stopped = running > 0 ? runner.stopAll("Stopped: a person pressed Stop.") : 0;
-      if (stopped > 0) ctx.commit("orchestrator.stopped", `Stop was pressed. Ended ${stopped} running session(s).`);
-      reasons.push("Stop was pressed: agents are stopped (press Start agents to go on)");
-    } else {
-      reasons.push(`agents are paused (press Start agents to go on)${running > 0 ? `; ${running} running session(s) finish their step` : ""}`);
-    }
+  // 3. The switches of the three agent roles (store/control.ts): triage, implementors, review, each Resume / Pause, and Stop.
+  // A paused role's running sessions finish their step and are settled above; nothing new of that role starts, the others
+  // go on. A stopped role (the stop switch, not resumed since) has its running sessions ended too.
+  const level = config.level;
+  const control = Object.fromEntries(ROLES.map((role) => [role, switchState(store, role)])) as Record<SessionRole, SwitchState>;
+  const stoppedRoles = ROLES.filter((role) => control[role] === "stopped");
+  if (stoppedRoles.length > 0 && running > 0) {
+    const stopped = runner.stopAll("Stopped: a person pressed Stop.", stoppedRoles.length === ROLES.length ? undefined : stoppedRoles);
+    if (stopped > 0) ctx.commit("orchestrator.stopped", `Stop was pressed. Ended ${stopped} running session(s).`);
+  }
+  // Only the roles this level uses are named (at level 0 none runs anyway).
+  const used = ROLES.filter((role) => STEP_LEVEL[role] <= Math.max(level, 1));
+  if (ROLES.every((role) => control[role] !== "started")) {
+    const names = used.map((role) => SWITCH_WORDS[role]);
+    const list = names.length > 1 ? `${names.slice(0, -1).join(", ")} and ${names.at(-1)}` : names[0] ?? "";
+    if (stoppedRoles.length === ROLES.length) reasons.push(`Stop was pressed: ${list} ${names.length > 1 ? "are" : "is"} stopped (press Resume on their lanes to go on)`);
+    else reasons.push(`${list} ${names.length > 1 ? "are" : "is"} paused (press Resume on their lanes to go on)${running > 0 ? `; ${running} running session(s) finish their step` : ""}`);
     report.paused = true;
     return finish();
   }
+  if (level > 0) for (const role of used) if (control[role] !== "started") off.push(role);
 
   // 3b. The level. Level 0 (Watch) starts no session and merges nothing; the board still syncs, outside the tick.
-  const level = config.level;
   if (level === 0) {
     reasons.push(`the project is at ${levelName(0)}: Scope Soup shows the work and starts nothing (raise the level to let it work)`);
     return finish();
@@ -515,6 +528,11 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
     // item gets its triage. With risk classes gone the size label alone decides.
     const skipped = entry.job || level < 2 ? null : clearWithoutTriage(entry.item);
     let step = entry.job?.step ?? (skipped ? "implement" : "triage");
+    // Its role is paused: it waits, and takes no slot, so the roles that go on may start.
+    if (control[step] !== "started") {
+      waitsFor[step]++;
+      continue;
+    }
     if (running >= slots) {
       reasons.push(`all ${slots} session slot(s) are in use`);
       break;
@@ -536,6 +554,11 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
     let again: string | undefined;
     if (entry.job && step === "implement" && awaitsImplement(entry.job)) {
       const recheck = await staleTriage(ctx, entry.job, entry.item, items);
+      // Its triage is taken again first, and triage is paused: it waits for triage.
+      if (recheck && control.triage !== "started") {
+        waitsFor.triage++;
+        continue;
+      }
       if (recheck) {
         startRecheck(ctx, entry.job, recheck);
         step = "triage";

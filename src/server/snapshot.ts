@@ -42,7 +42,7 @@ export function loadSnapshot(store: Store): Snapshot {
     usageHistory: store.usageSamplesSince(new Date(Date.now() - 25 * 3600_000).toISOString()),
     ...(() => {
       const control = readControl(store);
-      return { paused: control.agents !== "started", agents: control.agents, mergeQueue: control.mergeQueue };
+      return { paused: control.agents !== "started", agents: control.agents, triage: control.triage, implement: control.implement, review: control.review, mergeQueue: control.mergeQueue };
     })(),
     parked: Object.values(loadJobs(store)).flatMap((job): Parked[] => {
       if (!job.parked) return [];

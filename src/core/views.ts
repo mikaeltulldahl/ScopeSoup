@@ -247,11 +247,17 @@ export interface UsageWindowView {
 }
 
 export interface StatusLine {
-  /** Agents are not started: no new session starts. */
+  /** No agent role is started: no new session starts. */
   paused: boolean;
-  /** Start agents / Pause agents / Stop. */
+  /** The three agent roles together: "started" while any is. */
   agents: AgentsState;
-  /** Start merge queue / Pause merge queue; means something only at level 4. */
+  /** Resume / Pause on the Backlog lane (from level 1). */
+  triage: AgentsState;
+  /** Resume / Pause on the In progress lane (from level 2). */
+  implement: AgentsState;
+  /** Resume / Pause on the In review lane (from level 3). */
+  review: AgentsState;
+  /** Resume / Pause on the Queued lane; means something only at level 4. */
   mergeQueue: MergeQueueState;
   /** The project's level; absent with no project configuration (board only: no orchestrator, no Start). */
   level?: number;
@@ -376,9 +382,12 @@ export interface ItemListView {
 /** `GET /api/status`: the board, compact, for scripts and agents. */
 export interface StatusView {
   now: string;
-  /** Agents are not started (kept for scripts written for `/api/pause` and `/api/resume`). */
+  /** No agent role is started (kept for scripts written for `/api/pause` and `/api/resume`). */
   paused: boolean;
   agents: AgentsState;
+  triage: AgentsState;
+  implement: AgentsState;
+  review: AgentsState;
   mergeQueue: MergeQueueState;
   level?: number;
   lanes: Record<Lane, number>;

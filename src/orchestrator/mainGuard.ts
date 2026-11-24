@@ -1,7 +1,7 @@
 // The main branch only moves forward ("Enforced in code instead of prose"). From level 2 a session
 // may push to the main branch itself, so after every session Scope Soup fetches the remote's main and compares it with the commit
-// it last saw there. A main that moved other than fast-forward (a force push, rewritten history) presses Pause agents with the
-// reason and an event, so the loop stops until a person has looked and presses Start agents again.
+// it last saw there. A main that moved other than fast-forward (a force push, rewritten history) pauses the three agent roles
+// (triage, implementors, review) with the reason and an event each, so the loop stops until a person has looked and resumes them.
 
 import { refKey } from "../model/types.ts";
 import { applyControl } from "../store/control.ts";
@@ -65,8 +65,8 @@ export async function watchMain(ctx: Context, job: Job, after: string): Promise<
     return main;
   }
   // Rewritten: the commit seen last is not in main's history any more (or is gone). The new main is recorded, so a person's
-  // Start agents after looking is not undone by the same finding at the next session.
-  const reason = `${name} did not move fast-forward ${after}: it was at ${last!.slice(0, 7)} and is now at ${main.slice(0, 7)}, which ${forward === null ? "is not built on it (that commit is no longer there)" : "does not contain it"}. Someone forced it or rewrote its history. Agents are paused: look at ${name}, then press Start agents.`;
+  // Resuming after looking is not undone by the same finding at the next session.
+  const reason = `${name} did not move fast-forward ${after}: it was at ${last!.slice(0, 7)} and is now at ${main.slice(0, 7)}, which ${forward === null ? "is not built on it (that commit is no longer there)" : "does not contain it"}. Someone forced it or rewrote its history. Agents are paused (triage, implementors and review): look at ${name}, then press Resume on their lanes.`;
   store.tx(() => {
     record();
     ctx.commit("orchestrator.main_rewritten", reason, key, { from: last, to: main, repo });

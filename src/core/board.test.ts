@@ -193,7 +193,7 @@ test("a batch whose only run passed is not drawn as a bisect", () => {
     runs: [],
     probes: [{ prefix: 1, status: "passed" }],
   };
-  const board = buildBoard({ works: [], changes: [], runs: [], batches: [batch], sessions: [], runners: [], usage: null, paused: false, agents: "started", mergeQueue: "started", sync: {} }, new Date("2026-01-01T00:00:00Z"));
+  const board = buildBoard({ works: [], changes: [], runs: [], batches: [batch], sessions: [], runners: [], usage: null, paused: false, agents: "started", triage: "started", implement: "started", review: "started", mergeQueue: "started", sync: {} }, new Date("2026-01-01T00:00:00Z"));
   const shown = [...board.queue.batches, ...board.queue.recent][0];
   assert.ok(shown);
   assert.equal(shown.bisect, undefined);

@@ -69,7 +69,7 @@ export function createLoop(deps: LoopDeps): Loop {
     start() {
       if (!stopped) return;
       stopped = false;
-      // Scope Soup comes up paused after every start-up: nothing runs until Start agents (and Start merge queue at level 4).
+      // Scope Soup comes up paused after every start-up: nothing runs until a switch is resumed on its lane.
       // Work under way goes on from the items' logs when it is pressed (recover.ts).
       pauseAtStartup(deps.store, deps.now());
       schedule(0);

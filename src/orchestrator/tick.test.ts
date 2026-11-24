@@ -1,7 +1,7 @@
 // The tick against an in-memory store and a fake runner. No process is started, no clock is read.
 
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import { describe, test } from "node:test";
 import { budgetReserve } from "../config/budgetReserve.ts";
 import { persistenceLimits } from "../config/persistence.ts";
 import { buildCommand } from "./providers/claude/command.ts";
@@ -37,7 +37,7 @@ import { createGitHubHost } from "../hosts/github/adapter.ts";
 import { fakeIssues, ISSUES_API } from "../hosts/github/fakeIssues.ts";
 import { readMarker } from "../hosts/github/conventions.ts";
 import { createHash } from "node:crypto";
-import { agentsState, applyControl, mergeQueueState } from "../store/control.ts";
+import { agentsState, applyControl, mergeQueueState, setRolesForTest } from "../store/control.ts";
 import type { ControlAction } from "../store/control.ts";
 import { KEYS } from "../store/keys.ts";
 import { QUEUE_KEY, readQueueHealth, requestQueueResume } from "./queueHealth.ts";
@@ -132,7 +132,7 @@ function world(cfg: ProjectConfig | ConfigSource, items: WorkItem[] = []): World
   const clock = { ms: T0 };
   const now = () => new Date(clock.ms).toISOString();
   // Agents and merging started, as after a person pressed both Start buttons (no events, so counts stay as they were).
-  store.setValue(KEYS.agents, "started");
+  setRolesForTest(store, "started");
   store.setValue(KEYS.mergeQueue, "started");
   for (const entry of items) store.put(entry, "sync", now());
   let count = 0;
@@ -150,11 +150,11 @@ function world(cfg: ProjectConfig | ConfigSource, items: WorkItem[] = []): World
       return session;
     },
     async reconcile() {},
-    stopAll(reason) {
+    stopAll(reason, only) {
       runner.stops.push(reason);
       let stopped = 0;
       for (const [id, session] of sessions) {
-        if (session.status === "running") {
+        if (session.status === "running" && (!only || only.includes(session.role))) {
           runner.end(id, "cancelled", undefined, { endReason: reason });
           stopped++;
         }
@@ -402,7 +402,7 @@ const press = (w: World, action: ControlAction): void => void applyControl(w.sto
 
 test("a triage request stored earlier is ignored: with agents paused nothing starts; started at level 1, every Item gets its triage", async () => {
   const w = world(config({ level: 1, settings: { maxParallelSessions: { value: 3, reason: "test" } } }), [item("1"), item("2", STATED_EARLY)]);
-  w.store.setValue(KEYS.agents, "paused");
+  setRolesForTest(w.store, "paused");
   w.store.setValue("orchestrator.triages", JSON.stringify([refKey(ref("1"))]));
   w.store.addUsageSample(usage(0.1, 0.1));
   const paused = await w.run();
@@ -459,7 +459,7 @@ test("Pause agents: a running session finishes its step and is settled, and noth
   assert.deepEqual(w.runner.stops, [], "Pause agents ends no session");
   assert.equal(paused.paused, true);
   assert.equal(paused.running, 1);
-  assert.match(paused.idle ?? "", /agents are paused \(press Start agents to go on\); 1 running session\(s\) finish their step/);
+  assert.match(paused.idle ?? "", /because triage and implementors are paused \(press Resume on their lanes to go on\); 1 running session\(s\) finish their step/);
 
   // The session finishes: its answer is settled and the item moves to its next step, which does not start.
   w.runner.end("1", "succeeded", TRIAGE_OK);
@@ -473,6 +473,87 @@ test("Pause agents: a running session finishes its step and is settled, and noth
   w.clock.ms += 1000;
   await w.run();
   assert.equal(w.runner.requests[1]?.role, "implement");
+});
+
+describe("each role's switch", { concurrency: 4 }, () => {
+  const at = (w: World): string => new Date(w.clock.ms).toISOString();
+
+  test("triage paused: a running triage finishes its step, no new triage starts, and the implementors go on", async () => {
+    const w = world(config({ settings: { maxParallelSessions: { value: 3, reason: "test" } } }), [item("1")]);
+    w.store.addUsageSample(usage(0.1, 0.1));
+    await w.run();
+    press(w, "triage.pause");
+    w.store.put(item("2"), "sync", at(w));
+    await step(w, "1", "succeeded", TRIAGE_OK);
+    assert.deepEqual(roles(w), ["triage", "implement"], "the triage under way was settled; 2 gets no triage");
+    assert.deepEqual(w.runner.stops, [], "pausing ends nothing");
+    const idle = await w.run();
+    assert.match(idle.idle ?? "", /^Nothing was started because triage is paused \(1 item\(s\) wait for it\)/);
+    assert.equal(idle.paused, undefined, "the other roles go on");
+    press(w, "triage.start");
+    w.clock.ms += 1000;
+    await w.run();
+    assert.deepEqual(roles(w), ["triage", "implement", "triage"]);
+  });
+
+  test("implementors paused: triages go on, no implement step starts until resumed", async () => {
+    const w = world(config({ settings: { maxParallelSessions: { value: 3, reason: "test" } } }), [item("1"), item("2")]);
+    w.store.addUsageSample(usage(0.1, 0.1));
+    press(w, "implement.pause");
+    await w.run();
+    assert.deepEqual(roles(w), ["triage", "triage"]);
+    const idle = await step(w, "1", "succeeded", TRIAGE_OK);
+    assert.deepEqual(roles(w), ["triage", "triage"], "1's implement step waits");
+    assert.equal(w.job("1")?.step, "implement");
+    assert.match(idle.idle ?? "", /because implementors are paused \(1 item\(s\) wait for them\)/);
+    assert.equal(idle.queued, 0, "a step waiting for a paused role is not work to stay awake for");
+    press(w, "implement.start");
+    w.clock.ms += 1000;
+    await w.run();
+    assert.deepEqual(roles(w), ["triage", "triage", "implement"]);
+  });
+
+  test("review paused: the review step waits while a new Item's triage starts", async () => {
+    const w = world(config({ rules: STAGE1, settings: { maxParallelSessions: { value: 3, reason: "test" } } }), [item("1")]);
+    w.store.addUsageSample(usage(0.1, 0.1));
+    press(w, "review.pause");
+    await w.run();
+    await step(w, "1", "succeeded", TRIAGE_OK);
+    const idle = await step(w, "1", "succeeded", IMPLEMENT_OK);
+    assert.deepEqual(roles(w), ["triage", "implement"]);
+    assert.equal(w.job("1")?.step, "review");
+    assert.match(idle.idle ?? "", /^Nothing was started because review is paused \(1 item\(s\) wait for it\)/);
+    w.store.put(item("2"), "sync", at(w));
+    w.clock.ms += 1000;
+    await w.run();
+    assert.deepEqual(roles(w), ["triage", "implement", "triage"]);
+    press(w, "review.start");
+    w.clock.ms += 1000;
+    await w.run();
+    assert.deepEqual(roles(w), ["triage", "implement", "triage", "review"]);
+  });
+
+  test("a role's switch is named in the idle reason only from its level; Stop and resuming one role ends nothing of it", async () => {
+    // Level 1: implementors and review do not run there, so their paused switches are not named.
+    const low = world(config({ level: 1 }), []);
+    press(low, "implement.pause");
+    press(low, "review.pause");
+    const quiet = await low.run();
+    assert.equal(quiet.idle, "Nothing was started because no item is ready.");
+
+    const w = world(config(), [item("1")]);
+    await w.run();
+    press(w, "stop");
+    await w.run();
+    assert.equal(w.runner.running(), 0, "Stop ended the triage");
+    press(w, "triage.start");
+    w.clock.ms += 1000;
+    await w.run();
+    assert.equal(w.runner.requests.at(-1)?.role, "triage");
+    w.clock.ms += 1000;
+    await w.run();
+    assert.equal(w.runner.running(), 1, "the implementors are still stopped, but a resumed triage is not ended");
+  });
 });
 
 test("after a restart nothing starts until Start agents: the loop comes up paused", async () => {
@@ -502,7 +583,7 @@ test("after a restart nothing starts until Start agents: the loop comes up pause
   assert.deepEqual([agentsState(w.store), mergeQueueState(w.store)], ["paused", "paused"]);
   const startup = w.events("control.startup_paused");
   assert.equal(startup.length, 1);
-  assert.deepEqual(startup[0]?.data, { agents: "started", mergeQueue: "started", reason: "Scope Soup starts paused: press Start agents (and Start merge queue at level 4) to let it work." });
+  assert.deepEqual(startup[0]?.data, { triage: "started", implement: "started", review: "started", mergeQueue: "started", reason: "Scope Soup starts paused: press Resume on the lanes (triage, implementors, review, the merge queue) to let it work." });
   await fire();
   assert.deepEqual(reports, [{ started: 0, paused: true }]);
   assert.equal(w.runner.requests.length, 0);

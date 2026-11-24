@@ -14,7 +14,7 @@ import type { Ref, Session, WorkItem } from "../model/types.ts";
 import { refKey } from "../model/types.ts";
 import { openStore } from "../store/store.ts";
 import type { Store } from "../store/store.ts";
-import { KEYS } from "../store/keys.ts";
+import { setRolesForTest } from "../store/control.ts";
 import { execFileSyncRetrying } from "../hosts/spawnRetry.ts";
 import { sessionView } from "../core/board.ts";
 import { createChat, knownSessions, readTurns, replyFromStream } from "./chat.ts";
@@ -81,7 +81,7 @@ function world(jobOver: Partial<Job> | null = {}): World {
   const store = openStore(":memory:");
   const clock = { ms: T0 };
   const now = () => new Date(clock.ms).toISOString();
-  store.setValue(KEYS.agents, "started");
+  setRolesForTest(store, "started");
   const work: WorkItem = { ref: ITEM, title: "A synthetic item", state: "doing", hostState: "open", labels: [], blockedBy: [], openChildren: 0, updatedAt: "2026-11-01T00:00:00Z" };
   store.put(work, "sync", now());
   // The item's triage, then its implementor, then its reviewer: each a session Scope Soup knows, newest last.
@@ -256,7 +256,7 @@ describe("chat", { concurrency: 4 }, () => {
 
   test("Stop refuses a message; an item without work under way, or a session it does not have, too", async () => {
     const stopped = world();
-    stopped.store.setValue(KEYS.agents, "stopped");
+    setRolesForTest(stopped.store, "stopped");
     assert.match(stopped.chat.view(KEY).blocked ?? "", /Stop was pressed/);
     const none = world(null);
     assert.match(none.chat.view(KEY).blocked ?? "", /no work under way/);
@@ -307,7 +307,7 @@ function poolWorld(holdings: Record<string, { item: string; clone: "a" | "b"; br
   const paths = config.workspaces.kind === "pool" ? config.workspaces.paths : [];
   const clone = (name: "a" | "b") => paths[name === "a" ? 0 : 1]!;
   const store = openStore(":memory:");
-  store.setValue(KEYS.agents, "started");
+  setRolesForTest(store, "started");
   const work: WorkItem = { ref: ITEM, title: "A synthetic item", state: "doing", hostState: "open", labels: [], blockedBy: [], openChildren: 0, updatedAt: "2026-11-01T00:00:00Z" };
   store.put(work, "sync", "2026-11-18T08:00:00.000Z");
   const where = cwd === null ? undefined : cwd === "gone" ? join(dir, "pool", "gone", "modules", "project") : join(clone(cwd), "modules", "project");

@@ -44,7 +44,7 @@ test("backlog reasons: blocked, sub-items, paused, usage limit, ready", () => {
   assert.equal(turnOf(base, 1).unblocks, 1);
   assert.match(turnOf(base, 3).reason, /2 open sub-items/);
   assert.equal(turnOf(base, 4).actor, "agent");
-  assert.equal(turnOf({ ...base, paused: true }, 1).reason, "ready, but agents are paused (Start agents)");
+  assert.equal(turnOf({ ...base, paused: true }, 1).reason, "ready, but agents are paused (Resume on the lanes)");
   const limited = { ...base, usage: { at: T0, status: "rejected", windows: [{ kind: "five_hour" as const, resetsAt: at(42) }] } };
   assert.equal(turnOf(limited, 1).reason, "ready, but the usage limit is reached; the window resets in 42 min");
 });

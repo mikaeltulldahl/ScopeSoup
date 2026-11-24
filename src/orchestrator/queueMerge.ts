@@ -172,7 +172,7 @@ async function apply(ctx: Context, notice: Notice): Promise<void> {
 /**
  * One tick of the queue: changes that are no longer waiting leave it, a queue the engine paused goes on when a person
  * resumed it on the Queue page, then the queue is driven until it waits for nothing. While merging is paused (Pause
- * merging, Stop, start-up) nothing is driven. Start merge queue does not resume a queue the engine paused itself: that is
+ * merging, Stop, start-up) nothing is driven. Resuming the merge queue switch does not resume a queue the engine paused itself: that is
  * the queue's own health pause, with its own Resume.
  */
 export async function driveQueue(ctx: Context, items: readonly WorkItem[]): Promise<void> {
@@ -211,7 +211,7 @@ export async function driveQueue(ctx: Context, items: readonly WorkItem[]): Prom
   const run = launch(ctx, queue, leased);
   await settleFor(ctx, run, ctx.deps.queueWaitMs ?? QUEUE_WAIT_MS);
   const still = queue.pausedWhy();
-  if (still !== null && run.done) ctx.say("orchestrator.queue_paused", `The merge queue is paused: ${still} Resume it on the Queue page of the board to let it go on (Start merge queue does not).`);
+  if (still !== null && run.done) ctx.say("orchestrator.queue_paused", `The merge queue is paused: ${still} Resume it on the Queue page of the board to let it go on (the lane's Resume does not).`);
 }
 
 /**

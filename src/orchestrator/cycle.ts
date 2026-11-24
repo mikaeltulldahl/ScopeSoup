@@ -583,7 +583,7 @@ async function handOver(ctx: Context, job: Job, item: WorkItem | null): Promise<
   }
   if (!mergeQueueOn(ctx.deps.store)) {
     job.owes = "hand-over";
-    ctx.commit("orchestrator.merge_queue_paused", `The merge queue is paused: ${job.branch} is not handed to the queue now; it is when Start merge queue is pressed.`, refKey(job.item));
+    ctx.commit("orchestrator.merge_queue_paused", `The merge queue is paused: ${job.branch} is not handed to the queue now; it is when the merge queue is resumed.`, refKey(job.item));
     return;
   }
   return handOverToQueue(ctx, job);
