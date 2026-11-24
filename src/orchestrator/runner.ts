@@ -23,9 +23,8 @@ import { providerFor } from "./providers/index.ts";
 import { loadRole, renderTemplate } from "./roles.ts";
 import { restoreWip, wipPatchPath } from "./wip.ts";
 import { baseRef, changedPaths, changeStat, commitsAhead, commitsTouching, deleteBranch, fetchMain, isAncestor, squashedOnMain } from "./worktree.ts";
-import { createCheckRunner } from "./checkRunner.ts";
 import type { RunCheck } from "./checkRunner.ts";
-import { ensureSetup, SETUP_ADVICE, setupEnv, setupPromptLine } from "./setup.ts";
+import { createSetupRunner, ensureSetup, setupPromptLine } from "./setup.ts";
 import { prepareSlot, releaseSlot } from "./slots.ts";
 import { cloneRepoForBranch, deleteBranchInPool, loadHoldings, NoFreeClone, poolRepoPath, prepareClone, releaseClone, takeClone } from "./workspaces.ts";
 import type { PoolDeps } from "./workspaces.ts";
@@ -52,7 +51,7 @@ export interface RunnerDeps {
   onFinished?: (session: Session) => void;
   /** The Session object is rewritten at most this often while events stream in. */
   storeWriteIntervalMs?: number;
-  /** Runs `setupCommand`. Default: a check runner over `processes` with `setupEnv` of `env`. */
+  /** Runs `setupCommand`. Default: a check runner over `processes` with `setupEnv` of `env` and the configuration. */
   runSetup?: RunCheck;
   /** True once a person pressed Stop and the role was not resumed since: a setup under way for its session is ended. */
   stopped?: (role: SessionRole) => boolean;
@@ -120,7 +119,7 @@ export function createRunner(deps: RunnerDeps): Runner {
   const preparing = new Map<string, number>();
   const finishedSessions = new Map<string, Promise<Session>>();
 
-  const runSetup = deps.runSetup ?? createCheckRunner(processes, setupEnv(deps.env ?? process.env), now, SETUP_ADVICE);
+  const runSetup = deps.runSetup ?? createSetupRunner(processes, deps.env ?? process.env, deps.config, now);
   /** Raised by every Stop: a setup under way ends when it changes. */
   /** Counts the stops per role, so a setup under way sees one that happened meanwhile. */
   const stops: Record<SessionRole, number> = { triage: 0, implement: 0, review: 0 };

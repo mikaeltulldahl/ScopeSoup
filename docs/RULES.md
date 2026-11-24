@@ -16,7 +16,7 @@ So Scope Soup keeps a small core that is always on and enforced in code. How muc
 4. **An append-only log.** Every action the tool takes is an event with who or what did it and on whose authority. Events are never edited or removed.
 5. **People's decisions are surfaced, not made.** When an item needs a decision, the tool asks with options and a recommendation and waits. Scope Soup never takes the recommendation itself. This is the one core rule that is parked on judgement; the tool provides the place to put decisions and the list that shows them.
 
-Enforced on the command line: every session is refused `git push --force*`, `git push -f*` and `*--no-verify*` (`--disallowedTools`), and from level 4 any `git push`. A role on GitHub Copilot CLI, which cannot refuse a flag, is refused every `git push`, and a role that may run `git commit` does not run on it (decision 85). After every session Scope Soup checks that the remote's main moved only fast-forward; if not, it pauses the three agent roles with the reason.
+Enforced on the command line: every session is refused `git push --force*`, `git push -f*` and `*--no-verify*` (`--disallowedTools`), and from level 4 any `git push`. A role on GitHub Copilot CLI, which cannot refuse a flag, is refused every `git push`, and a role that may run a git command beyond the read-only ones does not run on it (decision 85). After every session Scope Soup checks that the remote's main moved only fast-forward; if not, it pauses the three agent roles with the reason.
 
 ## Levels
 

@@ -36,10 +36,14 @@ const FILE_WRITES = new Set(["Edit", "Write", "MultiEdit", "NotebookEdit"]);
 /** Reads in the working folder need no rule: Copilot allows them. */
 const FILE_READS = new Set(["Read", "Glob", "Grep", "LS"]);
 
+/** Git subcommands that only read: a rule for one of them may allow every flag of it. */
+export const READ_ONLY_GIT = new Set(["status", "log", "diff", "show", "blame", "shortlog", "ls-files", "ls-tree", "rev-parse", "cat-file", "grep"]);
+
 /**
  * One `Bash(...)` entry as a Copilot shell rule, or null when it cannot be held: `Bash(git *)` is `shell(git:*)`,
- * `Bash(pnpm check*)` is `shell(pnpm check:*)`, `Bash(git status)` is `shell(git status)`. Three words or more, a flag in the
- * subcommand's place, or a wildcard inside the command cannot be said without allowing more.
+ * `Bash(pnpm check*)` is `shell(pnpm check:*)`. A rule names a command whatever its flags follow, so an exact entry
+ * (`Bash(git branch)`) cannot be held, except for a read-only git subcommand (`Bash(git status)` is `shell(git status)`).
+ * Three words or more, a flag in the subcommand's place, or a wildcard inside the command cannot be held either.
  */
 export function shellRule(tool: string): string | null | undefined {
   const match = /^Bash(?:\((.*)\))?$/.exec(tool.trim());
@@ -50,6 +54,7 @@ export function shellRule(tool: string): string | null | undefined {
   const words = inner.replace(/(?::\*|\s*\*)$/, "").trim().split(/\s+/).filter((word) => word !== "");
   if (words.length === 0) return "shell";
   if (words.length > 2 || words.some((word) => /[*?"'`{}()$;&|<>]/.test(word)) || words[1]?.startsWith("-")) return null;
+  if (!open && !(words[0] === "git" && READ_ONLY_GIT.has(words[1] ?? ""))) return null;
   return `shell(${words.join(" ")}${open ? ":*" : ""})`;
 }
 
@@ -77,20 +82,22 @@ export function copilotRules(allowedTools: readonly string[]): CopilotRules {
   return { allow, deny: ["shell(git push)"], left };
 }
 
-/** Whether a rule allows `git <sub>` (and so every flag of it). */
-export function allowsGit(rules: readonly string[], sub: string): boolean {
-  return rules.some((rule) => rule === "shell" || rule === "shell(git:*)" || rule === `shell(git ${sub}:*)` || rule === `shell(git ${sub})`);
+/** The git commands a rule allows beyond the read-only ones: `git` for every git command, else `git <sub>`; null for none. */
+export function gitBeyondReading(rule: string): string | null {
+  if (rule === "shell" || rule === "shell(git:*)") return "git";
+  const match = /^shell\(git (\S+?)(?::\*)?\)$/.exec(rule);
+  return match && !READ_ONLY_GIT.has(match[1] ?? "") ? `git ${match[1]}` : null;
 }
 
 /**
  * Why the role's sessions cannot be held to the core rules on Copilot, or null. Every session is refused `--no-verify`
- * (`docs/RULES.md`); Copilot cannot refuse a flag, so a role that may run `git commit` at all could skip the hooks.
+ * (`docs/RULES.md`), and commit, merge, rebase, pull, am, revert, cherry-pick and stash make commits or run hooks. Copilot
+ * cannot refuse a flag, so a role may run no git command on it but the read-only ones (`READ_ONLY_GIT`).
  */
 export function copilotRefusal(config: ProjectConfig, role: SessionRole): string | null {
-  const rules = copilotRules(config.roles[role].allowedTools).allow;
-  const commits = allowsGit(rules, "commit");
-  if (!commits) return null;
-  return `Refused: Copilot CLI cannot refuse \`git commit --no-verify\` while it allows \`git commit\` (its rules name a command, never a flag), so roles.${role} may not run on Copilot with these allowedTools. Run ${role} on Claude, or take git commit out of its allowedTools.`;
+  const beyond = copilotRules(config.roles[role].allowedTools).allow.map(gitBeyondReading).filter((text): text is string => text !== null);
+  if (beyond.length === 0) return null;
+  return `Refused: Copilot CLI cannot refuse a flag such as \`--no-verify\` (its rules name a command, never its flags), so a role on it may run only read-only git commands, and roles.${role} allows ${beyond.map((text) => `\`${text}\``).join(", ")}. Run ${role} on Claude, or take those out of its allowedTools.`;
 }
 
 /** The driver that runs the CLI and asks again once for an answer that fits (`driver.ts`). */
@@ -111,6 +118,11 @@ export interface DriverSpec {
 /** The usage file Copilot writes beside the session's stream. */
 export function usageFile(streamPath: string): string {
   return `${streamPath}.usage.json`;
+}
+
+/** The usage file of the driver's second run (asking again), so it does not overwrite the first run's. */
+export function retryUsageFile(path: string): string {
+  return path.replace(/\.usage\.json$/, ".usage-2.json");
 }
 
 export interface CopilotLaunchRequest {

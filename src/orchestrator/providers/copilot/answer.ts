@@ -1,5 +1,6 @@
 // Copilot CLI has no JSON-schema output: the session is asked to end with its answer as JSON, and Scope Soup checks it here.
 // The checker covers what the role schemas in `prompts/` use: type, enum, required, properties, additionalProperties and items.
+// A schema with any other keyword fails closed: no answer fits it, and the problem says which keyword.
 
 type Schema = Record<string, unknown>;
 const isObj = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
@@ -28,6 +29,25 @@ export function answerObject(text: string): { value?: unknown; problem?: string 
     }
   }
   return { problem: trimmed === "" ? "the answer was empty" : "the answer was not JSON" };
+}
+
+const CHECKED = new Set(["type", "enum", "required", "properties", "additionalProperties", "items"]);
+/** Keywords that only describe and need no check. */
+const NOTES = new Set(["description", "title", "$schema", "$id", "$comment", "examples"]);
+
+/** The keywords in `schema` (and the schemas inside it) the checker cannot check, as `path: keyword`. */
+export function uncheckedKeywords(schema: Schema, at = "schema"): string[] {
+  const found: string[] = [];
+  for (const [key, value] of Object.entries(schema)) {
+    if (NOTES.has(key)) continue;
+    if (!CHECKED.has(key)) found.push(`${at}: ${key}`);
+    else if (key === "properties" && isObj(value)) {
+      for (const [name, sub] of Object.entries(value)) if (isObj(sub)) found.push(...uncheckedKeywords(sub, `${at}.${name}`));
+    } else if (key === "items" && isObj(value)) found.push(...uncheckedKeywords(value, `${at}[]`));
+    else if (key === "additionalProperties" && typeof value !== "boolean") found.push(`${at}: additionalProperties as a schema`);
+    else if (key === "type" && typeof value !== "string") found.push(`${at}: type as a list`);
+  }
+  return found;
 }
 
 function typeOf(value: unknown): string {
@@ -79,6 +99,9 @@ export function checkAnswer(text: string | undefined, schema: string): { ok: tru
   } catch {
     return { ok: false, problems: ["the schema is not JSON"] };
   }
-  const problems = isObj(parsed) ? schemaProblems(value, parsed) : ["the schema is not an object"];
+  if (!isObj(parsed)) return { ok: false, problems: ["the schema is not an object"] };
+  const unchecked = uncheckedKeywords(parsed);
+  if (unchecked.length > 0) return { ok: false, problems: [`the schema uses what Scope Soup cannot check (${unchecked.join(", ")})`] };
+  const problems = schemaProblems(value, parsed);
   return problems.length === 0 ? { ok: true, value } : { ok: false, problems };
 }

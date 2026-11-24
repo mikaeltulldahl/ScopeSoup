@@ -5,6 +5,7 @@
 
 import { spawn } from "node:child_process";
 import { askAgainMessage, checkAnswer } from "./answer.ts";
+import { retryUsageFile } from "./command.ts";
 import type { DriverSpec } from "./command.ts";
 import { createCopilotReader } from "./stream.ts";
 
@@ -57,13 +58,18 @@ function run(spec: DriverSpec, prompt: string, resume: string | undefined): Prom
 }
 
 const spec = JSON.parse(await readStdin()) as DriverSpec;
+/** The second run writes its own usage file (`retryUsageFile`); `tokensIn` adds both. */
+function retryArgs(args: readonly string[]): string[] {
+  const at = args.indexOf("--usage-output-file");
+  return args.map((arg, index) => (at >= 0 && index === at + 1 ? retryUsageFile(arg) : arg));
+}
 let last = await run(spec, spec.prompt, spec.resume);
 if (spec.schema && last.code === 0) {
   const sessionId = last.sessionId ?? spec.resume;
   const checked = checkAnswer(last.answer, spec.schema);
   if (!checked.ok && sessionId) {
     process.stdout.write(`${JSON.stringify({ type: "scopesoup.ask_again", data: { problems: checked.problems } })}\n`);
-    last = await run(spec, askAgainMessage(checked.problems, spec.schema), sessionId);
+    last = await run({ ...spec, args: retryArgs(spec.args) }, askAgainMessage(checked.problems, spec.schema), sessionId);
   }
 }
 process.exitCode = last.code;

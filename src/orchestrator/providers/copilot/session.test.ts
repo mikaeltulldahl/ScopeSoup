@@ -15,7 +15,7 @@ import { workBranch, workspaceKey } from "../../paths.ts";
 import type { SessionRequest } from "../../ports.ts";
 import { createRunner, readSessionResult } from "../../runner.ts";
 import { streamTokens } from "../../../server/usage.ts";
-import { usageFile } from "./command.ts";
+import { retryUsageFile, usageFile } from "./command.ts";
 
 const FAKE = join(import.meta.dirname, "fake-copilot.ts");
 const T0 = Date.parse("2026-11-20T10:00:00Z");
@@ -125,6 +125,9 @@ describe("Copilot sessions", { concurrency: 4 }, () => {
     assert.match(runs[1]?.prompt ?? "", /^Your last message was not an answer that fits the schema \(the answer was not JSON\)/);
     assert.ok(runs[1]?.args.includes("--resume=00000000-0000-4000-8000-00000000f001"));
     assert.ok(events(session).some((event) => event.type === "scopesoup.ask_again"));
+    // Each run wrote its own usage file; the tokens add up.
+    assert.ok(runs[1]?.args.includes(retryUsageFile(usageFile(session.streamPath ?? ""))));
+    assert.equal(streamTokens(session.streamPath, session.provider), 2100);
   });
 
   test("an answer that still does not fit after asking again fails the session", async () => {
@@ -139,18 +142,18 @@ describe("Copilot sessions", { concurrency: 4 }, () => {
     const w = world("ok");
     const session = await w.runner.start(request("implement"));
     assert.equal(session.status, "failed");
-    assert.match(session.endReason ?? "", /^Refused: Copilot CLI cannot refuse `git commit --no-verify`/);
+    assert.match(session.endReason ?? "", /^Refused: Copilot CLI cannot refuse a flag such as `--no-verify`/);
     assert.equal(session.pid, undefined);
   });
 
-  test("an implement role without git commit runs on Copilot with file writes allowed", async () => {
-    const roles = { implement: { provider: "copilot", allowedTools: ["Read", "Edit", "Write", "Bash(git add *)"] } };
+  test("an implement role with only read-only git commands runs on Copilot with file writes allowed", async () => {
+    const roles = { implement: { provider: "copilot", allowedTools: ["Read", "Edit", "Write", "Bash(git diff *)"] } };
     const w = world("ok", { FAKE_COPILOT_OUTPUT: '{"done":true,"summary":"edited"}' }, roles);
     const session = await w.runner.finished((await w.runner.start(request("implement"))).ref.id);
     assert.equal(session.status, "succeeded", session.endReason);
     const [run] = fakeArgs(session);
     assert.ok(run?.args.includes("--allow-tool=write"));
-    assert.ok(run?.args.includes("--allow-tool=shell(git add:*)"));
+    assert.ok(run?.args.includes("--allow-tool=shell(git diff:*)"));
   });
 
   test("a refused command is recorded; a rate limit ends the session as 'limit'; a crash fails it", async () => {

@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs";
 import type { ToolCall } from "../../agent.ts";
 import { isObj, objectsOnLine } from "../lines.ts";
 import type { Obj } from "../lines.ts";
-import { usageFile } from "./command.ts";
+import { retryUsageFile, usageFile } from "./command.ts";
 import { describeTool } from "./stream.ts";
 
 function* events(text: string): Generator<Obj> {
@@ -60,12 +60,24 @@ export function tokensInUsage(text: string): number | undefined {
   }
 }
 
-/** The tokens of a finished session: its stream has none, so they are read from the usage file beside it. */
+/**
+ * The tokens of a finished session: its stream has none, so they are read from the usage files beside it, the first run's
+ * and, when the driver asked again, the second run's, added up. (Premium requests are read from the stream's last `result`
+ * line instead: the recording shows them counted for the whole session, earlier runs included. Whether a resumed run's usage
+ * file counts only that run, as this sum takes it, is not recorded yet.)
+ */
 export function tokensIn(_stream: string, streamPath?: string): number | undefined {
   if (!streamPath) return undefined;
-  try {
-    return tokensInUsage(readFileSync(usageFile(streamPath), "utf8"));
-  } catch {
-    return undefined;
+  let total: number | undefined;
+  for (const path of [usageFile(streamPath), retryUsageFile(usageFile(streamPath))]) {
+    let text: string;
+    try {
+      text = readFileSync(path, "utf8");
+    } catch {
+      continue;
+    }
+    const tokens = tokensInUsage(text);
+    if (tokens !== undefined) total = (total ?? 0) + tokens;
   }
+  return total;
 }

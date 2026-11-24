@@ -7,8 +7,8 @@ import { validateConfig } from "../../../config/validate.ts";
 import type { ProjectConfig } from "../../../config/types.ts";
 import type { AgentEvent } from "../../agent.ts";
 import { providerFor } from "../index.ts";
-import { checkAnswer } from "./answer.ts";
-import { copilotArgs, copilotRefusal, copilotRules, shellRule, usageFile } from "./command.ts";
+import { checkAnswer, uncheckedKeywords } from "./answer.ts";
+import { copilotArgs, copilotRefusal, copilotRules, retryUsageFile, shellRule, usageFile } from "./command.ts";
 import { copilotCommandsText, copilotProvider } from "./index.ts";
 import { replyIn, tokensIn, tokensInUsage, toolCallsIn } from "./readers.ts";
 import { createCopilotReader } from "./stream.ts";
@@ -49,7 +49,10 @@ test("allowedTools become Copilot rules that never allow more than the entry did
   assert.equal(shellRule("Bash(git log *)"), "shell(git log:*)");
   assert.equal(shellRule("Bash(pnpm check*)"), "shell(pnpm check:*)");
   assert.equal(shellRule("Bash(npm test:*)"), "shell(npm test:*)");
+  // A rule allows every flag of its command: an exact entry is held only for a read-only git subcommand.
   assert.equal(shellRule("Bash(git status)"), "shell(git status)");
+  assert.equal(shellRule("Bash(git branch)"), null);
+  assert.equal(shellRule("Bash(ls)"), null);
   assert.equal(shellRule("Bash"), "shell");
   assert.equal(shellRule("Bash(*)"), "shell");
   // Copilot names a command by its first subcommand only: these cannot be held without allowing more.
@@ -85,13 +88,18 @@ test("each role's command line: model, auto tier, rules, usage file, no question
   assert.equal(copilotArgs(c, "review").includes("--auto-tier"), false);
 });
 
-test("a role that may commit is refused on Copilot: it cannot refuse --no-verify; the read-only roles run", () => {
+test("a role that may run a git command beyond reading is refused on Copilot: it cannot refuse --no-verify; the read-only roles run", () => {
   const c = config({ triage: { provider: "copilot" }, implement: { provider: "copilot" }, review: { provider: "copilot" } });
   assert.equal(copilotRefusal(c, "triage"), null);
   assert.equal(copilotRefusal(c, "review"), null);
-  assert.match(copilotRefusal(c, "implement") ?? "", /cannot refuse `git commit --no-verify`/);
-  const narrow = config({ implement: { provider: "copilot", allowedTools: ["Read", "Edit", "Bash(git add *)"] } });
-  assert.equal(copilotRefusal(narrow, "implement"), null);
+  assert.match(copilotRefusal(c, "implement") ?? "", /cannot refuse a flag such as `--no-verify`.*allows `git`/);
+  for (const sub of ["commit", "merge", "am", "revert", "cherry-pick", "rebase", "pull", "stash", "add"]) {
+    const one = config({ implement: { provider: "copilot", allowedTools: ["Read", "Edit", `Bash(git ${sub} *)`] } });
+    assert.ok((copilotRefusal(one, "implement") ?? "").includes(`allows \`git ${sub}\``), sub);
+  }
+  assert.match(copilotRefusal(config({ review: { provider: "copilot", allowedTools: ["Bash"] } }), "review") ?? "", /allows `git`/);
+  const reading = config({ implement: { provider: "copilot", allowedTools: ["Read", "Edit", "Bash(git status)", "Bash(git blame *)", "Bash(pnpm check*)"] } });
+  assert.equal(copilotRefusal(reading, "implement"), null);
 });
 
 test("the launch runs the driver with the prompt, the schema and the instruction about the answer on stdin", () => {
@@ -149,11 +157,28 @@ test("the answer counts only when it is JSON that fits the schema", () => {
     ok: false, problems: ['answer.verdict must be one of "approve", "changes"', "answer.findings[0].text is missing", "answer.extra is not in the schema"],
   });
   assert.deepEqual(checkAnswer("All good.", schema), { ok: false, problems: ["the answer was not JSON"] });
+  // A keyword the checker does not know fails closed, whatever the answer.
+  const unknown = JSON.stringify({ type: "object", description: "notes are fine", properties: { n: { type: "integer", minimum: 1 } }, oneOf: [] });
+  assert.deepEqual(checkAnswer('{"n":0}', unknown), { ok: false, problems: ["the schema uses what Scope Soup cannot check (schema.n: minimum, schema: oneOf)"] });
+  // The role schemas Scope Soup ships use only what it checks.
+  for (const role of ["triage", "implement", "review"]) {
+    const text = readFileSync(join(import.meta.dirname, "..", "..", "..", "..", "prompts", `${role}.schema.json`), "utf8");
+    assert.deepEqual(uncheckedKeywords(JSON.parse(text) as Record<string, unknown>), [], role);
+  }
 
   const stream = fixture("plain.jsonl").replace('"content":"ok"', `"content":${JSON.stringify('{"verdict":"approve","findings":[]}')}`);
   const fits = read(stream, schema).summary.result;
   assert.deepEqual([fits?.hasStructuredOutput, fits?.structuredOutput], [true, { verdict: "approve", findings: [] }]);
   assert.equal(read(fixture("plain.jsonl"), schema).summary.result?.hasStructuredOutput, false);
+});
+
+test("a run that resumes the session forgets the earlier answer: a retry with no answer of its own has none", () => {
+  const schema = JSON.stringify({ type: "object", required: ["verdict"], properties: { verdict: { type: "string" } } });
+  const first = fixture("plain.jsonl").replace('"content":"ok"', `"content":${JSON.stringify('{"verdict":"approve"}')}`);
+  const retry = `${JSON.stringify({ type: "session.resume", data: {} })}\n${JSON.stringify({ type: "result", sessionId: "s", exitCode: 0 })}\n`;
+  const { summary } = read(first + retry, schema);
+  assert.equal(summary.answer, undefined);
+  assert.equal(summary.result?.hasStructuredOutput, false);
 });
 
 test("a rate limit is told apart by its words", () => {
@@ -172,6 +197,9 @@ test("tokens come from the usage file beside the stream", () => {
   assert.equal(tokensIn(fixture("plain.jsonl"), stream), undefined);
   writeFileSync(usageFile(stream), fixture("usage.json"));
   assert.equal(copilotProvider.tokensIn(fixture("plain.jsonl"), stream), 1520);
+  // The driver's second run (asking again) has a file of its own; both count.
+  writeFileSync(retryUsageFile(usageFile(stream)), fixture("usage.json"));
+  assert.equal(copilotProvider.tokensIn(fixture("plain.jsonl"), stream), 3040);
 });
 
 test("a chat reply streams from the deltas of the message being written", () => {

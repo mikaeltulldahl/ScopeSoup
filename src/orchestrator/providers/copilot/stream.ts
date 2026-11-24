@@ -63,6 +63,7 @@ export function createCopilotReader(now: () => string, root?: string, schema?: s
     const out: AgentResult = { isError, hasStructuredOutput: false, subtype: isError ? `exit ${exitCode}` : "success", turns };
     if (typeof object.sessionId === "string") out.sessionId = object.sessionId;
     const usage = isObj(object.usage) ? object.usage : {};
+    // The last `result` line counts: the recorded resume (1.0.115) gave the session's premium requests so far, earlier runs included.
     if (typeof usage.premiumRequests === "number") out.premiumRequests = usage.premiumRequests;
     if (aiCredits !== undefined) out.aiCredits = aiCredits;
     if (denied.length > 0) out.denied = [...denied];
@@ -81,6 +82,8 @@ export function createCopilotReader(now: () => string, root?: string, schema?: s
   function interpret(object: Obj, raw: string): AgentEvent {
     const type = typeof object.type === "string" ? object.type : "";
     const data = isObj(object.data) ? object.data : {};
+    // A new run (the driver's ask-again resumes the session) gives a new answer: the earlier one is not checked again.
+    if (type === "session.start" || type === "session.resume") state.answer = undefined;
     if (type === "session.start" && typeof data.sessionId === "string") {
       state.sessionId = data.sessionId;
       return { kind: "init", raw, sessionId: data.sessionId, model: typeof data.selectedModel === "string" ? data.selectedModel : undefined };
