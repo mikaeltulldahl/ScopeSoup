@@ -13,6 +13,8 @@ import { hostDiffers } from "../../src/core/lanes.ts";
 import { fill, itemNoun, words } from "./theme.ts";
 import { ago, fromWords, laneWord, optionRows, span, stateFacts, unmatchedRecommendation } from "./format.ts";
 import { ProgressBar } from "./Progress.tsx";
+import { collapse, diffLines, hasChanges } from "./textDiff.ts";
+import type { DiffRow } from "./textDiff.ts";
 import { rememberViewed } from "./ItemList.tsx";
 import { itemHref } from "./route.ts";
 import type { Held } from "./heldAnswers.ts";
@@ -641,6 +643,35 @@ function parseLabelChange(text: string): { add: string[]; remove: string[] } {
   return { add: change.add.filter(Boolean), remove: change.remove.filter(Boolean) };
 }
 
+/** One line of the draft's diff: "+" or "−" in the margin, the changed words marked when the line has a partner. */
+function DiffLine({ row }: { row: DiffRow }) {
+  const mark = row.kind === "add" ? "+" : row.kind === "del" ? "−" : " ";
+  return (
+    <div class={`dl dl-${row.kind}`}>
+      <span class="dl-mark" aria-hidden="true">{mark}</span>
+      <span class="dl-text">
+        {row.parts ? row.parts.map((part, index) => (part.changed ? <mark key={index}>{part.text}</mark> : part.text)) : row.text || " "}
+      </span>
+    </div>
+  );
+}
+
+/** The description turned into the draft, as one unified diff; long unchanged runs fold into a line that opens on a click. */
+function DraftDiff({ before, after }: { before: string; after: string }) {
+  const [opened, setOpened] = useState<Record<number, boolean>>({});
+  const rows = diffLines(before, after);
+  if (!hasChanges(rows)) return <p class="muted">The draft keeps the description as it is.</p>;
+  return (
+    <div class="diff-unified" role="group" aria-label="Description changed to the draft">
+      {collapse(rows).map((entry, index) =>
+        "row" in entry ? <DiffLine key={index} row={entry.row} /> : opened[index]
+          ? entry.skipped.map((row, at) => <DiffLine key={`${index}.${at}`} row={row} />)
+          : <button key={index} type="button" class="dl-fold" onClick={() => setOpened({ ...opened, [index]: true })}>… {entry.skipped.length} unchanged lines</button>,
+      )}
+    </div>
+  );
+}
+
 /**
  * The triage's draft of the description, next to the description as it stands, with its questions (each
  * recommendation picked to begin with). Keeping every recommendation, one press accepts the draft (or Edit, Reject); any
@@ -684,12 +715,8 @@ function DraftPanel({ page, draft, reload }: { page: ItemPage; draft: ParkedDraf
       ))}
       <div class="draft-compare">
         <div class="version">
-          <p class="muted num">Before</p>
-          <pre class="version-text">{draft.original || "(no description)"}</pre>
-        </div>
-        <div class="version">
-          <p class="muted num">After (the draft)</p>
-          <pre class="version-text">{draft.draft}</pre>
+          <p class="muted num">Change to the description (before, then the draft)</p>
+          <DraftDiff before={draft.original} after={draft.draft} />
         </div>
         {changed && (
           <div class="version">
