@@ -8,6 +8,8 @@ import type { FetchLike, FetchResponse } from "../github/client.ts";
 import type { Deployment } from "./client.ts";
 import { isoTime, jqlTime } from "./map.ts";
 import type { JiraComment, JiraIssue, JiraUser } from "./rest.ts";
+import type { FakeWriteState } from "./fakeJiraWrites.ts";
+import { routeWrite } from "./fakeJiraWrites.ts";
 
 export const FAKE_SITE = "https://example.atlassian.net";
 export const FAKE_DC_SITE = "https://jira.example.test";
@@ -29,6 +31,18 @@ export interface FakeJiraSetup {
   moved?: Record<string, string>;
   /** Results per page at most (Jira's own cap is larger). Default 100. */
   pageSize?: number;
+  /** The project writes go to. Default "DEMO". */
+  project?: string;
+  /** People who may be assignees, besides `user`. */
+  people?: JiraUser[];
+  /** The comment length limit. Default 32,767. */
+  commentLimit?: number;
+  /** The fake's clock for `updated` and `created` stamps of writes, milliseconds. Default a fixed time, one second more per write. */
+  now?: () => number;
+  /** Whether Cloud's comment list answers `expand=properties` with an empty list on every comment. */
+  emptyExpand?: boolean;
+  /** Who may be assigned in the project (the assignable-user search). Default `user` and `people`. */
+  assignable?: JiraUser[];
 }
 
 export interface FakeJiraCall {
@@ -43,10 +57,16 @@ export interface FakeJira {
   fetch: FetchLike;
   calls: FakeJiraCall[];
   issues: Map<string, JiraIssue>;
+  /** Issue key -> comments, as the writes leave them. */
+  comments: Record<string, JiraComment[]>;
+  issueProperties: Record<string, Record<string, unknown>>;
+  commentProperties: Record<string, Record<string, unknown>>;
   /** The next `times` requests are answered 429 with these headers. */
   limit(times: number, headers: Record<string, string>): void;
   /** Paths (method and status) requested since the last call of this. */
   take(): string[];
+  /** The next `times` requests whose path matches `path` are answered with `status`. */
+  fail(path: RegExp, status: number, times: number): void;
 }
 
 const KEY_NUMBER = (key: string): number => Number(/-(\d+)$/.exec(key)?.[1] ?? 0);
@@ -59,8 +79,19 @@ export function fakeJira(setup: FakeJiraSetup): FakeJira {
   const auth = setup.deployment === "cloud" ? `Basic ${Buffer.from(`${setup.email ?? ""}:${setup.token}`).toString("base64")}` : `Bearer ${setup.token}`;
   const issues = new Map((setup.issues ?? []).map((issue) => [issue.key, issue]));
   const pageSize = setup.pageSize ?? 100;
+  const comments = (setup.comments ??= {});
+  const issueProperties = (setup.issueProperties ??= {});
+  const commentProperties = (setup.commentProperties ??= {});
+  let tick = Date.parse("2026-11-21T08:00:00.000Z");
+  const writes: FakeWriteState = {
+    deployment: setup.deployment, site, user: setup.user, project: setup.project ?? "DEMO", issues, comments, issueProperties, commentProperties,
+    people: [setup.user, ...(setup.people ?? [])], assignable: setup.assignable, commentLimit: setup.commentLimit ?? 32_767,
+    now: setup.now ?? (() => (tick += 1000)),
+    ids: { comment: 40_000, link: 50_000, issue: 60_000 },
+  };
   const calls: FakeJiraCall[] = [];
   const limits: { times: number; headers: Record<string, string> }[] = [];
+  const failures: { path: RegExp; status: number; times: number }[] = [];
   let taken = 0;
 
   const answer = (status: number, body: unknown, headers: Record<string, string> = {}): FetchResponse => {
@@ -69,7 +100,7 @@ export function fakeJira(setup: FakeJiraSetup): FakeJira {
       status,
       headers: { get: (name) => lower.get(name.toLowerCase()) ?? null },
       json: async () => body,
-      text: async () => (typeof body === "string" ? body : JSON.stringify(body)),
+      text: async () => (body === undefined ? "" : typeof body === "string" ? body : JSON.stringify(body)),
     };
   };
   const refuse = (status: number, message: string): FetchResponse => answer(status, { errorMessages: [message], errors: {} });
@@ -133,7 +164,7 @@ export function fakeJira(setup: FakeJiraSetup): FakeJira {
       // Only the Cloud flavour expands properties on the list, so both of the host's paths are tried.
       const expand = setup.deployment === "cloud" && (query.get("expand") ?? "").split(",").includes("properties");
       const comments = all.slice(start, start + size).map((comment) =>
-        expand ? { ...comment, properties: Object.entries(setup.commentProperties?.[comment.id] ?? {}).map(([property, value]) => ({ key: property, value })) } : comment,
+        expand ? { ...comment, properties: setup.emptyExpand ? [] : Object.entries(setup.commentProperties?.[comment.id] ?? {}).map(([property, value]) => ({ key: property, value })) } : comment,
       );
       return answer(200, { startAt: start, maxResults: size, total: all.length, comments });
     }
@@ -147,14 +178,22 @@ export function fakeJira(setup: FakeJiraSetup): FakeJira {
       if (!store || !(key in store)) return refuse(404, `The property with key '${key}' does not exist.`);
       return answer(200, { key, value: store[key] });
     }
+    const written = routeWrite(writes, method, rest, query, body, answer, refuse);
+    if (written) return written;
     return refuse(404, `The fake does not serve ${method} ${path}.`);
   }
 
   const fake: FakeJira = {
     calls,
     issues,
+    comments,
+    issueProperties,
+    commentProperties,
     limit(times, headers) {
       limits.push({ times, headers });
+    },
+    fail(path, status, times) {
+      failures.push({ path, status, times });
     },
     take() {
       const fresh = calls.slice(taken).map((call) => `${call.status} ${call.method} ${call.path}`);
@@ -171,7 +210,11 @@ export function fakeJira(setup: FakeJiraSetup): FakeJira {
       const limited = limits[0];
       if (!url.startsWith(`${site}/`)) response = refuse(404, "Another site.");
       else if (headers.Authorization !== auth) response = answer(401, "Unauthorized");
-      else if (limited) {
+      else if (failures.some((each) => each.times > 0 && each.path.test(path))) {
+        const failure = failures.find((each) => each.times > 0 && each.path.test(path))!;
+        failure.times -= 1;
+        response = refuse(failure.status, "The fake was told to fail this request.");
+      } else if (limited) {
         limited.times -= 1;
         if (limited.times <= 0) limits.shift();
         response = answer(429, { errorMessages: ["Rate limit exceeded."] }, limited.headers);

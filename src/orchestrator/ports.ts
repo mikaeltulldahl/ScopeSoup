@@ -55,6 +55,8 @@ export interface AgentRunner {
   reconcile(): Promise<void>;
   /** Stops every running session, or only those of `roles` (and their setups under way). Returns how many were told to stop. */
   stopAll(reason: string, roles?: readonly SessionRole[]): number;
+  /** Stops the running sessions of one item (and its setup under way). Returns how many were told to stop. Absent in fakes that do not need it. */
+  stopFor?(subject: Ref, reason: string): number;
   /** Sessions with a live process. */
   running(): number;
   /**

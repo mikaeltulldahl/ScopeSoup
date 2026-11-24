@@ -275,8 +275,8 @@ export function validateConfig(given: unknown, baseDir: string): ConfigResult {
   if (mergeQueue?.ci === "github" && host !== undefined && host.kind !== "github") {
     err(`mergeQueue.ci is "github", but the host is ${host.kind}: Scope Soup waits for CI on GitHub only for a project whose host is GitHub. Remove mergeQueue.ci, or set it to "local" to run checkCommand.`);
   }
-  if (host?.kind === "jira" && level > 0) {
-    err(`level is ${level}, but the Jira host is read-only in this version: Scope Soup can only show a Jira project's Items. Set level to 0 (Watch).`);
+  if (host?.kind === "jira" && !host.write && level > 0) {
+    err(`level is ${level}, but the Jira host has writes off (host.write): Scope Soup can only show the Jira project's Items. Set host.write to true, or level to 0 (Watch).`);
   }
 
   // --- core rule 1 ---
@@ -369,7 +369,9 @@ function resourcesOf(value: unknown, shared: boolean, err: (message: string) => 
 }
 
 const GITHUB_KEYS = ["kind", "repo", "write"];
-const JIRA_KEYS = ["kind", "site", "project", "deployment", "write", "email", "priorities", "abandonedResolutions", "blocksLink"];
+const JIRA_KEYS = ["kind", "site", "project", "deployment", "write", "email", "priorities", "abandonedResolutions", "blocksLink", "issueType", "childIssueType", "transitions", "resolutions", "relatesLink", "duplicateLink", "commentLimit", "answerers"];
+const TRANSITION_TARGETS = ["todo", "doing", "done", "abandoned"] as const;
+const RESOLUTION_TARGETS = ["done", "abandoned", "duplicate"] as const;
 const PRIORITY_NAMES = ["blocker", "critical", "major", "minor"] as const;
 /** `mergeQueue`, the object form: what checks the merge queue's batches, and how long a check on GitHub may stay pending. */
 function mergeQueueOf(value: Obj, err: (message: string) => void): MergeQueueConfig {
@@ -393,7 +395,7 @@ function mergeQueueOf(value: Obj, err: (message: string) => void): MergeQueueCon
 // The meta ref is refs/scopesoup/meta in repoPath, shared with remote (both from this machine's file): no ref, folder or remote here.
 const META_BRANCH_KEYS = ["kind", "write", "authorName", "authorEmail", "prefix", "fetchSeconds"];
 
-/** `host` of kind "jira": a Jira project, read-only in this version. */
+/** `host` of kind "jira": a Jira project, written to with `write`. */
 function jiraHostOf(value: Obj, write: boolean, text: (key: string) => string | undefined, err: (message: string) => void): JiraHostConfig {
   const site = text("site")?.replace(/\/+$/, "");
   if (site === undefined) err(`host.site must be the Jira site's address, as "https://example.atlassian.net" (Cloud) or your Data Center's base URL.`);
@@ -403,11 +405,10 @@ function jiraHostOf(value: Obj, write: boolean, text: (key: string) => string | 
   else if (!/^[A-Z][A-Z0-9_]+$/.test(project)) err(`host.project (${project}) must be a Jira project key: capital letters, digits and "_", starting with a letter, as "DEMO".`);
   const deployment = value.deployment;
   if (deployment !== "cloud" && deployment !== "datacenter") err(`host.deployment must be "cloud" (Jira Cloud, an API token with the account's email) or "datacenter" (self-hosted Jira, a personal access token).`);
-  if (write) err("host.write is true, but the Jira host is read-only in this version: Scope Soup reads the project and writes nothing to Jira. Set host.write to false or leave it out.");
   const email = text("email");
   if (deployment === "cloud" && email === undefined) err(`host.deployment is "cloud", so the account's email is required with the API token: set jira.email in this machine's scopesoup.config.json.`);
   if (deployment === "datacenter" && email !== undefined) err("host.deployment is \"datacenter\": a personal access token needs no email. Remove jira.email.");
-  const config: JiraHostConfig = { kind: "jira", site: site ?? "", project: project ?? "", deployment: deployment === "datacenter" ? "datacenter" : "cloud", write: false };
+  const config: JiraHostConfig = { kind: "jira", site: site ?? "", project: project ?? "", deployment: deployment === "datacenter" ? "datacenter" : "cloud", write };
   if (email !== undefined) config.email = email;
   if (value.priorities !== undefined) {
     if (!isObj(value.priorities) || Object.keys(value.priorities).length === 0) err(`host.priorities must be an object from Jira priority names to ${PRIORITY_NAMES.join(", ")}, as { "Highest": "blocker" }.`);
@@ -426,8 +427,39 @@ function jiraHostOf(value: Obj, write: boolean, text: (key: string) => string | 
     if (!Array.isArray(given) || !given.every((entry) => typeof entry === "string" && entry.trim() !== "")) err(`host.abandonedResolutions must be a list of resolution names, as ["Won't Do", "Duplicate"].`);
     else config.abandonedResolutions = given.map((entry: string) => entry.trim());
   }
-  const blocksLink = text("blocksLink");
-  if (blocksLink !== undefined) config.blocksLink = blocksLink;
+  for (const key of ["blocksLink", "issueType", "childIssueType", "relatesLink", "duplicateLink"] as const) {
+    const given = text(key);
+    if (given !== undefined) config[key] = given;
+  }
+  const names = <T extends string>(key: "transitions" | "resolutions", targets: readonly T[], example: string): Partial<Record<T, string>> | undefined => {
+    const given = value[key];
+    if (given === undefined) return undefined;
+    if (!isObj(given)) {
+      err(`host.${key} must be an object from ${targets.join(", ")} to a name, as ${example}.`);
+      return undefined;
+    }
+    const map: Partial<Record<T, string>> = {};
+    for (const [target, name] of Object.entries(given)) {
+      if (!targets.includes(target as T)) err(`host.${key}: unknown key "${target}". Known keys: ${targets.join(", ")}.`);
+      else if (typeof name !== "string" || name.trim() === "") err(`host.${key}.${target} must be a non-empty name.`);
+      else map[target as T] = name.trim();
+    }
+    return map;
+  };
+  const transitions = names("transitions", TRANSITION_TARGETS, `{ "done": "Close Issue" }`);
+  if (transitions) config.transitions = transitions;
+  const resolutions = names("resolutions", RESOLUTION_TARGETS, `{ "abandoned": "Won't Fix" }`);
+  if (resolutions) config.resolutions = resolutions;
+  if (value.answerers !== undefined) {
+    const given = value.answerers;
+    if (!Array.isArray(given) || !given.every((entry) => typeof entry === "string" && entry.trim() !== "")) err(`host.answerers must be a list of Jira account ids (Cloud) or user names (Data Center) whose answers count, as ["robin"].`);
+    else config.answerers = given.map((entry: string) => entry.trim());
+  }
+  if (value.commentLimit !== undefined) {
+    const given = value.commentLimit;
+    if (typeof given !== "number" || !Number.isInteger(given) || given < 1000 || given > 1_000_000) err("host.commentLimit must be a whole number of characters from 1000 to 1000000 (Jira's default limit is 32767).");
+    else config.commentLimit = given;
+  }
   return config;
 }
 

@@ -21,7 +21,7 @@ export interface HostSettings {
   from: "file" | "environment";
   meta?: MetaBranchHostConfig;
   github?: GitHubHostConfig;
-  /** A Jira project (read-only); only from the configuration file. */
+  /** A Jira project; only from the configuration file. */
   jira?: JiraHostConfig;
   /**
    * This machine's name in claims and log lines on either host: the file's `machineName`, never the computer's host
@@ -106,9 +106,18 @@ export function createHosts(settings: HostSettings, env: Env, log: (line: string
   if (jira) {
     const token = env.SCOPESOUP_JIRA_TOKEN;
     if (!token) throw new Error(`The Jira host ${jira.site} (project ${jira.project}) is configured but SCOPESOUP_JIRA_TOKEN is not set. The token is only read from the environment: ${jira.deployment === "cloud" ? "a Jira Cloud API token" : "a personal access token"}.`);
-    // Read-only: the Jira host has no write port in this version.
+    // Claims name the machine, as on GitHub. The project's changes stay on its git remote: Jira has no pull requests.
     configured.push(createJiraHost({
-      site: jira.site, project: jira.project, deployment: jira.deployment, token,
+      site: jira.site, project: jira.project, deployment: jira.deployment, token, conventions: true, allowWrites: jira.write,
+      ...(settings.machine ? { machine: settings.machine } : {}),
+      ...(jira.issueType ? { issueType: jira.issueType } : {}),
+      ...(jira.childIssueType ? { childIssueType: jira.childIssueType } : {}),
+      ...(jira.transitions ? { transitions: jira.transitions } : {}),
+      ...(jira.resolutions ? { resolutions: jira.resolutions } : {}),
+      ...(jira.relatesLink ? { relatesLink: jira.relatesLink } : {}),
+      ...(jira.duplicateLink ? { duplicateLink: jira.duplicateLink } : {}),
+      ...(jira.commentLimit ? { commentLimit: jira.commentLimit } : {}),
+      ...(jira.answerers ? { answerers: jira.answerers } : {}),
       ...(jira.email ? { email: jira.email } : {}),
       ...(jira.priorities ? { priorities: jira.priorities } : {}),
       ...(jira.abandonedResolutions ? { abandonedResolutions: jira.abandonedResolutions } : {}),
@@ -122,7 +131,7 @@ export function describeHosts(settings: HostSettings): string {
   const names = [
     ...(settings.meta ? [`${DEFAULT_META_REF} in ${settings.meta.repoPath}`] : []),
     ...(settings.github ? [settings.github.repo] : []),
-    ...(settings.jira ? [`Jira project ${settings.jira.project} on ${settings.jira.site} (read-only)`] : []),
+    ...(settings.jira ? [`Jira project ${settings.jira.project} on ${settings.jira.site}${settings.jira.write ? "" : " (read-only)"}`] : []),
   ];
   if (names.length === 0) return "No host is configured: nothing is synced.";
   return `Syncing ${names.join(" and ")} (host from the ${settings.from === "file" ? "configuration file" : "environment"}).`;

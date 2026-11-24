@@ -115,7 +115,7 @@ export type HostConfig =
   | JiraHostConfig;
 
 /**
- * A Jira project, Cloud or Data Center. Read-only in this version (`write` is always false). The token is SCOPESOUP_JIRA_TOKEN:
+ * A Jira project, Cloud or Data Center, written to with `write`. The token is SCOPESOUP_JIRA_TOKEN:
  * Cloud an API token with the account's `email` (this machine's `jira.email`), Data Center a personal access token.
  */
 export interface JiraHostConfig {
@@ -125,7 +125,8 @@ export interface JiraHostConfig {
   /** The project key, `DEMO`. */
   project: string;
   deployment: "cloud" | "datacenter";
-  write: false;
+  /** Write issues, comments, labels and properties (a level above Watch needs it). */
+  write: boolean;
   /** Cloud: the account's email, from this machine's private file (`jira.email`). */
   email?: string;
   /** Jira priority name -> Scope Soup priority; replaces the defaults (Jira's default names) when given. */
@@ -134,6 +135,22 @@ export interface JiraHostConfig {
   abandonedResolutions?: string[];
   /** The issue link type read as "is blocked by". Default "Blocks". */
   blocksLink?: string;
+  /** The issue type of a new Item. Default "Task". */
+  issueType?: string;
+  /** The issue type of a split's child. Default "Sub-task". */
+  childIssueType?: string;
+  /** The transition (or the status it goes to) per target; defaults "To Do", "In Progress", "Done", "Won't Do". */
+  transitions?: Partial<Record<"todo" | "doing" | "done" | "abandoned", string>>;
+  /** The resolution a transition's screen gets when it asks for one; defaults "Done", "Won't Do", "Duplicate". */
+  resolutions?: Partial<Record<"done" | "abandoned" | "duplicate", string>>;
+  /** The link type from a follow-up to its Item. Default "Relates". */
+  relatesLink?: string;
+  /** The link type from a duplicate to its original. Default "Duplicate". */
+  duplicateLink?: string;
+  /** About the most a comment Scope Soup posts may hold, in characters, counted on the body as sent. Default 32000. */
+  commentLimit?: number;
+  /** People whose answers count besides the project's assignable users: account ids (Cloud) or user names (Data Center). */
+  answerers?: string[];
 }
 
 /**

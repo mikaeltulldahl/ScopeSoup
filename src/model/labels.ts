@@ -4,7 +4,7 @@
 import type { LabelChange, RepoLabel } from "./types.ts";
 
 /** Scope Soup's own labels: its code sets them, so the triage neither sees nor proposes them. */
-export const isOwnLabel = (name: string): boolean => /^scopesoup:/i.test(name.trim());
+export const isOwnLabel = (name: string): boolean => /^scopesoup:/i.test(name.trim()) || name.trim().toLowerCase() === "scopesoup-needs-decision";
 
 const same = (a: string, b: string): boolean => a.trim().toLowerCase() === b.trim().toLowerCase();
 

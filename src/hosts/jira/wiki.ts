@@ -34,7 +34,8 @@ function inline(text: string, simplified: Simplified): string {
     at = match.index + match[0].length;
     if (groups.brk !== undefined) out += "\\\n";
     else if (groups.esc !== undefined) out += escapeInline(groups.esc);
-    else if (groups.code !== undefined) out += inlineCode(groups.code);
+    // Inside `{{...}}` a backslash escapes as it does outside (Scope Soup escapes every live character there).
+    else if (groups.code !== undefined) out += inlineCode(groups.code.replace(/\\([{}[\]!|*_\-+^~?#])/g, "$1"));
     else if (groups.mention !== undefined) {
       simplified.add("mention");
       out += escapeInline(`@${groups.mention}`);
@@ -71,7 +72,7 @@ function linkTo(label: string, target: string, simplified: Simplified): string {
   return escapeInline(label || target.replace(/^[#^]/, ""));
 }
 
-const BLOCK_MACRO = /\{(code|noformat|quote|panel)(?::([^}]*))?\}([\s\S]*?)\{\1\}/g;
+const BLOCK_MACRO = /(?<![{\\])\{(code|noformat|quote|panel)(?::([^}]*))?\}([\s\S]*?)\{\1\}/g;
 
 /** The language of `{code:java}` or `{code:language=java|title=x}`; none for `{code:title=x}`. */
 function languageOf(params: string | undefined): string {

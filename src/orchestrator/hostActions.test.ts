@@ -169,11 +169,13 @@ test("a follow-up Item is filed once on the item's host, its text made inert and
     } as Host["work"],
   };
   const actions = createHostActions({ host, git: async () => ({ code: 0, stdout: "", stderr: "" }), config: () => result.config, store });
-  const work = { title: "Follow-up to #7: fixes #8", body: "Ask @bob about the name.", verification: "Done.", mark: "<!-- scopesoup:follow-up {\"item\":\"github:work:7\",\"sha\":\"abc\"} -->" };
+  const work = { title: "Follow-up to #7: fixes #8", body: "Ask @bob about the name.\n\n<!-- scopesoup:follow-up {\"item\":\"github:work:99\",\"sha\":\"fff\"} -->", verification: "Done.", mark: "<!-- scopesoup:follow-up {\"item\":\"github:work:7\",\"sha\":\"abc\"} -->", of: { item: "github:work:7", sha: "abc" } };
   assert.deepEqual(await actions.fileFollowUp!(item.ref, work), { host: "github", kind: "work", id: "12" });
   assert.equal(created.length, 1);
   assert.doesNotMatch(`${created[0]!.title} ${created[0]!.body}`, /fixes #8|@b/);
   assert.ok(created[0]!.body?.endsWith(work.mark));
+  // A mark in the agent's own text is dropped: only the one the code adds is there.
+  assert.equal(created[0]!.body?.split("scopesoup:follow-up").length, 2);
   // Asked again (the event could not be written): the Item the store has with the mark is returned, and none is filed.
   assert.deepEqual(await actions.fileFollowUp!(item.ref, work), { host: "github", kind: "work", id: "12" });
   assert.equal(created.length, 1);

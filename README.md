@@ -48,7 +48,7 @@ Items live in your repository (a text file and an append-only log per Item, on a
 Early, and changing fast. Runs for real are in [`docs/TRIALS.md`](docs/TRIALS.md).
 
 - **Built and run for real**, on a stand-in project: the triage, implement and review loop with questions answered on the Item page; merging after a check, including a failed check; the batching queue with flake rerun and bisect; Items in your repository; `scopesoup item` for people and Claude Code sessions; Windows sessions that start and stop cleanly.
-- **Built and tested, not yet run on a real project:** most of the board, GitHub Issues as the backlog, waiting for CI on GitHub, several people on one project, usage forecasting against your Claude subscription, the onboarding plugin, offboarding, releases and updates; Jira (read-only, untried on a real site), Cloud and Data Center, shown on the board at level 0.
+- **Built and tested, not yet run on a real project:** most of the board, GitHub Issues as the backlog, waiting for CI on GitHub, several people on one project, usage forecasting against your Claude subscription, the onboarding plugin, offboarding, releases and updates; Jira, Cloud and Data Center, reads and writes (untried on a real site): the board and every level, with the changes on the project's git remote.
 - **Planned:** see the issues.
 
 <img src="docs/images/phone.png" alt="The board on a phone" width="300">

@@ -54,6 +54,8 @@ export interface JiraClient {
   api: string;
   get<T>(path: string): Promise<T>;
   post<T>(path: string, body: unknown): Promise<T>;
+  put<T>(path: string, body: unknown): Promise<T>;
+  delete<T>(path: string): Promise<T>;
   /**
    * All results of a JQL search with the given fields. Cloud: `POST /rest/api/3/search/jql` with `nextPageToken` (unconfirmed:
    * the response's `nextPageToken` and `isLast`). Data Center: `GET /rest/api/2/search` with `startAt` and `total`.
@@ -107,7 +109,7 @@ export function createJiraClient(config: JiraClientConfig): JiraClient {
     return new JiraError(response.status, path, text, { rateLimited: response.status === 429 });
   }
 
-  async function request<T>(method: "GET" | "POST", path: string, body?: unknown): Promise<T> {
+  async function request<T>(method: "GET" | "POST" | "PUT" | "DELETE", path: string, body?: unknown): Promise<T> {
     const url = `${site}${path}`;
     for (let attempt = 1; ; attempt += 1) {
       if (blockedUntil > now()) throw new JiraError(429, path, `rate limited until ${new Date(blockedUntil).toISOString()}; no request sent`, { rateLimited: true });
@@ -133,7 +135,9 @@ export function createJiraClient(config: JiraClientConfig): JiraClient {
       }
       if (response.status < 200 || response.status >= 300) throw await failure(response, path);
       if (response.status === 204) return null as T;
-      return (await response.json()) as T;
+      // Some writes answer 200 or 201 with no body (a property PUT, an issue link POST).
+      const text = await response.text();
+      return (text.trim() === "" ? null : JSON.parse(text)) as T;
     }
   }
 
@@ -143,6 +147,8 @@ export function createJiraClient(config: JiraClientConfig): JiraClient {
     api,
     get: (path) => request("GET", path),
     post: (path, body) => request("POST", path, body),
+    put: (path, body) => request("PUT", path, body),
+    delete: (path) => request("DELETE", path),
 
     async search<T>(jql: string, fields: string[]): Promise<T[]> {
       const found: T[] = [];

@@ -2,7 +2,7 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { applyChange, asLabelChange, changeText, keepProposal, labelsPromptText } from "./labels.ts";
+import { applyChange, asLabelChange, changeText, isOwnLabel, keepProposal, labelsPromptText } from "./labels.ts";
 
 const REPO = ["bug", "question", "priority:major", "size:small", "scopesoup:claimed"];
 
@@ -34,4 +34,11 @@ test("the prompt lists the repository's labels with descriptions and the Item's,
   const text = labelsPromptText([{ name: "bug", description: "Something is broken" }, { name: "scopesoup:claimed", description: "Held" }], ["question", "scopesoup:needs-decision"]);
   assert.equal(text, "The repository's labels (name: description):\n- bug: Something is broken\nThe Item's labels: question");
   assert.match(labelsPromptText(null, []), /leave `labels` empty/);
+});
+
+test("Scope Soup's own labels: the scopesoup: prefix and Jira's scopesoup-needs-decision, not any other scopesoup- label", () => {
+  assert.equal(isOwnLabel("scopesoup:claimed"), true);
+  assert.equal(isOwnLabel("Scopesoup-Needs-Decision"), true);
+  assert.equal(isOwnLabel("scopesoup-docs"), false);
+  assert.equal(isOwnLabel("bug"), false);
 });

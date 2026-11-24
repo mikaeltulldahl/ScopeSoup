@@ -34,6 +34,7 @@ import { tick } from "./tick.ts";
 import { overturnIntoWork, overturnsFor, takesOverturn } from "./overturns.ts";
 import { syncHost } from "../sync/syncHost.ts";
 import { createHostActions } from "./hostActions.ts";
+import { writable } from "../hosts/jira/testHost.ts";
 import { createGitHubHost } from "../hosts/github/adapter.ts";
 import { fakeIssues, ISSUES_API } from "../hosts/github/fakeIssues.ts";
 import { readMarker } from "../hosts/github/conventions.ts";
@@ -163,6 +164,13 @@ function world(cfg: ProjectConfig | ConfigSource, items: WorkItem[] = []): World
         }
       }
       return stopped;
+    },
+    stopFor(subject, reason) {
+      const session = sessions.get(subject.id);
+      if (!session || session.status !== "running") return 0;
+      runner.stops.push(reason);
+      runner.end(subject.id, "cancelled", undefined, { endReason: reason });
+      return 1;
     },
     running: () => [...sessions.values()].filter((session) => session.status === "running").length,
     async takeWorkspace() {
@@ -2594,6 +2602,32 @@ test("claims across machines: a held item is renewed once less than half the tim
   assert.equal(claims().length, 2);
 });
 
+test("claims across machines: a claim lost at renewal stops the Item's session and parks it, and so does another machine's live claim while work runs here", async () => {
+  const mine = { id: "scopesoup@laptop-a", name: "scopesoup on laptop-a", bot: true };
+  for (const how of ["renewal", "holder"] as const) {
+    const w = world(config(), [item("1")]);
+    w.claimant = mine.id;
+    w.claims = true;
+    await w.run();
+    assert.deepEqual(roles(w), ["triage"]);
+    if (how === "renewal") {
+      w.store.put(item("1", { holder: { actor: mine, until: new Date(w.clock.ms + 50 * 60_000).toISOString() } }), "sync", new Date(w.clock.ms).toISOString());
+      w.claim = { won: false, why: "scopesoup on laptop-b claimed it first" };
+    } else {
+      w.store.put(item("1", { holder: { actor: { id: "scopesoup@laptop-b", name: "scopesoup on laptop-b", bot: true }, until: new Date(w.clock.ms + 60 * 60_000).toISOString() } }), "sync", new Date(w.clock.ms).toISOString());
+    }
+    await w.run();
+    assert.equal(w.job("1")?.parked?.as, "escalated", how);
+    assert.match(w.job("1")?.parked?.reason ?? "", /^The claim on 1 was lost: (scopesoup on laptop-b claimed it first|scopesoup on laptop-b holds it)\./);
+    assert.equal(w.runner.stops.length, 1, how);
+    assert.match(w.reasons("orchestrator.claim_lost")[0] ?? "", /Its session here is stopped/);
+    // Nothing starts again on its own: the Item waits for a person.
+    w.clock.ms += 60_000;
+    await w.run();
+    assert.deepEqual(roles(w), ["triage"]);
+  }
+});
+
 // --- agents push back: questions with options from the implementer and the fixer, and proposed rewrites of the item ---
 
 const ASKED = { question: "Keep the old format?", options: ["keep", "migrate"], recommendation: "keep" };
@@ -3991,4 +4025,68 @@ test("on GitHub the other Item's draft and question are posted there, the agent'
   const parked = loadJobs(w.store)[ghKey("2")]?.parked;
   assert.equal(parked?.as, "needs-decision");
   assert.equal(parked?.draft?.questions.length, 1);
+});
+
+// --- a Jira project at level 2, end to end against the fake Jira: every host action is the real one ---
+
+test("Jira at level 2: claimed in a property, a question comment answered by a person's A1: reply, implemented, merged and closed on Jira", async () => {
+  const w = world(config({ level: 2, ...MERGES }));
+  // The fake Jira and the host keep the world's clock.
+  const jira = writable("cloud", { clock: w.clock });
+  const made = await jira.write.createWork!({ title: "Tide table in metres", body: "Show metres.", verification: "The table says m." });
+  w.store.put((await jira.host.work.getWork(made.work))!, "sync", new Date(w.clock.ms).toISOString());
+  w.queue = fakeQueue();
+  w.store.addUsageSample(usage(0.1, 0.1));
+  const deps = w.depsFor();
+  deps.actions = createHostActions({ host: jira.host, git: async () => ({ code: 0, stdout: "", stderr: "" }), config: () => config({ level: 2, ...MERGES }), store: w.store });
+  const key = refKey(made.work);
+  const sync = async (): Promise<void> => {
+    const item = await jira.host.work.getWork(made.work);
+    if (item) w.store.put(item, "sync", new Date(w.clock.ms).toISOString());
+  };
+  const claimOf = () => jira.fake.issueProperties[made.work.id]?.["scopesoup.claim"] as { claims: { machine: string }[] } | undefined;
+
+  await tick(deps);
+  assert.deepEqual(roles(w), ["triage"]);
+  assert.deepEqual(claimOf()?.claims.map((each) => each.machine), ["laptop-a"]);
+  assert.equal(w.store.get<WorkItem>(made.work)?.holder?.actor.id, "scopesoup@laptop-a");
+
+  // The triage asks: one question comment with its property, and the needs-decision label.
+  w.runner.end(made.work.id, "succeeded", { ...TRIAGE_OK, hidesDecision: true, decision: { question: "Round up or down?", options: ["up", "down"], recommendation: "down" } });
+  await tick(deps);
+  assert.equal(loadJobs(w.store)[key]?.parked?.as, "needs-decision");
+  const comments = jira.fake.comments[made.work.id] ?? [];
+  assert.equal(comments.length, 1);
+  assert.equal((jira.fake.commentProperties[comments[0]!.id]?.scopesoup as { kind: string }).kind, "question");
+  assert.ok(jira.fake.issues.get(made.work.id)!.fields.labels?.includes("scopesoup-needs-decision"));
+
+  // A person answers on Jira itself; the next sync reads it and the triage runs again with the answer.
+  jira.fake.comments[made.work.id]!.push({ id: "99001", author: jira.person, created: "2026-11-18T10:05:00.000+0000", body: { version: 1, type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "A1: down" }] }] } });
+  await sync();
+  await tick(deps);
+  assert.equal(loadJobs(w.store)[key]?.parked, undefined);
+  assert.deepEqual(roles(w), ["triage", "triage"]);
+  assert.equal(jira.fake.issues.get(made.work.id)!.fields.labels?.includes("scopesoup-needs-decision"), false);
+
+  // Ready now: implemented, merged by the session at level 2, and closed on Jira with the merged property.
+  const next = async (output: unknown): Promise<void> => {
+    w.runner.end(made.work.id, "succeeded", output);
+    await tick(deps);
+    w.clock.ms += 1000;
+    await tick(deps);
+  };
+  await next(TRIAGE_OK);
+  assert.deepEqual(roles(w), ["triage", "triage", "implement"]);
+  assert.deepEqual(claimOf()?.claims.map((each) => each.machine), ["laptop-a"]);
+  await next(IMPLEMENT_OK);
+  assert.match(w.reasons("orchestrator.merged")[0] ?? "", /The implementing session merged it/);
+  const closed = jira.fake.issues.get(made.work.id)!;
+  assert.deepEqual([closed.fields.status?.name, closed.fields.resolution?.name], ["Done", "Done"]);
+  const merged = Object.values(jira.fake.commentProperties).map((each) => each.scopesoup as { kind?: string; sha?: string }).find((each) => each?.kind === "merged");
+  assert.equal(merged?.sha, HEAD);
+  // The session lines went to the log property, never a comment.
+  const log = jira.fake.issueProperties[made.work.id]?.["scopesoup.log"] as { lines: { kind: string }[] } | undefined;
+  assert.ok(log?.lines.some((line) => line.kind === "session"), JSON.stringify(log));
+  await sync();
+  assert.equal(w.store.get<WorkItem>(made.work)?.state, "done");
 });
