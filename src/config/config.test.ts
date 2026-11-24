@@ -554,3 +554,11 @@ test("setupCommand and setupWatch are optional keys of format 1, checked for the
   const watch = bad({ ...core, setupWatch: ["/etc/passwd", "../up.lock", "a\\b.lock", "**/x.lock", ""] });
   for (const word of [/"\/etc\/passwd" must be relative/, /"\.\.\/up\.lock" must be relative/, /must use "\/" between folders/, /not "\*\*"/, /must be a non-empty path/]) assert.match(watch, word);
 });
+
+test("the implement and review roles may always run the check command", () => {
+  const result = validateConfig({ project: "p", machineName: "laptop-a", repoPath: "/srv/clone", checkCommand: ["cmd.exe", "/d", "/c", "npm", "run", "check"], roles: { implement: { allowedTools: ["Read"] } } }, BASE);
+  assert.ok(result.ok);
+  assert.deepEqual(result.config.roles.implement.allowedTools, ["Read", "Bash(npm run check*)"]);
+  assert.ok(result.config.roles.review.allowedTools.includes("Bash(npm run check*)"));
+  assert.ok(!result.config.roles.triage.allowedTools.includes("Bash(npm run check*)"));
+});

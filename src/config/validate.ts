@@ -7,6 +7,8 @@ import type { SessionRole } from "../model/types.ts";
 import { defaultClaude, defaultRoles, defaultSettings, expandScopesoup, MACHINE_NAME } from "./defaults.ts";
 import type { Level, ProjectConfig, RoleConfig, SettingName, Settings } from "./types.ts";
 import { LEVELS, ROLES } from "./types.ts";
+import { CHECK_ROLES, withCheckRules } from "./checkRule.ts";
+import { proposeCheckCommand } from "./mergeQueue.ts";
 import { migrateConfig } from "./migrate.ts";
 import type { HostConfig, MergeQueueConfig, ResourceConfig, ResourceUser, WorkspacesConfig } from "./types.ts";
 import { RESOURCE_USERS } from "./types.ts";
@@ -262,6 +264,10 @@ export function validateConfig(given: unknown, baseDir: string): ConfigResult {
   // `{{scopesoup}}` in a role's allowed tools is the folder Scope Soup is installed in (the item commands of the triage).
   const scopesoup = fileURLToPath(new URL("../..", import.meta.url));
   for (const role of ROLES) roles[role].allowedTools = expandScopesoup(roles[role].allowedTools, scopesoup);
+  // The implementor and the reviewer may always run the project's check command: the one in the file, else the one Settings
+  // proposes from the project (the candidate it shows). A person's own list in the file wins for everything else.
+  const checkWords = checkCommand ?? proposeCheckCommand(repoPath).command;
+  for (const role of CHECK_ROLES) roles[role].allowedTools = withCheckRules(roles[role].allowedTools, checkWords);
   // Which model a role runs on is the project's choice; see recommend.ts for advice that is not enforced.
 
   const workspaces = workspacesOf(raw.workspaces, path, err);
