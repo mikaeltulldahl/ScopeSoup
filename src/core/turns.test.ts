@@ -198,7 +198,7 @@ test("queue reasons: position, paused, forming, cannot merge", () => {
   });
   assert.deepEqual(waitingQueue(buildIndex(snap)).map((each) => each.ref.id), ["20", "10", "40"]);
   assert.deepEqual([turnOf(snap, 1).actor, turnOf(snap, 1).reason], ["queue", "approved; waiting in the queue (position 2 of 3)"]);
-  assert.equal(turnOf(snap, 3).reason, "in batch 7, which is still forming");
+  assert.equal(turnOf(snap, 3).reason, "in batch 7, which is being prepared for its check");
   assert.deepEqual([turnOf(snap, 4).actor, turnOf(snap, 4).reason], ["agent", "approved, but it cannot merge: conflicts with main; the branch needs a rebase on main"]);
   assert.equal(turnOf({ ...snap, paused: true }, 1).reason, "approved, but the queue is paused");
 });

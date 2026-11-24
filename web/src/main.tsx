@@ -100,7 +100,7 @@ function App() {
         <nav aria-label="Views">
           <a href="#/" aria-current={route.view === "overview" ? "page" : undefined}>{theme.words.startPage}</a>
           <a href="#/items" aria-current={route.view === "items" ? "page" : undefined}>{theme.words.itemMany.replace(/^./, (first) => first.toUpperCase())}</a>
-          <a href="#/queue" aria-current={route.view === "queue" ? "page" : undefined}>Queue</a>
+          <a href="#/queue" aria-current={route.view === "queue" ? "page" : undefined}>Merge queue</a>
           <a href="#/history" aria-current={route.view === "history" ? "page" : undefined}>History</a>
           <a href="#/usage" aria-current={route.view === "usage" ? "page" : undefined}>Usage</a>
           <a href="#/settings" aria-current={route.view === "settings" || route.view === "stop" ? "page" : undefined}>Settings</a>

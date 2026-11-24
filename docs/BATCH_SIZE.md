@@ -92,7 +92,7 @@ with `defaultConfig.batch = { min: 2, max: 12, cBisect: 0.7, cMapping: 1.0, pFlo
 | check duration | measured: the queue times every full run that ended green or red (`ms` on the run input). A line `d(m) = a + b m` is fitted through duration against the members the run covered, once there are 6 runs of at least two lengths and the line rises; the model then prices a run of prefix m by `d(m)` (`throughput`'s optional last argument). Before that every run counts as equal |
 | queue depth | not used: a batch is cut to the changes that are ready anyway |
 
-`measuredRates` in `src/queue/sizing.ts` turns the sums kept in the state into f, s and d. A timed-out run, or a pass that changed tracked files, is not timed. The board's Queue page shows what has been measured.
+`measuredRates` in `src/queue/sizing.ts` turns the sums kept in the state into f, s and d. A timed-out run, or a pass that changed tracked files, is not timed. The board's Merge queue page shows what has been measured.
 
 The limits and the starting numbers are settings (`queueMinBatch`, `queueMaxBatch`, `queueRerunCost`, `queueMinOutcomes`), read at every step; `batch.cBisect`, `cMapping`, `pFloor`, `window` and `model` stay the engine's defaults.
 
