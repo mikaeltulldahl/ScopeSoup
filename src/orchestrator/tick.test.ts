@@ -2117,6 +2117,37 @@ async function toQueueAfterPause(w: World, queue: ReturnType<typeof fakeQueue>):
   assert.equal(w.job("1")?.queued, HEAD);
 }
 
+test("merging by queue: an approved change waiting through many ticks for a paused merge queue writes its review and session lines once", async () => {
+  const w = world(config(QUEUE), [item("1")]);
+  const queue = fakeQueue();
+  w.queue = queue;
+  w.store.addUsageSample(usage(0.1, 0.1));
+  await w.run();
+  await step(w, "1", "succeeded", TRIAGE_OK);
+  await step(w, "1", "succeeded", IMPLEMENT_OK);
+  w.store.setValue(KEYS.mergeQueue, "paused");
+  await step(w, "1", "succeeded", { verdict: "approve", findings: [{ severity: "should", text: "Name the constant." }] });
+  const reviews = () => logCalls(w).filter((call) => call.startsWith("appendLog 1 review"));
+  const reviewSessions = () => w.lines.filter((line) => line.startsWith("1 session") && line.includes('"role":"review"'));
+  const followUps = w.followUps.length;
+  const events = w.events().length;
+  for (let tick = 0; tick < 20; tick++) {
+    w.clock.ms += 30_000;
+    await w.run();
+  }
+  assert.equal(reviews().length, 1, reviews().join("\n"));
+  assert.equal(reviewSessions().length, 1, reviewSessions().join("\n"));
+  assert.equal(w.runner.requests.filter((request) => request.role === "review").length, 1);
+  assert.equal(w.followUps.length, followUps, "nothing more is filed while it waits");
+  assert.ok(w.events().length - events <= 2, w.events().slice(events).map((event) => event.kind).join(", "));
+  assert.deepEqual(queue.enqueued, []);
+  // Once the queue is started, it takes the change; still one review line.
+  w.store.setValue(KEYS.mergeQueue, "started");
+  await w.run();
+  assert.equal(w.job("1")?.parked?.as, "queued");
+  assert.equal(reviews().length, 1);
+});
+
 const SEND_BACKS = {
   culprit: { kind: "send-back" as const, change: ref("1"), sha: HEAD, batch: 1, reason: { kind: "culprit" as const, prefix: 1, chainSha: SHA2, files: ["test/sum.test.js"], excerpt: "1 test failed: sums metres" } },
   conflict: { kind: "send-back" as const, change: ref("1"), sha: HEAD, batch: 1, reason: { kind: "conflict" as const, with: ref("7"), ahead: [ref("7")], base: SHA2 } },
