@@ -195,7 +195,7 @@ Four switches, each on the overview's lane it feeds, and the stop switch in the 
 | Triage | Backlog | 1 | `POST /api/triage/start`, `/api/triage/pause` | `control.triage_started`, `control.triage_paused` |
 | Implementors | In progress | 2 | `POST /api/implement/start`, `/api/implement/pause` | `control.implement_started`, `control.implement_paused` |
 | Review | In review | 3 | `POST /api/review/start`, `/api/review/pause` | `control.review_started`, `control.review_paused` |
-| Merge queue | Queued (Checking shows it too) | 4 | `POST /api/merge-queue/start`, `/api/merge-queue/pause` | `control.merge_queue_started`, `control.merge_queue_paused` |
+| Merge queue | Merge queue | 4 | `POST /api/merge-queue/start`, `/api/merge-queue/pause` | `control.merge_queue_started`, `control.merge_queue_paused` |
 | Stop | the header | | `POST /api/stop` | `control.stopped` |
 
 - **Pause** on an agent role's lane: nothing new of that role starts; the others go on. Its running sessions finish their current step and their answers are settled; a step that is next for that role waits (and keeps no slot). Ends no session. Review paused (or implementors, at level 2) also leaves hand-backs waiting.
@@ -211,7 +211,7 @@ Each endpoint answers `{ triage, implement, review, mergeQueue, agents, changed,
 
 **The old endpoints still work.** `POST /api/pause` pauses all four switches (running sessions finish their step; only Stop ends them), and `POST /api/resume` resumes all four. Their events are the new ones, with `via` naming the old endpoint. The events `control.paused` and `control.resumed` are no longer written; old ones stay in the history.
 
-**The merge queue switch and the queue's own pause are two things.** The merge queue pauses itself when it cannot go on safely (a refused push with the main branch in place, an unusable check, a hold on order-dependent tests): that is `orchestrator.queue_paused`, shown on the Merge queue page, and only **Resume the queue** there (`POST /api/queue/resume`, 409 `QUEUE_NOT_PAUSED` when it is not paused) lets it go on. The merge queue switch (on the Queued lane) is a person's switch over all merging. The queue merges only while both are clear: resuming that switch does not resume a queue that paused itself (pressing the old stop switch off and on used to; it no longer does, since every start-up now pauses merging), and a resume asked for while merging is paused is done when merging is started.
+**The merge queue switch and the queue's own pause are two things.** The merge queue pauses itself when it cannot go on safely (a refused push with the main branch in place, an unusable check, a hold on order-dependent tests): that is `orchestrator.queue_paused`, shown on the Merge queue page, and only **Resume the queue** there (`POST /api/queue/resume`, 409 `QUEUE_NOT_PAUSED` when it is not paused) lets it go on. The merge queue switch (on the Merge queue lane) is a person's switch over all merging. The queue merges only while both are clear: resuming that switch does not resume a queue that paused itself (pressing the old stop switch off and on used to; it no longer does, since every start-up now pauses merging), and a resume asked for while merging is paused is done when merging is started.
 
 ### The setup of a fresh clone
 

@@ -28,7 +28,7 @@ One setting, `level`, says how much Scope Soup does. Each level includes the one
 | 1 Triage | A read-only triage at each Item: ready or not, size, questions, a draft description, a proposed split. |
 | 2 Implement | Runs an implementor per Item in its own clone. The implementor merges when it judges the work done, as the project's `CLAUDE.md` says. |
 | 3 Review | A reviewer reads every built change. Findings go back to the implementor; after approval the implementor merges. |
-| 4 Autopilot | Scope Soup merges every reviewed change itself, through its merge queue (its switch on the Queued lane: Resume and Pause). |
+| 4 Autopilot | Scope Soup merges every reviewed change itself, through its merge queue (its switch on the Merge queue lane: Resume and Pause). |
 
 There is no level above 4: no change waits for a person's approval. A project that wants a person to merge stays below level 4 and says so in its `CLAUDE.md`.
 

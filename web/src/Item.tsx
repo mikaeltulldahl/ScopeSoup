@@ -12,7 +12,7 @@ import { Stepper } from "./Stepper.tsx";
 import { Markdown } from "./Markdown.tsx";
 import { BatchBox } from "./Batch.tsx";
 import { hostDiffers } from "../../src/core/lanes.ts";
-import { itemNoun, words } from "./theme.ts";
+import { itemNoun } from "./theme.ts";
 import { ago, fromWords, laneWord, optionRows, span, stateFacts, unmatchedRecommendation } from "./format.ts";
 import { ProgressBar } from "./Progress.tsx";
 import { collapse, diffLines, hasChanges } from "./textDiff.ts";
@@ -1055,9 +1055,6 @@ function Body({ page, reload, resources }: { page: ItemPage; reload: () => void;
   return (
     <article class="item">
       <header class={`item-head tone-${page.tone}`}>
-        <p class="crumbs">
-          <a href="#/">{words().startPage}</a> / <span class="num">{item.label}</span>
-        </p>
         <h2>
           <span class="ref num">{item.label}</span> {item.title}
         </h2>

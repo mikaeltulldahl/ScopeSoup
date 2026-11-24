@@ -2,6 +2,7 @@
 // and collapsible on a phone.
 
 import { Fragment } from "preact";
+import type { ComponentChildren } from "preact";
 import { useState } from "preact/hooks";
 import type { BoardView, ControlPath, LaneView } from "./api.ts";
 import { BatchMini } from "./Batch.tsx";
@@ -10,10 +11,11 @@ import { Dialog } from "./Dialog.tsx";
 import { ItemForm } from "./ItemForm.tsx";
 import { laneIcon, laneLabel } from "./format.ts";
 import { itemHref } from "./route.ts";
+import { MERGE_LANE, mergeLane } from "./mergeLane.ts";
 import { itemNoun, words } from "./theme.ts";
 import { useTheme } from "./useTheme.ts";
 import { postItem } from "./api.ts";
-import { laneMutedBy, laneSwitch, switchPath, switchTitle, SWITCH_WORDS } from "./switches.ts";
+import { laneSwitch, switchPath, switchTitle, SWITCH_WORDS } from "./switches.ts";
 import type { SwitchName, SwitchState } from "./switches.ts";
 
 const STORE_KEY = "scopesoup.closedLanes";
@@ -28,41 +30,32 @@ function readClosed(): string[] {
   }
 }
 
-/** The lane's switch (Pause / Resume), and whether the lane is paused by it or, for Checking, by the merge queue's. */
+/** The lane's switch (Pause / Resume); a lane is paused when its switch is. */
 interface LaneControl {
   own: SwitchName | null;
-  mutedBy: SwitchName | null;
   states: Record<SwitchName, SwitchState>;
   busy: boolean;
   onSwitch: (path: ControlPath) => void;
 }
 
-function Lane({ lane, board, closed, toggle, control }: { lane: LaneView; board: BoardView; closed: boolean; toggle: () => void; control: LaneControl }) {
-  // Checking, items are drawn as their batches: the box is what moves.
-  const batches = lane.lane === "checking" ? board.queue.batches : [];
-  const boxed = new Set(batches.flatMap((batch) => batch.members.flatMap((member) => member.items.map((item) => item.key))));
-  const cards = lane.cards.filter((card) => !boxed.has(card.key));
-  // From level 1 the backlog's last cards are the Items not triaged yet, below a divider.
-  const below = lane.notTriaged ?? 0;
-  const divideAt = lane.notTriaged === undefined ? -1 : cards.length - below;
-  const { own, mutedBy, states } = control;
-  const paused = mutedBy !== null && states[mutedBy] !== "started";
+/** One lane's frame: the title row with the count and the switch, then the body. */
+function LaneFrame({ id, title, count, closed, toggle, control, children }: { id: string; title: string; count: number; closed: boolean; toggle: () => void; control: LaneControl; children: ComponentChildren }) {
+  const { own, states } = control;
   const ownState = own ? states[own] : null;
-  // Checking counts its batches (the boxes), and any card not in one.
-  const count = lane.lane === "checking" ? batches.length + cards.length : lane.total;
+  const paused = ownState !== null && ownState !== "started";
   return (
-    <section class={`lane lane-${lane.lane}${closed ? " lane-closed" : ""}${paused ? " lane-paused" : ""}`}>
+    <section class={`lane lane-${id}${closed ? " lane-closed" : ""}${paused ? " lane-paused" : ""}`}>
       {/* The switch sits on the title row, after the count: a lane without one has no extra row, so the columns line up. */}
       <h2>
         <button type="button" class="lane-toggle" aria-expanded={!closed} onClick={toggle}>
           <span class="chevron" aria-hidden="true" />
-          {laneIcon(lane.lane)}{laneLabel(lane.lane)}
+          {title}
           <span class="count num">{count}</span>
         </button>
-        {/* On its own lane the Pause / Resume button says it all; only a stopped switch is also named. Checking names the merge queue. */}
-        {paused && mutedBy && !(own && states[mutedBy] === "paused") && (
-          <span class="lane-state" title={switchTitle(mutedBy, states[mutedBy])}>
-            {own ? states[mutedBy] : `${SWITCH_WORDS[mutedBy]} ${states[mutedBy]}`}
+        {/* The Pause / Resume button says it all; only a stopped switch is also named. */}
+        {own && ownState === "stopped" && (
+          <span class="lane-state" title={switchTitle(own, ownState)}>
+            {ownState}
           </span>
         )}
         {own && ownState && (
@@ -81,26 +74,55 @@ function Lane({ lane, board, closed, toggle, control }: { lane: LaneView; board:
       </h2>
       <div class="lane-body">
         {count === 0 && <p class="empty">{words().emptyLane}</p>}
-        {batches.map((batch) => (
-          <BatchMini key={batch.key} batch={batch} />
-        ))}
-        {cards.map((card, position) => (
-          <Fragment key={card.key}>
-            {position === divideAt && <NotTriaged count={below} />}
-            <Card card={card} />
-          </Fragment>
-        ))}
-        {lane.total > lane.cards.length && <p class="empty">and {lane.total - lane.cards.length} older</p>}
+        {children}
       </div>
     </section>
   );
 }
 
-/** The backlog's divider: above it the Items that passed a triage, below it those not triaged yet, in the order their triages run. */
-function NotTriaged({ count }: { count: number }) {
+function Lane({ lane, closed, toggle, control }: { lane: LaneView; closed: boolean; toggle: () => void; control: LaneControl }) {
+  // From level 1 the backlog's last cards are the Items not triaged yet, below a divider.
+  const below = lane.notTriaged ?? 0;
+  const divideAt = lane.notTriaged === undefined ? -1 : lane.cards.length - below;
   return (
-    <p class="not-triaged" role="separator" title="Their triages run in this order: oldest first, a higher priority ahead">
-      Not triaged yet · <span class="num">{count}</span>
+    <LaneFrame id={lane.lane} title={`${laneIcon(lane.lane)}${laneLabel(lane.lane)}`} count={lane.total} closed={closed} toggle={toggle} control={control}>
+      {lane.cards.map((card, position) => (
+        <Fragment key={card.key}>
+          {position === divideAt && <Divider title="Their triages run in this order: oldest first, a higher priority ahead" words="Not triaged yet" count={below} />}
+          <Card card={card} />
+        </Fragment>
+      ))}
+      {lane.total > lane.cards.length && <p class="empty">and {lane.total - lane.cards.length} older</p>}
+    </LaneFrame>
+  );
+}
+
+/** Queued and Checking as one lane: the batch under test on top, then the changes waiting, in queue order. */
+function MergeQueueLane({ board, closed, toggle, control }: { board: BoardView; closed: boolean; toggle: () => void; control: LaneControl }) {
+  const find = (key: string) => board.lanes.find((lane) => lane.lane === key);
+  const { batches, waiting, count } = mergeLane(find("queued"), find("checking"), board.queue);
+  const theme = words();
+  return (
+    <LaneFrame id={MERGE_LANE} title={`${theme.mergeLaneIcon ? `${theme.mergeLaneIcon} ` : ""}${theme.mergeLane}`} count={count} closed={closed} toggle={toggle} control={control}>
+      {batches.map((batch) => (
+        <BatchMini key={batch.key} batch={batch} />
+      ))}
+      {waiting.length > 0 && <Divider title="Waiting for a batch, in queue order: the first goes into the next one" words="Waiting" count={waiting.length} />}
+      {waiting.map((card) => (
+        <Card key={card.key} card={card} />
+      ))}
+    </LaneFrame>
+  );
+}
+
+/**
+ * A divider in a lane: the backlog's above the Items not triaged yet (in the order their triages run), the merge queue's above
+ * the changes waiting for a batch.
+ */
+function Divider({ words: text, count, title }: { words: string; count: number; title: string }) {
+  return (
+    <p class="lane-divider" role="separator" title={title}>
+      {text} · <span class="num">{count}</span>
     </p>
   );
 }
@@ -131,7 +153,7 @@ export function Overview({ board, busy, onSwitch }: { board: BoardView; busy: bo
   const [dirty, setDirty] = useState(false);
   const level = board.status.level;
   const states = { triage: board.status.triage, implement: board.status.implement, review: board.status.review, mergeQueue: board.status.mergeQueue };
-  const control = (lane: string): LaneControl => ({ own: laneSwitch(lane, level), mutedBy: laneMutedBy(lane, level), states, busy, onSwitch });
+  const control = (lane: string): LaneControl => ({ own: laneSwitch(lane, level), states, busy, onSwitch });
   const close = () => {
     setWriting(false);
     setDirty(false);
@@ -205,9 +227,13 @@ export function Overview({ board, busy, onSwitch }: { board: BoardView; busy: bo
         )}
       </section>
       <div class="lanes">
-        {board.lanes.map((lane) => (
-          <Lane key={lane.lane} lane={lane} board={board} closed={closed.includes(lane.lane)} toggle={() => toggle(lane.lane)} control={control(lane.lane)} />
-        ))}
+        {board.lanes.map((lane) =>
+          lane.lane === "checking" ? null : lane.lane === "queued" ? (
+            <MergeQueueLane key={MERGE_LANE} board={board} closed={closed.includes(MERGE_LANE)} toggle={() => toggle(MERGE_LANE)} control={control(MERGE_LANE)} />
+          ) : (
+            <Lane key={lane.lane} lane={lane} closed={closed.includes(lane.lane)} toggle={() => toggle(lane.lane)} control={control(lane.lane)} />
+          ),
+        )}
       </div>
     </>
   );

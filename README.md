@@ -37,7 +37,7 @@ You choose how much to hand over, one level at a time:
 | 3 | Review | Also reviews them. |
 | 4 | Autopilot | Also merges, through the batching queue. |
 
-At levels 2 and 3 the implementing agent merges the way your `CLAUDE.md` says, or opens a pull request. Nothing runs until you press Resume on the lanes of the overview (triage on Backlog, implementors on In progress, review on In review, the merge queue on Queued).
+At levels 2 and 3 the implementing agent merges the way your `CLAUDE.md` says, or opens a pull request. Nothing runs until you press Resume on the lanes of the overview (triage on Backlog, implementors on In progress, review on In review, the merge queue on Merge queue).
 
 ![The queue: one batch being bisected (made-up data)](docs/images/queue.png)
 
