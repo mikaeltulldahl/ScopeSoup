@@ -101,7 +101,7 @@ export function VersionPanel() {
         {view.install === "checkout" && "Runs from a development checkout."}
         {view.install === "release" && <>Runs from Scope Soup's home <code>{view.home}</code>.</>}
         {view.install === "folder" && "Runs from a release folder outside Scope Soup's home."}
-        {" "}{view.checkOff ?? <>Last checked for a new release: {when(view.checkedAt)}.</>}
+        {" "}{view.checkOff ?? <>Scope Soup looks for a new release once a day and installs nothing until you press Get latest. Last looked: {when(view.checkedAt)}.</>}
       </p>
       {view.checkProblem && <p class="notice notice-bad" role="alert">{view.checkProblem}</p>}
 
@@ -119,7 +119,7 @@ export function VersionPanel() {
           )}
         </div>
       ) : (
-        latest && <p class="muted">This is the newest release{latest.version === view.version ? "" : ` (${latest.version})`}.</p>
+        latest && <p class="muted">No newer release when it last looked{latest.version === view.version ? "" : ` (the newest is ${latest.version})`}.</p>
       )}
 
       {task && (
@@ -136,7 +136,7 @@ export function VersionPanel() {
 
       <div class="form-actions version-actions">
         <button type="button" disabled={busy || view.checking || view.checkOff !== null} onClick={() => act("check")}>
-          {view.checking ? "Checking…" : "Check now"}
+          {view.checking ? "Checking…" : "Look again"}
         </button>
         {(view.available || view.getLatest.can) && (
           <button type="button" class="primary" disabled={busy || !view.getLatest.can} title={view.getLatest.why ?? ""} onClick={() => setAsking("get")}>
