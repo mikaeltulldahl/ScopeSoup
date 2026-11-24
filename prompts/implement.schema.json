@@ -10,6 +10,24 @@
       "type": "object", "additionalProperties": false, "required": ["question", "chosen", "others", "why"],
       "properties": { "question": { "type": "string" }, "chosen": { "type": "string" }, "others": { "type": "array", "items": { "type": "string" } }, "why": { "type": "string" } }
     } },
+    "aboutOthers": { "type": "array", "items": {
+      "type": "object", "additionalProperties": false, "required": ["item", "questions"],
+      "properties": {
+        "item": { "type": "string" },
+        "questions": { "type": "array", "items": {
+          "type": "object", "additionalProperties": false, "required": ["question", "options", "recommendation"],
+          "properties": {
+            "question": { "type": "string" },
+            "options": { "type": "array", "items": {
+              "type": "object", "additionalProperties": false, "required": ["label", "description"],
+              "properties": { "label": { "type": "string" }, "description": { "type": "string" } }
+            } },
+            "recommendation": { "type": "string" },
+            "context": { "type": "string" }
+          }
+        } }
+      }
+    } },
     "question": {
       "type": "object", "additionalProperties": false, "required": ["question", "options", "recommendation"],
       "properties": {

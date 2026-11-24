@@ -32,6 +32,8 @@ import type { ChangedFile } from "../core/fence.ts";
 import { FENCE_OUTSIDE_FILES, fenceBreach, proposedSplit } from "../core/fence.ts";
 import type { Finding } from "./jobs.ts";
 import { findingKey, followUpItem, noProgress } from "./followUp.ts";
+import { busyWhy, isOpenItem, keepAboutOthers, linkedItem as namedItem, readWaitingAbouts, writeWaitingAbouts } from "./aboutOthers.ts";
+import { workBranch, workspaceKey } from "./paths.ts";
 
 
 const CONTINUE_MS = 1000;
@@ -802,6 +804,7 @@ async function settleStep(ctx: Context, job: Job, session: Session | null, recor
     const answer = asTriage(record.output);
     if (!answer) return failed(ctx, job, `The triage answer does not have the expected shape, has tool-call markup inside a string, or gives no reason for "not ready" or no question for "needs decision". The answer was: ${JSON.stringify(record.output ?? null).slice(0, 4000)}`);
     job.triage = answer;
+    keepAboutOthers(ctx, job, "triage", answer.aboutOthers);
     // What this triage saw, so it is taken again once that is out of date.
     const text = job.triaging ?? (item ? triagedText(item) : undefined);
     if (text) job.triaged = triagedNow(text, item, ctx.deps.store.list<WorkItem>("work"), ctx.at, main);
@@ -832,6 +835,7 @@ async function settleStep(ctx: Context, job: Job, session: Session | null, recor
     if (session.agentSessionId) job.agentSession = session.agentSessionId;
     if (!answer) return failed(ctx, job, "The implementer's answer does not have the expected shape.");
     job.implement = answer;
+    keepAboutOthers(ctx, job, "implement", answer.aboutOthers);
     // The decisions it took itself go on the Item first, whether it finished or stopped to ask.
     if (answer.decisions?.length) await recordDecisions(ctx, job, answer.decisions);
     // Stopped without a question after a command was refused: a setting for a person, not a question.
@@ -951,16 +955,7 @@ async function afterTriage(ctx: Context, job: Job, answer: TriageAnswer, settled
 }
 
 /** The Item a triage's link names (`#12`, `12`, `A-3` or a ref key), on the subject's own host; null when the store has none. */
-function linkedItem(ctx: Context, subject: Ref, name: string): WorkItem | null {
-  let id = name.trim();
-  const prefix = `${subject.host}:work:`;
-  if (id.startsWith(prefix)) id = id.slice(prefix.length);
-  id = id.replace(/^#/, "");
-  if (id === subject.id) return null;
-  return ctx.deps.store.list<WorkItem>("work").find((work) => work.ref.host === subject.host && work.ref.id === id) ?? null;
-}
-
-const isOpenItem = (work: WorkItem): boolean => work.state !== "done" && work.state !== "abandoned";
+const linkedItem = (ctx: Context, subject: Ref, name: string): WorkItem | null => namedItem(ctx.deps.store, subject, name);
 
 /**
  * A duplicate or a conflict the triage found becomes a question for a person; Scope Soup closes nothing by itself. Where the host can close a duplicate (GitHub), the answer closes it there.
@@ -1105,6 +1100,8 @@ export async function afterRefine(ctx: Context, job: Job): Promise<void> {
   const refine = job.refine;
   delete job.refine;
   delete job.refineRounds;
+  // Questions and a draft from agents of other Items: once settled, this Item is triaged again with the answers.
+  if (refine?.askedBy) return next(ctx, job, "triage", `A person settled what ${refine.askedBy.join(" and ")} asked about ${job.item.id}${refine.settled ? ` (the draft ${refine.settled})` : ""}. Next: triage again, with the answers.`);
   if (refine?.stop && refine.duplicateOf && ctx.deps.actions.closeDuplicate) {
     // Closed on the host, written through; a failure is `orchestrator.host_write_failed`, and the Item parked as before.
     const key = refKey(job.item);
@@ -1140,4 +1137,69 @@ export async function retryHandOver(ctx: Context, job: Job, item: WorkItem | nul
   ctx.commit("orchestrator.handover_retry", `Trying the hand-over of ${job.branch} again, ${who}.`, refKey(job.item), { by: asker ?? "tick" });
   delete job.owesAskedBy;
   await handOver(ctx, job, item);
+}
+
+/**
+ * Writes the questions (and the draft) agents of other Items asked about an Item, once it is free (`busyWhy`): the Item parks on
+ * them as on triage's own draft and questions, with the same Accept, Edit and Reject, and the same posting on its host. Work paused
+ * on it keeps its branch and its implementor's session; the answers send it back to its triage. Questions for an Item that is not
+ * free wait, said once; for one unknown or closed they are dropped with an event.
+ */
+export async function writeAboutOthers(ctx: Context): Promise<void> {
+  const { store } = ctx.deps;
+  for (const [key, entries] of Object.entries(readWaitingAbouts(store))) {
+    if (entries.length === 0) continue;
+    const item = store.list<WorkItem>("work").find((work) => refKey(work.ref) === key) ?? null;
+    if (!item || !isOpenItem(item)) {
+      store.tx(() => {
+        const waiting = readWaitingAbouts(store);
+        delete waiting[key];
+        writeWaitingAbouts(store, waiting);
+        ctx.commit("orchestrator.about_other_dropped", `${entries.length} set(s) of questions from other Items waited for ${item ? `${item.ref.id}, which is now ${item.state}` : "an Item that is no longer in the store"}: dropped.`, key, { sets: entries.length });
+      });
+      continue;
+    }
+    const existing = ctx.jobs[key];
+    const busy = busyWhy(ctx, item, existing);
+    if (busy) {
+      ctx.say("orchestrator.about_other_wait", `Questions from ${[...new Set(entries.map((each) => each.askedBy))].join(" and ")} wait for ${item.ref.id}: ${busy}.`, key);
+      continue;
+    }
+    ctx.forget("orchestrator.about_other_wait", key);
+    const askedBy = [...new Set(entries.map((each) => each.askedBy))];
+    const questions = entries.flatMap((each) => each.questions);
+    const original = item.body?.trim() ?? "";
+    const draft = [...entries].reverse().find((each) => each.draft)?.draft ?? original;
+    // A job parked before gave back its claim and workspace then; one between steps holds them still.
+    const holds = existing !== undefined && !existing.parked;
+    const job: Job = existing ?? { item: item.ref, workspace: workspaceKey(item.ref), branch: workBranch(item.ref), step: "triage", failures: 0, fixRounds: 0, startedAt: ctx.at };
+    // Work paused on it keeps its branch, its implementor's session and the findings it is to be told; what it was about to do
+    // next waits until the triage has run again with the answers.
+    job.step = "triage";
+    job.failures = 0;
+    for (const field of ["decision", "proposal", "refine", "notBefore", "resume", "recheck", "triaging", "answered", "merge", "answerArrived"] as const) delete job[field];
+    const round = (job.refineRounds ?? 0) + 1;
+    job.refineRounds = round;
+    job.refine = { original, draft, questions, round, askedBy };
+    const reason = questions.length > 0
+      ? `Asked by ${askedBy.join(" and ")}: ${draft !== original ? "a draft description and " : ""}${questions.length} question(s) about ${item.ref.id} wait for an answer: ${questions.map((each, index) => `${index + 1}. ${each.question}`).join(" ")}`
+      : `Drafted by ${askedBy.join(" and ")}: a draft description of ${item.ref.id} waits for a person to accept, edit or reject.`;
+    store.tx(() => {
+      const waiting = readWaitingAbouts(store);
+      delete waiting[key];
+      writeWaitingAbouts(store, waiting);
+      ctx.jobs[key] = job;
+      ctx.commit("orchestrator.about_other_written", `Wrote on ${item.ref.id} what ${askedBy.join(" and ")} asked: ${questions.length} question(s)${draft !== original ? " and a draft" : ""}.`, key, { askedBy, questions: questions.length });
+    });
+    if (holds) await park(ctx, job, "needs-decision", reason, "decision");
+    else await parkFresh(ctx, job, reason);
+  }
+}
+
+/** `park` for an Item with no claim or workspace of its own to give back (no job, or one parked before). */
+async function parkFresh(ctx: Context, job: Job, reason: string): Promise<void> {
+  job.parked = { as: "needs-decision", reason, at: ctx.at };
+  delete job.sessionId;
+  ctx.commit(PARK_EVENT["needs-decision"], reason, refKey(job.item), { step: job.step });
+  await tellPeople(ctx, job, "needs-decision", reason, "decision");
 }

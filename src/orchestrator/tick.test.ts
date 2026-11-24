@@ -20,7 +20,7 @@ import { backoffMs } from "./cycle.ts";
 import type { MergeQueue } from "./mergeQueue.ts";
 import { createLoop } from "./loop.ts";
 import { workspaceKey } from "./paths.ts";
-import { answerQuestion, loadJobs, jobQuestions, releaseJob, resumesStep, saveJobs, settleDraft } from "./jobs.ts";
+import { answerQuestion, asImplement, asTriage, loadJobs, jobQuestions, releaseJob, resumesStep, saveJobs, settleDraft } from "./jobs.ts";
 import { loadOwnBlockers } from "../store/blockers.ts";
 import { buildItemPage } from "../core/item-page.ts";
 import { addAnswer } from "../store/answers.ts";
@@ -3473,4 +3473,138 @@ test("an overturn kept for work whose change merged before it was handed gets th
   assert.deepEqual(reworked, ["1 d-1 By height"]);
   assert.match(w.reasons("orchestrator.overturn_merged")[0] ?? "", /merged before a person's overturn of "Sort the list by\?" reached it: 9 reworks it\./);
   assert.deepEqual(overturnsFor(w.store, refKey(ref("1"))), []);
+});
+
+// --- triage and implementors ask questions about other Items (aboutOthers), and triage may draft them ---
+
+const ABOUT_Q = { question: "Knots or metres per second?", options: [{ label: "Knots", description: "As the charts." }, { label: "Metres per second", description: "SI." }], recommendation: "Knots" };
+const ABOUT_DRAFT = "Show wind speed in knots. Done when the forecast shows knots.";
+
+test("a triage puts a question and a draft on another backlog Item, which parks on them as needs-decision naming the asker", async () => {
+  const w = world(config(), [item("1", { body: "Tide table units." }), item("2", { body: "Wind units." })]);
+  w.store.addUsageSample(usage(0.1, 0.1));
+  await w.run();
+  assert.deepEqual(roles(w), ["triage"]);
+  await step(w, "1", "succeeded", { ...TRIAGE_OK, aboutOthers: [{ item: "#2", questions: [ABOUT_Q], draft: ABOUT_DRAFT }] });
+  const job = w.job("2")!;
+  assert.equal(job.parked?.as, "needs-decision");
+  assert.equal(job.step, "triage");
+  assert.deepEqual(job.refine, { original: "Wind units.", draft: ABOUT_DRAFT, questions: [{ ...ABOUT_Q, question: "Knots or metres per second? (asked by triage of 1)" }], round: 1, askedBy: ["triage of 1"] });
+  assert.match(job.parked?.reason ?? "", /^Asked by triage of 1: a draft description and 1 question\(s\) about 2 wait for an answer: 1\. Knots or metres per second\? \(asked by triage of 1\)/);
+  // Its own triage did not start; item 1 went on to implement.
+  assert.deepEqual(w.runner.requests.map((request) => `${request.role} ${request.subject.id}`), ["triage 1", "implement 1"]);
+  assert.ok(w.calls.includes("answerTurn 2 decision"));
+  const page = buildItemPage(loadSnapshot(w.store), refKey(ref("2")), new Date(w.clock.ms))!;
+  assert.equal(page.parked?.refine?.draft, ABOUT_DRAFT);
+  assert.deepEqual(w.reasons("orchestrator.about_other_written"), ["Wrote on 2 what triage of 1 asked: 1 question(s) and a draft."]);
+
+  // Answering works as for triage's own draft: accepting it triages Item 2 again, with the answer in its prompt.
+  assert.deepEqual(answerDraft(w, "2", ["Knots"]), { settled: "accepted" });
+  w.runner.end("1", "succeeded", IMPLEMENT_OK);
+  await w.run();
+  w.clock.ms += 1000;
+  await w.run();
+  assert.equal(w.runner.requests.at(-1)?.role, "triage");
+  assert.equal(w.runner.requests.at(-1)?.subject.id, "2");
+  assert.match(w.runner.requests.at(-1)!.vars.itemBody!, /Answered: Knots/);
+  assert.match(w.reasons("orchestrator.step").find((reason) => reason.includes("asked about 2")) ?? "", /A person settled what triage of 1 asked about 2 \(the draft accepted\)\. Next: triage again/);
+});
+
+test("an implementor puts a question on an Item with paused work, which keeps its branch and session", async () => {
+  const w = world(config(), [item("1"), item("2", { body: "Wind units." })]);
+  w.store.addUsageSample(usage(0.1, 0.1));
+  const at = new Date(w.clock.ms).toISOString();
+  w.store.tx(() => {
+    const jobs = loadJobs(w.store);
+    jobs[refKey(ref("2"))] = {
+      item: ref("2"), workspace: workspaceKey(ref("2")), branch: "scopesoup/2", step: "implement", failures: 0, fixRounds: 1, startedAt: at,
+      agentSession: "agent-old", resumeWith: "Fix the rounding.", parked: { as: "escalated", reason: "The implement step failed 3 times.", at, byStep: true },
+    };
+    saveJobs(w.store, jobs);
+  });
+  await w.run();
+  await step(w, "1", "succeeded", TRIAGE_OK);
+  await step(w, "1", "succeeded", { ...IMPLEMENT_OK, aboutOthers: [{ item: "2", questions: [ABOUT_Q], draft: "An implementor's draft is not taken." }] });
+  const job = w.job("2")!;
+  assert.equal(job.parked?.as, "needs-decision");
+  assert.equal(job.step, "triage");
+  assert.deepEqual(job.refine?.askedBy, ["the implementor of 1"]);
+  assert.equal(job.refine?.draft, "Wind units.");
+  assert.deepEqual(job.refine?.questions.map((each) => each.question), ["Knots or metres per second? (asked by the implementor of 1)"]);
+  assert.deepEqual([job.agentSession, job.resumeWith, job.branch, job.fixRounds], ["agent-old", "Fix the rounding.", "scopesoup/2", 1]);
+  // It had given back its workspace and claim when it parked before.
+  assert.equal(w.calls.includes("release 2"), false);
+});
+
+test("a question for an Item held by a person, or with a running session, waits in the store and is written once it is free", async () => {
+  const pat = { holder: { actor: { id: "p", name: "Pat" } } };
+  const w = world(config({ settings: { maxParallelSessions: { value: 2, reason: "test" } } }), [item("1"), item("2", pat), item("3")]);
+  w.store.addUsageSample(usage(0.1, 0.1));
+  await w.run();
+  assert.deepEqual(w.runner.requests.map((request) => `${request.role} ${request.subject.id}`), ["triage 1", "triage 3"]);
+  w.runner.end("1", "succeeded", { ...TRIAGE_OK, aboutOthers: [{ item: "2", questions: [ABOUT_Q] }, { item: "3", questions: [{ ...ABOUT_Q, question: "Gusts too?" }] }] });
+  await w.run();
+  assert.equal(w.job("2"), undefined);
+  assert.equal(w.job("3")?.parked, undefined);
+  const waits = w.reasons("orchestrator.about_other_wait");
+  assert.ok(waits.includes("Questions from triage of 1 wait for 2: it is held by Pat."), waits.join(" / "));
+  assert.ok(waits.includes("Questions from triage of 1 wait for 3: its triage session runs."), waits.join(" / "));
+  // Item 3's triage ends ready: before its implement step starts, the question is written.
+  w.runner.end("3", "succeeded", TRIAGE_OK);
+  await w.run();
+  w.clock.ms += 1000;
+  await w.run();
+  assert.equal(w.job("3")?.parked?.as, "needs-decision");
+  assert.deepEqual(w.job("3")?.refine?.questions.map((each) => each.question), ["Gusts too? (asked by triage of 1)"]);
+  assert.equal(w.runner.requests.some((request) => request.role === "implement" && request.subject.id === "3"), false);
+  // Pat lets go of item 2.
+  w.store.put(item("2"), "sync", new Date(w.clock.ms).toISOString());
+  await w.run();
+  assert.equal(w.job("2")?.parked?.as, "needs-decision");
+  assert.deepEqual(w.job("2")?.refine?.askedBy, ["triage of 1"]);
+  assert.equal(w.store.getValue("orchestrator.aboutOthers"), "{}");
+});
+
+test("questions about an unknown or closed Item, or the asker's own, are dropped with an event", async () => {
+  const w = world(config(), [item("1"), item("2", { state: "done" })]);
+  w.store.addUsageSample(usage(0.1, 0.1));
+  await w.run();
+  await step(w, "1", "succeeded", { ...TRIAGE_OK, aboutOthers: [{ item: "99", questions: [ABOUT_Q] }, { item: "2", questions: [ABOUT_Q] }, { item: "1", questions: [ABOUT_Q] }] });
+  const dropped = w.reasons("orchestrator.about_other_dropped");
+  assert.equal(dropped.length, 3);
+  assert.match(dropped[0]!, /asked about "99", but there is no such open Item other than its own: 1 question\(s\) dropped/);
+  assert.match(dropped[1]!, /asked about "2", but it is done/);
+  assert.equal(w.store.getValue("orchestrator.aboutOthers") ?? "{}", "{}");
+  assert.equal(w.job("1")?.step, "implement");
+});
+
+test("an answer's aboutOthers: an entry with tool-call markup or without a question is dropped, and an implementor's draft is not read", () => {
+  assert.deepEqual(asImplement({ done: true, summary: "x", aboutOthers: [{ item: "2", questions: [ABOUT_Q], draft: "no" }, { item: "3", questions: [] }, { item: "4", questions: [{ ...ABOUT_Q, question: "a</question>b" }] }] })?.aboutOthers, [{ item: "2", questions: [ABOUT_Q] }]);
+  assert.deepEqual(asTriage({ ...TRIAGE_OK, aboutOthers: [{ item: " #5 ", questions: [], draft: " D " }] })?.aboutOthers, [{ item: "#5", questions: [], draft: "D" }]);
+});
+
+test("on GitHub the other Item's draft and question are posted there, the agent's text made inert", async () => {
+  const w = world(config(), [ghItem("1"), ghItem("2", { body: "Wind units." })]);
+  w.store.addUsageSample(usage(0.1, 0.1));
+  const fake = fakeIssues("harbour/tides", [1, 2]);
+  const host = createGitHubHost({ token: "t", repo: "harbour/tides", apiUrl: ISSUES_API, fetchImpl: fake.fetch, allowWrites: true, conventions: true, login: "scopesoup-bot" });
+  const real = createHostActions({ host, git: async () => ({ code: 0, stdout: "", stderr: "" }), config: () => config(), store: w.store });
+  const deps = w.depsFor();
+  deps.actions.askQuestions = real.askQuestions;
+  deps.actions.postDraft = real.postDraft;
+  deps.actions.checkDraft = real.checkDraft;
+  await tick(deps);
+  assert.deepEqual(roles(w), ["triage"]);
+  w.runner.end("1", "succeeded", { ...TRIAGE_OK, aboutOthers: [{ item: "2", questions: [{ ...ABOUT_Q, question: "Fixes #3 too? Ask @ada." }], draft: "Closes #4. Show knots." }] });
+  await tick(deps);
+  const comments = (fake.comments.get("2") ?? []).map((comment) => comment.body);
+  assert.equal(comments.length, 2);
+  const all = comments.join("\n");
+  const zw = "​";
+  assert.ok(all.includes(`F${zw}ixes #3 too? Ask @${zw}ada. (asked by triage of 1)`), all);
+  assert.ok(all.includes(`C${zw}loses #4. Show knots.`), all);
+  assert.ok(!/Fixes #3|@ada|Closes #4/.test(all), all);
+  const parked = loadJobs(w.store)[ghKey("2")]?.parked;
+  assert.equal(parked?.as, "needs-decision");
+  assert.equal(parked?.draft?.questions.length, 1);
 });
