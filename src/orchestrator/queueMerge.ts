@@ -50,6 +50,7 @@ export async function handOverToQueue(ctx: Context, job: Job): Promise<void> {
     return;
   }
   job.queued = enqueued.sha;
+  delete job.sentBack;
   await park(ctx, job, "queued", `The change on ${job.branch} (${enqueued.sha.slice(0, 7)}) is reviewed and waits in the merge queue: it is built into a batch with others, ${github ? "the project's CI on GitHub checks the chain on a pull request" : "the check command runs on the chain"}, and the checked commit is pushed to ${config.mainBranch}.`);
 }
 
@@ -130,6 +131,8 @@ async function apply(ctx: Context, notice: Notice): Promise<void> {
         await ctx.act("write the check to the item's log", key, () => actions.appendLog(job.item, "check", { sha: notice.sha, verdict: "fail", command, findings: [failing], ...(notice.batch !== undefined ? { batch: notice.batch } : {}) }));
       }
       delete job.parked;
+      // The revision the queue found red or conflicting: it is not handed over again until the implementor made a new one.
+      job.sentBack = job.queued ?? notice.sha;
       delete job.queued;
       await sendBack(ctx, job, finding, what, failureKey(notice.reason));
       return;

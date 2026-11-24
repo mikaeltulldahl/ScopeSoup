@@ -475,6 +475,7 @@ export function backToImplement(ctx: Context, job: Job, reason: string): void {
   delete job.agentSession;
   delete job.merge;
   delete job.base;
+  delete job.sentBack;
   // The decisions were about work that is gone.
   delete job.taken;
   job.notBefore = later(ctx.at, CONTINUE_MS);
@@ -566,6 +567,8 @@ const APPROVED = "Approved. Merge now as CLAUDE.md says.";
  * to the merge queue, which merges the newest main in, runs the check and pushes the checked commit fast-forward.
  */
 async function handOver(ctx: Context, job: Job, item: WorkItem | null): Promise<void> {
+  // This is the hand-over that was owed, if one was: whatever happens now, it is not owed any more unless said again below.
+  delete job.owes;
   if (ctx.config.level < 4) return sessionMerged(ctx, job, item);
   const { runner } = ctx.deps;
   const empty = await emptyBranch(ctx, job);
@@ -581,12 +584,31 @@ async function handOver(ctx: Context, job: Job, item: WorkItem | null): Promise<
     await failed(ctx, job, `The agent reported the work done, but ${job.branch} changes nothing.`, false);
     return;
   }
+  // The revision the queue sent back is never handed to it again: the implementor's fix round comes first.
+  const head = job.sentBack ? await headOf(ctx, job) : null;
+  if (head && head === job.sentBack) {
+    job.resumeWith ??= "The merge queue sent this revision back. Fix what it found and commit.";
+    next(ctx, job, "implement", `${job.branch} is still at ${head.slice(0, 7)}, the revision the merge queue sent back; it is not handed to the queue again. Next: the implementor fixes it.`);
+    return;
+  }
   if (!mergeQueueOn(ctx.deps.store)) {
     job.owes = "hand-over";
+    // The session is over: the tick hands it over by itself once the merge queue is resumed, and settles nothing again meanwhile.
+    delete job.sessionId;
+    delete job.resume;
     ctx.commit("orchestrator.merge_queue_paused", `The merge queue is paused: ${job.branch} is not handed to the queue now; it is when the merge queue is resumed.`, refKey(job.item));
     return;
   }
   return handOverToQueue(ctx, job);
+}
+
+/** The branch's head, or null when it cannot be read. */
+async function headOf(ctx: Context, job: Job): Promise<string | null> {
+  try {
+    return await ctx.deps.runner.head(job.branch);
+  } catch {
+    return null;
+  }
 }
 
 /** Where a change handed to a person is, and what they do to merge it. */
@@ -680,6 +702,8 @@ export async function sendBack(ctx: Context, job: Job, finding: string, what: st
     return;
   }
   if (failure) job.progress = { ...job.progress, mergeQueue: failure };
+  // The change goes back to its implementor: no hand-over is owed until a new revision is reviewed.
+  delete job.owes;
   job.fixRounds++;
   job.review = { verdict: "changes", findings: [{ severity: "must", text: finding }] };
   backToImplementor(ctx, job, `Merging failed: ${finding}\nFix it and commit.`, `${what}; nothing was pushed. Next: the implementor fixes it, round ${job.fixRounds} of ${max}.`);
@@ -853,6 +877,10 @@ async function settleStep(ctx: Context, job: Job, session: Session | null, recor
     // Done with nothing committed: the step failed (and is counted), it does not go on to review or merging.
     const empty = await emptyBranch(ctx, job);
     if (empty) return failed(ctx, job, `The implementer reported the work done, but: ${empty}`);
+    // A fix round for a change the merge queue sent back that committed nothing: the same revision would only fail there again.
+    if (job.sentBack && (await headOf(ctx, job)) === job.sentBack) {
+      return failed(ctx, job, `The implementer reported the fix done, but ${job.branch} is still at ${job.sentBack.slice(0, 7)}, the revision the merge queue sent back: nothing new was committed.`);
+    }
     delete job.resumeWith;
     await writeRevision(ctx, job);
     // An overturn that arrived while it worked: its own session is resumed with it at once, before review.
