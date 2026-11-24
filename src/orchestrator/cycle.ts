@@ -31,7 +31,7 @@ import { dropOverturns, overturnMessage, overturnsFor } from "./overturns.ts";
 import type { ChangedFile } from "../core/fence.ts";
 import { FENCE_OUTSIDE_FILES, fenceBreach, proposedSplit } from "../core/fence.ts";
 import type { Finding } from "./jobs.ts";
-import { findingKey, followUpItem, noProgress } from "./followUp.ts";
+import { findingKey, followUpItem, isFollowUp, noProgress } from "./followUp.ts";
 import { busyWhy, isOpenItem, keepAboutOthers, linkedItem as namedItem, readWaitingAbouts, writeWaitingAbouts } from "./aboutOthers.ts";
 import { workBranch, workspaceKey } from "./paths.ts";
 
@@ -884,8 +884,16 @@ async function settleStep(ctx: Context, job: Job, session: Session | null, recor
       if (overturnsBack(ctx, job)) return;
       return handOver(ctx, job, item);
     }
-    // Done with nothing committed: the step failed (and is counted), it does not go on to review or merging.
+    // Done with nothing committed. On the first build the implementor found nothing to change in the code: no retry would find
+    // more, so it goes to a person to close it (or to answer, which runs the step again). In a fix round the step failed.
     const empty = await emptyBranch(ctx, job);
+    if (empty && job.fixRounds === 0) {
+      return parkByStep(
+        ctx, job, "escalated",
+        `Nothing to change: the implementer reported the work done, but ${empty} It said: ${clipText(answer.summary.trim() || "nothing", 600)} If that is right, close the Item; answer here to have it try again.`,
+        "escalation",
+      );
+    }
     if (empty) return failed(ctx, job, `The implementer reported the work done, but: ${empty}`);
     // A fix round for a change the merge queue sent back that committed nothing: the same revision would only fail there again.
     if (job.sentBack && (await headOf(ctx, job)) === job.sentBack) {
@@ -943,6 +951,7 @@ async function settleStep(ctx: Context, job: Job, session: Session | null, recor
 /**
  * The `should` findings of an approved change become one small follow-up Item that names them and the Item they came from,
  * once per finding. Where the host cannot file it, or refuses, an event says so with the findings; the merge goes on either way.
+ * A follow-up's own approval files none (follow-ups are one deep).
  */
 async function followUp(ctx: Context, job: Job, item: WorkItem | null, findings: readonly Finding[]): Promise<void> {
   const done = new Set(job.followUps ?? []);
@@ -950,6 +959,12 @@ async function followUp(ctx: Context, job: Job, item: WorkItem | null, findings:
   if (should.length === 0) return;
   const key = refKey(job.item);
   const listed = should.map((finding) => clipText(`${finding.file ? `${finding.file}: ` : ""}${finding.text.trim()}`, 300)).join(" / ");
+  // A follow-up's own review files no follow-up of its own (decision 73): its findings stay in its review line, so follow-ups stay one deep.
+  if (item && isFollowUp(item)) {
+    job.followUps = [...done, ...should.map(findingKey)].slice(-50);
+    ctx.commit("orchestrator.follow_up_skipped", `The review approved with ${should.length} \`should\` finding(s), but ${job.item.id} is itself a follow-up, so no further follow-up Item is filed; the finding(s) stay in its review line, and the merge goes on: ${listed}`, key, { findings: should.length });
+    return;
+  }
   const file = ctx.deps.actions.fileFollowUp;
   let made: Ref | null = null;
   if (file && item) {

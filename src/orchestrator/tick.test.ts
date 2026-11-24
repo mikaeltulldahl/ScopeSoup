@@ -17,6 +17,7 @@ import { openStore } from "../store/store.ts";
 import type { Store } from "../store/store.ts";
 import { compareItems, readyItems } from "./candidates.ts";
 import { backoffMs } from "./cycle.ts";
+import { followUpMark, isFollowUp } from "./followUp.ts";
 import type { MergeQueue } from "./mergeQueue.ts";
 import { createLoop } from "./loop.ts";
 import { workspaceKey } from "./paths.ts";
@@ -1187,6 +1188,28 @@ test("an approval with should findings files one follow-up Item naming them and 
   assert.deepEqual([w.job("1")?.merge, roles(w).at(-1)], [true, "implement"]);
 });
 
+test("the review of a follow-up Item files no follow-up of its own: its should finding stays in its review line, and the merge goes on", async () => {
+  // As in the trial: A-14 was filed for a should finding of A-9, which itself followed up A-3.
+  const body = `The review of #9 ("Item 9") approved its change at 1234567 and said this finding should still change:
+
+- Add a test.
+
+${followUpMark(item("9"), "1".repeat(40))}`;
+  const w = world(config({ rules: STAGE1, settings: { persistence: { value: 4, reason: "test" } } }), [item("1", { body })]);
+  w.store.addUsageSample(usage(0.1, 0.1));
+  w.runner.paths = ["src/a.ts"];
+  await w.run();
+  await step(w, "1", "succeeded", TRIAGE_OK);
+  await step(w, "1", "succeeded", IMPLEMENT_OK);
+  await step(w, "1", "succeeded", { verdict: "approve", findings: [{ severity: "should", file: "src/a.ts", text: "Name the helper after what it returns." }] });
+  assert.deepEqual(w.followUps, []);
+  assert.deepEqual(w.reasons("orchestrator.follow_up_filed"), []);
+  assert.match(w.reasons("orchestrator.follow_up_skipped")[0] ?? "", /^The review approved with 1 `should` finding\(s\), but 1 is itself a follow-up, so no further follow-up Item is filed; the finding\(s\) stay in its review line, and the merge goes on: src\/a\.ts: Name the helper/);
+  assert.ok(w.calls.some((call) => call.startsWith("appendLog 1 review") && call.includes("[should] src/a.ts: Name the helper after what it returns.")));
+  assert.deepEqual([w.job("1")?.merge, roles(w).at(-1)], [true, "implement"]);
+  assert.equal(isFollowUp(item("1")), false);
+});
+
 test("a follow-up the host refuses is an event; the merge goes on, and an approval with no should finding files nothing", async () => {
   const w = await toReview(["src/a.ts"]);
   w.followUpResult = "throw";
@@ -1350,7 +1373,7 @@ function logCalls(w: World): string[] {
   return w.calls.filter((call) => call.startsWith("appendLog"));
 }
 
-test("a branch with no commits over main is never reviewed or merged: the item goes back to implement, and the event says why", async () => {
+test("a first build with nothing committed is \"nothing to change\" for a person; a branch with no commits over main is never reviewed or merged", async () => {
   const w = world(config(QUEUE), [item("1")]);
   const queue = fakeQueue();
   w.queue = queue;
@@ -1361,11 +1384,18 @@ test("a branch with no commits over main is never reviewed or merged: the item g
   await w.run();
   await step(w, "1", "succeeded", TRIAGE_OK);
 
-  // Implemented with nothing committed: the step failed and is retried; no review starts.
-  await step(w, "1", "succeeded", IMPLEMENT_OK);
+  // Implemented with nothing committed on the first build: nothing to change, for a person to close; no retry and no review.
+  await step(w, "1", "succeeded", { done: true, summary: "Item 1 is already done on main." });
   assert.deepEqual(roles(), ["triage", "implement"]);
-  assert.match(w.reasons("orchestrator.retry_scheduled")[0] ?? "", /reported the work done, but: The branch scopesoup\/1 has no commits over main/);
+  assert.equal(w.job("1")?.parked?.as, "escalated");
+  assert.equal(w.job("1")?.failures, 0);
+  assert.deepEqual(w.reasons("orchestrator.retry_scheduled"), []);
+  assert.match(w.reasons("orchestrator.escalated")[0] ?? "", /^Nothing to change: the implementer reported the work done, but The branch scopesoup\/1 has no commits over main, .* It said: Item 1 is already done on main\. If that is right, close the Item; answer here to have it try again\.$/);
   w.clock.ms += 10_000;
+  await w.run();
+  assert.deepEqual(roles(), ["triage", "implement"], "it waits for a person");
+  // A person answers instead of closing it: the implement step runs again.
+  assert.ok(releaseJob(w.store, ref("1"), "Ada", new Date(w.clock.ms).toISOString(), "Try again."));
   await w.run();
   assert.deepEqual(roles(), ["triage", "implement", "implement"]);
 
@@ -3838,6 +3868,52 @@ test("a question for an Item held by a person, or with a running session, waits 
   assert.equal(w.job("2")?.parked?.as, "needs-decision");
   assert.deepEqual(w.job("2")?.refine?.askedBy, ["triage of 1"]);
   assert.equal(w.store.getValue("orchestrator.aboutOthers"), "{}");
+});
+
+test("a question about another Item that is open there, or a person answered there, is not asked again by any asker", async () => {
+  // As in the trial: triage of A-9 asked about A-7, a person answered on A-7, then other triages asked the same again.
+  const q = { ...ABOUT_Q, question: "Item 2 says to change only src/units.js. Should it also update test/sum.test.js?" };
+  const w = world(config(), [item("1", { priority: "major" }), item("2", { body: "Rename the unit key." }), item("3", { priority: "critical" })]);
+  w.store.addUsageSample(usage(0.1, 0.1));
+  await w.run();
+  await step(w, "3", "succeeded", { ...TRIAGE_OK, aboutOthers: [{ item: "2", questions: [q] }] });
+  const parked = w.job("2")!.parked!;
+  assert.equal(parked.as, "needs-decision");
+  assert.equal(w.reasons("orchestrator.about_other_written").length, 1);
+  // Asked again while it is open there: not added.
+  await step(w, "3", "succeeded", { done: false, summary: "Stopped.", aboutOthers: [{ item: "2", questions: [q] }] });
+  assert.match(w.reasons("orchestrator.about_other_dropped").at(-1) ?? "", /^The implementor of 3 asked about 2 again: .* Not asked again: it is open there\.$/);
+  assert.equal(w.store.getValue("orchestrator.aboutOthers") ?? "{}", "{}");
+  // A person answers on Item 2 as the trial did (one answer to the parked questions, kept with the parked reason); its text is unchanged.
+  const at = new Date(w.clock.ms).toISOString();
+  addAnswer(w.store, { subject: ref("2"), answer: "Yes: every file that uses m.", by: "Ada", at, question: parked.reason, textHash: itemTextHash(w.store.get<WorkItem>(ref("2"))!) });
+  assert.ok(releaseJob(w.store, ref("2"), "Ada", at, "Yes: every file that uses m."));
+  await w.run();
+  // Triage of 1, another asker, asks the same: it is not asked again, and Item 2 is not parked again.
+  assert.equal(w.runner.requests.map((request) => `${request.role} ${request.subject.id}`).at(-1), "triage 1");
+  await step(w, "1", "succeeded", { ...TRIAGE_OK, aboutOthers: [{ item: "#2", questions: [q] }] });
+  assert.match(w.reasons("orchestrator.about_other_dropped").at(-1) ?? "", /^Triage of 1 asked about 2 again: .* Not asked again: a person answered it there at .* \("Yes: every file that uses m\."\)\.$/);
+  assert.equal(w.store.getValue("orchestrator.aboutOthers") ?? "{}", "{}");
+  assert.equal(w.reasons("orchestrator.about_other_written").length, 1);
+  assert.notEqual(w.job("2")?.parked?.as, "needs-decision");
+});
+
+test("a question for an Item whose change is in review waits, and does not pull it back to triage", async () => {
+  // As in the trial: A-7 was built ("Next: review") when triage of A-9's question about it was written, and it went back to triage.
+  const w = world(config({ rules: STAGE1, settings: { maxParallelSessions: { value: 2, reason: "test" } } }), [item("1", { priority: "major" }), item("2")]);
+  w.store.addUsageSample(usage(0.1, 0.1));
+  await w.run();
+  assert.deepEqual(roles(w), ["triage", "triage"]);
+  await step(w, "1", "succeeded", TRIAGE_OK);
+  assert.deepEqual(roles(w), ["triage", "triage", "implement"]);
+  // Item 1 is built in the same tick in which triage of 2 asks about it: its review session has not started yet.
+  w.runner.end("1", "succeeded", IMPLEMENT_OK);
+  w.runner.end("2", "succeeded", { ...TRIAGE_OK, aboutOthers: [{ item: "1", questions: [ABOUT_Q] }] });
+  await w.run();
+  assert.equal(w.job("1")?.parked, undefined);
+  assert.equal(w.job("1")?.step, "review");
+  assert.ok(w.reasons("orchestrator.about_other_wait").some((reason) => /^Questions from triage of 2 wait for 1: its (change is in review|review session runs)\.$/.test(reason)), w.reasons("orchestrator.about_other_wait").join(" / "));
+  assert.deepEqual(w.reasons("orchestrator.about_other_written"), []);
 });
 
 test("questions about an unknown or closed Item, or the asker's own, are dropped with an event", async () => {

@@ -38,6 +38,11 @@ export function followUpMark(item: WorkItem, sha: string): string {
   return `<!-- scopesoup:follow-up ${JSON.stringify({ item: refKey(item.ref), sha })} -->`;
 }
 
+/** True when the Item is itself a follow-up (its description carries the mark): its review files no follow-up of its own. */
+export function isFollowUp(item: Pick<WorkItem, "body">): boolean {
+  return (item.body ?? "").includes("<!-- scopesoup:follow-up ");
+}
+
 /** One small follow-up Item for the `should` findings of an approved change of `item`, reviewed at `sha`. Their text is data from an agent. */
 export function followUpItem(item: WorkItem, should: readonly Finding[], sha: string): FollowUpItem {
   const name = itemName(item);
