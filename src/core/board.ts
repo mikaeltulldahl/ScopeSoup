@@ -143,7 +143,7 @@ export function batchView(batch: Batch, index: Index, now: Date): BatchView {
 
 function batchWords(batch: Batch, view: BatchView): string {
   const size = plural(batch.members.length, "change");
-  if (batch.status === "forming") return `forming, ${size} so far`;
+  if (batch.status === "forming") return `preparing ${size} for the check`;
   if (batch.status === "merged") return `merged ${size}`;
   if (batch.status === "testing") return view.progress.state === "waiting-for-runner" ? view.progress.words : `checking: ${view.progress.words}`;
   const culprit = view.members.filter((member) => member.mark === "culprit" || member.state === "culprit");

@@ -88,39 +88,35 @@ export function Queue({ board }: { board: BoardView }) {
       {board.queue.mergeQueue && <MergeLease lease={board.queue.mergeQueue} />}
       {board.resources && <Resources resources={board.resources} />}
       {empty && <p class="empty">The queue is empty.</p>}
-      {waiting.length + forming.length > 0 && (
+      {waiting.length > 0 && (
         <section>
           <h2>
-            Queued <span class="count num">{waiting.length + forming.length}</span>
+            Queued <span class="count num">{waiting.length}</span>
           </h2>
-          {waiting.length > 0 && (
-            <ol class="waiting">
-              {waiting.map((entry) => {
-                const item = entry.items[0];
-                return (
-                  <li key={entry.change.label}>
-                    <a class="waiting-row" href={item ? itemHref(item.key) : "#/queue"}>
-                      <span class="order num">{entry.position}</span>
-                      <span class="ref num">{item?.label ?? entry.change.label}</span>
-                      <span class="waiting-title">{item?.title ?? entry.change.title}</span>
-                      <span class="when num">queued {ago(entry.since, now)}</span>
-                    </a>
-                  </li>
-                );
-              })}
-            </ol>
-          )}
-          {forming.map((batch) => (
-            <BatchBox key={batch.key} batch={batch} />
-          ))}
+          <ol class="waiting">
+            {waiting.map((entry) => {
+              const item = entry.items[0];
+              return (
+                <li key={entry.change.label}>
+                  <a class="waiting-row" href={item ? itemHref(item.key) : "#/queue"}>
+                    <span class="order num">{entry.position}</span>
+                    <span class="ref num">{item?.label ?? entry.change.label}</span>
+                    <span class="waiting-title">{item?.title ?? entry.change.title}</span>
+                    <span class="when num">queued {ago(entry.since, now)}</span>
+                  </a>
+                </li>
+              );
+            })}
+          </ol>
         </section>
       )}
-      {batches.length > 0 && (
+      {/* There is one batch at a time: while it is prepared (its changes merged onto main) and while it is checked. */}
+      {batches.length + forming.length > 0 && (
         <section>
           <h2>
-            Checking <span class="count num">{batches.length}</span>
+            Checking <span class="count num">{batches.length + forming.length}</span>
           </h2>
-          {batches.map((batch) => (
+          {[...batches, ...forming].map((batch) => (
             <BatchBox key={batch.key} batch={batch} />
           ))}
         </section>

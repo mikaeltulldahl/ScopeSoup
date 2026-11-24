@@ -242,7 +242,7 @@ function queueTurn(situation: Situation, change: Change, ctx: TurnContext): Draf
     const why = change.blockers && change.blockers.length > 0 ? `: ${change.blockers.join("; ")}` : "";
     return { actor: "agent", tone: "blocked", since: change.updatedAt, reason: `approved, but it cannot merge${why}; the branch needs a rebase on main` };
   }
-  if (batch && batch.status === "forming") return { actor: "queue", tone: "waiting", since: change.updatedAt, reason: `in ${batchName(batch.ref)}, which is still forming` };
+  if (batch && batch.status === "forming") return { actor: "queue", tone: "waiting", since: change.updatedAt, reason: `in ${batchName(batch.ref)}, which is being prepared for its check` };
   const again = batch && member?.state === "requeued" ? `back in the queue after ${batchName(batch.ref)} failed on another change` : "approved";
   // Below level 4 Scope Soup merges nothing and the merge queue's switch is not shown: the implementor (or a person) merges it.
   const level = ctx.index.snapshot.level;

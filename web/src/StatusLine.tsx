@@ -17,7 +17,8 @@ export function StatusLine({ status }: { status: Status }) {
   const now = useNow();
   const live = useLive();
   const { runners, usage, queue, sync } = status;
-  const waiting = queue.waiting + queue.forming;
+  // A batch being prepared (its changes merged onto main) is the one about to be checked: there is only ever one.
+  const checking = queue.testing + queue.forming;
   return (
     <section class="status" aria-label="Status">
       <div class="status-group">
@@ -51,10 +52,10 @@ export function StatusLine({ status }: { status: Status }) {
         {usage?.status === "rejected" && <span class="tag tag-blocked">limit reached</span>}
       </div>
       <div class="status-group">
-        <span class="status-name">Queue</span>
+        <span class="status-name">Merge queue</span>
         <a class="status-item" href="#/queue">
           <span class="num">
-            {waiting} waiting · {queue.testing} checking{queue.bisecting > 0 ? ` · ${queue.bisecting} bisecting` : ""}
+            {queue.waiting} waiting · {checking} checking{queue.bisecting > 0 ? ` · ${queue.bisecting} bisecting` : ""}
           </span>
         </a>
       </div>

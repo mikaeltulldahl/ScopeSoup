@@ -989,7 +989,7 @@ function Body({ page, reload, resources }: { page: ItemPage; reload: () => void;
         {page.why && <p class="why">{page.why}</p>}
         {waitingForUnit(item.ref.id, resources).map((wait) => (
           <p class="why" key={wait.name}>
-            Waits for a unit of <b>{wait.name}</b> <span class="muted num">since {ago(wait.since, now)}</span>; all of them are in use. <a href="#/queue">Queue</a>
+            Waits for a unit of <b>{wait.name}</b> <span class="muted num">since {ago(wait.since, now)}</span>; all of them are in use. <a href="#/queue">Merge queue</a>
           </p>
         ))}
         {page.canVote && <VoteButtons itemKey={item.key} off={page.voteOff} />}
