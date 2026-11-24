@@ -132,7 +132,8 @@ function App() {
           <b>Who are you?</b> Pick your name at the top (or add it). People are equals here: anyone answers Scope Soup's questions, takes and releases Items, and the log records who did.
         </p>
       )}
-      <UpgradeNote />
+      {/* A switch that changes takes the note off on the server; read it again at once. */}
+      <UpgradeNote switches={Object.values(switches).join(" ")} />
       {(error || failed) && <p class="notice notice-bad" role="alert">{failed ?? `Cannot reach the server: ${error}`}</p>}
       <main>
         {board && route.view !== "settings" && route.view !== "stop" && route.view !== "history" && route.view !== "usage" && route.view !== "items" && <StatusLine status={board.status} />}

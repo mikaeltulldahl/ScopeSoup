@@ -10,7 +10,8 @@
 //   Stop     the stop switch (core rule 3): pauses all four, ends running sessions and cuts off a merge under way at its
 //            next safe point, before any push. Each reads "stopped" until it is resumed.
 // Scope Soup comes up paused after every start-up. A missing value reads as paused, so nothing runs by accident.
-// Every change writes its event in the same transaction: one per switch that changed.
+// Every change writes its event in the same transaction: one per switch that changed. A change takes the upgrade's note
+// (what an upgrade started again or left paused) off the board.
 
 import type { AgentsState, MergeQueueState, SessionRole } from "../model/types.ts";
 import { KEYS } from "./keys.ts";
@@ -125,6 +126,8 @@ export function applyControl(store: Store, action: ControlAction, at: string, vi
       const names = name === "agents" ? ROLES : [name];
       for (const each of names) (verb === "start" ? start : pause)(each);
     }
+    // The upgrade's note says which switches were started again or stay paused: once one changes, it is no longer true.
+    if (changed) store.setValue(KEYS.upgradeNote, "");
     const after = readControl(store);
     return { ...after, changed, paused: after.agents !== "started" };
   });

@@ -185,6 +185,7 @@ export function createChat(deps: ChatDeps): Chat {
     const current = config();
     if (!current) return "This server has no project configuration, so it runs no sessions.";
     if (!job) return "The Item has no work under way here, so there is no worktree to talk to its sessions in.";
+    if (job.merged) return "The Item is merged, so its sessions take no more messages.";
     // Level 4: the branch is the queue's now; a turn could change it under the merge.
     if (job.parked?.as === "queued" || job.queued !== undefined || job.owes === "hand-over") {
       return "The Item is queued for merging (or being merged); talk to its sessions once it merges or comes back.";

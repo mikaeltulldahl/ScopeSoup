@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { applyControl, pauseAtStartup, pauseRemembering, readControl, startAgain } from "./control.ts";
+import { KEYS } from "./keys.ts";
 import { openStore } from "./store.ts";
 
 const AT = "2026-11-24T10:00:00.000Z";
@@ -55,4 +56,14 @@ test("pausing one switch leaves the others; a pause after Stop keeps it stopped"
   assert.deepEqual(readControl(store), { triage: "stopped", implement: "stopped", review: "stopped", mergeQueue: "stopped", agents: "stopped" });
   applyControl(store, "implement.start", AT, "test");
   assert.equal(readControl(store).agents, "started");
+});
+
+test("a switch that changes takes the upgrade's note off; one that does not change leaves it", () => {
+  const store = openStore(":memory:");
+  const note = JSON.stringify({ text: "Upgraded to 0.2.0; triage, implementors, review and the merge queue were paused before and stay paused", at: AT });
+  store.setValue(KEYS.upgradeNote, note);
+  applyControl(store, "review.pause", AT, "test");
+  assert.equal(store.getValue(KEYS.upgradeNote), note);
+  applyControl(store, "review.start", AT, "test");
+  assert.equal(store.getValue(KEYS.upgradeNote), "");
 });
