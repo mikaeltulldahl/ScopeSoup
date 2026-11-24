@@ -188,8 +188,9 @@ function backlogTurn(situation: Situation, ctx: TurnContext): Draft {
   // Its next step is the triage and triage is paused: it waits for that switch, not for a slot. (A stated size skips the triage from level 2.)
   const triageNext = ctx.notTriaged?.has(refKey(item.ref)) && !((ctx.index.snapshot.level ?? 0) >= 2 && clearWithoutTriage(item));
   if (triageNext && ctx.index.snapshot.triage !== "started") return { actor: "nobody", tone: "blocked", reason: "ready, but triage is paused (Resume on Backlog)" };
-  // Its next step is the implement (it is triaged, or needs no triage) and implementors are paused.
-  if (!triageNext && ctx.index.snapshot.implement !== "started") return { actor: "nobody", tone: "blocked", reason: "ready, but implementors are paused (Resume on In progress)" };
+  // Its next step is the implement (it is triaged, or needs no triage), and no implementor takes it now: implementors are
+  // paused, or the level is below 2. The status line says which; the card says only "ready".
+  if (!triageNext && (ctx.index.snapshot.implement !== "started" || (ctx.index.snapshot.level ?? 2) < 2)) return { actor: "nobody", tone: "waiting", reason: "ready" };
   return { actor: "agent", tone: "waiting", reason: "ready; waiting for a free agent slot" };
 }
 
