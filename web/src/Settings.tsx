@@ -438,6 +438,17 @@ export function Settings({ project }: { project?: ProjectView | undefined } = {}
           ))}
         </div>
 
+        <h4>Allowed commands</h4>
+        <p class="muted">What each role may run, from <code>roles.&lt;role&gt;.allowedTools</code>. The implement and review roles can always run the project's check command; its rule is added here when the file does not list it.</p>
+        {["implement", "review"].map((name) => {
+          const tools = view.config?.roles[name as "implement" | "review"]?.allowedTools ?? [];
+          return (
+            <p key={name}>
+              <b>{ROLES.find(([role]) => role === name)?.[1]}</b>: {tools.length > 0 ? tools.map((tool) => <code key={tool}>{tool} </code>) : "nothing"}
+            </p>
+          );
+        })}
+
         <div class="form-actions">
           <button type="submit" class="primary" disabled={busy || !dirty}>{busy ? "Saving…" : "Save"}</button>
           <button type="button" disabled={busy || !dirty} onClick={() => set(base)}>Undo changes</button>
