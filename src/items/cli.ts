@@ -20,7 +20,10 @@ import { FROM_CLAUDE_CODE } from "../model/people.ts";
 import type { Git } from "../orchestrator/process.ts";
 import { realGit } from "../orchestrator/process.ts";
 import type { Host } from "../ports/host.ts";
+import { gitRemoteUrl } from "../config/mergeQueue.ts";
 import { DEFAULT_PORT } from "../server/server.ts";
+import { projectInfo, sameProject } from "../server/project.ts";
+import type { ProjectIdentity } from "../server/project.ts";
 import type { ClosedChoice } from "./githubImport.ts";
 import { DEFAULT_COMMENTS, importIssues, isRepoName, reportText } from "./githubImport.ts";
 import type { OnGitHub } from "./githubMove.ts";
@@ -81,6 +84,8 @@ export interface CliDeps {
   ask?: (question: string) => Promise<string>;
   /** Scope Soup's home, whose list of configs is matched against the repository in `cwd`; default from SCOPESOUP_HOME or the install. */
   home?: string | null;
+  /** Replaces `git remote get-url`, for tests. */
+  remoteUrlOf?: (repoPath: string, remote: string) => string;
 }
 
 /** What a verb does, wherever it runs. */
@@ -102,6 +107,8 @@ export interface Setup {
   repo: string;
   remote: string;
   mainBranch: string;
+  /** Which project the found config is, as a server says it in `/api/health`; null without a config (then any server is used). */
+  identity: ProjectIdentity | null;
 }
 
 export function loadSetup(deps: CliDeps, configPath: string | undefined): Setup {
@@ -118,7 +125,11 @@ export function loadSetup(deps: CliDeps, configPath: string | undefined): Setup 
   } else if (found.ok) throw new Refused(`There is no configuration file ${file}.`);
   const settings = hostSettings(config, deps.env, (path) => resolve(deps.cwd, path));
   if (!settings.meta && !settings.github) throw new Refused(`No item host is configured: ${file} has no \`host\` and neither SCOPESOUP_META_REPO nor SCOPESOUP_GITHUB_REPO is set.`);
-  return { config, settings, repo: config?.repoPath ?? deps.cwd, remote: config?.remote ?? "origin", mainBranch: config?.mainBranch ?? "main" };
+  const identity = config ? projectInfo(config, file, deps.remoteUrlOf ?? gitRemoteUrl) : null;
+  return {
+    config, settings, repo: config?.repoPath ?? deps.cwd, remote: config?.remote ?? "origin", mainBranch: config?.mainBranch ?? "main",
+    identity: identity ? { name: identity.name, repository: identity.repository } : null,
+  };
 }
 
 /** The person's name: the option, the environment, the configuration, git; never a guess. Reading (`show`, `list` without `--mine`) needs none. */
@@ -134,12 +145,15 @@ async function personName(deps: CliDeps, setup: Setup, asked: string | undefined
 
 // --- the server, when it is up ---
 
-async function serverUp(deps: CliDeps, base: string): Promise<boolean> {
+/** Whether a server answers at `base`, and which project it says it serves (absent when it does not say). */
+async function serverAt(deps: CliDeps, base: string): Promise<{ project?: ProjectIdentity | null } | null> {
   try {
     const response = await (deps.fetch ?? fetch)(`${base}/api/health`, { signal: AbortSignal.timeout(1500) });
-    return response.ok;
+    if (!response.ok) return null;
+    const body = (await response.json().catch(() => null)) as { project?: ProjectIdentity | null } | null;
+    return { project: body?.project ?? null };
   } catch {
-    return false;
+    return null;
   }
 }
 
@@ -211,12 +225,17 @@ async function open(deps: CliDeps, setup: Setup, values: { as?: string; server?:
     const who = await personName(deps, setup, values.as, reading);
     if (!values["no-server"]) {
       const base = (values.server ?? deps.env.SCOPESOUP_URL ?? `http://127.0.0.1:${deps.env.SCOPESOUP_PORT ?? DEFAULT_PORT}`).replace(/\/+$/, "");
-      if (await serverUp(deps, base)) return { doer: serverDoer(deps, base, who), via: `the Scope Soup server at ${base}`, kind: "metaBranch" };
+      const server = await serverAt(deps, base);
+      if (server) {
+        if (!setup.identity || sameProject(setup.identity, server.project ?? null)) return { doer: serverDoer(deps, base, who), via: `the Scope Soup server at ${base}`, kind: "metaBranch" };
+        const theirs = server.project ? `${server.project.name} (${server.project.repository ?? "no repository"})` : "no project";
+        deps.err(`The Scope Soup server at ${base} serves ${theirs}, not ${setup.identity.name} (${setup.identity.repository ?? "no repository"}): not used; going to the meta ref.`);
+      }
     }
     const host = (deps.makeHosts ?? ((settings, env) => createHosts(settings, env, () => undefined)))({ from: setup.settings.from, meta, machine: setup.settings.machine }, deps.env)[0];
     if (!host?.work) throw new Refused("The meta host cannot be read.");
     const backend: Backend = { kind: "metaBranch", host: host.info.id, ...(host.info.machine ? { machine: host.info.machine } : {}), who, work: host.work, write: host.write ?? {}, now, mainBranch: setup.mainBranch, branches: branchesOf(deps, setup) };
-    return { doer: hostDoer(backend, host), via: "the meta ref (the server is not running)", kind: "metaBranch" };
+    return { doer: hostDoer(backend, host), via: "the meta ref (no server for this project)", kind: "metaBranch" };
   }
   const github = setup.settings.github;
   if (!github) throw new Refused("No item host is configured.");
