@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { HeldStorage } from "../web/src/heldAnswers.ts";
-import { answerText, clearHeld, dropOther, heldCount, heldKey, loadHeld, pick, pickOther, saveHeld } from "../web/src/heldAnswers.ts";
+import { answerText, clearHeld, dropOther, heldCount, isAnswered, heldKey, loadHeld, pick, pickOther, saveHeld } from "../web/src/heldAnswers.ts";
 
 function memory(): HeldStorage & { data: Map<string, string> } {
   const data = new Map<string, string>();
@@ -57,4 +57,19 @@ test("the answer sent: the option as given, an Other text as written, nothing wh
   assert.equal(answerText({ picked: [], other: "Round to the nearest 5 cm, as the harbour master asks." }, OPTIONS), "Round to the nearest 5 cm, as the harbour master asks.");
   assert.equal(answerText({ picked: [], other: "   " }, OPTIONS), "");
   assert.equal(answerText(undefined, OPTIONS), "");
+});
+
+test("a question with nothing ticked and Other empty is not answered, a multi-select one included", () => {
+  assert.equal(isAnswered(undefined, OPTIONS), false);
+  assert.equal(isAnswered({ picked: [], other: null }, OPTIONS), false);
+  // "Other" ticked but empty or blank, or every pick unticked again.
+  assert.equal(isAnswered(pickOther(undefined, "", true), OPTIONS), false);
+  assert.equal(isAnswered(pickOther(undefined, "  ", true), OPTIONS), false);
+  assert.equal(isAnswered(pick(pick(undefined, "up", true), "up", true), OPTIONS), false);
+  // A pick of an option no longer asked is not an answer either.
+  assert.equal(isAnswered({ picked: ["gone"], other: null }, OPTIONS), false);
+  assert.equal(isAnswered(pick(undefined, "up", true), OPTIONS), true);
+  assert.equal(isAnswered(dropOther(pickOther(pick(undefined, "up", true), "words", true)), OPTIONS), true);
+  assert.equal(isAnswered(pickOther(undefined, "Fathoms", true), OPTIONS), true);
+  assert.equal(answerText(pickOther(undefined, "", true), OPTIONS), "");
 });
