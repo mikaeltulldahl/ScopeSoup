@@ -5,7 +5,8 @@ import type { BoardView } from "./api.ts";
 import { useNow } from "./api.ts";
 import { ago } from "./format.ts";
 
-const USERS: Record<string, string> = { triage: "triage", implement: "implement", review: "review", check: "the check" };
+const USERS: Record<string, string> = { triage: "triage", implement: "implementing", review: "reviewing", check: "the check" };
+const and = (words: string[]): string => (words.length < 2 ? words.join("") : `${words.slice(0, -1).join(", ")} and ${words[words.length - 1]}`);
 
 const clock = (iso: string): string => new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
 
@@ -20,7 +21,7 @@ export function Resources({ resources }: { resources: NonNullable<BoardView["res
             {resource.name} <span class="muted num">{resource.held.length} of {resource.units} in use</span>
           </h4>
           <p class="muted">
-            {resource.shared ? "Shared by every machine" : "This machine's"}; needed by {resource.neededBy.map((user) => USERS[user] ?? user).join(", ")}
+            {resource.shared ? "Shared by every machine" : "This machine's"}; needed for {and(resource.neededBy.map((user) => USERS[user] ?? user))}
           </p>
           <ul>
             {resource.held.map((held) => (

@@ -63,7 +63,7 @@ test("an Item that waits for a paused triage says so, not that it waits for a sl
   assert.equal(turnWith(snap, 1, ["demo:work:1"]).reason, "ready; waiting for a free agent slot");
 });
 
-test("a ready Item whose next step is implement says so when implementors are paused", () => {
+test("a ready Item whose next step is implement says only \"ready\" when no implementor takes it (paused, or below level 2)", () => {
   const snap = snapshot({ works: [work(1), work(2)] });
   const paused = { ...snap, implement: "paused" as const };
   const turnWith = (s: Snapshot, id: number, notTriaged: string[]) => {
@@ -72,10 +72,10 @@ test("a ready Item whose next step is implement says so when implementors are pa
     const found = assess(situate(item, index), turnContext(index, now, new Set(notTriaged)));
     return { ...found.turn, tone: found.tone };
   };
-  const words = "ready, but implementors are paused (Resume on In progress)";
+  const words = "ready";
   const triaged = turnWith(paused, 2, ["demo:work:1"]);
   assert.equal(triaged.reason, words);
-  assert.equal(triaged.tone, "blocked");
+  assert.equal(triaged.tone, "waiting");
   assert.equal(triaged.actor, "nobody");
   // One still to triage waits for triage, which runs; implementors do not matter yet.
   assert.equal(turnWith(paused, 1, ["demo:work:1"]).reason, "ready; waiting for a free agent slot");
@@ -347,4 +347,10 @@ test("a question is in every person's Your turn until someone answers it, even o
   const answered = snapshot({ works: [work(1), work(2, { log: [handback] }), work(3, { holder: { actor: bob, until: far } })] });
   const after = assessAll(buildIndex(answered), now);
   for (const person of ["alice", "bob", "carol"]) assert.deepEqual(yourTurn(after, { person }).map((each) => each.situation.item.ref.id).filter((id) => id !== "3"), [], person);
+});
+
+test("below level 2 a triaged Item is only \"ready\", never waiting for a slot", () => {
+  const snap = snapshot({ works: [work(1)] });
+  for (const level of [0, 1]) assert.equal(turnOf({ ...snap, level }, 1).reason, "ready");
+  assert.equal(turnOf({ ...snap, level: 2 }, 1).reason, "ready; waiting for a free agent slot");
 });
