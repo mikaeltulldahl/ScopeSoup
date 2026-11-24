@@ -5,7 +5,7 @@ import { HANDBACK_LABEL, holdStands, ITEM_BRANCH_PREFIX } from "../model/people.
 import { refKey } from "../model/types.ts";
 import { batchProgress } from "./estimates.ts";
 import type { Self } from "./holdings.ts";
-import { holdDetails, isSelfPerson } from "./holdings.ts";
+import { actorParts, holdDetails, isSelfPerson } from "./holdings.ts";
 import type { Situation } from "./lanes.ts";
 import { currentVerdicts, isApproved, isLive, openBlockers, situate } from "./lanes.ts";
 import type { Index } from "./snapshot.ts";
@@ -104,7 +104,7 @@ function batchName(ref: Ref): string {
   return `batch ${ref.id}`;
 }
 
-type Draft = { actor: TurnActor; reason: string; tone: Tone; since?: string; person?: Actor };
+type Draft = { actor: TurnActor; reason: string; waits?: string; tone: Tone; since?: string; person?: Actor };
 
 /**
  * The person an item is with now, if any: a person who holds it, else the person whose hand-back is its newest revision
@@ -134,6 +134,7 @@ function heldTurn(item: WorkItem, ctx: TurnContext): Draft {
     const touched = [...(item.log ?? [])].pop()?.at ?? item.updatedAt;
     return {
       actor: "person", person: holder.actor, tone: "yours", ...(details?.since ? { since: details.since } : {}),
+      waits: `held by ${actorParts(holder.actor).who}`,
       reason: `held by ${holder.actor.name}; Scope Soup leaves it alone until they hand it back or release it${details?.quiet ? `. Quiet: nothing written for ${since(touched, ctx.now)}` : ""}`,
     };
   }
@@ -163,7 +164,7 @@ function umbrellaTurn(item: WorkItem): Draft {
 
 function allPartsDoneTurn(item: WorkItem): Draft {
   const total = item.children ?? 0;
-  return { actor: "anyone", tone: "yours", reason: `Close it if nothing is left: all ${total} sub-item${total === 1 ? " is" : "s are"} done` };
+  return { actor: "anyone", tone: "yours", waits: "ready to close", reason: `Close it if nothing is left: all ${total} sub-item${total === 1 ? " is" : "s are"} done` };
 }
 
 function backlogTurn(situation: Situation, ctx: TurnContext): Draft {
@@ -260,19 +261,20 @@ function parkedTurn(parked: Parked, situation: Situation): Draft {
   const person = parked.as === "needs-decision" || parked.as === "not-ready" ? undefined : personOf(situation);
   const base = { ...(person ? { actor: "person" as const, person } : { actor: "anyone" as const }), tone: "yours" as const, since: parked.at };
   if (parked.as === "needs-decision") {
-    if (parked.proposal) return { ...base, reason: `Accept, edit or reject the proposed split: ${parked.proposal.reason}` };
+    const count = (n: number): string => `${n} question${n === 1 ? "" : "s"}`;
+    if (parked.proposal) return { ...base, waits: "a split to accept", reason: `Accept, edit or reject the proposed split: ${parked.proposal.reason}` };
     const open = (parked.questions ?? []).filter((question) => question.answer === undefined);
-    if ((parked.questions ?? []).length > 0) return { ...base, reason: `Answer ${open.length} of ${parked.questions!.length} questions: ${(open[0] ?? parked.questions![0]!).question}` };
-    if (parked.decision && parked.decision.options.length > 0) return { ...base, reason: `Pick an option: ${parked.decision.question}` };
-    return { ...base, reason: `Answer the question: ${parked.decision?.question ?? parked.reason}` };
+    if ((parked.questions ?? []).length > 0) return { ...base, waits: open.length === 0 && parked.refine ? "a draft to accept" : count(open.length), reason: `Answer ${open.length} of ${parked.questions!.length} questions: ${(open[0] ?? parked.questions![0]!).question}` };
+    if (parked.decision && parked.decision.options.length > 0) return { ...base, waits: "1 question", reason: `Pick an option: ${parked.decision.question}` };
+    return { ...base, waits: parked.refine ? "a draft to accept" : "1 question", reason: `Answer the question: ${parked.decision?.question ?? parked.reason}` };
   }
   if (parked.as === "handed-over") {
     const { change, item } = situation;
     const what = change ? `Merge pull request ${change.ref.id}` : `Merge branch ${ITEM_BRANCH_PREFIX}${item.ref.id}`;
-    return { ...base, reason: `${what}: handed over to you. ${parked.reason}` };
+    return { ...base, waits: "to merge", reason: `${what}: handed over to you. ${parked.reason}` };
   }
-  if (parked.as === "not-ready") return { ...base, reason: `Answer or edit the item so it can start: ${parked.reason}` };
-  return { ...base, reason: `Look at it and decide what next: the agents gave up. ${parked.reason}` };
+  if (parked.as === "not-ready") return { ...base, waits: "not ready", reason: `Answer or edit the item so it can start: ${parked.reason}` };
+  return { ...base, waits: "escalated", reason: `Look at it and decide what next: the agents gave up. ${parked.reason}` };
 }
 
 
@@ -289,7 +291,7 @@ function draft(situation: Situation, ctx: TurnContext): Draft {
     if ((item.children ?? 0) > 0) return allPartsDoneTurn(item);
   }
   if (parked && parked.as !== "queued") return parkedTurn(parked, situation);
-  if (item.needsDecision) return { actor: "anyone", tone: "yours", reason: "Answer the question: the item needs a decision" };
+  if (item.needsDecision) return { actor: "anyone", tone: "yours", waits: "1 question", reason: "Answer the question: the item needs a decision" };
   if (lane === "backlog" || lane === "blocked") return backlogTurn(situation, ctx);
   if (lane === "in-progress" || !change) return progressTurn(situation, ctx);
   if (lane === "in-review") return reviewTurn(situation, change, ctx);
@@ -304,6 +306,7 @@ export function assess(situation: Situation, ctx: TurnContext): Assessment {
     actor: result.actor,
     ...(result.person ? { person: result.person } : {}),
     reason: result.reason,
+    ...(result.waits ? { waits: result.waits } : {}),
     since: result.since ?? situation.item.updatedAt,
     unblocks: ctx.unblocks.get(refKey(situation.item.ref)) ?? 0,
   };

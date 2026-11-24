@@ -433,10 +433,6 @@ ul.md-list ul.md-list { list-style: circle; }
 .usage-table .num { text-align: right; white-space: nowrap; }
 .usage-dot { display: inline-block; width: 0.7em; height: 0.7em; border-radius: 2px; }
 .usage-methods { font-size: 0.8rem; }
-.holdings h4 { font-size: 0.9rem; margin: 6px 0 2px; }
-.holdings ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
-.holdings li { overflow-wrap: anywhere; }
-.holdings .mergeQueue { font-weight: 600; }
 .resources h4 { font-size: 0.9rem; margin: 6px 0 2px; }
 .resources p { margin: 0; }
 .resources ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
@@ -509,10 +505,8 @@ body.dialog-open { overflow: hidden; }
 }
 
 /* --- decisions implementors took themselves --- */
-main > .decisions-panel, .decisions-panel { max-width: none; margin: 0 0 var(--gap); }
 .decision p { margin: 0; overflow-wrap: anywhere; }
 .decision-settled { opacity: 0.85; }
-.decision-item { font-size: 0.87rem; }
 .decision-overturn { display: grid; gap: 6px; }
 .decision-overturn label { display: grid; gap: 4px; }
 .decision-overturn textarea { font: inherit; width: 100%; box-sizing: border-box; padding: 8px 10px; border-radius: 6px; border: 1px solid var(--line); background: var(--surface); color: var(--text); resize: vertical; }

@@ -77,11 +77,13 @@ export function Card({ card, showLane = false }: { card: CardView; showLane?: bo
         <span class="ref num">{card.label}</span>
         <span class="card-title">{card.title}</span>
       </div>
-      <p class={card.tone === "done" ? "reason epitaph" : "reason"}>{card.reason}</p>
+      <p class={card.tone === "done" ? "reason epitaph" : "reason"}>{showLane && card.waits ? card.waits : card.reason}</p>
       {card.why && <p class="why">{card.why}</p>}
       <div class="tags">
         {actorWords(card) && <span class={`tag ${actorClass(card)}`}>{actorWords(card)}</span>}
         {showLane && <span class="tag">{laneLabel(card.lane)}</span>}
+        {card.heldBy && !showLane && !card.reason.includes(`held by ${card.heldBy}`) && <span class="tag">held by {card.heldBy}</span>}
+        {card.openDecisions && <span class="tag tag-decisions">{card.openDecisions} {card.openDecisions === 1 ? "decision" : "decisions"} to look at</span>}
         {unsent && <span class="tag">{unsent}</span>}
         {card.session && <SessionChip session={card.session} />}
         {running && theme.sessionBadge && <span class="tag tag-flair">{fill(theme.sessionBadge, { n: card.session!.attempt })}</span>}

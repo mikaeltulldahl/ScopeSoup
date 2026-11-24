@@ -1025,7 +1025,7 @@ function Body({ page, reload }: { page: ItemPage; reload: () => void }) {
         <section class="panel">
           <h3>Decided by the implementor</h3>
           <p class="muted">Cheap to change later, so the work went on. Pick Accept, or Overturn with your decision, for each (the arrows go to the others); nothing is recorded until you press Send.</p>
-          <Assumptions list={page.assumptions} now={now} showItem={false} canSettle={() => page.canSettle === true} onDone={reload} />
+          <Assumptions list={page.assumptions} now={now} canSettle={() => page.canSettle === true} onDone={reload} />
         </section>
       )}
 
@@ -1103,6 +1103,7 @@ function Body({ page, reload }: { page: ItemPage; reload: () => void }) {
                 {item.holder.since ? `, since ${ago(item.holder.since, now)}` : ""}
                 {item.holder.from ? ` (${fromWords(item.holder.from)})` : ""}
                 {item.holder.quiet && <span class="tag tag-blocked">quiet for a while: ask, or release it</span>}
+                {item.holder.actor.bot && item.holder.until && Date.parse(item.holder.until) <= now && <span class="tag tag-blocked">claim ran out</span>}
               </dd>
             </>
           )}

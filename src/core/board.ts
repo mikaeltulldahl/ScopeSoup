@@ -23,11 +23,6 @@ export function itemLink(ref: Ref, index: Index): ItemLink {
   return { ref, key: refKey(ref), label: refLabel(ref), title: index.work.get(refKey(ref))?.title ?? "(not synced)" };
 }
 
-/** How long a settled decision stays in the board's list. */
-export const SETTLED_SHOWN_MS = 7 * 24 * 3600_000;
-/** The most decisions the board's list carries. */
-export const ASSUMPTIONS_SHOWN = 30;
-
 /** An item's decisions as views, newest first. */
 export function assumptionViews(item: WorkItem, index: Index): AssumptionView[] {
   return (item.assumptions ?? [])
@@ -36,16 +31,6 @@ export function assumptionViews(item: WorkItem, index: Index): AssumptionView[] 
 }
 
 const newestFirst = (a: AssumptionView, b: AssumptionView): number => Date.parse(b.at) - Date.parse(a.at) || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0);
-
-/** The board's list: every open decision and those settled within `SETTLED_SHOWN_MS`, newest first. */
-export function recentAssumptions(index: Index, now: Date): AssumptionView[] {
-  const since = now.getTime() - SETTLED_SHOWN_MS;
-  return [...index.work.values()]
-    .flatMap((item) => assumptionViews(item, index))
-    .filter((each) => !each.settled || Date.parse(each.settled.at) >= since)
-    .sort(newestFirst)
-    .slice(0, ASSUMPTIONS_SHOWN);
-}
 
 export function changeLink(change: Change): ChangeLink {
   const link: ChangeLink = { ref: change.ref, label: refLabel(change.ref), title: change.title, draft: change.draft };
@@ -85,11 +70,15 @@ export function cardView(assessment: Assessment, parkedFor?: Map<string, Parked>
     lane: situation.lane as Lane,
     actor: turn.actor,
     reason: turn.reason,
+    ...(turn.waits ? { waits: turn.waits } : {}),
     tone,
     since: turn.since,
     unblocks: turn.unblocks ?? 0,
     needsDecision: item.needsDecision === true,
   };
+  if (item.holder) card.heldBy = item.holder.actor.bot ? item.holder.actor.name : actorParts(item.holder.actor).who;
+  const decisions = (item.assumptions ?? []).filter((each) => !each.settled).length;
+  if (decisions > 0) card.openDecisions = decisions;
   if (item.priority) card.priority = item.priority;
   if (item.ref.url) card.url = item.ref.url;
   if (change) card.change = changeLink(change);
@@ -229,6 +218,5 @@ export function buildBoard(snapshot: Snapshot, now: Date, backlogOrder?: string[
     yourTurn: yourTurn(cards, self).map(strip),
     queue,
     status: buildStatusLine(index, queue, now),
-    assumptions: recentAssumptions(index, now),
   };
 }

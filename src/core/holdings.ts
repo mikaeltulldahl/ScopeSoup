@@ -1,11 +1,8 @@
-// Who holds what: the items others hold, by machine and by person, as far as the items' logs tell.
-// Pure. The server adds which machine and person this board belongs to, and what it last saw of the
-// merge queue lease.
+// Who holds an item: a hold's details (since when, from where, quiet) and which person is this board's own.
+// Pure.
 
-import type { Actor, LogRecord, WorkItem } from "../model/types.ts";
-import { refKey } from "../model/types.ts";
-import type { HeldItem, HolderGroup, HoldingsView, MachineView } from "./views.ts";
-import { ms, refLabel } from "./snapshot.ts";
+import type { Actor, WorkItem } from "../model/types.ts";
+import { ms } from "./snapshot.ts";
 
 /** The machine and the person this board belongs to. */
 export interface Self {
@@ -39,8 +36,6 @@ export function holdDetails(item: WorkItem, now: Date): HoldDetails | undefined 
   };
 }
 
-const open = (item: WorkItem): boolean => item.state !== "done" && item.state !== "abandoned";
-
 /** `who@machine` as the meta branch host writes it, or a bare name. */
 export function actorParts(actor: Actor): { who: string; machine?: string } {
   const at = actor.id.lastIndexOf("@");
@@ -54,63 +49,4 @@ export function actorParts(actor: Actor): { who: string; machine?: string } {
 export function isSelfPerson(actor: Actor, self: Self | undefined): boolean {
   if (!self?.person || actor.bot) return false;
   return actorParts(actor).who === self.person;
-}
-
-const clip = (text: string, chars: number): string => (text.length > chars ? `${text.slice(0, chars - 1)}…` : text);
-
-/** The newest session line of the item's log in words: what another machine's session did, as the log tells it. */
-function lastSession(log: readonly LogRecord[]): HeldItem["last"] | undefined {
-  const line = [...log].reverse().find((each) => each.kind === "session");
-  if (!line) return undefined;
-  const role = typeof line.fields.role === "string" ? line.fields.role : "session";
-  const outcome = typeof line.fields.outcome === "string" ? line.fields.outcome : "";
-  const summary = typeof line.fields.summary === "string" ? line.fields.summary.trim() : "";
-  return { at: line.at, words: clip(`${role}${outcome ? ` ${outcome}` : ""}${summary ? `: ${summary}` : ""}`, 200), ...(line.by.machine ? { machine: line.by.machine } : {}) };
-}
-
-export function buildHoldings(works: readonly WorkItem[], now: Date, self: Self | undefined): HoldingsView {
-  const groups = new Map<string, HolderGroup>();
-  for (const item of works) {
-    if (!open(item) || !item.holder) continue;
-    const { actor, until } = item.holder;
-    const parts = actorParts(actor);
-    const person = !actor.bot;
-    const mine = person ? isSelfPerson(actor, self) : self?.machine !== undefined && parts.machine === self.machine;
-    const log = item.log ?? [];
-    const details = holdDetails(item, now) ?? { quiet: false };
-    // A person's hold has no end (no stall timer); the far `until` it is written with is not shown.
-    const expired = !person && until !== undefined && (ms(until) ?? Infinity) <= now.getTime();
-    const held: HeldItem = {
-      key: refKey(item.ref), label: refLabel(item.ref), title: item.title,
-      ...(details.since ? { since: details.since } : {}), ...(until && !person ? { until } : {}), expired, quiet: details.quiet,
-      ...(details.from ? { from: details.from } : {}),
-    };
-    const last = lastSession(log);
-    if (last) held.last = last;
-    const group = groups.get(actor.id) ?? { id: actor.id, who: parts.who, ...(parts.machine ? { machine: parts.machine } : {}), person, mine, items: [] };
-    group.items.push(held);
-    groups.set(actor.id, group);
-  }
-  const ordered = [...groups.values()].sort((a, b) => Number(b.mine) - Number(a.mine) || Number(b.person) - Number(a.person) || a.id.localeCompare(b.id));
-  return { now: now.toISOString(), ...(self ? { self } : {}), groups: ordered, machines: machines(works, now, self) };
-}
-
-/** Every machine that has written a line to an item's log, and when it last did. */
-function machines(works: readonly WorkItem[], now: Date, self: Self | undefined): MachineView[] {
-  const seen = new Map<string, MachineView>();
-  for (const item of works) {
-    for (const line of item.log ?? []) {
-      const name = line.by.machine;
-      if (!name) continue;
-      const entry = seen.get(name) ?? { name, mine: self?.machine === name, lastAt: line.at, holding: 0 };
-      if (line.at > entry.lastAt) entry.lastAt = line.at;
-      seen.set(name, entry);
-    }
-  }
-  for (const item of works) {
-    const name = open(item) && item.holder ? actorParts(item.holder.actor).machine : undefined;
-    const entry = name ? seen.get(name) : undefined;
-    if (entry) entry.holding++;
-  }
-  return [...seen.values()].sort((a, b) => Number(b.mine) - Number(a.mine) || a.name.localeCompare(b.name)).map((entry) => ({ ...entry, quietFor: Math.max(0, now.getTime() - (ms(entry.lastAt) ?? now.getTime())) }));
 }

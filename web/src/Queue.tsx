@@ -71,6 +71,12 @@ function Health({ health }: { health: NonNullable<BoardView["queue"]["health"]> 
   );
 }
 
+/** Only one machine merges at a time: which one, as this machine last saw it. */
+function MergeLease({ lease }: { lease: NonNullable<BoardView["queue"]["mergeQueue"]> }) {
+  const until = lease.until && lease.holder !== null ? `, until ${new Date(lease.until).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false })}` : "";
+  return <p class="merge-queue">Merges: {lease.holder === null ? "nobody at the moment" : lease.mine ? "this machine" : lease.holder}{until}</p>;
+}
+
 export function Queue({ board }: { board: BoardView }) {
   const now = useNow();
   const { batches, forming, waiting, recent } = board.queue;
@@ -78,6 +84,7 @@ export function Queue({ board }: { board: BoardView }) {
   return (
     <div class="queue">
       {board.queue.health && <Health health={board.queue.health} />}
+      {board.queue.mergeQueue && <MergeLease lease={board.queue.mergeQueue} />}
       {empty && <p class="empty">The queue is empty.</p>}
       {batches.length > 0 && (
         <section>
