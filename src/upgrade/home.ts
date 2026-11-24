@@ -3,6 +3,7 @@
 //
 //   <home>/
 //     bin/scopesoup.cmd, bin/scopesoup   the launcher: runs the version `current` names. The person adds bin/ to their PATH.
+//     node/node.exe                the Node the Windows .exe brought (src/exe/setup.ts), used when the PATH has no Node 22.18+
 //     current                      one line: the folder of the version that runs (`scopesoup-0.5.0`)
 //     upgrade.json                 the last switch: from, to, when, whether the new version started, the backup
 //     scopesoup-0.5.0/                a release, unpacked as it came
@@ -18,6 +19,10 @@ import { RESTART_EXIT_CODE, compareVersions, folderOf, versionOf, versionOfFolde
 const NODE_FLAGS = "--disable-warning=ExperimentalWarning";
 export const POINTER = "current";
 export const STATE = "upgrade.json";
+/** The folder of the bundled Node in the home, as src/exe/setup.ts writes it (`NODE_DIR`). */
+export const BUNDLED_NODE = "node";
+/** Exits 0 when the Node that runs it can run Scope Soup (22.18 or newer); the launchers ask the `node` on the PATH. No quotes inside. */
+export const NODE_CHECK = "const [a,b]=process.versions.node.split('.').map(Number);process.exit(a>22||(a===22&&b>=18)?0:1)";
 /** How long a new version must have run before the folder of the one before it is deleted (the upgrade policy). */
 export const CLEAN_DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -169,6 +174,10 @@ export function launcherCmd(): string {
     "setlocal",
     "set \"SCOPESOUP_HOME=%~dp0..\"",
     "set \"SCOPESOUP_LAUNCHER=1\"",
+    "rem With no Node 22.18 or newer on the PATH, the Node the .exe put in the home is used (only in this window).",
+    `if not exist "%SCOPESOUP_HOME%\\${BUNDLED_NODE}\\node.exe" goto run`,
+    `node -e "${NODE_CHECK}" >nul 2>nul && goto run`,
+    `set "PATH=%SCOPESOUP_HOME%\\${BUNDLED_NODE};%PATH%"`,
     ":run",
     "set \"SCOPESOUP_CURRENT=\"",
     "set /p SCOPESOUP_CURRENT=<\"%SCOPESOUP_HOME%\\current\"",
@@ -193,6 +202,8 @@ export function launcherSh(): string {
     "SCOPESOUP_HOME=\"$(cd \"$(dirname \"$0\")/..\" && pwd)\"",
     "SCOPESOUP_LAUNCHER=1",
     "export SCOPESOUP_HOME SCOPESOUP_LAUNCHER",
+    "# With no Node 22.18 or newer on the PATH, the Node the .exe put in the home is used (only for this process).",
+    `if [ -f "$SCOPESOUP_HOME/${BUNDLED_NODE}/node.exe" ] && ! node -e "${NODE_CHECK}" >/dev/null 2>&1; then PATH="$SCOPESOUP_HOME/${BUNDLED_NODE}:$PATH"; export PATH; fi`,
     "while :; do",
     "  current=\"$(head -n 1 \"$SCOPESOUP_HOME/current\" 2>/dev/null | tr -d '\\r')\"",
     "  if [ -z \"$current\" ]; then echo \"No Scope Soup version is named in $SCOPESOUP_HOME/current.\" >&2; exit 1; fi",
