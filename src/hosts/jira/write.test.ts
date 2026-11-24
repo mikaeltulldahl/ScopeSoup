@@ -2,32 +2,9 @@
 
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
-import type { Ref } from "../../model/types.ts";
 import { BodyChanged, TooLarge } from "../../ports/host.ts";
-import { createJiraHost } from "./adapter.ts";
-import type { Deployment } from "./client.ts";
-import { FAKE_DC_SITE, FAKE_SITE, fakeJira } from "./fakeJira.ts";
-import { CLOUD_EMAIL, CLOUD_ROBIN, CLOUD_SCOPESOUP, cloudIssues, DC_ROBIN, dcIssues, TOKEN } from "./fixtures.ts";
-import type { JiraUser } from "./rest.ts";
-
-export const DC_SCOPESOUP: JiraUser = { name: "scopesoup", key: "JIRAUSER10001", displayName: "Scope Soup Bot" };
-
-export function writable(deployment: Deployment, more: { commentLimit?: number; conventions?: boolean; clock?: { ms: number }; transitions?: Record<string, string> } = {}) {
-  const cloud = deployment === "cloud";
-  const clock = more.clock ?? { ms: Date.parse("2026-11-21T09:00:00Z") };
-  const fake = fakeJira({
-    deployment, token: TOKEN, ...(cloud ? { email: CLOUD_EMAIL } : {}), user: cloud ? CLOUD_SCOPESOUP : DC_SCOPESOUP, people: [cloud ? CLOUD_ROBIN : DC_ROBIN],
-    issues: cloud ? cloudIssues() : dcIssues(), now: () => (clock.ms += 1000), ...(more.commentLimit ? { commentLimit: more.commentLimit } : {}),
-  });
-  const host = createJiraHost({
-    site: cloud ? FAKE_SITE : FAKE_DC_SITE, project: "DEMO", deployment, token: TOKEN, ...(cloud ? { email: CLOUD_EMAIL } : {}),
-    fetchImpl: fake.fetch, now: () => clock.ms, sleep: async () => {}, allowWrites: true, conventions: more.conventions ?? true, machine: "laptop-a",
-    ...(more.commentLimit ? { commentLimit: more.commentLimit } : {}), ...(more.transitions ? { transitions: more.transitions } : {}),
-  });
-  const write = host.write!;
-  const ref = (id: string): Ref => ({ host: "jira", kind: "work", id });
-  return { fake, host, write, ref, clock, person: cloud ? CLOUD_ROBIN : DC_ROBIN };
-}
+import { FAKE_DC_SITE, FAKE_SITE } from "./fakeJira.ts";
+import { writable } from "./testHost.ts";
 
 for (const deployment of ["cloud", "datacenter"] as const) {
   const cloud = deployment === "cloud";

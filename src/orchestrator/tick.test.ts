@@ -34,6 +34,7 @@ import { tick } from "./tick.ts";
 import { overturnIntoWork, overturnsFor, takesOverturn } from "./overturns.ts";
 import { syncHost } from "../sync/syncHost.ts";
 import { createHostActions } from "./hostActions.ts";
+import { writable } from "../hosts/jira/testHost.ts";
 import { createGitHubHost } from "../hosts/github/adapter.ts";
 import { fakeIssues, ISSUES_API } from "../hosts/github/fakeIssues.ts";
 import { readMarker } from "../hosts/github/conventions.ts";
@@ -3991,4 +3992,68 @@ test("on GitHub the other Item's draft and question are posted there, the agent'
   const parked = loadJobs(w.store)[ghKey("2")]?.parked;
   assert.equal(parked?.as, "needs-decision");
   assert.equal(parked?.draft?.questions.length, 1);
+});
+
+// --- a Jira project at level 2, end to end against the fake Jira: every host action is the real one ---
+
+test("Jira at level 2: claimed in a property, a question comment answered by a person's A1: reply, implemented, merged and closed on Jira", async () => {
+  const w = world(config({ level: 2, ...MERGES }));
+  // The fake Jira and the host keep the world's clock.
+  const jira = writable("cloud", { clock: w.clock });
+  const made = await jira.write.createWork!({ title: "Tide table in metres", body: "Show metres.", verification: "The table says m." });
+  w.store.put((await jira.host.work.getWork(made.work))!, "sync", new Date(w.clock.ms).toISOString());
+  w.queue = fakeQueue();
+  w.store.addUsageSample(usage(0.1, 0.1));
+  const deps = w.depsFor();
+  deps.actions = createHostActions({ host: jira.host, git: async () => ({ code: 0, stdout: "", stderr: "" }), config: () => config({ level: 2, ...MERGES }), store: w.store });
+  const key = refKey(made.work);
+  const sync = async (): Promise<void> => {
+    const item = await jira.host.work.getWork(made.work);
+    if (item) w.store.put(item, "sync", new Date(w.clock.ms).toISOString());
+  };
+  const claimOf = () => jira.fake.issueProperties[made.work.id]?.["scopesoup.claim"] as { claims: { machine: string }[] } | undefined;
+
+  await tick(deps);
+  assert.deepEqual(roles(w), ["triage"]);
+  assert.deepEqual(claimOf()?.claims.map((each) => each.machine), ["laptop-a"]);
+  assert.equal(w.store.get<WorkItem>(made.work)?.holder?.actor.id, "scopesoup@laptop-a");
+
+  // The triage asks: one question comment with its property, and the needs-decision label.
+  w.runner.end(made.work.id, "succeeded", { ...TRIAGE_OK, hidesDecision: true, decision: { question: "Round up or down?", options: ["up", "down"], recommendation: "down" } });
+  await tick(deps);
+  assert.equal(loadJobs(w.store)[key]?.parked?.as, "needs-decision");
+  const comments = jira.fake.comments[made.work.id] ?? [];
+  assert.equal(comments.length, 1);
+  assert.equal((jira.fake.commentProperties[comments[0]!.id]?.scopesoup as { kind: string }).kind, "question");
+  assert.ok(jira.fake.issues.get(made.work.id)!.fields.labels?.includes("scopesoup-needs-decision"));
+
+  // A person answers on Jira itself; the next sync reads it and the triage runs again with the answer.
+  jira.fake.comments[made.work.id]!.push({ id: "99001", author: jira.person, created: "2026-11-18T10:05:00.000+0000", body: { version: 1, type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "A1: down" }] }] } });
+  await sync();
+  await tick(deps);
+  assert.equal(loadJobs(w.store)[key]?.parked, undefined);
+  assert.deepEqual(roles(w), ["triage", "triage"]);
+  assert.equal(jira.fake.issues.get(made.work.id)!.fields.labels?.includes("scopesoup-needs-decision"), false);
+
+  // Ready now: implemented, merged by the session at level 2, and closed on Jira with the merged property.
+  const next = async (output: unknown): Promise<void> => {
+    w.runner.end(made.work.id, "succeeded", output);
+    await tick(deps);
+    w.clock.ms += 1000;
+    await tick(deps);
+  };
+  await next(TRIAGE_OK);
+  assert.deepEqual(roles(w), ["triage", "triage", "implement"]);
+  assert.deepEqual(claimOf()?.claims.map((each) => each.machine), ["laptop-a"]);
+  await next(IMPLEMENT_OK);
+  assert.match(w.reasons("orchestrator.merged")[0] ?? "", /The implementing session merged it/);
+  const closed = jira.fake.issues.get(made.work.id)!;
+  assert.deepEqual([closed.fields.status?.name, closed.fields.resolution?.name], ["Done", "Done"]);
+  const merged = Object.values(jira.fake.commentProperties).map((each) => each.scopesoup as { kind?: string; sha?: string }).find((each) => each?.kind === "merged");
+  assert.equal(merged?.sha, HEAD);
+  // The session lines went to the log property, never a comment.
+  const log = jira.fake.issueProperties[made.work.id]?.["scopesoup.log"] as { lines: { kind: string }[] } | undefined;
+  assert.ok(log?.lines.some((line) => line.kind === "session"), JSON.stringify(log));
+  await sync();
+  assert.equal(w.store.get<WorkItem>(made.work)?.state, "done");
 });
