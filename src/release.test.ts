@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { buildRelease, foreignImports, importsOf } from "./release.ts";
+import { buildRelease, foreignImports, importsOf, releaseScripts } from "./release.ts";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -58,5 +58,22 @@ test("a release without a built web app is refused", () => {
     assert.throws(() => buildRelease({ outDir: join(work, "out"), webDist: join(work, "none") }), /pnpm web:build/);
   } finally {
     rmSync(work, { recursive: true, force: true });
+  }
+});
+
+test("every pnpm script a skill runs in the install exists in a release, and its file does too", () => {
+  const skills = join(ROOT, "plugins", "scopesoup", "skills");
+  const scripts = releaseScripts();
+  const used = new Set<string>();
+  for (const name of readdirSync(skills)) {
+    const file = join(skills, name, "SKILL.md");
+    if (!existsSync(file)) continue;
+    for (const match of readFileSync(file, "utf8").matchAll(/pnpm\s+(?:--silent\s+)?--dir\s+"?SCOPESOUP"?\s+(?:--silent\s+)?([\w:-]+)/g)) used.add(match[1] as string);
+  }
+  assert.ok(used.size >= 5, `found only: ${[...used].join(", ")}`);
+  for (const script of used) {
+    const entry = /(src\/\S+\.ts)/.exec(scripts[script] ?? "")?.[1];
+    assert.ok(entry, `a release has no "${script}" script, but a skill runs it`);
+    assert.ok(existsSync(join(ROOT, entry)), `${script} runs ${entry}, which does not exist`);
   }
 });
