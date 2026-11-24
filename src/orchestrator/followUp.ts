@@ -52,7 +52,7 @@ export function followUpItem(item: WorkItem, should: readonly Finding[], sha: st
     body: [
       `The review of ${name} ("${item.title}") approved its change at ${sha.slice(0, 7)} and said ${should.length === 1 ? "this finding" : "these findings"} should still change:`,
       listed,
-      `${name}'s change went on to be merged without ${should.length === 1 ? "it" : "them"}. This is a small Item: one change that does what the finding${should.length === 1 ? " says" : "s say"}, or a person decides against it.`,
+      `${name}'s change went on to the merge without ${should.length === 1 ? "it" : "them"}. This is a small Item: one change that does what the finding${should.length === 1 ? " says" : "s say"}, or a person decides against it.`,
     ].join("\n\n"),
     verification: `Each finding of the review of ${name} listed above is done, or a person decided against it.`,
     mark: followUpMark(item, sha),
