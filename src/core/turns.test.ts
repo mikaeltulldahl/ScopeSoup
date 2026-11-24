@@ -49,6 +49,20 @@ test("backlog reasons: blocked, sub-items, paused, usage limit, ready", () => {
   assert.equal(turnOf(limited, 1).reason, "ready, but the usage limit is reached; the window resets in 42 min");
 });
 
+test("an Item that waits for a paused triage says so, not that it waits for a slot", () => {
+  const snap = snapshot({ works: [work(1), work(2)] });
+  const paused = { ...snap, triage: "paused" as const };
+  const turnWith = (s: Snapshot, id: number, notTriaged: string[]) => {
+    const item = s.works.find((each) => each.ref.id === String(id))!;
+    const index = buildIndex(s);
+    return assess(situate(item, index), turnContext(index, now, new Set(notTriaged))).turn;
+  };
+  assert.equal(turnWith(paused, 1, ["demo:work:1"]).reason, "ready, but triage is paused (Resume on Backlog)");
+  // One that is already triaged waits for a slot, as does any Item while triage runs.
+  assert.equal(turnWith(paused, 2, ["demo:work:1"]).reason, "ready; waiting for a free agent slot");
+  assert.equal(turnWith(snap, 1, ["demo:work:1"]).reason, "ready; waiting for a free agent slot");
+});
+
 test("an item parked as too large leaves Your turn once split, and says so when all parts are done", () => {
   const parkedList = [{ subject: ref("work", 1), as: "not-ready" as const, reason: "Triage: too large for one change.", at: T0 }];
   const single = snapshot({ works: [work(1)], parked: parkedList });

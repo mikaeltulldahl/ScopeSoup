@@ -8,7 +8,7 @@ import { refKey } from "../model/types.ts";
 import type { SendBackReason } from "../queue/index.ts";
 import { mergeQueueOn, mergeQueueStopped } from "../store/control.ts";
 import type { Context } from "./context.ts";
-import { errorText } from "./context.ts";
+import { createLog, errorText } from "./context.ts";
 import { park, sendBack } from "./cycle.ts";
 import type { Job } from "./jobs.ts";
 import { itemRepository } from "./workspaces.ts";
@@ -233,34 +233,31 @@ interface Delivery {
   reject: (error: unknown) => void;
 }
 
-interface Note {
-  kind: string;
-  reason: string;
-  data?: Record<string, unknown>;
-}
-
 /** One drain of the queue that runs beside the ticks. At most one per queue. */
 interface Run {
   done: boolean;
   promise: Promise<void>;
   deliveries: Delivery[];
-  notes: Note[];
   wake: (() => void) | null;
 }
 
 const runs = new WeakMap<QueueDriver, Run>();
 
 function launch(ctx: Context, queue: QueueDriver, leased: boolean): Run {
-  const run: Run = { done: false, promise: Promise.resolve(), deliveries: [], notes: [], wake: null };
+  const run: Run = { done: false, promise: Promise.resolve(), deliveries: [], wake: null };
   const wake = (): void => {
     run.wake?.();
   };
   // Nothing here writes through the starting tick's `ctx.commit`: its jobs are out of date once the tick is over.
+  // A note is written when it is made, with the time it is made: the log then shows a push before the Stop that came after it,
+  // not after the tick that would have applied it. It carries no job, so it saves none.
+  const write = (kind: string, reason: string, data?: Record<string, unknown>): void => {
+    const at = ctx.deps.now();
+    if (kind === "orchestrator.queue_problem") recordQueueNote(ctx.deps.store, at, "problem", reason);
+    createLog(ctx.deps.store, at, () => null).commit(kind, reason, undefined, data);
+  };
   const sink: QueueSink = {
-    note: (kind, reason, data) => {
-      run.notes.push({ kind, reason, ...(data ? { data } : {}) });
-      wake();
-    },
+    note: (kind, reason, data) => write(kind, reason, data),
     deliver: (notice) => new Promise<void>((resolve, reject) => {
       run.deliveries.push({ notice, resolve, reject });
       wake();
@@ -270,7 +267,7 @@ function launch(ctx: Context, queue: QueueDriver, leased: boolean): Run {
     try {
       await queue.drain(sink);
     } catch (error) {
-      if (!(error instanceof Stopped)) run.notes.push({ kind: "orchestrator.queue_problem", reason: `The queue failed: ${errorText(error)}` });
+      if (!(error instanceof Stopped)) write("orchestrator.queue_problem", `The queue failed: ${errorText(error)}`);
     } finally {
       try {
         if (leased) await giveLease({ ...ctx, at: ctx.deps.now() });
@@ -284,12 +281,8 @@ function launch(ctx: Context, queue: QueueDriver, leased: boolean): Run {
   return run;
 }
 
-/** Writes what the drain noted and applies what it decided, in this tick. After Stop nothing is applied and the drain is ended. */
+/** Applies what the drain decided, in this tick (what it noted is already written). After Stop nothing is applied and the drain is ended. */
 async function pump(ctx: Context, run: Run, stopped: boolean): Promise<void> {
-  for (const note of run.notes.splice(0)) {
-    if (note.kind === "orchestrator.queue_problem") recordQueueNote(ctx.deps.store, ctx.at, "problem", note.reason);
-    ctx.commit(note.kind, note.reason, undefined, note.data);
-  }
   for (let next = run.deliveries.shift(); next; next = run.deliveries.shift()) {
     if (stopped) {
       next.reject(new Stopped());

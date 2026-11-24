@@ -10,6 +10,7 @@ import type { Situation } from "./lanes.ts";
 import { currentVerdicts, isApproved, isLive, openBlockers, situate } from "./lanes.ts";
 import type { Index } from "./snapshot.ts";
 import { durationWords, ms, refLabel } from "./snapshot.ts";
+import { clearWithoutTriage } from "./statedSize.ts";
 
 /** How a card is coloured: is it moving, waiting its turn, stuck, or a person's? */
 export type Tone = "moving" | "waiting" | "blocked" | "yours" | "done";
@@ -26,6 +27,8 @@ export interface TurnContext {
   /** Keys of approved changes waiting for a batch, first in line first. */
   queue: string[];
   unblocks: Map<string, number>;
+  /** Keys of the open Items not triaged yet, when the caller knows them: with triage paused they wait for it, not for a slot. */
+  notTriaged?: ReadonlySet<string>;
 }
 
 function isOpen(item: WorkItem): boolean {
@@ -78,8 +81,8 @@ export function waitingQueue(index: Index): Change[] {
     .sort((a, b) => a.updatedAt.localeCompare(b.updatedAt));
 }
 
-export function turnContext(index: Index, now: Date): TurnContext {
-  return { index, now, queue: waitingQueue(index).map((change) => refKey(change.ref)), unblocks: computeUnblocks(index.snapshot.works) };
+export function turnContext(index: Index, now: Date, notTriaged?: ReadonlySet<string>): TurnContext {
+  return { index, now, queue: waitingQueue(index).map((change) => refKey(change.ref)), unblocks: computeUnblocks(index.snapshot.works), ...(notTriaged ? { notTriaged } : {}) };
 }
 
 function list(words: string[]): string {
@@ -182,6 +185,9 @@ function backlogTurn(situation: Situation, ctx: TurnContext): Draft {
   if (item.holder && holdStands(item.holder, ctx.now.getTime())) return heldTurn(item, ctx);
   if (ctx.index.snapshot.paused) return { actor: "nobody", tone: "blocked", reason: "ready, but agents are paused (Resume on the lanes)" };
   if (ctx.index.snapshot.usage?.status === "rejected") return { actor: "nobody", tone: "blocked", reason: `ready, but the usage limit is reached${resetWords(ctx)}` };
+  // Its next step is the triage and triage is paused: it waits for that switch, not for a slot. (A stated size skips the triage from level 2.)
+  const triageNext = ctx.notTriaged?.has(refKey(item.ref)) && !((ctx.index.snapshot.level ?? 0) >= 2 && clearWithoutTriage(item));
+  if (triageNext && ctx.index.snapshot.triage !== "started") return { actor: "nobody", tone: "blocked", reason: "ready, but triage is paused (Resume on Backlog)" };
   return { actor: "agent", tone: "waiting", reason: "ready; waiting for a free agent slot" };
 }
 
@@ -314,8 +320,8 @@ export function assess(situation: Situation, ctx: TurnContext): Assessment {
 }
 
 /** Every item on the board with its turn, in snapshot order. Abandoned items are left out. */
-export function assessAll(index: Index, now: Date): Assessment[] {
-  const ctx = turnContext(index, now);
+export function assessAll(index: Index, now: Date, notTriaged?: ReadonlySet<string>): Assessment[] {
+  const ctx = turnContext(index, now, notTriaged);
   return index.snapshot.works.map((item) => assess(situate(item, index), ctx)).filter((assessment) => assessment.situation.lane !== null);
 }
 

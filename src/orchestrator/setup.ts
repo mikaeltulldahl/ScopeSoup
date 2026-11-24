@@ -10,7 +10,7 @@
 
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { commandText } from "../config/commandLine.ts";
 import { DEFAULT_SETUP_WATCH } from "../config/defaults.ts";
 import { allProviders } from "./providers/index.ts";
@@ -63,6 +63,11 @@ function isFile(path: string): boolean {
   }
 }
 
+function isInside(repo: string, path: string): boolean {
+  const rel = relative(resolve(repo), resolve(path));
+  return rel !== "" && !rel.startsWith("..") && !isAbsolute(rel);
+}
+
 function segmentMatch(pattern: string, name: string): boolean {
   if (!pattern.includes("*")) return process.platform === "win32" ? pattern.toLowerCase() === name.toLowerCase() : pattern === name;
   const regex = new RegExp(`^${pattern.split("*").map((part) => part.replace(/[.+?^${}()|[\]\\]/g, "\\$&")).join("[^/]*")}$`, process.platform === "win32" ? "i" : "");
@@ -105,12 +110,15 @@ function hashOf(data: string | Buffer): string {
   return createHash("sha256").update(data).digest("hex");
 }
 
-/** The command's words and the content of every word that names a file (absolute, or relative to the repository with a folder in it). */
+/**
+ * The command's words and the content of every word that names a file inside the repository (a path with a folder in it, or an absolute one
+ * under it). A file outside the repository is not hashed: it is a log or another output the setup writes, which would change at every run.
+ */
 function commandHash(repo: string, command: readonly string[]): string {
   const hash = createHash("sha256").update(JSON.stringify(command));
   for (const word of command) {
     const path = isAbsolute(word) ? word : /[\\/]/.test(word) ? resolve(repo, word) : null;
-    if (path && isFile(path)) hash.update(`\0${word}\0`).update(readFileSync(path));
+    if (path && isInside(repo, path) && isFile(path)) hash.update(`\0${word}\0`).update(readFileSync(path));
   }
   return hash.digest("hex");
 }

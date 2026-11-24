@@ -202,7 +202,7 @@ export function buildBoard(snapshot: Snapshot, now: Date, backlogOrder?: string[
   const index = buildIndex(snapshot);
   // Not in the plan: an umbrella, whose work happens in its open children, and an item a person holds: Scope Soup never starts it.
   const unplanned = new Set(snapshot.works.filter((item) => item.openChildren > 0 || (item.holder !== undefined && !item.holder.actor.bot)).map((item) => refKey(item.ref)));
-  const cards = assessAll(index, now).map((assessment) => ({ ...personCard(cardView(assessment, index.parkedByWork), assessment, self), turn: assessment.turn }));
+  const cards = assessAll(index, now, notTriaged).map((assessment) => ({ ...personCard(cardView(assessment, index.parkedByWork), assessment, self), turn: assessment.turn }));
   const queue = buildQueue(index, now);
   const strip = ({ turn: _turn, ...card }: (typeof cards)[number]): CardView => card;
   return {
