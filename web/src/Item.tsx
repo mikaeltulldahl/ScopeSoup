@@ -7,6 +7,7 @@ import { fetchChat, fetchDiff, fetchItem, fetchItemBranch, fetchSession, postAns
 import { actorClass, actorWords, VoteButtons } from "./Card.tsx";
 import { ItemForm } from "./ItemForm.tsx";
 import { Assumptions } from "./Assumptions.tsx";
+import { Stepper } from "./Stepper.tsx";
 import { Markdown } from "./Markdown.tsx";
 import { BatchBox } from "./Batch.tsx";
 import { hostDiffers } from "../../src/core/lanes.ts";
@@ -353,9 +354,10 @@ interface PanelQuestion {
 /**
  * One question as Claude Code's question dialog shows it: each option a button (label, with what it means in lighter text
  * under it), the recommended one first and marked so, and "Other" last with a box for a person's own words. A multi-select
- * question takes several. Without canAnswer the options are only shown. Text only: nothing in it is set as HTML.
+ * question takes several. Without canAnswer the options are only shown. Text only: nothing in it is set as HTML. The counter
+ * and the arrows to the other questions are the Stepper's around it.
  */
-function QuestionCard({ question, index, count, held, canAnswer, busy, onChange }: { question: PanelQuestion; index: number; count: number; held: Held | undefined; canAnswer: boolean; busy: boolean; onChange: (held: Held) => void }) {
+function QuestionCard({ question, held, canAnswer, busy, onChange }: { question: PanelQuestion; held: Held | undefined; canAnswer: boolean; busy: boolean; onChange: (held: Held) => void }) {
   const rows = optionRows(question.options, question.recommendation);
   const unmatched = unmatchedRecommendation(rows, question.recommendation);
   const multi = question.multiSelect === true;
@@ -363,10 +365,10 @@ function QuestionCard({ question, index, count, held, canAnswer, busy, onChange 
   const id = useId();
   return (
     <div class="parked-question">
-      <h4>{count > 1 ? `Question ${index + 1} of ${count}` : "Question"}{multi ? " · pick one or more" : ""}</h4>
       <p class="question">{question.question}</p>
       {question.context && <p class="choice-why">{question.context}</p>}
       {question.asked && <p class="muted">{question.asked}</p>}
+      {multi && question.answered === undefined && <p class="muted">Pick one or more.</p>}
       {question.answered !== undefined ? (
         <p>Your answer: {question.answered}</p>
       ) : rows.length === 0 ? (
@@ -411,6 +413,22 @@ function QuestionCard({ question, index, count, held, canAnswer, busy, onChange 
 /** The options of a question as `answerText` sends them: the label alone (a draft's), or the label with its description. */
 const sendOf = (question: Pick<PanelQuestion, "options" | "recommendation">, send: "answer" | "label") =>
   optionRows(question.options, question.recommendation).map((row) => ({ label: row.label, send: send === "label" ? row.label : row.answer }));
+
+/** Which of `questions` have an answer: one given already, or one held here that would send something. */
+const answeredOf = (questions: readonly PanelQuestion[], held: Record<string, Held>, send: "answer" | "label"): boolean[] =>
+  questions.map((question) => question.answered !== undefined || answerText(held[question.id], sendOf(question, send)).trim() !== "");
+
+/** Questions one at a time, each answered as in QuestionCard. */
+function QuestionSteps({ questions, held, send, canAnswer, busy, change }: { questions: readonly PanelQuestion[]; held: Record<string, Held>; send: "answer" | "label"; canAnswer: boolean; busy: boolean; change: (id: string, held: Held) => void }) {
+  return (
+    <Stepper noun="Question" answered={answeredOf(questions, held, send)}>
+      {(index) => {
+        const question = questions[index]!;
+        return <QuestionCard key={question.id} question={question} held={held[question.id]} canAnswer={canAnswer} busy={busy} onChange={(next) => change(question.id, next)} />;
+      }}
+    </Stepper>
+  );
+}
 
 /** The held answers of `ids` on an Item, kept in this browser on every change. */
 function useHeld(itemKey: string, ids: readonly string[], start: () => Record<string, Held> = () => ({})): [Record<string, Held>, (id: string, held: Held) => void, (sent: readonly string[]) => void] {
@@ -458,9 +476,7 @@ function QuestionsPanel({ page, questions, now, reload }: { page: ItemPage; ques
         <p class="question">{parked.reason}</p>
       ) : null)}
       {parked && <p class="muted">Put down {ago(parked.at, now)}.</p>}
-      {questions.map((question, index) => (
-        <QuestionCard key={question.id} question={question} index={index} count={questions.length} held={held[question.id]} canAnswer={canAnswer} busy={busy} onChange={(next) => change(question.id, next)} />
-      ))}
+      {questions.length > 0 && <QuestionSteps questions={questions} held={held} send="answer" canAnswer={canAnswer} busy={busy} change={change} />}
       {canAnswer && open.length > 0 && (
         <div class="answer">
           <p class="muted num">
@@ -710,9 +726,7 @@ function DraftPanel({ page, draft, reload }: { page: ItemPage; draft: ParkedDraf
     <section class="panel panel-yours">
       <h3>Triage: draft of the description{draft.round > 1 ? ` (round ${draft.round})` : ""}</h3>
       {draft.questions.length > 0 && <p class="question">The draft is written as if you take every recommendation. Pick another answer and the triage runs again with it.</p>}
-      {questions.map((question, index) => (
-        <QuestionCard key={question.id} question={question} index={index} count={questions.length} held={held[question.id]} canAnswer={true} busy={busy} onChange={(next) => change(question.id, next)} />
-      ))}
+      {questions.length > 0 && <QuestionSteps questions={questions} held={held} send="label" canAnswer={true} busy={busy} change={change} />}
       <div class="draft-compare">
         <div class="version">
           <p class="muted num">Change to the description (before, then the draft)</p>
@@ -1010,7 +1024,7 @@ function Body({ page, reload }: { page: ItemPage; reload: () => void }) {
       {page.assumptions.length > 0 && (
         <section class="panel">
           <h3>Decided by the implementor</h3>
-          <p class="muted">Cheap to change later, so the work went on. Pick Accept, or Overturn with your decision, for each; nothing is recorded until you press Send.</p>
+          <p class="muted">Cheap to change later, so the work went on. Pick Accept, or Overturn with your decision, for each (the arrows go to the others); nothing is recorded until you press Send.</p>
           <Assumptions list={page.assumptions} now={now} showItem={false} canSettle={() => page.canSettle === true} onDone={reload} />
         </section>
       )}

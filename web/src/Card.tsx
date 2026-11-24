@@ -7,6 +7,7 @@ import { ago, dateOf, laneLabel } from "./format.ts";
 import { fill, words } from "./theme.ts";
 import { itemHref } from "./route.ts";
 import { browserStorage, heldCount } from "./heldAnswers.ts";
+import { picksCount, unsentNote } from "./heldDecisions.ts";
 
 /** "anyone" is a question: in every person's "Your turn", so it is yours too. */
 const ACTORS = (): Record<CardView["actor"], string> => ({ anyone: words().turnYours, person: "", agent: "agent", queue: "queue", runner: "runner", nobody: "" });
@@ -61,6 +62,8 @@ export function Card({ card, showLane = false }: { card: CardView; showLane?: bo
   const now = useNow();
   const theme = words();
   const running = card.session && card.session.live && !card.session.chat && card.lane === "in-progress";
+  // Answers held in this browser count where it is this person's turn; picks on implementors' decisions always (they do not block).
+  const unsent = unsentNote(card.actor === "anyone" || card.person?.mine ? heldCount(browserStorage(), card.key) : 0, picksCount(browserStorage(), card.key));
   const quiet = card.tone !== "done" && card.tone !== "moving" && !card.session && card.since !== undefined && now - Date.parse(card.since) > QUIET_MS;
   return (
     <a class={`card tone-${card.tone}`} href={itemHref(card.key)}>
@@ -79,7 +82,7 @@ export function Card({ card, showLane = false }: { card: CardView; showLane?: bo
       <div class="tags">
         {actorWords(card) && <span class={`tag ${actorClass(card)}`}>{actorWords(card)}</span>}
         {showLane && <span class="tag">{laneLabel(card.lane)}</span>}
-        {(card.actor === "anyone" || card.person?.mine) && heldCount(browserStorage(), card.key) > 0 && <span class="tag">answers not sent</span>}
+        {unsent && <span class="tag">{unsent}</span>}
         {card.session && <SessionChip session={card.session} />}
         {running && theme.sessionBadge && <span class="tag tag-flair">{fill(theme.sessionBadge, { n: card.session!.attempt })}</span>}
         {quiet && theme.staleBadge && <span class="tag tag-flair tag-stale">{fill(theme.staleBadge, { date: dateOf(card.since!) })}</span>}

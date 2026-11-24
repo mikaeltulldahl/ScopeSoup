@@ -71,3 +71,14 @@ export function readyPicks(picks: Record<string, HeldPick>, ids: readonly string
     return answer ? [{ id, action: "overturn", answer }] : [];
   });
 }
+
+/** How many picks are held for an Item (an Overturn still being written counts too), for the "not sent" note on its card. */
+export const picksCount = (storage: HeldStorage | null, itemKey: string): number => Object.keys(readAll(storage, itemKey)).length;
+
+/** The card's "not sent" note for an Item's held answers and decision picks, or null when nothing is held. */
+export function unsentNote(answers: number, picks: number): string | null {
+  if (answers > 0 && picks > 0) return "answers and decisions not sent";
+  if (answers > 0) return "answers not sent";
+  if (picks > 0) return "decisions not sent";
+  return null;
+}

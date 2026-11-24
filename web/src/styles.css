@@ -550,3 +550,17 @@ main > .decisions-panel, .decisions-panel { max-width: none; margin: 0 0 var(--g
 .tag-flair { border-style: dashed; color: var(--accent); }
 .tag-stale { color: var(--muted); filter: grayscale(1); }
 :root[data-theme="graveyard"] .tag-stale { opacity: 0.8; }
+
+/* --- one question (or decision) at a time --- */
+.stepper { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); outline: none; }
+.stepper:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: var(--radius); }
+.stepper-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
+.stepper-title { margin: 0; font-size: 0.82rem; font-weight: 600; color: var(--muted); }
+.stepper-arrow { min-width: 34px; padding: 4px 8px; line-height: 1; }
+.stepper-arrow[aria-disabled="true"] { opacity: 0.45; cursor: default; }
+.stepper-dots { display: inline-flex; flex-wrap: wrap; gap: 4px; margin-left: auto; }
+.stepper-dot { min-width: 26px; min-height: 26px; padding: 0 6px; font-size: 0.75rem; font-weight: 550; border-radius: 999px; border-style: dashed; color: var(--muted); background: var(--surface); }
+.stepper-dot-done { border-style: solid; border-color: var(--accent); background: var(--accent-soft); color: var(--text); }
+.stepper-dot-current { outline: 2px solid var(--text); outline-offset: 1px; }
+.stepper .parked-question { margin-top: 6px; padding-top: 0; border-top: 0; }
+.stepper .decisions { margin-top: 8px; }
