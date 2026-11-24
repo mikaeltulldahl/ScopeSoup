@@ -35,6 +35,9 @@ export interface ThemeWords {
   /** The words of the lanes, and of an abandoned item. */
   lanes: Readonly<Record<LaneKey, string>>;
   abandoned: string;
+  /** The overview's one lane for Queued and Checking (web/src/mergeLane.ts), and its glyph ("" for none). */
+  mergeLane: string;
+  mergeLaneIcon: string;
   /** The tag on a card whose turn it is yours; and another's ("{name}" is filled in). */
   turnYours: string;
   turnOf: string;
@@ -59,7 +62,7 @@ const NO_ICONS: Readonly<Record<LaneKey, string>> = { blocked: "", backlog: "", 
 const STANDARD_LANES: Readonly<Record<LaneKey, string>> = { blocked: "Blocked", backlog: "Backlog", "in-progress": "In progress", "in-review": "In review", queued: "Queued", checking: "Checking", done: "Done" };
 
 /** The words every theme but a themed one shares. */
-const STANDARD_WORDS = { turnYours: "your turn", turnOf: "{name}'s turn", emptyLane: "Nothing here.", doneBadge: "", sessionBadge: "", staleBadge: "", logoHover: "", itemOne: "item", itemMany: "items", summaryTitle: "Overnight summary", lanes: STANDARD_LANES, abandoned: "Abandoned", laneIcons: NO_ICONS, abandonedIcon: "" } as const;
+const STANDARD_WORDS = { turnYours: "your turn", turnOf: "{name}'s turn", emptyLane: "Nothing here.", doneBadge: "", sessionBadge: "", staleBadge: "", logoHover: "", itemOne: "item", itemMany: "items", summaryTitle: "Overnight summary", lanes: STANDARD_LANES, abandoned: "Abandoned", mergeLane: "Merge queue", mergeLaneIcon: "", laneIcons: NO_ICONS, abandonedIcon: "" } as const;
 
 /** The custom properties that make up a look; each theme gives all of them, for light and for dark. */
 export const COLOUR_VARS = [
@@ -195,6 +198,8 @@ export const THEMES: Readonly<Record<ThemeId, Theme>> = {
         done: "Laid to rest",
       },
       abandoned: "Cold case",
+      mergeLane: "Crime lab",
+      mergeLaneIcon: "🧪",
       laneIcons: { blocked: "🔭", backlog: "🕵", "in-progress": "🔍", "in-review": "⚖", queued: "🧬", checking: "🩺", done: "🪦" },
       abandonedIcon: "❄",
     },
