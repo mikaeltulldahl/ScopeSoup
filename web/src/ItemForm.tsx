@@ -1,15 +1,17 @@
 // The form an item is written in: a new item from the overview, or an edit from its page.
 
-import { useState } from "preact/hooks";
+import { useEffect, useState } from "preact/hooks";
 import type { ItemFields } from "./api.ts";
 import { stateLabel } from "./format.ts";
 
 const STATES = ["todo", "doing", "waiting", "done", "abandoned"];
 
-export function ItemForm({ start, withState, states = STATES, submitWords, onSubmit, onCancel }: { start: ItemFields; withState: boolean; states?: string[]; submitWords: string; onSubmit: (fields: ItemFields) => Promise<void>; onCancel: () => void }) {
+export function ItemForm({ start, withState, states = STATES, submitWords, onSubmit, onCancel, onDirty }: { start: ItemFields; withState: boolean; states?: string[]; submitWords: string; onSubmit: (fields: ItemFields) => Promise<void>; onCancel: () => void; onDirty?: (dirty: boolean) => void }) {
   const [fields, setFields] = useState(start);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Whether anything differs from the start: a dialog around the form keeps the draft on a click outside.
+  useEffect(() => onDirty?.((Object.keys(start) as (keyof ItemFields)[]).some((key) => fields[key] !== start[key])), [fields]);
   const set = (key: keyof ItemFields) => (event: Event) => setFields({ ...fields, [key]: (event.target as HTMLInputElement).value });
   const submit = (event: Event) => {
     event.preventDefault();

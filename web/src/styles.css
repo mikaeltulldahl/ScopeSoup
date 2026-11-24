@@ -459,6 +459,7 @@ body.dialog-open { overflow: hidden; }
 .dialog { position: relative; width: 100%; max-width: 960px; box-sizing: border-box; padding: calc(var(--gap) * 1.5) var(--gap) var(--gap); background: var(--bg); border: 1px solid var(--line); border-radius: calc(var(--radius) * 1.5); box-shadow: 0 12px 40px rgb(0 0 0 / 0.35); outline: none; }
 .dialog-close { position: absolute; top: 8px; right: 8px; z-index: 1; width: 34px; height: 34px; padding: 0; font-size: 1.4rem; line-height: 1; }
 .dialog .item { max-width: none; }
+.dialog-title { margin: 0 40px var(--gap) 0; }
 @media (max-width: 640px) {
   .dialog-backdrop { padding: 0; }
   .dialog { min-height: 100%; max-width: none; border: 0; border-radius: 0; }

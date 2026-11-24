@@ -6,6 +6,7 @@ import { useState } from "preact/hooks";
 import type { BoardView, ControlPath, LaneView } from "./api.ts";
 import { BatchMini } from "./Batch.tsx";
 import { Card } from "./Card.tsx";
+import { Dialog } from "./Dialog.tsx";
 import { ItemForm } from "./ItemForm.tsx";
 import { laneIcon, laneLabel } from "./format.ts";
 import { itemHref } from "./route.ts";
@@ -136,23 +137,36 @@ export function Overview({ board, busy, onSwitch }: { board: BoardView; busy: bo
     }
   };
   const [writing, setWriting] = useState(false);
-  // The Backlog's "+" opens the same form, at the top of the board: brought into view, its title ready to type in.
-  const openFromLane = () => {
-    setWriting(true);
-    requestAnimationFrame(() => {
-      const form = document.getElementById("new-item");
-      if (!form) return;
-      // Below the sticky header, which is tall on a phone.
-      const header = document.querySelector("header.top")?.getBoundingClientRect().bottom ?? 0;
-      window.scrollBy({ top: form.getBoundingClientRect().top - header - 12, behavior: "smooth" });
-      form.querySelector<HTMLInputElement>("input")?.focus({ preventScroll: true });
-    });
-  };
+  // The draft in the dialog has text in it: a click outside then keeps the dialog.
+  const [dirty, setDirty] = useState(false);
   const level = board.status.level;
   const states = { triage: board.status.triage, implement: board.status.implement, review: board.status.review, mergeQueue: board.status.mergeQueue };
   const control = (lane: string): LaneControl => ({ own: laneSwitch(lane, level), mutedBy: laneMutedBy(lane, level), states, busy, onSwitch, row: switchesAt(level).length > 0 });
+  const close = () => {
+    setWriting(false);
+    setDirty(false);
+  };
+  const dialog =
+    board.canWrite && writing ? (
+      <Dialog label={`New ${theme.words.itemOne}`} onClose={close} focusSelector="input" keepOnOutsideClick={dirty}>
+        <h3 class="dialog-title">New {theme.words.itemOne}</h3>
+        <ItemForm
+          start={{ title: "", body: "", verification: "", labels: "", blockedBy: "", priority: "" }}
+          withState={false}
+          submitWords="Create"
+          onDirty={setDirty}
+          onSubmit={(fields) =>
+            postItem(fields).then(({ ref }) => {
+              close();
+              location.hash = itemHref(ref);
+            })
+          }
+          onCancel={close}
+        />
+      </Dialog>
+    ) : null;
   const empty = board.lanes.every((lane) => lane.total === 0) && board.yourTurn.length === 0;
-  if (empty && !writing) {
+  if (empty) {
     return (
       <section class="panel empty-board">
         <h2>No {theme.words.itemMany} yet</h2>
@@ -171,35 +185,20 @@ export function Overview({ board, busy, onSwitch }: { board: BoardView; busy: bo
             </button>
           </p>
         )}
+        {dialog}
       </section>
     );
   }
   return (
     <>
-      {board.canWrite && !writing && (
+      {board.canWrite && (
         <p class="new-item">
           <button type="button" class="primary" onClick={() => setWriting(true)}>
             New {theme.words.itemOne}
           </button>
         </p>
       )}
-      {board.canWrite && writing && (
-        <section class="panel" id="new-item">
-          <h3>New {theme.words.itemOne}</h3>
-          <ItemForm
-            start={{ title: "", body: "", verification: "", labels: "", blockedBy: "", priority: "" }}
-            withState={false}
-            submitWords="Create"
-            onSubmit={(fields) =>
-              postItem(fields).then(({ ref }) => {
-                setWriting(false);
-                location.hash = itemHref(ref);
-              })
-            }
-            onCancel={() => setWriting(false)}
-          />
-        </section>
-      )}
+      {dialog}
       {board.withoutTriage ? <NoTriage count={board.withoutTriage} /> : null}
       <section class={board.yourTurn.length > 0 ? "your-turn waiting" : "your-turn"} aria-labelledby="your-turn-title">
         <h2 id="your-turn-title">
@@ -217,7 +216,7 @@ export function Overview({ board, busy, onSwitch }: { board: BoardView; busy: bo
       </section>
       <div class="lanes">
         {board.lanes.map((lane) => (
-          <Lane key={lane.lane} lane={lane} board={board} closed={closed.includes(lane.lane)} toggle={() => toggle(lane.lane)} control={control(lane.lane)} onAdd={lane.lane === "backlog" && board.canWrite && !writing ? openFromLane : undefined} />
+          <Lane key={lane.lane} lane={lane} board={board} closed={closed.includes(lane.lane)} toggle={() => toggle(lane.lane)} control={control(lane.lane)} onAdd={lane.lane === "backlog" && board.canWrite ? () => setWriting(true) : undefined} />
         ))}
       </div>
     </>
