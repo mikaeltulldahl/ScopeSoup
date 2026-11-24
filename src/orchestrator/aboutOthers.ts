@@ -6,6 +6,8 @@
 import type { Ref, WorkItem } from "../model/types.ts";
 import { refKey } from "../model/types.ts";
 import { holdStands } from "../model/people.ts";
+import { itemTextHash, optionTexts, reusableAnswer, sameDecision } from "../core/answerReuse.ts";
+import { knownAnswers } from "../store/answers.ts";
 import type { Store } from "../store/store.ts";
 import type { Context } from "./context.ts";
 import type { AboutOther, Decision, Job } from "./jobs.ts";
@@ -54,6 +56,8 @@ export function linkedItem(store: Store, subject: Ref, name: string): WorkItem |
   return store.list<WorkItem>("work").find((work) => work.ref.host === subject.host && work.ref.id === id) ?? null;
 }
 
+const clip = (text: string, chars: number): string => (text.length > chars ? `${text.slice(0, chars - 1)}…` : text);
+
 export const isOpenItem = (work: WorkItem): boolean => work.state !== "done" && work.state !== "abandoned";
 
 /** "triage of A-3", "the implementor of A-12". */
@@ -61,9 +65,31 @@ export function askerName(role: "triage" | "implement", item: Ref): string {
   return role === "triage" ? `triage of ${item.id}` : `the implementor of ${item.id}`;
 }
 
+const plain = (text: string): string => text.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+
+/**
+ * Why a question about `other` is not asked there again, or null: the same question (the asker named in it, its text matched as
+ * answers are for reuse) already waits to be written on it, is open there now, or was answered there on its text as it is now.
+ * An answer given to the questions all at once is kept with the parked reason as its question, so that text containing it counts too.
+ */
+export function askedBefore(ctx: Context, other: WorkItem, question: Decision): string | null {
+  const key = refKey(other.ref);
+  const asked = { question: question.question, options: optionTexts(question.options) };
+  const same = (each: Decision) => sameDecision(asked, { question: each.question, options: optionTexts(each.options) });
+  if ((readWaitingAbouts(ctx.deps.store)[key] ?? []).some((entry) => entry.questions.some(same))) return "it already waits to be asked there";
+  const job = ctx.jobs[key];
+  if (job?.parked?.as === "needs-decision" && job.refine?.questions.some(same)) return "it is open there";
+  const answers = knownAnswers(ctx.deps.store);
+  const hash = itemTextHash(other);
+  const found = reusableAnswer(answers, other, question)
+    ?? answers.findLast((answer) => refKey(answer.subject) === key && answer.textHash === hash && plain(answer.question ?? "").includes(plain(question.question)));
+  return found ? `a person answered it there at ${found.at} ("${clip(found.answer.trim(), 300)}")` : null;
+}
+
 /**
  * Keeps an answer's questions about other Items, each naming who asked, until they are written on that Item. An unknown or closed
- * Item (or the asker's own) is dropped with an event; so is a draft that changes nothing with no question.
+ * Item (or the asker's own) is dropped with an event; so is a draft that changes nothing with no question, and a question already
+ * open or answered there (`askedBefore`).
  */
 export function keepAboutOthers(ctx: Context, job: Job, role: "triage" | "implement", list: readonly AboutOther[] | undefined): void {
   if (!list || list.length === 0) return;
@@ -78,9 +104,15 @@ export function keepAboutOthers(ctx: Context, job: Job, role: "triage" | "implem
       continue;
     }
     const draft = entry.draft?.trim() && entry.draft.trim() !== (other.body ?? "").trim() ? entry.draft.trim() : undefined;
-    const questions = entry.questions.map((each) => ({ ...each, question: `${each.question.trim()} (asked by ${askedBy})` }));
+    const questions: Decision[] = [];
+    for (const each of entry.questions) {
+      const question = { ...each, question: `${each.question.trim()} (asked by ${askedBy})` };
+      const why = askedBefore(ctx, other, question);
+      if (!why) questions.push(question);
+      else ctx.commit("orchestrator.about_other_dropped", `${askedBy[0]!.toUpperCase()}${askedBy.slice(1)} asked about ${other.ref.id} again: ${clip(each.question.trim(), 300)} Not asked again: ${why}.`, subject, { item: refKey(other.ref), again: true });
+    }
     if (questions.length === 0 && !draft) {
-      ctx.commit("orchestrator.about_other_dropped", `Triage of ${job.item.id} drafted ${other.ref.id}'s description as it already is, with no question: nothing to write.`, subject, { item: refKey(other.ref) });
+      if (entry.questions.length === 0) ctx.commit("orchestrator.about_other_dropped", `Triage of ${job.item.id} drafted ${other.ref.id}'s description as it already is, with no question: nothing to write.`, subject, { item: refKey(other.ref) });
       continue;
     }
     const key = refKey(other.ref);
@@ -95,7 +127,7 @@ export function keepAboutOthers(ctx: Context, job: Job, role: "triage" | "implem
 
 /**
  * Why questions from other Items cannot be written on this Item now, or null when they can: a session or a person's chat runs
- * on it, someone else holds it, it waits for an answer to questions of its own, or its change is merged, queued or handed over.
+ * on it, someone else holds it, it waits for an answer to questions of its own, or its change is in review, merged, queued or handed over.
  * This machine's own claim does not count: parking releases it.
  */
 export function busyWhy(ctx: Context, item: WorkItem, job: Job | undefined): string | null {
@@ -104,6 +136,8 @@ export function busyWhy(ctx: Context, item: WorkItem, job: Job | undefined): str
   const holder = item.holder;
   if (holder && holdStands(holder, Date.parse(ctx.at)) && !(holder.actor.bot && holder.actor.id === ctx.deps.actions.claimant)) return `it is held by ${holder.actor.name}`;
   if (!job) return null;
+  // A change in review (its session about to start, or between attempts) is not pulled back to triage by another Item's question.
+  if (job.step === "review" && !job.parked) return "its change is in review";
   if (job.owes || job.merged !== undefined || job.queued !== undefined || job.parked?.as === "queued" || job.parked?.as === "handed-over" || job.parked?.retry === "hand-over") return "its change is merged, in the merge queue or handed over";
   if (job.parked?.as === "needs-decision" || job.parked?.retry === "post") return "it waits for a person's answer to its own questions";
   return null;

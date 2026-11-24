@@ -3870,6 +3870,52 @@ test("a question for an Item held by a person, or with a running session, waits 
   assert.equal(w.store.getValue("orchestrator.aboutOthers"), "{}");
 });
 
+test("a question about another Item that is open there, or a person answered there, is not asked again by any asker", async () => {
+  // As in the trial: triage of A-9 asked about A-7, a person answered on A-7, then other triages asked the same again.
+  const q = { ...ABOUT_Q, question: "Item 2 says to change only src/units.js. Should it also update test/sum.test.js?" };
+  const w = world(config(), [item("1", { priority: "major" }), item("2", { body: "Rename the unit key." }), item("3", { priority: "critical" })]);
+  w.store.addUsageSample(usage(0.1, 0.1));
+  await w.run();
+  await step(w, "3", "succeeded", { ...TRIAGE_OK, aboutOthers: [{ item: "2", questions: [q] }] });
+  const parked = w.job("2")!.parked!;
+  assert.equal(parked.as, "needs-decision");
+  assert.equal(w.reasons("orchestrator.about_other_written").length, 1);
+  // Asked again while it is open there: not added.
+  await step(w, "3", "succeeded", { done: false, summary: "Stopped.", aboutOthers: [{ item: "2", questions: [q] }] });
+  assert.match(w.reasons("orchestrator.about_other_dropped").at(-1) ?? "", /^The implementor of 3 asked about 2 again: .* Not asked again: it is open there\.$/);
+  assert.equal(w.store.getValue("orchestrator.aboutOthers") ?? "{}", "{}");
+  // A person answers on Item 2 as the trial did (one answer to the parked questions, kept with the parked reason); its text is unchanged.
+  const at = new Date(w.clock.ms).toISOString();
+  addAnswer(w.store, { subject: ref("2"), answer: "Yes: every file that uses m.", by: "Ada", at, question: parked.reason, textHash: itemTextHash(w.store.get<WorkItem>(ref("2"))!) });
+  assert.ok(releaseJob(w.store, ref("2"), "Ada", at, "Yes: every file that uses m."));
+  await w.run();
+  // Triage of 1, another asker, asks the same: it is not asked again, and Item 2 is not parked again.
+  assert.equal(w.runner.requests.map((request) => `${request.role} ${request.subject.id}`).at(-1), "triage 1");
+  await step(w, "1", "succeeded", { ...TRIAGE_OK, aboutOthers: [{ item: "#2", questions: [q] }] });
+  assert.match(w.reasons("orchestrator.about_other_dropped").at(-1) ?? "", /^Triage of 1 asked about 2 again: .* Not asked again: a person answered it there at .* \("Yes: every file that uses m\."\)\.$/);
+  assert.equal(w.store.getValue("orchestrator.aboutOthers") ?? "{}", "{}");
+  assert.equal(w.reasons("orchestrator.about_other_written").length, 1);
+  assert.notEqual(w.job("2")?.parked?.as, "needs-decision");
+});
+
+test("a question for an Item whose change is in review waits, and does not pull it back to triage", async () => {
+  // As in the trial: A-7 was built ("Next: review") when triage of A-9's question about it was written, and it went back to triage.
+  const w = world(config({ rules: STAGE1, settings: { maxParallelSessions: { value: 2, reason: "test" } } }), [item("1", { priority: "major" }), item("2")]);
+  w.store.addUsageSample(usage(0.1, 0.1));
+  await w.run();
+  assert.deepEqual(roles(w), ["triage", "triage"]);
+  await step(w, "1", "succeeded", TRIAGE_OK);
+  assert.deepEqual(roles(w), ["triage", "triage", "implement"]);
+  // Item 1 is built in the same tick in which triage of 2 asks about it: its review session has not started yet.
+  w.runner.end("1", "succeeded", IMPLEMENT_OK);
+  w.runner.end("2", "succeeded", { ...TRIAGE_OK, aboutOthers: [{ item: "1", questions: [ABOUT_Q] }] });
+  await w.run();
+  assert.equal(w.job("1")?.parked, undefined);
+  assert.equal(w.job("1")?.step, "review");
+  assert.ok(w.reasons("orchestrator.about_other_wait").some((reason) => /^Questions from triage of 2 wait for 1: its (change is in review|review session runs)\.$/.test(reason)), w.reasons("orchestrator.about_other_wait").join(" / "));
+  assert.deepEqual(w.reasons("orchestrator.about_other_written"), []);
+});
+
 test("questions about an unknown or closed Item, or the asker's own, are dropped with an event", async () => {
   const w = world(config(), [item("1"), item("2", { state: "done" })]);
   w.store.addUsageSample(usage(0.1, 0.1));
