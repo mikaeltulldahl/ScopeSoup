@@ -76,6 +76,28 @@ describe("setup", { concurrency: 4 }, () => {
     assert.equal((await ensureSetup(deps(run), {}, dir)).kind, "none");
   });
 
+  test("a file the command names outside the repository (a log it writes) is not hashed: changing it does not run the setup again; a script inside is", async () => {
+    const dir = repo();
+    const outside = join(mkdtempSync(join(tmpdir(), "scopesoup-setup-out-")), "setup-runs.log");
+    dirs.push(join(outside, ".."));
+    writeFileSync(outside, "run 1\n");
+    mkdirSync(join(dir, ".scopesoup"));
+    writeFileSync(join(dir, ".scopesoup", "setup.mjs"), "// v1\n");
+    const commit = (...args: string[]): void => void execFileSyncRetrying("git", ["-c", "user.name=t", "-c", "user.email=t@example.invalid", ...args], { cwd: dir, stdio: "pipe" });
+    commit("add", ".");
+    commit("commit", "-q", "-m", "script");
+    const run = fakeRun();
+    const config = { setupCommand: ["node", ".scopesoup/setup.mjs", outside], setupWatch: ["pnpm-lock.yaml"] };
+    assert.equal((await ensureSetup(deps(run), config, dir)).kind, "ran");
+    writeFileSync(outside, "run 1\nrun 2\n");
+    assert.equal((await ensureSetup(deps(run), config, dir)).kind, "current");
+    writeFileSync(join(dir, ".scopesoup", "setup.mjs"), "// v2\n");
+    commit("commit", "-qam", "v2");
+    const again = await ensureSetup(deps(run), config, dir);
+    assert.equal(again.kind, "ran");
+    assert.equal(run.runs.length, 2);
+  });
+
   test("each worktree has its own record: a new worktree runs the setup, the first does not again", async () => {
     const dir = repo();
     const run = fakeRun();
