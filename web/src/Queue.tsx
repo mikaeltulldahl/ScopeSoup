@@ -5,6 +5,7 @@ import { postQueueResume, useNow } from "./api.ts";
 import { useState } from "preact/hooks";
 import { BatchBox } from "./Batch.tsx";
 import { ago, flakyRows } from "./format.ts";
+import { Resources } from "./Resources.tsx";
 import { itemHref } from "./route.ts";
 
 function Health({ health }: { health: NonNullable<BoardView["queue"]["health"]> }) {
@@ -85,6 +86,7 @@ export function Queue({ board }: { board: BoardView }) {
     <div class="queue">
       {board.queue.health && <Health health={board.queue.health} />}
       {board.queue.mergeQueue && <MergeLease lease={board.queue.mergeQueue} />}
+      {board.resources && <Resources resources={board.resources} />}
       {empty && <p class="empty">The queue is empty.</p>}
       {batches.length > 0 && (
         <section>

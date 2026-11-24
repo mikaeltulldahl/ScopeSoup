@@ -1,7 +1,7 @@
 // The item page: the item with everything attached. The item is the one thing a person follows.
 
 import type { ConflictVersions, DecisionOption, ProposedPart, ParkedDraft } from "../../src/model/types.ts";
-import type { DiffFile, DiffView, ItemPage, RoundRow, SessionDetailsView } from "./api.ts";
+import type { BoardView, DiffFile, DiffView, ItemPage, RoundRow, SessionDetailsView } from "./api.ts";
 import { useEffect, useId, useState } from "preact/hooks";
 import { fetchChat, fetchDiff, fetchItem, fetchItemBranch, fetchSession, postAnswers, postChat, postDraft, postEdit, postHandBack, postProposal, postRelease, postResolve, postStartOver, postClaim, useNow, usePerson, useView } from "./api.ts";
 import { actorClass, actorWords, VoteButtons } from "./Card.tsx";
@@ -955,7 +955,14 @@ function Hold({ page, reload }: { page: ItemPage; reload: () => void }) {
   );
 }
 
-function Body({ page, reload }: { page: ItemPage; reload: () => void }) {
+/** The limited resources this Item waits for a unit of, from the board's resources (the waiting entry names the Item's id). */
+function waitingForUnit(id: string, resources: BoardView["resources"]): { name: string; since: string }[] {
+  return (resources?.resources ?? []).flatMap((resource) =>
+    resource.waiting.filter((wait) => wait.who.endsWith(` for ${id}`) || wait.who.endsWith(` on ${id}`)).map((wait) => ({ name: resource.name, since: wait.since })),
+  );
+}
+
+function Body({ page, reload, resources }: { page: ItemPage; reload: () => void; resources?: BoardView["resources"] }) {
   const now = useNow();
   const { item } = page;
   const [editing, setEditing] = useState(false);
@@ -973,6 +980,11 @@ function Body({ page, reload }: { page: ItemPage; reload: () => void }) {
         </h2>
         <p class="reason reason-big">{page.reason}</p>
         {page.why && <p class="why">{page.why}</p>}
+        {waitingForUnit(item.ref.id, resources).map((wait) => (
+          <p class="why" key={wait.name}>
+            Waits for a unit of <b>{wait.name}</b> <span class="muted num">since {ago(wait.since, now)}</span>; all of them are in use. <a href="#/queue">Queue</a>
+          </p>
+        ))}
         {page.canVote && <VoteButtons itemKey={item.key} off={page.voteOff} />}
         <div class="tags">
           <span class="tag">{laneWord(page.lane)}</span>
@@ -1250,9 +1262,9 @@ function Body({ page, reload }: { page: ItemPage; reload: () => void }) {
   );
 }
 
-export function Item({ refKey }: { refKey: string }) {
+export function Item({ refKey, resources }: { refKey: string; resources?: BoardView["resources"] }) {
   const { data, error, reload } = useView(() => fetchItem(refKey), refKey);
   useEffect(() => rememberViewed(refKey), [refKey]);
   if (!data) return <p class={error ? "notice notice-bad" : "empty"}>{error ?? "Loading…"}</p>;
-  return <Body page={data} reload={reload} />;
+  return <Body page={data} reload={reload} resources={resources} />;
 }
