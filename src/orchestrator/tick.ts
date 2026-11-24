@@ -20,7 +20,7 @@ import { compareItems, foreignChanges, readyItems } from "./candidates.ts";
 import type { Context, TickDeps } from "./context.ts";
 import type { ClaimResult } from "./ports.ts";
 import { createLog, errorText } from "./context.ts";
-import { afterRefine, backToImplement, emptyBranch, followDraft, followQuestions, overturnsBack, retryHandOver, retryPost, settle, writeAboutOthers } from "./cycle.ts";
+import { afterRefine, backToImplement, emptyBranch, followDraft, followQuestions, overturnsBack, retryHandOver, retryPost, reviewOffAtLevel2, settle, writeAboutOthers } from "./cycle.ts";
 import { loadOwnBlockers, withOwnBlockers } from "../store/blockers.ts";
 import { decide } from "./usageCheck.ts";
 import type { UsageCheckDecision } from "./usageCheck.ts";
@@ -317,8 +317,10 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
 
   // 1b. Sessions that are over move their job to the next step.
   let running = 0;
-  // A hand-over owed (a merge pushes the main branch) waits while merging is paused (Pause merge queue, Stop, start-up).
-  const merging = mergeQueueOn(store);
+  // A hand-over owed waits while its switch is paused (Pause, Stop, start-up). At level 4 that is the merge queue's: the hand-over
+  // gives the change to the queue, which pushes the main branch. Below level 4 Scope Soup merges nothing and the merge queue's
+  // switch is not shown: the hand-over looks at what the implementor did and may resume it, so it waits for the implementors'.
+  const merging = config.level >= 4 ? mergeQueueOn(store) : switchState(store, "implement") === "started";
   for (const [key, job] of Object.entries(jobs)) {
     const item = itemByKey.get(key) ?? null;
     // A post that failed in an earlier tick; one that fails in this tick is tried again by the next.
@@ -388,6 +390,9 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
     // A person overturned a decision while the work waits (for review, a slot, a retry, or an answer it was given): the
     // implementor's own session is resumed with the answer before the next step. A triage waits until the implement step.
     if (item && !job.sessionId && !job.parked && !job.owes && job.step !== "triage") overturnsBack(ctx, job);
+    // A job at the review step at level 2 (the level was lowered while it waited for a reviewer): nobody reviews at this level, and
+    // the implementor merges. Its own session is resumed to merge it, as level 2 does after a build.
+    if (item && config.level === 2 && job.step === "review" && !job.sessionId && !job.parked && !job.owes) reviewOffAtLevel2(ctx, job);
   }
 
   // Questions agents asked about other Items are written on each that is free now, before anything starts on it.

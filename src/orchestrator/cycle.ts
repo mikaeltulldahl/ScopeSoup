@@ -566,10 +566,10 @@ const APPROVED = "Approved. Merge now as CLAUDE.md says.";
  * implementing session merged it (or opened a pull request), and the hand-over checks what it did. At level 4 it goes
  * to the merge queue, which merges the newest main in, runs the check and pushes the checked commit fast-forward.
  */
-async function handOver(ctx: Context, job: Job, item: WorkItem | null): Promise<void> {
+async function handOver(ctx: Context, job: Job, item: WorkItem | null, askedBy?: string): Promise<void> {
   // This is the hand-over that was owed, if one was: whatever happens now, it is not owed any more unless said again below.
   delete job.owes;
-  if (ctx.config.level < 4) return sessionMerged(ctx, job, item);
+  if (ctx.config.level < 4) return sessionMerged(ctx, job, item, askedBy);
   const { runner } = ctx.deps;
   const empty = await emptyBranch(ctx, job);
   if (empty) return backToImplement(ctx, job, empty);
@@ -630,8 +630,9 @@ export function pullRequestIn(merged: string | undefined): string | null {
  * project's CLAUDE.md says, or opens a pull request. Scope Soup does not take its word: it fetches the remote's main, and the Item
  * is done when main contains the branch head (`merged` is written as a merge writes it). A pull request named in the answer
  * is a hand-over with that link. Anything else is parked for a person with the reason, so nothing is lost silently.
+ * After a person's answer to that (`askedBy`), a branch still not merged goes on as the level says (`afterAnswer`).
  */
-async function sessionMerged(ctx: Context, job: Job, item: WorkItem | null): Promise<void> {
+async function sessionMerged(ctx: Context, job: Job, item: WorkItem | null, askedBy?: string): Promise<void> {
   const { runner, actions } = ctx.deps;
   const key = refKey(job.item);
   const main = ctx.config.mainBranch;
@@ -681,11 +682,42 @@ async function sessionMerged(ctx: Context, job: Job, item: WorkItem | null): Pro
     await park(ctx, job, "handed-over", `The implementing session opened a pull request instead of merging: ${pr} . ${name} does not contain ${job.branch} yet; merging the pull request is a person's call.`, "handover");
     return;
   }
+  if (askedBy) return afterAnswer(ctx, job, name, askedBy);
   const where = (item ? itemRepository(ctx.deps.store, ctx.config, item.ref) : null) ?? (ctx.config.workspaces.kind === "pool" ? null : ctx.config.repoPath);
   await park(
     ctx, job, "escalated",
     `The implementor said the work is done, but ${name} (at ${tip.slice(0, 7)}) does not contain ${job.branch} (at ${head.slice(0, 7)}), and its answer names no pull request${said ? ` (it said: ${clipText(said, 200)})` : ""}. The change is not lost: ${whereIsIt(ctx.config.remote, job.branch, null, where)} Answer here once it is merged, and Scope Soup looks again.`,
     "escalation", "hand-over",
+  );
+}
+
+/**
+ * A person answered the escalation of a change the implementor said is done and did not merge, and main still does not contain it.
+ * At level 2, and at level 3 once the reviewer approved, the implementor merges: its own session is resumed with the answer (the
+ * person's answers go with the message). At level 3 before an approval (it was built at level 2), review comes first.
+ */
+function afterAnswer(ctx: Context, job: Job, name: string, askedBy: string): void {
+  const what = `${name} does not contain ${job.branch} yet, and ${askedBy} answered`;
+  if (ctx.config.level === 3 && job.merge !== true) {
+    next(ctx, job, "review", `${what}. At level 3 a reviewer looks at the change before it is merged. Next: review.`);
+    return;
+  }
+  backToImplementor(
+    ctx, job,
+    `A person answered your question about merging; their answer is below. Do as it says, then merge it to ${ctx.config.mainBranch} and push the way CLAUDE.md says (or open a pull request if it says so).`,
+    `${what}. At level ${ctx.config.level} the implementor merges it. Next: the implementor's own session goes on with the answer.`,
+  );
+}
+
+/**
+ * Level 2 and a job at the review step (the level was lowered while it waited for a reviewer): nobody reviews at level 2, and the
+ * implementor merges. Its own session is resumed to merge it, as level 2 does after a build.
+ */
+export function reviewOffAtLevel2(ctx: Context, job: Job): void {
+  backToImplementor(
+    ctx, job,
+    `Nobody reviews at this level now. If the work is done, merge it to ${ctx.config.mainBranch} and push the way CLAUDE.md says (or open a pull request if it says so).`,
+    `${job.branch} waited at the review step, but the project is at level 2, where nobody reviews and the implementor merges. Next: the implementor's own session merges it.`,
   );
 }
 
@@ -1189,7 +1221,7 @@ export async function retryHandOver(ctx: Context, job: Job, item: WorkItem | nul
   const who = asker ? `as ${asker} asked` : "by the tick itself: nobody asked";
   ctx.commit("orchestrator.handover_retry", `Trying the hand-over of ${job.branch} again, ${who}.`, refKey(job.item), { by: asker ?? "tick" });
   delete job.owesAskedBy;
-  await handOver(ctx, job, item);
+  await handOver(ctx, job, item, asker);
 }
 
 /**

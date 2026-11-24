@@ -219,8 +219,18 @@ function reviewTurn(situation: Situation, change: Change, ctx: TurnContext): Dra
   if (change.verdicts.some((verdict) => verdict.stale && verdict.dimension === "review")) {
     return { actor: "agent", tone: "waiting", since: change.updatedAt, reason: "it has a new revision since the last review; waiting for a reviewer session" };
   }
+  const level = ctx.index.snapshot.level;
+  // Below level 3 nobody reviews, and the review switch is not shown: the change waits for its implementor to merge it.
+  if (level !== undefined && level < 3) return belowReviewTurn(change, level, ctx);
   const paused = ctx.index.snapshot.review !== "started" ? ", and review is paused (Resume on In review)" : "";
   return { actor: "agent", tone: paused ? "blocked" : "waiting", since: change.updatedAt, reason: `waiting for a reviewer session${paused}` };
+}
+
+/** A change not merged below level 3, where nobody reviews: at level 2 its implementor merges it; below that nothing is built or merged. */
+function belowReviewTurn(change: Change, level: number, ctx: TurnContext): Draft {
+  if (level < 2) return { actor: "nobody", tone: "blocked", since: change.updatedAt, reason: `its change is not merged, and at level ${level} nothing is built or merged (raise the level to go on)` };
+  const paused = ctx.index.snapshot.implement !== "started" ? ", but implementors are paused (Resume on In progress)" : "";
+  return { actor: "agent", tone: paused ? "blocked" : "waiting", since: change.updatedAt, reason: `its change is not merged; nobody reviews at level 2: its implementor merges it${paused}` };
 }
 
 function queueTurn(situation: Situation, change: Change, ctx: TurnContext): Draft {
@@ -231,6 +241,12 @@ function queueTurn(situation: Situation, change: Change, ctx: TurnContext): Draf
   }
   if (batch && batch.status === "forming") return { actor: "queue", tone: "waiting", since: change.updatedAt, reason: `in ${batchName(batch.ref)}, which is still forming` };
   const again = batch && member?.state === "requeued" ? `back in the queue after ${batchName(batch.ref)} failed on another change` : "approved";
+  // Below level 4 Scope Soup merges nothing and the merge queue's switch is not shown: the implementor (or a person) merges it.
+  const level = ctx.index.snapshot.level;
+  if (level !== undefined && level < 4 && !batch) {
+    const merger = level >= 2 ? "its implementor or a person" : "a person";
+    return { actor: "nobody", tone: "waiting", since: change.updatedAt, reason: `${again}; at level ${level} Scope Soup merges nothing itself: ${merger} merges it` };
+  }
   if (ctx.index.snapshot.paused) return { actor: "queue", tone: "blocked", since: change.updatedAt, reason: `${again}, but the queue is paused` };
   const position = ctx.queue.indexOf(refKey(change.ref));
   const place = position >= 0 ? ` (position ${position + 1} of ${ctx.queue.length})` : "";

@@ -86,12 +86,12 @@ if (mode === "hang") {
   // FAKE_CLAUDE_PUSH, only when the prompt tells the session to merge (level 2, or level 3 after the approval):
   // "when-told" pushes the branch to the remote's main, fast-forward; "force" points the remote's main at a new root commit
   // with a force push instead; "squash" pushes one new commit on the remote's main with the branch's tree and names it in
-  // `mergedAs`, as a squash merge does.
+  // `mergedAs`, as a squash merge does. "when-resumed" is "when-told" in a resumed session only: the first one stops before merging.
   const push = process.env.FAKE_CLAUDE_PUSH;
   let merged: string | undefined;
   if (push && /merge it to|Merge now|Merge it now/.test(prompt)) {
     const git = (...args: string[]) => String(execFileSyncRetrying("git", [...args], { stdio: "pipe", encoding: "utf8" })).trim();
-    if (push === "when-told") git("push", "-q", "origin", "HEAD:refs/heads/main");
+    if (push === "when-told" || (push === "when-resumed" && resumeAt > 0)) git("push", "-q", "origin", "HEAD:refs/heads/main");
     if (push === "force") {
       const root = git("commit-tree", "HEAD^{tree}", "-m", "fake: rewritten history");
       git("push", "-q", "--force", "origin", `${root}:refs/heads/main`);
