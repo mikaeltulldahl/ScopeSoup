@@ -56,7 +56,7 @@ export function BatchBox({ batch }: { batch: BatchView }) {
     <article class={`batch batch-${batch.status}`}>
       <header class="batch-head">
         <h3>{batch.name}</h3>
-        <span class={`tag tag-batch-${batch.status}`}>{batch.status}</span>
+        <span class={`tag tag-batch-${batch.status}`}>{batch.status === "forming" ? "preparing" : batch.status}</span>
         <span class="batch-words">{batch.words}</span>
       </header>
       <ProgressBar progress={batch.progress} />
@@ -97,7 +97,7 @@ export function BatchMini({ batch }: { batch: BatchView }) {
     <a class={`batch batch-mini batch-${batch.status}`} href="#/queue">
       <div class="batch-head">
         <h3>{batch.name}</h3>
-        <span class={`tag tag-batch-${batch.status}`}>{batch.status}</span>
+        <span class={`tag tag-batch-${batch.status}`}>{batch.status === "forming" ? "preparing" : batch.status}</span>
       </div>
       <ProgressBar progress={batch.progress} />
       <p class="reason">{batch.words}</p>
