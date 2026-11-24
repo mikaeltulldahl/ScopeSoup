@@ -178,7 +178,7 @@ a.status-item { text-decoration: underline; text-decoration-color: var(--line); 
 .lane-closed .lane-body { display: none; }
 
 @media (min-width: 720px) {
-  .lanes { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .lanes { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   /* Title rows share one height across a row of lanes (a long title that wraps), so the cards start level. */
   .lane { display: grid; grid-row: span 2; grid-template-rows: subgrid; row-gap: 0; align-self: stretch; align-content: start; }
   .lane-closed .lane-body { display: grid; }
@@ -186,7 +186,7 @@ a.status-item { text-decoration: underline; text-decoration-color: var(--line); 
   .chevron { display: none; }
 }
 @media (min-width: 1180px) {
-  .lanes { grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 10px; }
+  .lanes { grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 10px; }
 }
 
 /* --- Progress --- */
@@ -266,8 +266,6 @@ a.member:hover { border-color: var(--accent); }
 .item-head { display: grid; gap: 6px; padding-left: 10px; border-left: 3px solid var(--line); }
 .item-head h2 { font-size: 1.25rem; letter-spacing: 0; text-transform: none; color: var(--text); line-height: 1.25; }
 .item-head .ref { font-size: 1rem; }
-.crumbs { font-size: 0.82rem; color: var(--muted); }
-.crumbs a { color: var(--accent); }
 .why { font-size: 0.84rem; color: var(--text); }
 .vote { display: inline-flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .vote-off { font-size: 0.75rem; opacity: 0.75; }
@@ -442,16 +440,47 @@ ul.md-list ul.md-list { list-style: circle; }
 
 /* Usage: a stacked bar in inline SVG and a table per role; at 375 px the table wraps and nothing scrolls sideways. */
 .usage { display: grid; gap: var(--gap); min-width: 0; }
-.usage-spans { display: flex; flex-wrap: wrap; gap: 6px; }
-.usage-fig { margin: 0; display: grid; gap: 2px; }
-.usage-svg { width: 100%; height: 136px; display: block; }
-.usage-axis { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); }
+.usage h4 { margin: 12px 0 4px; font-size: 0.9rem; }
+.usage-top { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: baseline; justify-content: space-between; }
+.usage-top h3 { margin: 0; }
+.usage-spans { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.usage-span { display: inline-flex; gap: 6px; align-items: center; }
+.usage-meters { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px 24px; margin-top: 10px; }
+.usage-meter { display: grid; gap: 6px; min-width: 0; }
+.usage-meter-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.usage-big { font-size: 1.4rem; font-variant-numeric: tabular-nums; }
+.usage-track { position: relative; height: 14px; border-radius: 4px; background: var(--sunken); overflow: hidden; }
+.usage-track-fill { position: absolute; inset: 0 auto 0 0; background: var(--accent); border-radius: 4px; }
+.usage-track-fill.over { background: var(--blocked); }
+.usage-track-reserve { position: absolute; inset: 0 0 0 auto; right: 0; background: repeating-linear-gradient(135deg, transparent 0 4px, var(--line) 4px 6px); }
+.usage-track-mark { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: var(--blocked); }
+.usage-facts { margin: 0; padding: 0; list-style: none; font-size: 0.85rem; color: var(--muted); display: grid; gap: 2px; }
+.usage-warn { color: var(--blocked); font-weight: 600; }
+.usage-plot { position: relative; width: 100%; min-width: 0; }
+.usage-plot svg { display: block; overflow: visible; }
+.usage-grid { stroke: var(--line); stroke-width: 1; opacity: 0.55; }
+.usage-tick { font-size: 11px; fill: var(--muted); font-variant-numeric: tabular-nums; }
+.usage-label { font-size: 12px; fill: var(--text); }
+.usage-none { fill: var(--sunken); opacity: 0.8; }
+.usage-band { stroke: var(--surface); stroke-width: 0.5; opacity: 0.9; }
+.usage-band.earlier { opacity: 0.6; }
+.usage-total { fill: none; stroke: var(--text); stroke-width: 1.5; stroke-linejoin: round; }
+.usage-total.dense { stroke-width: 0.75; opacity: 0.7; }
+.usage-forecast { fill: none; stroke: var(--text); stroke-width: 2; stroke-dasharray: 6 4; }
+.usage-reserve { stroke: var(--blocked); stroke-width: 1.5; }
+.usage-reserve-text { fill: var(--blocked); }
+.usage-now { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 2 3; }
+.usage-cross { stroke: var(--text); stroke-width: 1; opacity: 0.5; pointer-events: none; }
+.usage-tip { position: absolute; top: 8px; width: 180px; padding: 6px 8px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); font-size: 0.8rem; pointer-events: none; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12); }
 .usage-table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
 .usage-table th, .usage-table td { padding: 4px 4px; border-top: 1px solid var(--line); text-align: left; font-weight: normal; overflow-wrap: anywhere; }
 .usage-table thead th { border-top: 0; font-size: 0.75rem; color: var(--muted); }
-.usage-table .num { text-align: right; white-space: nowrap; }
+.usage-table tfoot th, .usage-table tfoot td { color: var(--muted); }
+.usage-table .num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .usage-dot { display: inline-block; width: 0.7em; height: 0.7em; border-radius: 2px; }
-.usage-methods { font-size: 0.8rem; }
+.usage-how { margin-top: 8px; font-size: 0.85rem; color: var(--muted); }
+.usage-how summary { cursor: pointer; width: fit-content; }
+.usage-how p { margin: 6px 0 0; }
 .resources h4 { font-size: 0.9rem; margin: 6px 0 2px; }
 .resources p { margin: 0; }
 .resources ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
@@ -478,8 +507,8 @@ body.dialog-open { overflow: hidden; }
 
 /* The overview's one line at level 0. */
 .no-triage { margin: 0 0 12px; }
-.not-triaged { display: flex; align-items: center; gap: 8px; margin: 4px 0 0; color: var(--muted); font-size: 0.8rem; }
-.not-triaged::before, .not-triaged::after { content: ""; flex: 1; border-top: 1px dashed var(--line); }
+.lane-divider { display: flex; align-items: center; gap: 8px; margin: 4px 0 0; color: var(--muted); font-size: 0.8rem; }
+.lane-divider::before, .lane-divider::after { content: ""; flex: 1; border-top: 1px dashed var(--line); }
 
 /* a person's chat with a session of the item. */
 .chat select { font: inherit; color: var(--text); width: 100%; box-sizing: border-box; padding: 6px 8px; border-radius: 6px; border: 1px solid var(--line); background: var(--surface); min-height: 34px; }

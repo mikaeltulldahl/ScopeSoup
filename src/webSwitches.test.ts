@@ -2,7 +2,7 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { allPaused, laneMutedBy, laneSwitch, switchesAt, switchPath } from "../web/src/switches.ts";
+import { allPaused, laneSwitch, switchesAt, switchPath } from "../web/src/switches.ts";
 
 test("each switch sits on its lane, and is hidden below the level that uses its role", () => {
   assert.deepEqual(switchesAt(undefined), [], "no project configuration: no switches");
@@ -14,12 +14,11 @@ test("each switch sits on its lane, and is hidden below the level that uses its 
   assert.equal(laneSwitch("backlog", 4), "triage");
   assert.equal(laneSwitch("in-progress", 4), "implement");
   assert.equal(laneSwitch("in-review", 4), "review");
-  assert.equal(laneSwitch("queued", 4), "mergeQueue");
-  assert.equal(laneSwitch("checking", 4), null, "Checking has no button of its own");
-  assert.equal(laneMutedBy("checking", 4), "mergeQueue", "but shows the merge queue paused");
+  assert.equal(laneSwitch("merge-queue", 4), "mergeQueue", "on the overview's one lane for Queued and Checking");
+  assert.equal(laneSwitch("queued", 4), null);
+  assert.equal(laneSwitch("checking", 4), null);
   assert.equal(laneSwitch("in-review", 2), null, "no review switch below level 3");
-  assert.equal(laneSwitch("queued", 3), null, "no merge queue switch below level 4");
-  assert.equal(laneMutedBy("checking", 3), null);
+  assert.equal(laneSwitch("merge-queue", 3), null, "no merge queue switch below level 4");
   assert.equal(laneSwitch("done", 4), null);
 });
 

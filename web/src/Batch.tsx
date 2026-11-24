@@ -91,7 +91,7 @@ export function BatchBox({ batch }: { batch: BatchView }) {
   );
 }
 
-/** The small box in the overview's "Checking" lane. */
+/** The small box in the overview's Merge queue lane. */
 export function BatchMini({ batch }: { batch: BatchView }) {
   return (
     <a class={`batch batch-mini batch-${batch.status}`} href="#/queue">

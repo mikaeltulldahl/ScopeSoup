@@ -31,6 +31,8 @@ import { chatKey, createChat } from "../orchestrator/chat.ts";
 import type { Decision, Job, Jobs } from "../orchestrator/jobs.ts";
 import { loadJobs, saveJobs } from "../orchestrator/jobs.ts";
 import { workspaceKey } from "../orchestrator/paths.ts";
+import { usageReserve } from "../orchestrator/tick.ts";
+import { demoUsage } from "./demoUsage.ts";
 import { applyControl } from "../store/control.ts";
 import type { Store } from "../store/store.ts";
 import { openStore } from "../store/store.ts";
@@ -441,13 +443,11 @@ export function seedDemo(store: Store, now: Date, dir?: string): void {
   applyControl(store, "agents.start", at(-200), "demo");
   applyControl(store, "mergeQueue.start", at(-200), "demo");
   store.setValue(KEYS.sync, JSON.stringify({ lastAt: at(-0.5) }));
-  store.addUsageSample({
-    at: at(-1),
-    status: "allowed",
-    windows: [
-      { kind: "five_hour", utilization: 0.42, resetsAt: at(132) },
-      { kind: "seven_day", utilization: 0.31, resetsAt: at(60 * 24 * 4 + 200) },
-    ],
+  // 30 days of synthetic usage readings and the finished sessions that filled the windows, for the Usage page.
+  const usage = demoUsage(now);
+  store.tx(() => {
+    for (const each of usage.sessions) store.put(each, "demo", each.finishedAt ?? base);
+    for (const sample of usage.samples) store.addUsageSample(sample);
   });
 }
 
@@ -850,7 +850,7 @@ async function main(): Promise<void> {
     },
     planning: () => {
       const loaded = loader.load().config;
-      return loaded ? { bugLabels: loaded.bugLabels, plannedSessions: loaded.settings.maxParallelSessions.value, level: loaded.level, ...(loaded.resources ? { resources: loaded.resources } : {}) } : { bugLabels: ["bug"] };
+      return loaded ? { bugLabels: loaded.bugLabels, plannedSessions: loaded.settings.maxParallelSessions.value, reserve: usageReserve(loaded), level: loaded.level, ...(loaded.resources ? { resources: loaded.resources } : {}) } : { bugLabels: ["bug"] };
     },
     chat: createDemoChat(store, configFile, dir, undefined, settings),
     assumptions: [demoAssumptionHost(store)],
