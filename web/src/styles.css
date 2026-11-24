@@ -152,7 +152,7 @@ a.status-item { text-decoration: underline; text-decoration-color: var(--line); 
 .tone-done .card-title { font-weight: 500; }
 
 /* --- Your turn --- */
-.your-turn { position: relative; overflow: hidden; display: grid; gap: 8px; padding: 10px; background: var(--yours-soft); border: 1px solid var(--yours-line); border-radius: var(--radius); }
+.your-turn { position: relative; overflow: hidden; display: grid; gap: 8px; padding: 10px; border: 2px solid var(--yours-line); border-radius: var(--radius); }
 .your-turn > * { position: relative; }
 .your-turn.waiting::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: min(55%, 360px); background: linear-gradient(90deg, var(--glow), transparent); clip-path: polygon(0 38%, 100% 0, 100% 100%, 0 62%); pointer-events: none; animation: beam 5s ease-in-out infinite alternate; }
 @keyframes beam { from { opacity: 0.55; } to { opacity: 1; } }
@@ -268,7 +268,7 @@ a.member:hover { border-color: var(--accent); }
 .reason-big { font-size: 0.95rem; }
 .panel { display: grid; gap: 8px; padding: 10px 12px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); min-width: 0; }
 .panel h3 { font-size: 0.78rem; letter-spacing: 0.05em; text-transform: uppercase; color: var(--muted); }
-.panel-yours { background: var(--yours-soft); border-color: var(--yours-line); }
+.panel-yours { border: 2px solid var(--yours-line); }
 .panel-yours h3 { color: var(--yours); }
 .body-text { white-space: pre-wrap; }
 .verification { padding: 6px 8px; background: var(--sunken); border-radius: 6px; font-size: 0.9rem; }
