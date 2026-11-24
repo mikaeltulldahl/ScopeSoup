@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { UsageSample } from "../model/types.ts";
 import { at, ref, T0 } from "./testing.ts";
-import { attributeUsage, forecastLine, stackPlot, timeTicks, usagePlot } from "./usage.ts";
+import { attributeUsage, forecastLine, stackPlot, timeTicks, usageParts, usagePlot } from "./usage.ts";
 import type { UsageSession } from "./usage.ts";
 
 const t = (minutes: number) => Date.parse(at(minutes));
@@ -170,4 +170,24 @@ test("the plot's parts stack bottom to top in the order given, and a part never 
     { key: "implement", lo: [0, 0], hi: [0.2, 0.3] },
     { key: "outside", lo: [0.2, 0.3], hi: [0.2, 0.4] },
   ]);
+});
+
+test("usageParts: over several windows the shares are of all use and sum to 100, with the windows' worth", () => {
+  const shares = { implement: 4.66, review: 2.0, triage: 1.01, outside: 0.5 };
+  const parts = usageParts({ total: 8.17, resets: 7, shares }, ["implement", "review", "triage", "outside"]);
+  assert.equal(parts.several, true);
+  assert.equal(parts.windows, 8);
+  assert.deepEqual(parts.percents, { implement: 57, review: 25, triage: 12, outside: 6 });
+  assert.equal(Object.values(parts.percents).reduce((sum, each) => sum + each, 0), 100);
+  // Thirds do not round to 100 by themselves: the largest remainders take the spare points.
+  const thirds = usageParts({ total: 3, resets: 2, shares: { implement: 1, review: 1, triage: 1, outside: 0 } }, ["implement", "review", "triage"]);
+  assert.deepEqual(thirds.percents, { implement: 34, review: 33, triage: 33 });
+});
+
+test("usageParts: one window keeps its own shares; a small total is still one window's worth", () => {
+  const one = usageParts({ total: 0.4, resets: 0, shares: { implement: 0.4, review: 0, triage: 0, outside: 0 } }, ["implement"]);
+  assert.equal(one.several, false);
+  assert.deepEqual(one.percents, {});
+  assert.equal(one.windows, 1);
+  assert.equal(usageParts({ total: 0, resets: 1, shares: { implement: 0, review: 0, triage: 0, outside: 0 } }, ["implement"]).several, false);
 });

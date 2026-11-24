@@ -361,3 +361,30 @@ export function stackPlot(points: readonly UsagePlotPoint[], keys: readonly Usag
   }
   return bands;
 }
+
+export interface UsageParts {
+  /** More than one window's use is in the span (it reset in it): shares are of all use, not of one window. */
+  several: boolean;
+  /** About how many windows' worth was used in all (at least 1 once anything was used). */
+  windows: number;
+  /** Per key, in the order given: its share of all use as whole percents, summing to 100 when anything was used. */
+  percents: Partial<Record<UsageKey, number>>;
+}
+
+/**
+ * Who used it, for a span: over several windows each key's share of all use in whole percents (largest remainder, so they sum
+ * to exactly 100), and the number of windows' worth; within one window the shares stay what they are, of the window.
+ */
+export function usageParts(window: Pick<UsageAttribution, "total" | "resets" | "shares">, keys: readonly UsageKey[]): UsageParts {
+  const several = window.resets > 0 && window.total > 0;
+  const percents: Partial<Record<UsageKey, number>> = {};
+  if (several) {
+    const exact = keys.map((key) => (window.shares[key] / window.total) * 100);
+    const floors = exact.map(Math.floor);
+    let left = 100 - floors.reduce((sum, each) => sum + each, 0);
+    const order = exact.map((value, index) => ({ index, rest: value - floors[index]! })).sort((a, b) => b.rest - a.rest || a.index - b.index);
+    for (const { index } of order) if (left-- > 0) floors[index]!++;
+    keys.forEach((key, index) => (percents[key] = floors[index]!));
+  }
+  return { several, windows: Math.max(1, Math.round(window.total)), percents };
+}
