@@ -19,7 +19,7 @@ import { compareItems, foreignChanges, readyItems } from "./candidates.ts";
 import type { Context, TickDeps } from "./context.ts";
 import type { ClaimResult } from "./ports.ts";
 import { createLog, errorText } from "./context.ts";
-import { afterRefine, backToImplement, emptyBranch, followDraft, followQuestions, overturnsBack, retryHandOver, retryPost, settle } from "./cycle.ts";
+import { afterRefine, backToImplement, emptyBranch, followDraft, followQuestions, overturnsBack, retryHandOver, retryPost, settle, writeAboutOthers } from "./cycle.ts";
 import { loadOwnBlockers, withOwnBlockers } from "../store/blockers.ts";
 import { decide } from "./usageCheck.ts";
 import type { UsageCheckDecision } from "./usageCheck.ts";
@@ -388,6 +388,9 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
     // implementor's own session is resumed with the answer before the next step. A triage waits until the implement step.
     if (item && !job.sessionId && !job.parked && !job.owes && job.step !== "triage") overturnsBack(ctx, job);
   }
+
+  // Questions agents asked about other Items are written on each that is free now, before anything starts on it.
+  await writeAboutOthers(ctx);
 
   // Overturns kept for work whose change merged before they were handed to it get a new Item, as an Overturn after merging does.
   await overturnsMerged(ctx, itemByKey);

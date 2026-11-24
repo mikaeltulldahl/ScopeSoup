@@ -1,0 +1,110 @@
+// Questions an agent asks about another Item than its own, and from triage a draft of that Item's description
+// (`aboutOthers` in its answer). Scope Soup, not the agent, writes them on that Item as triage's own draft and questions are
+// written (`writeAboutOthers` in cycle.ts), once no session runs on it and nobody holds it. Until then they wait here, in the
+// store, by the other Item's ref key. Kept apart from the jobs, as overturns are, so the asker's job and the other Item's never race.
+
+import type { Ref, WorkItem } from "../model/types.ts";
+import { refKey } from "../model/types.ts";
+import { holdStands } from "../model/people.ts";
+import type { Store } from "../store/store.ts";
+import type { Context } from "./context.ts";
+import type { AboutOther, Decision, Job } from "./jobs.ts";
+
+/** Questions (and a draft) waiting to be written on another Item. Agent text: data. */
+export interface WaitingAbout {
+  /** Who asked, in words: "the implementor of A-12", "triage of A-3". */
+  askedBy: string;
+  /** The asker's Item, by ref key. */
+  from: string;
+  /** Each question names who asked. */
+  questions: Decision[];
+  draft?: string;
+  at: string;
+}
+
+/** By the other Item's ref key, oldest first. */
+export type WaitingAbouts = Record<string, WaitingAbout[]>;
+
+const KEY = "orchestrator.aboutOthers";
+
+export function readWaitingAbouts(store: Store): WaitingAbouts {
+  const text = store.getValue(KEY);
+  if (!text) return {};
+  try {
+    const parsed = JSON.parse(text) as unknown;
+    return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed) ? (parsed as WaitingAbouts) : {};
+  } catch {
+    return {};
+  }
+}
+
+/** Writes the list; call it in the transaction that writes the event. */
+export function writeWaitingAbouts(store: Store, waiting: WaitingAbouts): void {
+  for (const key of Object.keys(waiting)) if (waiting[key]!.length === 0) delete waiting[key];
+  store.setValue(KEY, JSON.stringify(waiting));
+}
+
+/** The Item a name from an agent points at (`#12`, `12`, `A-3` or a ref key), on the subject's own host; null when the store has none, or it is the subject itself. */
+export function linkedItem(store: Store, subject: Ref, name: string): WorkItem | null {
+  let id = name.trim();
+  const prefix = `${subject.host}:work:`;
+  if (id.startsWith(prefix)) id = id.slice(prefix.length);
+  id = id.replace(/^#/, "");
+  if (id === subject.id) return null;
+  return store.list<WorkItem>("work").find((work) => work.ref.host === subject.host && work.ref.id === id) ?? null;
+}
+
+export const isOpenItem = (work: WorkItem): boolean => work.state !== "done" && work.state !== "abandoned";
+
+/** "triage of A-3", "the implementor of A-12". */
+export function askerName(role: "triage" | "implement", item: Ref): string {
+  return role === "triage" ? `triage of ${item.id}` : `the implementor of ${item.id}`;
+}
+
+/**
+ * Keeps an answer's questions about other Items, each naming who asked, until they are written on that Item. An unknown or closed
+ * Item (or the asker's own) is dropped with an event; so is a draft that changes nothing with no question.
+ */
+export function keepAboutOthers(ctx: Context, job: Job, role: "triage" | "implement", list: readonly AboutOther[] | undefined): void {
+  if (!list || list.length === 0) return;
+  const { store } = ctx.deps;
+  const subject = refKey(job.item);
+  const askedBy = askerName(role, job.item);
+  for (const entry of list) {
+    const other = linkedItem(store, job.item, entry.item);
+    if (!other || !isOpenItem(other)) {
+      const why = other ? `it is ${other.state}` : "there is no such open Item other than its own";
+      ctx.commit("orchestrator.about_other_dropped", `The ${role === "triage" ? "triage" : "implementor"} of ${job.item.id} asked about ${JSON.stringify(entry.item.slice(0, 60))}, but ${why}: ${entry.questions.length} question(s)${entry.draft ? " and a draft" : ""} dropped.`, subject, { item: entry.item.slice(0, 200) });
+      continue;
+    }
+    const draft = entry.draft?.trim() && entry.draft.trim() !== (other.body ?? "").trim() ? entry.draft.trim() : undefined;
+    const questions = entry.questions.map((each) => ({ ...each, question: `${each.question.trim()} (asked by ${askedBy})` }));
+    if (questions.length === 0 && !draft) {
+      ctx.commit("orchestrator.about_other_dropped", `Triage of ${job.item.id} drafted ${other.ref.id}'s description as it already is, with no question: nothing to write.`, subject, { item: refKey(other.ref) });
+      continue;
+    }
+    const key = refKey(other.ref);
+    store.tx(() => {
+      const waiting = readWaitingAbouts(store);
+      waiting[key] = [...(waiting[key] ?? []), { askedBy, from: subject, questions, ...(draft ? { draft } : {}), at: ctx.at }];
+      writeWaitingAbouts(store, waiting);
+      ctx.commit("orchestrator.about_other_kept", `${askedBy[0]!.toUpperCase()}${askedBy.slice(1)} asked ${questions.length} question(s)${draft ? " and gave a draft description" : ""} about ${other.ref.id}; Scope Soup writes them there once no session runs on it and nobody holds it.`, key, { from: subject, questions: questions.length, draft: draft !== undefined });
+    });
+  }
+}
+
+/**
+ * Why questions from other Items cannot be written on this Item now, or null when they can: a session or a person's chat runs
+ * on it, someone else holds it, it waits for an answer to questions of its own, or its change is merged, queued or handed over.
+ * This machine's own claim does not count: parking releases it.
+ */
+export function busyWhy(ctx: Context, item: WorkItem, job: Job | undefined): string | null {
+  if (ctx.deps.runner.busy?.(item.ref)) return "a person is talking to one of its sessions";
+  if (job?.sessionId) return `its ${job.step} session runs`;
+  const holder = item.holder;
+  if (holder && holdStands(holder, Date.parse(ctx.at)) && !(holder.actor.bot && holder.actor.id === ctx.deps.actions.claimant)) return `it is held by ${holder.actor.name}`;
+  if (!job) return null;
+  if (job.owes || job.merged !== undefined || job.queued !== undefined || job.parked?.as === "queued" || job.parked?.as === "handed-over" || job.parked?.retry === "hand-over") return "its change is merged, in the merge queue or handed over";
+  if (job.parked?.as === "needs-decision" || job.parked?.retry === "post") return "it waits for a person's answer to its own questions";
+  return null;
+}

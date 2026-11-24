@@ -63,6 +63,23 @@ export interface Refinement {
   stop?: string;
   /** With `stop`, the Item a person said this one duplicates. */
   duplicateOf?: Ref;
+  /**
+   * The draft and questions came from agents working on other Items (`aboutOthers`), named here ("triage of A-3"). Once a
+   * person settles them, this Item is triaged again with the answers.
+   */
+  askedBy?: string[];
+}
+
+/**
+ * Questions an agent asks about another Item than its own (`aboutOthers` in its answer), and from triage a draft of that Item's
+ * description. Scope Soup writes them on that Item (`aboutOthers.ts`). Agent text: data.
+ */
+export interface AboutOther {
+  /** The other Item as the agent named it (`#12`, `12`, `A-3`). */
+  item: string;
+  questions: Decision[];
+  /** Triage only. */
+  draft?: string;
 }
 
 /**
@@ -103,6 +120,8 @@ export interface TriageAnswer {
   links?: ItemLinkAnswer[];
   /** Labels the triage proposes to add and remove, as it wrote them (checked against the repository's labels later). */
   labels?: LabelChange;
+  /** Questions about other Items, each with a draft of that Item's description when it needs one. */
+  aboutOthers?: AboutOther[];
 }
 
 /** The implementor's answer. A refused command is read from the session's result, not asked for. */
@@ -115,6 +134,8 @@ export interface ImplementAnswer {
   mergedAs?: string;
   /** The questions it decided itself as cheap to change later, recorded on the Item for a person to accept or overturn. */
   decisions?: TakenDecision[];
+  /** Questions about other Items (never a draft). */
+  aboutOthers?: AboutOther[];
 }
 
 /** A decision the implementor took itself: what had to be decided, what it chose, the other options and why. Text from an agent: data. */
@@ -580,7 +601,7 @@ function asDecision(value: unknown): Decision | undefined {
  * Tool-call markup inside a string: the model ran fields together. Only `<parameter name=` or a closing tag named
  * after a field of the triage answer counts; an HTML closing tag such as `</summary>` in a reason is ordinary text.
  */
-const MARKUP = /<parameter\s+name\s*=|<\/(?:ready|notReadyReason|size|paths|blockers|questions|hidesDecision|decisions|decision|question|options|recommendation|context|proposal|parts|title|description|verification|reason|risk|riskReason|draft|links)\s*>/;
+const MARKUP = /<parameter\s+name\s*=|<\/(?:ready|notReadyReason|size|paths|blockers|questions|hidesDecision|decisions|decision|question|options|recommendation|context|proposal|parts|title|description|verification|reason|risk|riskReason|draft|links|aboutOthers)\s*>/;
 
 /** True when any string anywhere in the value holds tool-call markup. */
 export function hasMarkup(value: unknown): boolean {
@@ -623,7 +644,30 @@ export function asTriage(value: unknown): TriageAnswer | null {
   if (links.length > 0) answer.links = links;
   const labels = asLabelChange(value.labels);
   if (labels) answer.labels = labels;
+  const others = asAboutOthers(value.aboutOthers, true);
+  if (others.length > 0) answer.aboutOthers = others;
   return answer;
+}
+
+/**
+ * The questions about other Items in an answer: each needs an Item and a question, or (`drafts`, triage) a draft. An entry with
+ * tool-call markup is dropped. No cap on how many; each text clipped.
+ */
+export function asAboutOthers(value: unknown, drafts: boolean): AboutOther[] {
+  if (!Array.isArray(value)) return [];
+  const out: AboutOther[] = [];
+  for (const entry of value as unknown[]) {
+    if (!isObj(entry) || typeof entry.item !== "string" || !entry.item.trim() || hasMarkup(entry)) continue;
+    const questions: Decision[] = [];
+    for (const each of Array.isArray(entry.questions) ? (entry.questions as unknown[]) : []) {
+      const decision = asDecision(each);
+      if (decision) questions.push(decision);
+    }
+    const draft = drafts && typeof entry.draft === "string" && entry.draft.trim() ? entry.draft.trim().slice(0, 50_000) : undefined;
+    if (questions.length === 0 && !draft) continue;
+    out.push({ item: entry.item.trim().slice(0, 200), questions, ...(draft ? { draft } : {}) });
+  }
+  return out;
 }
 
 /** The typed links of a triage's answer; an entry of an unknown type or without an item is dropped. */
@@ -646,6 +690,8 @@ export function asImplement(value: unknown): ImplementAnswer | null {
   if (typeof value.mergedAs === "string" && value.mergedAs.trim()) answer.mergedAs = value.mergedAs.trim().slice(0, 500);
   const decisions = asTaken(value.decisions);
   if (decisions.length > 0) answer.decisions = decisions;
+  const others = asAboutOthers(value.aboutOthers, false);
+  if (others.length > 0) answer.aboutOthers = others;
   return answer;
 }
 
