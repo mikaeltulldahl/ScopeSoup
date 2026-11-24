@@ -1,5 +1,6 @@
 // The four switches on the overview's lanes (src/store/control.ts): triage on Backlog, implementors on In progress, review on
-// In review, the merge queue on Queued (Checking shows it too). Below the level that uses a role its switch is not shown.
+// In review, the merge queue on Merge queue (the overview's lane for Queued and Checking). Below the level that uses a role its
+// switch is not shown.
 
 export type SwitchName = "triage" | "implement" | "review" | "mergeQueue";
 export type SwitchState = "started" | "paused" | "stopped";
@@ -11,7 +12,7 @@ export const SWITCH_NAMES: readonly SwitchName[] = ["triage", "implement", "revi
 export const SWITCH_LEVEL: Record<SwitchName, number> = { triage: 1, implement: 2, review: 3, mergeQueue: 4 };
 
 /** The lane each switch sits on. */
-const LANE_OF: Record<SwitchName, string> = { triage: "backlog", implement: "in-progress", review: "in-review", mergeQueue: "queued" };
+const LANE_OF: Record<SwitchName, string> = { triage: "backlog", implement: "in-progress", review: "in-review", mergeQueue: "merge-queue" };
 
 export const SWITCH_WORDS: Record<SwitchName, string> = { triage: "Triage", implement: "Implementors", review: "Review", mergeQueue: "Merge queue" };
 
@@ -25,11 +26,6 @@ export function switchesAt(level: number | undefined): SwitchName[] {
 /** The switch whose button sits on this lane, if it is shown at this level. */
 export function laneSwitch(lane: string, level: number | undefined): SwitchName | null {
   return switchesAt(level).find((name) => LANE_OF[name] === lane) ?? null;
-}
-
-/** The switch this lane is muted by when it is paused: its own, or for Checking the merge queue's. */
-export function laneMutedBy(lane: string, level: number | undefined): SwitchName | null {
-  return laneSwitch(lane === "checking" ? "queued" : lane, level);
 }
 
 /** What pressing the switch does now: Pause when it runs, else Resume. */

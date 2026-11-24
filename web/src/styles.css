@@ -178,7 +178,7 @@ a.status-item { text-decoration: underline; text-decoration-color: var(--line); 
 .lane-closed .lane-body { display: none; }
 
 @media (min-width: 720px) {
-  .lanes { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .lanes { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   /* Title rows share one height across a row of lanes (a long title that wraps), so the cards start level. */
   .lane { display: grid; grid-row: span 2; grid-template-rows: subgrid; row-gap: 0; align-self: stretch; align-content: start; }
   .lane-closed .lane-body { display: grid; }
@@ -186,7 +186,7 @@ a.status-item { text-decoration: underline; text-decoration-color: var(--line); 
   .chevron { display: none; }
 }
 @media (min-width: 1180px) {
-  .lanes { grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 10px; }
+  .lanes { grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 10px; }
 }
 
 /* --- Progress --- */
@@ -266,8 +266,6 @@ a.member:hover { border-color: var(--accent); }
 .item-head { display: grid; gap: 6px; padding-left: 10px; border-left: 3px solid var(--line); }
 .item-head h2 { font-size: 1.25rem; letter-spacing: 0; text-transform: none; color: var(--text); line-height: 1.25; }
 .item-head .ref { font-size: 1rem; }
-.crumbs { font-size: 0.82rem; color: var(--muted); }
-.crumbs a { color: var(--accent); }
 .why { font-size: 0.84rem; color: var(--text); }
 .vote { display: inline-flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .vote-off { font-size: 0.75rem; opacity: 0.75; }
@@ -478,8 +476,8 @@ body.dialog-open { overflow: hidden; }
 
 /* The overview's one line at level 0. */
 .no-triage { margin: 0 0 12px; }
-.not-triaged { display: flex; align-items: center; gap: 8px; margin: 4px 0 0; color: var(--muted); font-size: 0.8rem; }
-.not-triaged::before, .not-triaged::after { content: ""; flex: 1; border-top: 1px dashed var(--line); }
+.lane-divider { display: flex; align-items: center; gap: 8px; margin: 4px 0 0; color: var(--muted); font-size: 0.8rem; }
+.lane-divider::before, .lane-divider::after { content: ""; flex: 1; border-top: 1px dashed var(--line); }
 
 /* a person's chat with a session of the item. */
 .chat select { font: inherit; color: var(--text); width: 100%; box-sizing: border-box; padding: 6px 8px; border-radius: 6px; border: 1px solid var(--line); background: var(--surface); min-height: 34px; }

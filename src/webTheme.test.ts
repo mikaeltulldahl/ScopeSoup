@@ -26,7 +26,7 @@ test("every theme has a non-empty word for every key, a colour for every variabl
   for (const id of THEME_IDS) {
     const theme = THEMES[id];
     assert.deepEqual(Object.keys(theme.words).sort(), keys, id);
-    for (const [key, word] of Object.entries(theme.words)) if (typeof word === "string" && !FLAIR.includes(key) && key !== "abandonedIcon") assert.ok(word.trim() !== "", `${id}.${key}`);
+    for (const [key, word] of Object.entries(theme.words)) if (typeof word === "string" && !FLAIR.includes(key) && key !== "abandonedIcon" && key !== "mergeLaneIcon") assert.ok(word.trim() !== "", `${id}.${key}`);
     for (const name of COLOUR_VARS) assert.ok(theme.light[name], `${id} light ${name}`);
     for (const name of Object.keys(theme.dark)) assert.ok((COLOUR_VARS as readonly string[]).includes(name), `${id} dark ${name}`);
     for (const lane of LANE_KEYS) assert.ok(theme.words.lanes[lane].trim() !== "", `${id} lane ${lane}`);
@@ -59,6 +59,8 @@ test("The default theme words the lanes as the core does, and Graveyard Shift ha
   const graveyard = THEMES.graveyard.words;
   assert.deepEqual(Object.values(graveyard.lanes), ["Stakeout", "At large", "On the case", "Cross-examination", "Awaiting DNA", "Autopsy", "Laid to rest"]);
   assert.equal(graveyard.abandoned, "Cold case");
+  assert.equal(THEMES.default.words.mergeLane, "Merge queue");
+  assert.equal(graveyard.mergeLane, "Crime lab");
   assert.equal(graveyard.yourTurn, "Wanted for questioning");
   assert.equal(graveyard.itemOne, "case");
   assert.equal(graveyard.summaryTitle, "Coroner's report");
