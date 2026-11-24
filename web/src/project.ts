@@ -25,7 +25,7 @@ export function faviconHref(colour: string, theme: ThemeId = DEFAULT_THEME): str
 
 /** What each folder button says. */
 export const FOLDER_WORDS: Readonly<Record<FolderName, { label: string; title: string }>> = {
-  checkout: { label: "Open your checkout", title: "Open your own checkout of the project in the file manager" },
-  clone: { label: "Open Scope Soup's clone", title: "Open the clone Scope Soup makes its worktrees from (repoPath) in the file manager" },
-  config: { label: "Open the configuration folder", title: "Open the folder of this machine's scopesoup.config.json in the file manager" },
+  checkout: { label: "Your project folder", title: "Opens the folder you work on this project in, in the file manager" },
+  clone: { label: "Scope Soup's copy of the project", title: "Opens Scope Soup's own copy of the project, where its agents work, in the file manager; leave it to Scope Soup" },
+  config: { label: "Scope Soup's settings folder", title: "Opens the folder with this machine's Scope Soup settings (scopesoup.config.json), in the file manager" },
 };

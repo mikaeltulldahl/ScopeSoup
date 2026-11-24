@@ -1,5 +1,5 @@
 // Scope Soup's version on the board. The footer shows the version that runs and, when a newer release is known,
-// "Scope Soup X.Y.Z is available". The Settings page has the panel: the check, the release's notes, Get latest and Go back.
+// "Scope Soup X.Y.Z is available". The Settings page has the panel: the check, the release's notes, Upgrade and Go back.
 
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { UpgradeView } from "./api.ts";
@@ -111,7 +111,7 @@ export function VersionPanel() {
       {view.available && latest ? (
         <div class="version-new">
           <p class="notice version-notice" role="status">
-            <b>Scope Soup {latest.version} is available.</b> Nothing changes until you press Get latest.
+            <b>Scope Soup {latest.version} is available.</b> Nothing changes until you press Upgrade.
             {latest.page && <> <a class="tag-link" href={latest.page} target="_blank" rel="noreferrer">The release</a></>}
           </p>
           {latest.notes.trim() && (
@@ -121,9 +121,7 @@ export function VersionPanel() {
             </details>
           )}
         </div>
-      ) : (
-        latest && <p class="muted">This is the newest release{latest.version === view.version ? "" : ` (${latest.version})`}.</p>
-      )}
+      ) : null}
 
       {task && (
         <p class={`notice${task.state === "failed" ? " notice-bad" : ""} version-task`} role="status">
@@ -138,12 +136,13 @@ export function VersionPanel() {
       )}
 
       <div class="form-actions version-actions">
-        <button type="button" disabled={busy || view.checking || view.checkOff !== null} onClick={() => act("check")}>
-          {view.checking ? "Checking…" : "Check now"}
-        </button>
-        {(view.available || view.getLatest.can) && (
+        {view.available && latest ? (
           <button type="button" class="primary" disabled={busy || !view.getLatest.can} title={view.getLatest.why ?? ""} onClick={() => setAsking("get")}>
-            Get latest
+            Upgrade to {latest.version}
+          </button>
+        ) : (
+          <button type="button" disabled={busy || view.checking || view.checkOff !== null} onClick={() => act("check")}>
+            {view.checking ? "Checking…" : "Check now"}
           </button>
         )}
         {view.back && (
@@ -161,11 +160,11 @@ export function VersionPanel() {
         <div class="notice version-confirm" role="dialog" aria-label="Switch Scope Soup">
           <p>
             {asking === "get"
-              ? <>Get Scope Soup {latest?.version}: it is downloaded, checked and unpacked beside this version. Then agents and the merge queue are paused, Scope Soup waits until no session and no queue batch runs, copies the database and the config, and restarts on {latest?.version}. It comes back paused; this version stays for Go back.</>
+              ? <>Upgrade to Scope Soup {latest?.version}: it is downloaded, checked and unpacked beside this version. Then agents and the merge queue are paused, Scope Soup waits until no session and no queue batch runs, copies the database and the config, and restarts on {latest?.version}. It comes back paused; this version stays for Go back.</>
               : <>Switch back to Scope Soup {view.back?.version}: agents and the merge queue are paused, Scope Soup waits until nothing runs and restarts on {view.back?.version}. It comes back paused.{view.lastSwitch?.backup ? <> If {view.version} changed the data's format, {view.back?.version} will not start on it: the copy from before the upgrade is in <code>{view.lastSwitch.backup}</code>.</> : null}</>}
           </p>
           <div class="form-actions">
-            <button type="button" class="primary" disabled={busy} onClick={() => act(asking)}>{asking === "get" ? `Yes, get ${latest?.version}` : `Yes, switch to ${view.back?.version}`}</button>
+            <button type="button" class="primary" disabled={busy} onClick={() => act(asking)}>{asking === "get" ? `Yes, upgrade to ${latest?.version}` : `Yes, switch to ${view.back?.version}`}</button>
             <button type="button" disabled={busy} onClick={() => setAsking(null)}>No</button>
           </div>
         </div>

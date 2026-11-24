@@ -433,8 +433,8 @@ ul.md-list ul.md-list { list-style: circle; }
 .usage { display: grid; gap: var(--gap); min-width: 0; }
 .usage-spans { display: flex; flex-wrap: wrap; gap: 6px; }
 .usage-fig { margin: 0; display: grid; gap: 2px; }
-.usage-svg { width: 100%; height: 150px; display: block; }
-.usage-axis { font-size: 9px; fill: var(--muted); }
+.usage-svg { width: 100%; height: 136px; display: block; }
+.usage-axis { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); }
 .usage-table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
 .usage-table th, .usage-table td { padding: 4px 4px; border-top: 1px solid var(--line); text-align: left; font-weight: normal; overflow-wrap: anywhere; }
 .usage-table thead th { border-top: 0; font-size: 0.75rem; color: var(--muted); }

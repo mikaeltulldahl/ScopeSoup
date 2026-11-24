@@ -35,8 +35,8 @@ function Bars({ window, now }: { window: Window; now: number }) {
   const first = window.buckets[0]?.from;
   return (
     <figure class="usage-fig">
-      <svg viewBox={`0 0 ${W} ${H + 14}`} role="img" aria-label="Usage over time, stacked by role" preserveAspectRatio="none" class="usage-svg">
-        <line x1="0" y1={H} x2={W} y2={H} stroke="var(--line)" />
+      <svg viewBox={`0 0 ${W} ${H + 1}`} role="img" aria-label="Usage over time, stacked by role" preserveAspectRatio="none" class="usage-svg">
+        <line x1="0" y1={H} x2={W} y2={H} stroke="var(--line)" vector-effect="non-scaling-stroke" />
         {window.buckets.map((bucket, index) => {
           let y = H;
           return (
@@ -52,9 +52,12 @@ function Bars({ window, now }: { window: Window; now: number }) {
             </g>
           );
         })}
-        <text x="0" y={H + 11} class="usage-axis">{first ? clockTime(first, now) : ""}</text>
-        <text x={W} y={H + 11} text-anchor="end" class="usage-axis">now</text>
       </svg>
+      {/* The labels sit outside the SVG: it stretches to the page's width, and text inside it would stretch too. */}
+      <div class="usage-axis">
+        <span>{first ? clockTime(first, now) : ""}</span>
+        <span>now</span>
+      </div>
       <figcaption class="muted">Tallest bar: {pct(peak)} of the window.</figcaption>
     </figure>
   );

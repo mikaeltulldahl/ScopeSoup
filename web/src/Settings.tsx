@@ -148,7 +148,7 @@ function Folders({ project }: { project: ProjectView | undefined }) {
   if (!project || project.folders.length === 0) return null;
   return (
     <div class="settings-folders">
-      <span class="muted">Folders on this machine:</span>
+      <span class="muted">Open in the file manager:</span>
       {project.folders.map((folder) => <FolderButton key={folder} folder={folder} onError={setProblem} />)}
       {problem && <p class="notice notice-bad" role="alert">{problem}</p>}
     </div>

@@ -235,7 +235,7 @@ $env:SCOPESOUP_DATA = "<config folder>\data"
 & "HOME\bin\scopesoup.cmd" start
 ```
 
-Git Bash: `SCOPESOUP_CONFIG=... SCOPESOUP_DATA=... "HOME/bin/scopesoup" start`. Add `SCOPESOUP_GITHUB_TOKEN` for a github host. The board is on http://127.0.0.1:4310. Start it with the launcher (`scopesoup start` once `HOME/bin` is on the PATH): the Settings page's Get latest then restarts it on a new version by itself. It fills and nothing runs. The overview then says how many Items have no triage; for triages the person sets level 1 on the Settings page and presses Start agents.
+Git Bash: `SCOPESOUP_CONFIG=... SCOPESOUP_DATA=... "HOME/bin/scopesoup" start`. Add `SCOPESOUP_GITHUB_TOKEN` for a github host. The board is on http://127.0.0.1:4310. Start it with the launcher (`scopesoup start` once `HOME/bin` is on the PATH): the Settings page's Upgrade then restarts it on a new version by itself. It fills and nothing runs. The overview then says how many Items have no triage; for triages the person sets level 1 on the Settings page and presses Start agents.
 
 ## 8. Optional: suggest the plugin to teammates
 
