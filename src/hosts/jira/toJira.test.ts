@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { answersBody, assumptionBody, draftBody, questionBody } from "../github/conventions.ts";
+import type { AdfNode } from "./adf.ts";
 import { adfToMarkdown } from "./adf.ts";
 import { spliceAdfVerification, spliceWikiVerification, writeDescription } from "./description.ts";
 import { adfProblem } from "./fakeJiraWrites.ts";
@@ -70,19 +71,41 @@ test("Markdown to wiki markup reads back as the same Markdown, with every live c
     assert.equal(read.simplified.length, 0, line);
     assert.doesNotMatch(read.markdown, /^(#|>|- |---$)/, line);
   }
-  assert.equal(markdownToWiki("```\nthe {code} macro\n```"), "{noformat}\nthe {code} macro\n{noformat}");
+  // Every `{code` and `{noformat` inside a code block gets a zero-width space, parameterised ones too, so none ends or opens a block.
+  assert.equal(markdownToWiki("```\nthe {code} and {noformat} and {code:java} macros\n```"), "{code}\nthe {​code} and {​noformat} and {​code:java} macros\n{code}");
+  assert.equal(wikiToMarkdown(markdownToWiki("```\nend {code} here\n```")).markdown, "```\nend {​code} here\n```");
+});
+
+test("inline code on Data Center escapes everything wiki markup still acts on inside {{...}}, and reads back as it was", () => {
+  const code = "[~admin] !x.png! [a|http://e] *b* {html} -s- _e_ a\\b";
+  const wiki = markdownToWiki(`Run \`${code}\` now.`);
+  const inside = /\{\{(.*)\}\}/.exec(wiki)?.[1] ?? "";
+  for (const live of [/(^|[^\\])\[/, /(^|[^\\])!/, /(^|[^\\])\*/, /(^|[^\\])\{/, /(^|[^\\])\|/, /(^|[^\\])_/, /(^|[^\\])-/]) assert.doesNotMatch(inside, live, inside);
+  const read = wikiToMarkdown(wiki);
+  assert.equal(read.simplified.length, 0);
+  assert.equal(read.markdown, `Run \`${code}\` now.`);
 });
 
 test("the Verification section is spliced into the ADF tree and the wiki text, everything else kept", () => {
   const panel = { type: "panel", attrs: { panelType: "info" }, content: [{ type: "paragraph", content: [{ type: "text", text: "Kept." }] }] };
   const doc = { version: 1, type: "doc", content: [panel, { type: "heading", attrs: { level: 2 }, content: [{ type: "text", text: "Verification" }] }, { type: "paragraph", content: [{ type: "text", text: "Old." }] }, { type: "heading", attrs: { level: 2 }, content: [{ type: "text", text: "Notes" }] }] };
-  const spliced = spliceAdfVerification(doc, "New.");
+  const splice = (from: unknown, text: string | null): AdfNode => spliceAdfVerification(from, text) as AdfNode;
+  const spliced = splice(doc, "New.");
   assert.deepEqual(spliced.content![0], panel);
   assert.equal(adfToMarkdown(spliced).markdown, "> **Info:** Kept.\n\n## Verification\n\nNew.\n\n## Notes");
-  assert.equal(spliceAdfVerification({ version: 1, type: "doc", content: [panel] }, "Added.").content?.length, 3);
-  assert.deepEqual(spliceAdfVerification(doc, null).content, [panel, doc.content[3]]);
+  assert.equal(splice({ version: 1, type: "doc", content: [panel] }, "Added.").content?.length, 3);
+  assert.deepEqual(splice(doc, null).content, [panel, doc.content[3]]);
+  // Nothing to splice and nothing to write: the description as it was, an empty one too.
+  assert.equal(spliceAdfVerification(null, null), null);
+  assert.deepEqual(writeDescription("cloud", null, { verification: null }), { value: null });
+  assert.equal(spliceWikiVerification("Text.", ""), "Text.");
   assert.equal(spliceWikiVerification("{panel}Kept.{panel}\n\nh2. Verification\nOld.\n\nh2. Notes\nN.", "New."), "{panel}Kept.{panel}\n\nh2. Verification\n\nNew.\n\nh2. Notes\nN.");
   assert.equal(spliceWikiVerification("Text.", "Added."), "Text.\n\nh2. Verification\n\nAdded.");
+  // A heading inside a panel or quote is the macro's: a Verification there is left whole and a section is added at the end.
+  const inPanel = "{panel:title=Notes}\nh2. Verification\nInside.\n{panel}\n\nAfter.";
+  assert.equal(spliceWikiVerification(inPanel, "New."), `${inPanel}\n\nh2. Verification\n\nNew.`);
+  // A quote inside the section is the section's, whole: its heading does not end the section, so no closing tag is left behind.
+  assert.equal(spliceWikiVerification("h2. Verification\nOld.\n{quote}\nh2. Quoted\n{quote}\nh2. Notes\nN.", "New."), "h2. Verification\n\nNew.\n\nh2. Notes\nN.");
   assert.match(JSON.stringify(writeDescription("cloud", doc, { description: "Flat." })), /refused/);
   assert.deepEqual(writeDescription("datacenter", "Plain.\n\nh2. Verification\nIt.", { description: "New." }), { value: "New.\n\nh2. Verification\n\nIt." });
 });

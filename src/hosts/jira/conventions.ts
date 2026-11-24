@@ -47,12 +47,23 @@ export function splitMarked(body: string): { markdown: string; property: Record<
   return { markdown: lines.slice(0, -1).join("\n").trim(), property: { ...marker.data, v: 1, kind: marker.kind } };
 }
 
-/** One claim in `scopesoup.claim`. */
+/** One claim in `scopesoup.claim`: `at` is when it was first written and `nonce` tells two writes of one machine apart. */
 export interface JiraClaim {
   machine: string;
   until: string;
   released: boolean;
+  at: string;
+  nonce: string;
 }
+
+/**
+ * The longest a claim read from Jira may last from now: twice the orchestrator's claim expiry (`CLAIM_EXPIRY_MINUTES`, 120). An
+ * issue property can be edited by anyone who may edit the issue, so a forged `until` far ahead holds the issue no longer than this.
+ */
+export const MAX_CLAIM_MS = 2 * 120 * 60_000;
+
+/** The earliest claim first (by `at`, then `nonce`): the one that stands among the live ones. */
+export const claimOrder = (a: JiraClaim, b: JiraClaim): number => a.at.localeCompare(b.at) || a.nonce.localeCompare(b.nonce);
 
 /** An issue property's value counts when it is an object, version 1, written by the token's own account. */
 function ownProperty(value: unknown, self: string | null): Record<string, unknown> | null {
@@ -60,17 +71,19 @@ function ownProperty(value: unknown, self: string | null): Record<string, unknow
   return str(value.by).toLowerCase() === self ? value : null;
 }
 
-/** The claims of a `scopesoup.claim` value, in the order they were written. */
-export function claimsOf(value: unknown, self: string | null): JiraClaim[] {
+/** The claims of a `scopesoup.claim` value, earliest first, each `until` capped at `MAX_CLAIM_MS` from `now`. */
+export function claimsOf(value: unknown, self: string | null, now: number): JiraClaim[] {
   const own = ownProperty(value, self);
   const out: JiraClaim[] = [];
   for (const each of Array.isArray(own?.claims) ? own.claims : []) {
     if (!isObject(each)) continue;
     const machine = str(each.machine);
     const until = str(each.until);
-    if (machine && until && !Number.isNaN(Date.parse(until))) out.push({ machine, until, released: each.released === true });
+    if (!machine || !until || Number.isNaN(Date.parse(until))) continue;
+    const capped = Math.min(Date.parse(until), now + MAX_CLAIM_MS);
+    out.push({ machine, until: capped === Date.parse(until) ? until : new Date(capped).toISOString(), released: each.released === true, at: str(each.at), nonce: str(each.nonce) });
   }
-  return out;
+  return out.sort(claimOrder);
 }
 
 /** The verdicts of `scopesoup.overturns`, by the assumption comment's id. */
@@ -99,24 +112,31 @@ export interface JiraRead {
 const LOG_ID = -2_000_000;
 const CLAIM_ID = -1_000_000;
 
-const trustedAuthor = (comment: JiraThreadComment, self: string | null, kind: string): boolean =>
-  self !== null && (comment.author.id.toLowerCase() === self || (kind === "answer" && !comment.author.bot));
+/**
+ * Who may answer besides Scope Soup's own account: a person who belongs to the project (`mayAnswer`: the project's assignable
+ * users, or the configured `answerers`), never an app.
+ */
+const mayAnswerAs = (comment: JiraThreadComment, mayAnswer: (id: string) => boolean): boolean => !comment.author.bot && mayAnswer(comment.author.id.toLowerCase());
+
+const trustedAuthor = (comment: JiraThreadComment, self: string | null, kind: string, mayAnswer: (id: string) => boolean): boolean =>
+  self !== null && (comment.author.id.toLowerCase() === self || (kind === "answer" && mayAnswerAs(comment, mayAnswer)));
 
 /**
  * The thread of one issue. `self` is the token's own account id (Cloud) or user name (Data Center), lower case; null when it is
- * not known, and then nothing but people's answers counts. `host` is the host id the refs carry.
+ * not known, and then nothing but people's answers counts. `host` is the host id the refs carry. `mayAnswer` says, for a lower-case
+ * account id or user name, whether that person's answers and `A1:` replies count. `now` caps the claims (`MAX_CLAIM_MS`).
  */
-export function readJiraThread(host: string, subject: Ref, jira: JiraThread, self: string | null): JiraRead {
+export function readJiraThread(host: string, subject: Ref, jira: JiraThread, self: string | null, mayAnswer: (id: string) => boolean, now: number): JiraRead {
   const verdicts = verdictsOf(jira.properties[OVERTURNS_PROPERTY], self);
   const data = new Map<string, Record<string, unknown>>();
   const comments: RestComment[] = [];
   for (const comment of [...jira.comments].sort((a, b) => Number(a.id) - Number(b.id))) {
     const user = { login: comment.author.id.toLowerCase() };
-    // Any person who can comment may answer (an `A1:` reply or an answer); an app other than Scope Soup's account may not.
-    const association = comment.author.bot ? "NONE" : "MEMBER";
+    // A person of the project may answer (an `A1:` reply or an answer, a draft's decision too); anyone else's is a plain comment.
+    const association = mayAnswerAs(comment, mayAnswer) ? "MEMBER" : "NONE";
     const property = comment.properties[COMMENT_PROPERTY];
     const kind = isObject(property) && property.v === 1 ? str(property.kind) : "";
-    if (COMMENT_KINDS.has(kind) && trustedAuthor(comment, self, kind)) {
+    if (COMMENT_KINDS.has(kind) && trustedAuthor(comment, self, kind, mayAnswer)) {
       const { kind: _kind, text, ...rest } = property as Record<string, unknown>;
       data.set(comment.id, property as Record<string, unknown>);
       if (kind === "assumption" && verdicts[comment.id]) rest.settled = verdicts[comment.id];
@@ -135,9 +155,9 @@ export function readJiraThread(host: string, subject: Ref, jira: JiraThread, sel
     const { v: _v, by: _by, ...rest } = log;
     comments.push({ id: LOG_ID, body: writeMarker("log", rest), user: selfUser, created_at: "" });
   }
-  const claims = claimsOf(jira.properties[CLAIM_PROPERTY], self);
+  const claims = claimsOf(jira.properties[CLAIM_PROPERTY], self, now);
   claims.forEach((claim, index) => {
-    comments.push({ id: CLAIM_ID + index, body: writeMarker("claim", { ...claim }), user: selfUser, created_at: "" });
+    comments.push({ id: CLAIM_ID + index, body: writeMarker("claim", { machine: claim.machine, until: claim.until, released: claim.released }), user: selfUser, created_at: "" });
   });
   const thread = readThread(subject, comments, self);
   // The GitHub reader names the host of an overturn's Item "github".
@@ -147,21 +167,11 @@ export function readJiraThread(host: string, subject: Ref, jira: JiraThread, sel
   return { thread, comments: comments.filter((comment) => comment.id > 0), data, log, claims, verdicts, followUp };
 }
 
-/** The hidden mark of a follow-up Item, as the orchestrator writes it at the end of the Item's text (`followUpMark`). */
-const FOLLOW_UP_MARK = /\n*<!-- scopesoup:follow-up (\{[^\n]*\}) -->\s*$/;
-
-/** A follow-up's mark at the end of a new Item's text: the text without it, and what it names. Jira keeps it in a link and a property. */
-export function takeFollowUpMark(body: string): { body: string; followUp?: { item: string; sha: string } } {
-  const match = FOLLOW_UP_MARK.exec(body);
-  if (!match?.[1]) return { body };
-  try {
-    const data = JSON.parse(match[1]) as unknown;
-    if (isObject(data) && str(data.item)) return { body: body.slice(0, match.index).trimEnd(), followUp: { item: str(data.item), sha: str(data.sha) } };
-  } catch {
-    // Not a mark: the text as it is.
-  }
-  return { body };
-}
+/**
+ * A new Item's text without any follow-up mark (`<!-- scopesoup:follow-up ... -->`). Jira keeps a follow-up in a link and a
+ * property, taken only from `NewWork.followUpOf`; a mark in the text could have come from an agent, so it is dropped, never read.
+ */
+export const withoutFollowUpMarks = (body: string): string => body.replace(/\n*<!--\s*scopesoup:follow-up[\s\S]*?-->/g, "").trim();
 
 const followUpMarkOf = (followUp: { item: string; sha: string }): string => `<!-- scopesoup:follow-up ${JSON.stringify({ item: followUp.item, sha: followUp.sha })} -->`;
 

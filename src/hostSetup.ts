@@ -117,6 +117,7 @@ export function createHosts(settings: HostSettings, env: Env, log: (line: string
       ...(jira.relatesLink ? { relatesLink: jira.relatesLink } : {}),
       ...(jira.duplicateLink ? { duplicateLink: jira.duplicateLink } : {}),
       ...(jira.commentLimit ? { commentLimit: jira.commentLimit } : {}),
+      ...(jira.answerers ? { answerers: jira.answerers } : {}),
       ...(jira.email ? { email: jira.email } : {}),
       ...(jira.priorities ? { priorities: jira.priorities } : {}),
       ...(jira.abandonedResolutions ? { abandonedResolutions: jira.abandonedResolutions } : {}),

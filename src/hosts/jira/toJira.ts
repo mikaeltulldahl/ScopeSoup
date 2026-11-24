@@ -412,7 +412,7 @@ function wikiInline(spans: Span[]): string {
       continue;
     }
     if (!span.text) continue;
-    let text = span.code ? `{{${span.text.replace(/[{}]/g, (char) => `\\${char}`)}}}` : wikiEscape(span.text);
+    let text = span.code ? `{{${wikiCodeEscape(span.text)}}}` : wikiEscape(span.text);
     if (!span.code) {
       if (span.strike) text = `-${text}-`;
       if (span.em) text = `_${text}_`;
@@ -427,12 +427,26 @@ function wikiInline(spans: Span[]): string {
 const wikiParagraph = (text: string, marks: Marks = {}): string => wikiInline(parseInline(text, marks)).split("\n").map(wikiLineStart).join("\n");
 
 function wikiCode(block: { lang: string; code: string }): string {
-  // A code block ends at the first `{code}`; one that holds it is `{noformat}`, and one that holds both is broken up.
-  let code = block.code;
-  if (code.includes("{code}") && code.includes("{noformat}")) code = code.replace(/\{(code|noformat)\}/g, `{$1${ZWSP}}`);
-  if (code.includes("{code}")) return `{noformat}\n${code}\n{noformat}`;
+  // A code block ends at the first `{code}`: every `{code` and `{noformat` in the code (with parameters or not) gets a zero-width
+  // space, so none can close the block or open another.
+  const code = block.code.replace(/\{(code|noformat)/gi, `{${ZWSP}$1`);
   const lang = /^[\w+#-]+$/.test(block.lang) ? `:${block.lang}` : "";
   return `{code${lang}}\n${code}\n{code}`;
+}
+
+/** Wiki characters that still act inside `{{monospace}}`: all escaped there, a backslash kept as text. */
+const CODE_LIVE = new Set(["{", "}", "[", "]", "!", "|", "*", "_", "-", "+", "^", "~", "?", "#"]);
+
+/** Text for inside `{{...}}`: wiki markup still acts there (a mention, a link, an image, bold), so every such character is escaped. */
+export function wikiCodeEscape(text: string): string {
+  let out = "";
+  for (let at = 0; at < text.length; at += 1) {
+    const char = text[at] ?? "";
+    const after = text[at + 1] ?? "";
+    if (char === "\\") out += CODE_LIVE.has(after) || after === "\\" || after === "" ? `\\${ZWSP}` : "\\";
+    else out += CODE_LIVE.has(char) ? `\\${char}` : char;
+  }
+  return out;
 }
 
 function wikiBlocks(blocks: Block[], depth: string): string[] {

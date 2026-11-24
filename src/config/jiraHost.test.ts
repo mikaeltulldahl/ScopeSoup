@@ -44,6 +44,8 @@ test("a Jira host with writes on takes the write settings, and any level", () =>
   assert.match(bad({ ...base, host: { ...dc, write: true, transitions: { closed: "Close" } } }), /host.transitions: unknown key "closed"/);
   assert.match(bad({ ...base, host: { ...dc, write: true, resolutions: { done: "" } } }), /host.resolutions.done must be a non-empty name/);
   assert.match(bad({ ...base, host: { ...dc, write: true, commentLimit: 10 } }), /host.commentLimit must be a whole number/);
+  assert.deepEqual(good({ ...base, host: { ...dc, answerers: ["robin", " kim "] } }).host?.kind === "jira" && good({ ...base, host: { ...dc, answerers: ["robin", " kim "] } }).host, { kind: "jira", site: "https://jira.example.test/jira", project: "DEMO", deployment: "datacenter", write: false, answerers: ["robin", "kim"] });
+  assert.match(bad({ ...base, host: { ...dc, answerers: "robin" } }), /host.answerers must be a list/);
   const choices = levelChoices(good({ ...base, host: { ...dc, write: true } }), () => true);
   assert.equal(choices[2]?.pickable, true);
 });

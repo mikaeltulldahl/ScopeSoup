@@ -5,18 +5,18 @@
 // or wiki markup that cannot mention, link a page or run a macro (toJira.ts).
 // API details marked "unconfirmed" are from docs/research/jira.md's [known] marks: from memory, not yet checked on a real site.
 
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { changeText } from "../../model/labels.ts";
 import type { Priority, Ref } from "../../model/types.ts";
 import type { AnswerWrite, WriteOutcome, WritePort } from "../../ports/host.ts";
 import { AlreadyAnswered, BodyChanged, TooLarge, WriteLater } from "../../ports/host.ts";
 import type { AssumptionEntry, LogKeep, LogLine } from "../github/conventions.ts";
-import { answersBody, assumptionBody, clipLogFields, draftBody, liveClaims, mergedBody, nextQuestionNumber, questionBody, questionNumber, readVerdicts, waitsForAnswer, withdrawnBody } from "../github/conventions.ts";
+import { answersBody, assumptionBody, clipLogFields, draftBody, mergedBody, nextQuestionNumber, questionBody, questionNumber, readVerdicts, waitsForAnswer, withdrawnBody } from "../github/conventions.ts";
 import { spliceBody } from "../github/map.ts";
 import type { JiraClient } from "./client.ts";
 import { JiraError, transient } from "./client.ts";
 import type { JiraClaim, JiraRead } from "./conventions.ts";
-import { CLAIM_PROPERTY, COMMENT_PROPERTY, FOLLOW_UP_PROPERTY, LOG_PROPERTY, OVERTURNS_PROPERTY, PROPERTY_LIMIT, propertySize, splitMarked, takeFollowUpMark } from "./conventions.ts";
+import { CLAIM_PROPERTY, claimOrder, COMMENT_PROPERTY, FOLLOW_UP_PROPERTY, LOG_PROPERTY, OVERTURNS_PROPERTY, PROPERTY_LIMIT, propertySize, splitMarked, withoutFollowUpMarks } from "./conventions.ts";
 import { toJiraText, writeDescription } from "./description.ts";
 import type { JiraScope } from "./map.ts";
 import { ISSUE_FIELDS, isoTime, NEEDS_DECISION_LABEL, priorityOf, stateOf, workRef } from "./map.ts";
@@ -37,7 +37,8 @@ export const DEFAULT_RELATES_LINK = "Relates";
 export const DEFAULT_DUPLICATE_LINK = "Duplicate";
 /**
  * About the most a comment Scope Soup posts may hold on Jira: Jira's default text field limit is 32,767 characters [known] (a site
- * admin can change it). Counted on the Markdown Scope Soup writes (unconfirmed: whether Jira counts the ADF or the text).
+ * admin can change it). Counted on the body as sent, the ADF's JSON or the wiki text (unconfirmed: what Jira counts; the JSON is the
+ * larger, so this is on the safe side).
  */
 export const JIRA_COMMENT_LIMIT = 32_000;
 
@@ -63,6 +64,12 @@ export interface JiraWriteDeps {
   read(ref: Ref): Promise<JiraRead>;
   /** Milliseconds since the epoch. */
   now(): number;
+  /** Waits `ms`; injectable so tests do not wait. */
+  sleep(ms: number): Promise<void>;
+  /** How long a claim waits after its write before it reads who stands. Default 2 s. */
+  claimSettleMs?: number;
+  /** A fresh claim nonce; injectable for tests. */
+  nonce?(): string;
 }
 
 interface JiraTransition {
@@ -130,7 +137,8 @@ export function createJiraWrite(deps: JiraWriteDeps): WritePort {
 
   /** The comment over the host's limit, or a property over Jira's, is refused before anything is posted. */
   function checkSize(ref: Ref, what: string, markdown: string, property?: Record<string, unknown>): void {
-    if (markdown.length > settings.commentLimit) throw new TooLarge(`${what} on ${ref.id} is over ${settings.commentLimit} characters.`, settings.commentLimit);
+    const sent = toJiraText(deployment, markdown);
+    if ((typeof sent === "string" ? sent : JSON.stringify(sent)).length > settings.commentLimit) throw new TooLarge(`${what} on ${ref.id} is over ${settings.commentLimit} characters.`, settings.commentLimit);
     if (property && propertySize(property) > PROPERTY_LIMIT) throw new TooLarge(`${what} on ${ref.id} is over Jira's ${PROPERTY_LIMIT} bytes for a property.`, settings.commentLimit);
   }
 
@@ -272,7 +280,9 @@ export function createJiraWrite(deps: JiraWriteDeps): WritePort {
 
   const write: WritePort = {
     async createWork(input) {
-      const { body, followUp } = takeFollowUpMark(input.body ?? "");
+      // A follow-up is named only by `followUpOf`; a mark in the text is dropped (it may have come from an agent).
+      const body = withoutFollowUpMarks(input.body ?? "");
+      const followUp = input.followUpOf;
       const markdown = input.verification !== undefined ? spliceBody(body, { verification: input.verification }) : body.trim();
       const labels = input.labels ?? [];
       checkLabels(labels);
@@ -560,25 +570,30 @@ export function createJiraWrite(deps: JiraWriteDeps): WritePort {
     },
 
     /**
-     * The claim, in the issue property `scopesoup.claim`: written (or this machine's live claim renewed), then read again; the
-     * first live claim must be this one, else this one is taken out and the claim is not won. An assignee (a person's hold) and an
-     * earlier live claim of another machine win without a write. Jira has no conditional write: two machines writing in the same
-     * moment both write the whole property, and the later one stands; the re-read tells each which.
+     * The claim, in the issue property `scopesoup.claim`. Jira has no conditional write, so two machines may write the whole
+     * property at nearly the same time and the later write stands. To decide the same way on both: an assignee (a person's hold) or
+     * a live claim of another machine wins without a write; else this machine's entry (a new one with its time and a nonce, or its
+     * live one renewed, keeping its time) is written, and after `claimSettleMs` the property is read again. The earliest live entry
+     * there wins (by time, then nonce); it must be this write's own nonce, else this entry is taken out and the claim is not won.
      */
     async claim(subject, { until }) {
       const machine = deps.machine!;
       const issue = await issueOf(subject);
       if (issue.fields.assignee) return { won: false, why: `held by ${issue.fields.assignee.displayName ?? issue.fields.assignee.accountId ?? issue.fields.assignee.name}` };
-      const read = await deps.read(subject);
-      const live = liveClaims(read.thread.claims, deps.now()).map(({ machine: who, until: to }) => ({ machine: who, until: to, released: false }));
-      const first = live[0];
+      const now = deps.now();
+      const live = (claims: JiraClaim[]): JiraClaim[] => claims.filter((each) => !each.released && Date.parse(each.until) > deps.now()).sort(claimOrder);
+      const before = live((await deps.read(subject)).claims);
+      const first = before[0];
       if (first && first.machine !== machine) return { won: false, why: `held by scopesoup on ${first.machine}` };
-      const mine = { machine, until, released: false };
-      await writeClaims(subject, first ? live.map((each) => (each.machine === machine ? mine : each)).filter((each, index, all) => all.findIndex((other) => other.machine === each.machine) === index) : [mine]);
-      const after = await deps.read(subject);
-      const winner = liveClaims(after.thread.claims, deps.now())[0];
-      if (winner?.machine === machine && winner.until === until) return { won: true };
-      await writeClaims(subject, after.claims.filter((each) => each.machine !== machine && !each.released && Date.parse(each.until) > deps.now()));
+      const nonce = deps.nonce?.() ?? randomUUID();
+      const own = before.find((each) => each.machine === machine);
+      const mine: JiraClaim = { machine, until, released: false, at: own?.at || new Date(now).toISOString(), nonce };
+      await writeClaims(subject, [...before.filter((each) => each.machine !== machine), mine].sort(claimOrder));
+      await deps.sleep(deps.claimSettleMs ?? 2000);
+      const after = live((await deps.read(subject)).claims);
+      const winner = after[0];
+      if (winner?.nonce === nonce) return { won: true };
+      if (after.some((each) => each.nonce === nonce)) await writeClaims(subject, after.filter((each) => each.nonce !== nonce));
       return { won: false, why: winner ? `scopesoup on ${winner.machine} claimed it first` : "the claim does not show on Jira" };
     },
 

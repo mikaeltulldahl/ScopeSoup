@@ -39,6 +39,10 @@ export interface FakeJiraSetup {
   commentLimit?: number;
   /** The fake's clock for `updated` and `created` stamps of writes, milliseconds. Default a fixed time, one second more per write. */
   now?: () => number;
+  /** Whether Cloud's comment list answers `expand=properties` with an empty list on every comment. */
+  emptyExpand?: boolean;
+  /** Who may be assigned in the project (the assignable-user search). Default `user` and `people`. */
+  assignable?: JiraUser[];
 }
 
 export interface FakeJiraCall {
@@ -61,6 +65,8 @@ export interface FakeJira {
   limit(times: number, headers: Record<string, string>): void;
   /** Paths (method and status) requested since the last call of this. */
   take(): string[];
+  /** The next `times` requests whose path matches `path` are answered with `status`. */
+  fail(path: RegExp, status: number, times: number): void;
 }
 
 const KEY_NUMBER = (key: string): number => Number(/-(\d+)$/.exec(key)?.[1] ?? 0);
@@ -79,12 +85,13 @@ export function fakeJira(setup: FakeJiraSetup): FakeJira {
   let tick = Date.parse("2026-11-21T08:00:00.000Z");
   const writes: FakeWriteState = {
     deployment: setup.deployment, site, user: setup.user, project: setup.project ?? "DEMO", issues, comments, issueProperties, commentProperties,
-    people: [setup.user, ...(setup.people ?? [])], commentLimit: setup.commentLimit ?? 32_767,
+    people: [setup.user, ...(setup.people ?? [])], assignable: setup.assignable, commentLimit: setup.commentLimit ?? 32_767,
     now: setup.now ?? (() => (tick += 1000)),
     ids: { comment: 40_000, link: 50_000, issue: 60_000 },
   };
   const calls: FakeJiraCall[] = [];
   const limits: { times: number; headers: Record<string, string> }[] = [];
+  const failures: { path: RegExp; status: number; times: number }[] = [];
   let taken = 0;
 
   const answer = (status: number, body: unknown, headers: Record<string, string> = {}): FetchResponse => {
@@ -157,7 +164,7 @@ export function fakeJira(setup: FakeJiraSetup): FakeJira {
       // Only the Cloud flavour expands properties on the list, so both of the host's paths are tried.
       const expand = setup.deployment === "cloud" && (query.get("expand") ?? "").split(",").includes("properties");
       const comments = all.slice(start, start + size).map((comment) =>
-        expand ? { ...comment, properties: Object.entries(setup.commentProperties?.[comment.id] ?? {}).map(([property, value]) => ({ key: property, value })) } : comment,
+        expand ? { ...comment, properties: setup.emptyExpand ? [] : Object.entries(setup.commentProperties?.[comment.id] ?? {}).map(([property, value]) => ({ key: property, value })) } : comment,
       );
       return answer(200, { startAt: start, maxResults: size, total: all.length, comments });
     }
@@ -185,6 +192,9 @@ export function fakeJira(setup: FakeJiraSetup): FakeJira {
     limit(times, headers) {
       limits.push({ times, headers });
     },
+    fail(path, status, times) {
+      failures.push({ path, status, times });
+    },
     take() {
       const fresh = calls.slice(taken).map((call) => `${call.status} ${call.method} ${call.path}`);
       taken = calls.length;
@@ -200,7 +210,11 @@ export function fakeJira(setup: FakeJiraSetup): FakeJira {
       const limited = limits[0];
       if (!url.startsWith(`${site}/`)) response = refuse(404, "Another site.");
       else if (headers.Authorization !== auth) response = answer(401, "Unauthorized");
-      else if (limited) {
+      else if (failures.some((each) => each.times > 0 && each.path.test(path))) {
+        const failure = failures.find((each) => each.times > 0 && each.path.test(path))!;
+        failure.times -= 1;
+        response = refuse(failure.status, "The fake was told to fail this request.");
+      } else if (limited) {
         limited.times -= 1;
         if (limited.times <= 0) limits.shift();
         response = answer(429, { errorMessages: ["Rate limit exceeded."] }, limited.headers);

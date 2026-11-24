@@ -182,3 +182,92 @@ for (const deployment of ["cloud", "datacenter"] as const) {
     });
   });
 }
+
+const STRANGER: JiraUser = { accountId: "000000:stranger-0003", displayName: "Someone Else", accountType: "atlassian" };
+const DC_STRANGER: JiraUser = { name: "someone", displayName: "Someone Else" };
+
+for (const deployment of ["cloud", "datacenter"] as const) {
+  const stranger = deployment === "cloud" ? STRANGER : DC_STRANGER;
+  const strangerId = stranger.accountId ?? stranger.name!;
+  describe(`Jira ${deployment}: who may answer, forged claims, reads that fail`, { concurrency: 4 }, () => {
+    test("only people of the project answer: a stranger's A1: reply, answer property or draft decision counts for nothing, unless named in answerers", async () => {
+      const w = writable(deployment);
+      const { host, write, ref } = w;
+      const { ids } = await write.askQuestions!(ref("DEMO-3"), [ASK]);
+      personSays(w, "DEMO-3", "A1: up", stranger);
+      personSays(w, "DEMO-3", "**A1:** up", stranger, { [COMMENT_PROPERTY]: { v: 1, kind: "answer", to: Number(ids[0]), n: 1, answer: "up", by: "Someone" } });
+      let item = await host.work.getWork(ref("DEMO-3"));
+      assert.equal(item?.answers, undefined);
+      assert.equal(item?.openQuestions?.length, 1);
+      const draft = await write.postDraft!(ref("DEMO-1"), { round: 1, draft: "New text." });
+      personSays(w, "DEMO-1", "Accept", stranger, { [COMMENT_PROPERTY]: { v: 1, kind: "answer", to: Number(draft.id), answer: "Accept", proposal: "accepted", by: "Someone" } });
+      assert.equal((await host.work.getWork(ref("DEMO-1")))?.hostRecord?.draft?.id, draft.id, "the draft still waits");
+      // Named in answerers, the same person's reply counts.
+      const named = w.another("laptop-c", { answerers: [strangerId] });
+      item = await named.work.getWork(ref("DEMO-3"));
+      assert.deepEqual(item?.answers?.map((each) => each.answer), ["up"]);
+    });
+
+    test("a claim written with an until far ahead (an edit by anyone who may edit the issue) holds no longer than twice the claim expiry", async () => {
+      const { host, fake, ref, clock } = writable(deployment);
+      const self = (await host.info.whoami()).id;
+      fake.issueProperties["DEMO-3"] = { [CLAIM_PROPERTY]: { v: 1, by: self, claims: [{ machine: "laptop-z", until: "2030-01-01T00:00:00.000Z", released: false, at: "2026-11-21T08:00:00.000Z", nonce: "n" }] } };
+      const item = await host.work.getWork(ref("DEMO-3"));
+      assert.equal(item?.holder?.actor.id, "scopesoup@laptop-z");
+      assert.ok(Date.parse(item!.holder!.until!) <= clock.ms + 4 * 3600_000, item?.holder?.until);
+    });
+
+    test("two machines claiming at once: the later write stands, both read it after the wait, and exactly one wins", async () => {
+      const w = writable(deployment);
+      const { ref } = w;
+      let bWrote: () => void = () => {};
+      const bHasWritten = new Promise<void>((done) => (bWrote = done));
+      let aWrote: () => void = () => {};
+      const aHasWritten = new Promise<void>((done) => (aWrote = done));
+      // B reads before A writes, writes, and waits until A has written over it before it reads again.
+      const b = w.another("laptop-b", { sleep: async () => { bWrote(); await aHasWritten; } });
+      let bClaim: Promise<unknown> | undefined;
+      const a = w.another("laptop-a", {
+        fetchImpl: async (url, init) => {
+          if (init?.method === "PUT" && url.includes("/properties/scopesoup.claim") && !bClaim) {
+            bClaim = b.write!.claim!(ref("DEMO-3"), { until: "2026-11-21T11:00:00.000Z", shown: "laptop-b" });
+            await bHasWritten;
+            const answer = await w.fake.fetch(url, init);
+            aWrote();
+            return answer;
+          }
+          return w.fake.fetch(url, init);
+        },
+      });
+      const aClaim = await a.write!.claim!(ref("DEMO-3"), { until: "2026-11-21T11:00:00.000Z", shown: "laptop-a" });
+      const bOutcome = await bClaim;
+      assert.deepEqual(aClaim, { won: true });
+      assert.deepEqual(bOutcome, { won: false, why: "scopesoup on laptop-a claimed it first" });
+      assert.equal((await w.host.work.getWork(ref("DEMO-3")))?.holder?.actor.id, "scopesoup@laptop-a");
+    });
+
+    test("one failed /myself does not drop trust once the account is known; a failure before is said, and the next read counts again", async () => {
+      const lines: string[] = [];
+      const w = writable(deployment);
+      const { write, ref, fake } = w;
+      await write.askQuestions!(ref("DEMO-3"), [ASK]);
+      const fresh = w.another("laptop-a", { log: (line) => lines.push(line) });
+      fake.fail(/\/myself$/, 503, 1);
+      assert.equal((await fresh.work.getWork(ref("DEMO-3")))?.openQuestions, undefined);
+      assert.match(lines[0] ?? "", /could not read the token's own account/);
+      assert.equal((await fresh.work.getWork(ref("DEMO-3")))?.openQuestions?.length, 1);
+      fake.fail(/\/myself$/, 503, 5);
+      assert.equal((await fresh.work.getWork(ref("DEMO-3")))?.openQuestions?.length, 1);
+      assert.equal(lines.length, 1);
+    });
+  });
+}
+
+test("Jira Cloud answering expand=properties with an empty list: Scope Soup's own comments are read one by one and still count", async () => {
+  const w = writable("cloud", { emptyExpand: true });
+  const { write, ref, host, fake } = w;
+  await write.askQuestions!(ref("DEMO-3"), [ASK]);
+  const item = await host.work.getWork(ref("DEMO-3"));
+  assert.equal(item?.openQuestions?.length, 1);
+  assert.ok(fake.calls.some((call) => /\/comment\/\d+\/properties$/.test(call.path)));
+});

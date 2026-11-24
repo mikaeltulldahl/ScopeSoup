@@ -20,21 +20,23 @@ export interface Writable {
   clock: { ms: number };
   /** Robin, a person on the site. */
   person: JiraUser;
-  /** Another Scope Soup machine on the same site and account. */
-  another(machine: string): JiraHost;
+  /** Another Scope Soup machine on the same site and account, with its own settings if given. */
+  another(machine: string, extra?: Partial<JiraConfig>): JiraHost;
 }
 
-export function writable(deployment: Deployment, more: { commentLimit?: number; conventions?: boolean; clock?: { ms: number }; transitions?: JiraConfig["transitions"] } = {}): Writable {
+export function writable(deployment: Deployment, more: { commentLimit?: number; conventions?: boolean; clock?: { ms: number }; transitions?: JiraConfig["transitions"]; answerers?: string[]; people?: JiraUser[]; emptyExpand?: boolean } = {}): Writable {
   const cloud = deployment === "cloud";
   const clock = more.clock ?? { ms: Date.parse("2026-11-21T09:00:00Z") };
   const fake = fakeJira({
-    deployment, token: TOKEN, ...(cloud ? { email: CLOUD_EMAIL } : {}), user: cloud ? CLOUD_SCOPESOUP : DC_SCOPESOUP, people: [cloud ? CLOUD_ROBIN : DC_ROBIN],
+    deployment, token: TOKEN, ...(cloud ? { email: CLOUD_EMAIL } : {}), user: cloud ? CLOUD_SCOPESOUP : DC_SCOPESOUP, people: [cloud ? CLOUD_ROBIN : DC_ROBIN, ...(more.people ?? [])], ...(more.emptyExpand ? { emptyExpand: true } : {}),
     issues: cloud ? cloudIssues() : dcIssues(), now: () => (clock.ms += 1000), ...(more.commentLimit ? { commentLimit: more.commentLimit } : {}),
   });
-  const make = (machine: string): JiraHost => createJiraHost({
+  const make = (machine: string, extra: Partial<JiraConfig> = {}): JiraHost => createJiraHost({
     site: cloud ? FAKE_SITE : FAKE_DC_SITE, project: "DEMO", deployment, token: TOKEN, ...(cloud ? { email: CLOUD_EMAIL } : {}),
     fetchImpl: fake.fetch, now: () => clock.ms, sleep: async () => {}, allowWrites: true, conventions: more.conventions ?? true, machine,
     ...(more.commentLimit ? { commentLimit: more.commentLimit } : {}), ...(more.transitions ? { transitions: more.transitions } : {}),
+    ...(more.answerers ? { answerers: more.answerers } : {}), log: () => {},
+    ...extra,
   });
   const host = make("laptop-a");
   return { fake, host, write: host.write!, ref: (id) => ({ host: "jira", kind: "work", id }), clock, person: cloud ? CLOUD_ROBIN : DC_ROBIN, another: make };

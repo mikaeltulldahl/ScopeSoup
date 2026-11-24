@@ -21,3 +21,8 @@ export function inertText(text: string): string {
 export function inertFile(file: string): string {
   return inertText(file.replaceAll("`", ""));
 }
+
+/** Text with every hidden mark of Scope Soup's (`<!-- scopesoup:... -->`) taken out, so text from agents cannot pose as one. */
+export function withoutMarks(text: string): string {
+  return text.replace(/<!--\s*scopesoup:[\s\S]*?-->/gi, "").replace(/\n{3,}/g, "\n\n").trim();
+}

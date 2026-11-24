@@ -511,6 +511,16 @@ export function createRunner(deps: RunnerDeps): Runner {
       return stopped;
     },
 
+    stopFor(subject, reason) {
+      let stopped = 0;
+      for (const entry of live.values()) {
+        if (entry.kill || entry.over || refKey(entry.session.subject) !== refKey(subject)) continue;
+        kill(entry, "cancelled", reason);
+        stopped++;
+      }
+      return stopped;
+    },
+
     running() {
       return live.size;
     },

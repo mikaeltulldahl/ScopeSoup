@@ -31,6 +31,8 @@ export interface FollowUpItem {
   body: string;
   verification: string;
   mark: string;
+  /** The Item it came from (its ref key) and the reviewed head, as the mark names them. */
+  of: { item: string; sha: string };
 }
 
 /** The hidden last line of a follow-up Item: the Item and the reviewed head it came from. */
@@ -56,5 +58,6 @@ export function followUpItem(item: WorkItem, should: readonly Finding[], sha: st
     ].join("\n\n"),
     verification: `Each finding of the review of ${name} listed above is done, or a person decided against it.`,
     mark: followUpMark(item, sha),
+    of: { item: refKey(item.ref), sha },
   };
 }

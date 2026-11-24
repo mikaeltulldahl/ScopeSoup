@@ -117,6 +117,8 @@ export interface FakeWriteState {
   commentProperties: Record<string, Record<string, unknown>>;
   /** People the fake knows, by account id (Cloud) or name (Data Center), for assignees. */
   people: JiraUser[];
+  /** Who may be assigned in the project; `people` when not given. */
+  assignable?: JiraUser[] | undefined;
   commentLimit: number;
   now: () => number;
   ids: { comment: number; link: number; issue: number };
@@ -366,6 +368,11 @@ export function routeWrite(state: FakeWriteState, method: string, rest: string, 
     const had = !!store[id] && key in store[id]!;
     store[id] = { ...store[id], [key]: structuredClone(body) };
     return answer(had ? 200 : 201);
+  }
+
+  if (method === "GET" && rest === "/user/assignable/search") {
+    if (query.get("project") !== state.project) return refuse(404, "No project could be found with key.");
+    return answer(200, state.assignable ?? state.people);
   }
 
   if (method === "GET" && rest.startsWith("/label") && state.deployment === "cloud") {

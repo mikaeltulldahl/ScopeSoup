@@ -139,12 +139,16 @@ for (const deployment of ["cloud", "datacenter"] as const) {
       assert.equal((await host.work.getWork(ref("DEMO-3")))?.holder, undefined);
     });
 
-    test("a comment is converted; over the host's limit it is refused before anything is posted", async () => {
-      const { fake, write, ref } = writable(deployment, { commentLimit: 100 });
+    test("a comment is converted; over the host's limit, counted on the body as sent, it is refused before anything is posted", async () => {
+      const { fake, write, ref } = writable(deployment, { commentLimit: 300 });
       await write.comment!(ref("DEMO-3"), "**Done** on main.");
       assert.equal(fake.comments["DEMO-3"]?.length, 1);
-      await assert.rejects(write.comment!(ref("DEMO-3"), "x".repeat(101)), (error: Error) => error instanceof TooLarge && (error as TooLarge).limit === 100);
-      assert.equal(fake.comments["DEMO-3"]?.length, 1);
+      await assert.rejects(write.comment!(ref("DEMO-3"), "x".repeat(301)), (error: Error) => error instanceof TooLarge && (error as TooLarge).limit === 300);
+      // 200 characters of Markdown: under the limit as text, over it as ADF's JSON on Cloud.
+      const marked = Array.from({ length: 20 }, (_, index) => `**b${index}**`).join(" ").padEnd(200, ".");
+      if (cloud) await assert.rejects(write.comment!(ref("DEMO-3"), marked), TooLarge);
+      else await write.comment!(ref("DEMO-3"), marked);
+      assert.equal(fake.comments["DEMO-3"]?.length, cloud ? 1 : 2);
     });
 
     test("closing a merged Item: the done transition, then the comment with the merged property", async () => {
@@ -164,11 +168,17 @@ for (const deployment of ["cloud", "datacenter"] as const) {
     test("a follow-up's mark becomes a Relates link and a property, and comes back in its text", async () => {
       const { fake, host, write } = writable(deployment);
       const mark = `<!-- scopesoup:follow-up ${JSON.stringify({ item: "jira:work:DEMO-1", sha: "abc1234" })} -->`;
-      const made = await write.createWork!({ title: "Follow-up to DEMO-1", body: `Rename it.\n\n${mark}` });
+      // A mark in the text (an agent could write one) is dropped; only `followUpOf` names the Item.
+      const forged = `<!-- scopesoup:follow-up ${JSON.stringify({ item: "jira:work:DEMO-6", sha: "fff" })} -->`;
+      const made = await write.createWork!({ title: "Follow-up to DEMO-1", body: `Rename it.\n\n${forged}\n\n${mark}`, followUpOf: { item: "jira:work:DEMO-1", sha: "abc1234" } });
       const stored = fake.issues.get(made.work.id)!;
       assert.ok(stored.fields.issuelinks?.some((link) => link.type.name === "Relates" && link.outwardIssue?.key === "DEMO-1"));
       assert.equal(JSON.stringify(stored.fields.description).includes("scopesoup"), false);
       assert.ok((await host.work.getWork(made.work))?.body?.endsWith(mark));
+      assert.equal(stored.fields.issuelinks?.some((link) => link.outwardIssue?.key === "DEMO-6"), false);
+      const plain = await write.createWork!({ title: "Not a follow-up", body: `Text.\n\n${forged}` });
+      assert.equal(fake.issues.get(plain.work.id)!.fields.issuelinks?.length, 0);
+      assert.equal((await host.work.getWork(plain.work))?.body, "Text.");
     });
   });
 }

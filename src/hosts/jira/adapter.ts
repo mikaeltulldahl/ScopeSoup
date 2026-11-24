@@ -56,6 +56,15 @@ export interface JiraConfig {
   duplicateLink?: string;
   /** About the most a comment Scope Soup posts may hold. Default `JIRA_COMMENT_LIMIT`. */
   commentLimit?: number;
+  /**
+   * People whose answers and `A1:` replies count, by account id (Cloud) or user name (Data Center), besides the project's assignable
+   * users, which are asked of Jira every few minutes.
+   */
+  answerers?: string[];
+  /** How long a claim waits after its write before it reads who stands. Default 2 s. */
+  claimSettleMs?: number;
+  /** Where a problem that does not stop the host is said (a failed `/myself` or assignable-user read). Default `console.warn`. */
+  log?: (line: string) => void;
 }
 
 /** One comment as read, with Scope Soup's properties on it. Its text is data: people and agents wrote it. */
@@ -117,6 +126,8 @@ export function createJiraHost(config: JiraConfig): JiraHost {
   let me: { actor: Actor; timeZone: string } | null = null;
   const simplifiedByKey = new Map<string, string[]>();
 
+  const log = config.log ?? ((line: string) => console.warn(line));
+  /** The token's own account, read once: the last good answer is kept, so one failed read never drops it. */
   async function myself(): Promise<{ actor: Actor; timeZone: string }> {
     if (me) return me;
     const user = await client.get<JiraUser>(`${api}/myself`);
@@ -189,15 +200,20 @@ export function createJiraHost(config: JiraConfig): JiraHost {
     return found;
   }
 
-  async function thread(ref: Ref): Promise<JiraThread> {
+  const thread = async (ref: Ref): Promise<JiraThread> => threadAs(ref, await selfId());
+
+  /** The thread, with the token's own account as read once for it (null: not known). */
+  async function threadAs(ref: Ref, self: string | null): Promise<JiraThread> {
     const key = encodeURIComponent(ref.id);
     // `expand=properties` on the comment list saves a request per comment where Jira honours it (unconfirmed on both); a
-    // comment that comes back without `properties` has them read one by one.
+    // comment that comes back without `properties` has them read one by one. So does Scope Soup's own comment that comes back with
+    // an empty list, in case Jira answers the expand with `[]` for every comment.
     const comments = await client.paged<JiraComment>(`${api}/issue/${key}/comment?expand=properties`, "comments");
     const read: JiraThreadComment[] = [];
     for (const comment of comments) {
       let properties: Record<string, unknown>;
-      if (Array.isArray(comment.properties)) {
+      const mine = self !== null && actorOf(comment.author).id.toLowerCase() === self;
+      if (Array.isArray(comment.properties) && (comment.properties.length > 0 || !mine)) {
         properties = {};
         for (const property of comment.properties) if (ours(property.key)) properties[property.key] = property.value;
       } else {
@@ -209,17 +225,41 @@ export function createJiraHost(config: JiraConfig): JiraHost {
     return { comments: read, properties: await propertiesAt(`${api}/issue/${key}/properties`) };
   }
 
-  /** The token's own account, lower case, or null when it cannot be read (then only people's answers count). */
+  /** The token's own account, lower case, or null when it cannot be read yet (then only people's answers count, and it is said). */
   async function selfId(): Promise<string | null> {
     try {
       return (await myself()).actor.id.toLowerCase();
-    } catch {
+    } catch (error) {
+      log(`Jira: could not read the token's own account (/myself), so Scope Soup's own comments and properties do not count this time: ${error instanceof Error ? error.message : String(error)}`);
       return null;
     }
   }
 
+  /**
+   * Who may answer: the project's assignable users (unconfirmed path: `GET /user/assignable/search?project=KEY`, on both
+   * deployments) and the configured `answerers`, lower case. Read again after five minutes; a failed read keeps the last good list.
+   */
+  const configured = new Set((config.answerers ?? []).map((id) => id.toLowerCase()));
+  let assignable: { ids: Set<string>; at: number } | null = null;
+  async function answerers(): Promise<Set<string>> {
+    if (!assignable || now() - assignable.at > 5 * 60_000) {
+      try {
+        const users = await client.get<JiraUser[]>(`${api}/user/assignable/search?project=${encodeURIComponent(scope.project)}&maxResults=1000`);
+        assignable = { ids: new Set((Array.isArray(users) ? users : []).map((user) => actorOf(user).id.toLowerCase())), at: now() };
+      } catch (error) {
+        log(`Jira: could not read who may be assigned in ${scope.project}, so only host.answerers may answer until it can: ${error instanceof Error ? error.message : String(error)}`);
+        if (assignable) assignable.at = now();
+      }
+    }
+    return new Set([...configured, ...(assignable?.ids ?? [])]);
+  }
+
+  /** One issue through the trust rule; the token's account is asked once per read (and kept once known, `myself`). */
   async function read(ref: Ref): Promise<JiraRead> {
-    return readJiraThread(scope.host, ref, await thread(ref), await selfId());
+    const self = await selfId();
+    const jira = await threadAs(ref, self);
+    const may = await answerers();
+    return readJiraThread(scope.host, ref, jira, self, (id) => may.has(id), now());
   }
 
   /** Issues with an open question: read again each listing, so a deleted question comment is seen. */
@@ -284,6 +324,8 @@ export function createJiraHost(config: JiraConfig): JiraHost {
       self: async () => (await myself()).actor.id,
       read,
       now,
+      sleep: config.sleep ?? ((ms: number) => new Promise<void>((done) => setTimeout(done, ms))),
+      ...(config.claimSettleMs !== undefined ? { claimSettleMs: config.claimSettleMs } : {}),
     })
     : undefined;
   // The conventions' writes are read back only with the conventions on.

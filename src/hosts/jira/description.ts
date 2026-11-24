@@ -17,8 +17,11 @@ const textIn = (node: AdfNode): string => (node.type === "text" ? node.text ?? "
 const isSectionHeading = (node: AdfNode): boolean => node.type === "heading" && Number(node.attrs?.level ?? 1) <= 2;
 const isVerification = (node: AdfNode): boolean => isSectionHeading(node) && textIn(node).trim().toLowerCase() === "verification";
 
-/** The ADF document with its last Verification section (a heading of level 1 or 2, to the next such heading) set to `text`; null or empty removes it. */
-export function spliceAdfVerification(doc: unknown, text: string | null): AdfNode & { version: 1 } {
+/**
+ * The ADF document with its last top-level Verification section (a heading of level 1 or 2, to the next such heading) set to `text`;
+ * null or empty removes it. With no section and nothing to write, the document comes back as it was (null stays null).
+ */
+export function spliceAdfVerification(doc: unknown, text: string | null): unknown {
   const content: AdfNode[] = doc && typeof doc === "object" && (doc as AdfNode).type === "doc" ? [...((doc as AdfNode).content ?? [])] : [];
   let start = -1;
   content.forEach((node, index) => {
@@ -30,6 +33,7 @@ export function spliceAdfVerification(doc: unknown, text: string | null): AdfNod
     break;
   }
   const wanted = (text ?? "").trim();
+  if (start < 0 && !wanted) return doc;
   const section: AdfNode[] = wanted ? [start >= 0 ? content[start]! : { type: "heading", attrs: { level: 2 }, content: [{ type: "text", text: "Verification" }] }, ...markdownToAdfBlocks(wanted)] : [];
   const next = start >= 0 ? [...content.slice(0, start), ...section, ...content.slice(end)] : [...content, ...section];
   return { version: 1, type: "doc", content: next };
@@ -38,22 +42,37 @@ export function spliceAdfVerification(doc: unknown, text: string | null): AdfNod
 const WIKI_SECTION = /^\s*h[12]\.\s/;
 const WIKI_VERIFICATION = /^\s*h[12]\.\s+verification\s*$/i;
 
-/** The wiki text with its last Verification section (`h1.` or `h2.`, to the next such heading, outside code) set to `text`; null or empty removes it. */
+/** The block macros whose inside is not the description's own structure: a heading there is the macro's, not a section. */
+const WIKI_BLOCK_MACRO = /\{(code|noformat|panel|quote)(?::[^}]*)?\}/gi;
+
+/**
+ * The wiki text with its last Verification section (`h1.` or `h2.`, to the next such heading, outside `{code}`, `{noformat}`,
+ * `{panel}` and `{quote}`) set to `text`; null or empty removes it. A Verification heading inside such a macro is the macro's own:
+ * a new section is added at the end instead, and the macro is left whole. With no section and nothing to write, the text is unchanged.
+ */
 export function spliceWikiVerification(wiki: string, text: string | null): string {
   const lines = wiki.replace(/\r\n?/g, "\n").split("\n");
-  let inCode = false;
+  // Each macro name opens and closes with the same tag (`{panel:title=x}` ... `{panel}`); inside code nothing else counts.
+  const open = new Set<string>();
   let start = -1;
   let end = lines.length;
   const headings: number[] = [];
   lines.forEach((line, index) => {
-    if (/\{(code|noformat)(:[^}]*)?\}/.test(line)) inCode = (line.match(/\{(code|noformat)(:[^}]*)?\}/g) ?? []).length % 2 === 1 ? !inCode : inCode;
-    else if (!inCode && WIKI_SECTION.test(line)) {
+    if (open.size === 0 && WIKI_SECTION.test(line)) {
       headings.push(index);
       if (WIKI_VERIFICATION.test(line)) start = index;
+    }
+    for (const match of line.matchAll(WIKI_BLOCK_MACRO)) {
+      const name = (match[1] ?? "").toLowerCase();
+      const inCode = open.has("code") || open.has("noformat");
+      if (inCode && name !== "code" && name !== "noformat") continue;
+      if (open.has(name)) open.delete(name);
+      else if (!inCode) open.add(name);
     }
   });
   if (start >= 0) end = headings.find((index) => index > start) ?? lines.length;
   const wanted = (text ?? "").trim();
+  if (start < 0 && !wanted) return wiki;
   const section = wanted ? [start >= 0 ? lines[start]! : "h2. Verification", "", markdownToWiki(wanted)] : [];
   const trim = (part: string[]): string[] => {
     const copy = [...part];

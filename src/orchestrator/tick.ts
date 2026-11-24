@@ -20,7 +20,7 @@ import { compareItems, foreignChanges, readyItems } from "./candidates.ts";
 import type { Context, TickDeps } from "./context.ts";
 import type { ClaimResult } from "./ports.ts";
 import { createLog, errorText } from "./context.ts";
-import { afterRefine, backToImplement, emptyBranch, followDraft, followQuestions, overturnsBack, retryHandOver, retryPost, reviewOffAtLevel2, settle, writeAboutOthers } from "./cycle.ts";
+import { afterRefine, backToImplement, emptyBranch, followDraft, followQuestions, overturnsBack, park, retryHandOver, retryPost, reviewOffAtLevel2, settle, writeAboutOthers } from "./cycle.ts";
 import { loadOwnBlockers, withOwnBlockers } from "../store/blockers.ts";
 import { decide } from "./usageCheck.ts";
 import type { UsageCheckDecision } from "./usageCheck.ts";
@@ -113,22 +113,40 @@ function recordConfigChanges(ctx: Context, config: ProjectConfig): void {
  * A claim lapses `CLAIM_EXPIRY_MINUTES` after its last line, and a session may run longer than that. So an
  * item this machine holds and has work under way on (a session, or a change waiting for a person or
  * the queue) is claimed again once less than half the time is left. One line per half period, not per tick.
+ *
+ * A claim that is lost (the renewal is not won, or another machine's live claim holds the Item while work runs here: two machines
+ * both took it) stops this machine's work on the Item: its session is stopped and the job parked as escalated, for a person to look
+ * at, so two machines never build and merge the same Item. A change already queued or handed over is only reported.
  */
 async function renewClaims(ctx: Context, itemByKey: Map<string, WorkItem>): Promise<void> {
-  const { actions } = ctx.deps;
+  const { actions, runner } = ctx.deps;
   if (!actions.claims || !actions.claimant) return;
   const period = CLAIM_EXPIRY_MINUTES * 60_000;
+  const lost = async (job: Job, item: WorkItem, key: string, why: string): Promise<void> => {
+    const reason = `The claim on ${item.ref.id} was lost: ${why}.`;
+    if (job.parked) {
+      ctx.say("orchestrator.claim_lost", reason, key);
+      return;
+    }
+    const stopped = runner.stopFor?.(job.item, reason) ?? 0;
+    ctx.say("orchestrator.claim_lost", `${reason} ${stopped > 0 ? "Its session here is stopped and the" : "The"} work here is parked for a person: another machine may be working on it.`, key);
+    await park(ctx, job, "escalated", `${reason} Another machine may be working on it, so the work here stopped. Check which machine holds it before answering.`);
+  };
   for (const [key, job] of Object.entries(ctx.jobs)) {
     const item = itemByKey.get(key);
     if (!item || item.state === "done" || item.state === "abandoned") continue;
     if (job.parked && job.parked.as !== "queued" && job.parked.as !== "handed-over") continue;
     const holder = item.holder;
+    if (holder && holder.actor.id !== actions.claimant && holder.actor.id.startsWith(`${actions.claimant.split("@")[0]}@`) && !job.parked && job.sessionId && (!holder.until || Date.parse(holder.until) > Date.parse(ctx.at))) {
+      await lost(job, item, key, `${holder.actor.name} holds it`);
+      continue;
+    }
     if (!holder || holder.actor.id !== actions.claimant || !holder.until) continue;
     if (Date.parse(holder.until) - Date.parse(ctx.at) >= period / 2) continue;
     const until = new Date(Date.parse(ctx.at) + period).toISOString();
     try {
       const renewed = await actions.claim(job.item, until, ctx.at);
-      if (!renewed.won) ctx.say("orchestrator.claim_lost", `The claim on ${item.ref.id} could not be renewed: ${renewed.why}.`, key);
+      if (!renewed.won) await lost(job, item, key, renewed.why);
     } catch (error) {
       ctx.say("orchestrator.claim_lost", `The claim on ${item.ref.id} could not be renewed: ${errorText(error)}.`, key);
     }

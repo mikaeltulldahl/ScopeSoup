@@ -147,8 +147,10 @@ export interface JiraHostConfig {
   relatesLink?: string;
   /** The link type from a duplicate to its original. Default "Duplicate". */
   duplicateLink?: string;
-  /** About the most a comment Scope Soup posts may hold, in characters. Default 32000. */
+  /** About the most a comment Scope Soup posts may hold, in characters, counted on the body as sent. Default 32000. */
   commentLimit?: number;
+  /** People whose answers count besides the project's assignable users: account ids (Cloud) or user names (Data Center). */
+  answerers?: string[];
 }
 
 /**

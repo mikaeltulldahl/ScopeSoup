@@ -165,6 +165,13 @@ function world(cfg: ProjectConfig | ConfigSource, items: WorkItem[] = []): World
       }
       return stopped;
     },
+    stopFor(subject, reason) {
+      const session = sessions.get(subject.id);
+      if (!session || session.status !== "running") return 0;
+      runner.stops.push(reason);
+      runner.end(subject.id, "cancelled", undefined, { endReason: reason });
+      return 1;
+    },
     running: () => [...sessions.values()].filter((session) => session.status === "running").length,
     async takeWorkspace() {
       return null;
@@ -2593,6 +2600,32 @@ test("claims across machines: a held item is renewed once less than half the tim
   w.store.put(item("1", { holder: { actor: { id: "scopesoup@laptop-b", name: "b" }, until: new Date(w.clock.ms + 1000).toISOString() } }), "sync", new Date(w.clock.ms).toISOString());
   await w.run();
   assert.equal(claims().length, 2);
+});
+
+test("claims across machines: a claim lost at renewal stops the Item's session and parks it, and so does another machine's live claim while work runs here", async () => {
+  const mine = { id: "scopesoup@laptop-a", name: "scopesoup on laptop-a", bot: true };
+  for (const how of ["renewal", "holder"] as const) {
+    const w = world(config(), [item("1")]);
+    w.claimant = mine.id;
+    w.claims = true;
+    await w.run();
+    assert.deepEqual(roles(w), ["triage"]);
+    if (how === "renewal") {
+      w.store.put(item("1", { holder: { actor: mine, until: new Date(w.clock.ms + 50 * 60_000).toISOString() } }), "sync", new Date(w.clock.ms).toISOString());
+      w.claim = { won: false, why: "scopesoup on laptop-b claimed it first" };
+    } else {
+      w.store.put(item("1", { holder: { actor: { id: "scopesoup@laptop-b", name: "scopesoup on laptop-b", bot: true }, until: new Date(w.clock.ms + 60 * 60_000).toISOString() } }), "sync", new Date(w.clock.ms).toISOString());
+    }
+    await w.run();
+    assert.equal(w.job("1")?.parked?.as, "escalated", how);
+    assert.match(w.job("1")?.parked?.reason ?? "", /^The claim on 1 was lost: (scopesoup on laptop-b claimed it first|scopesoup on laptop-b holds it)\./);
+    assert.equal(w.runner.stops.length, 1, how);
+    assert.match(w.reasons("orchestrator.claim_lost")[0] ?? "", /Its session here is stopped/);
+    // Nothing starts again on its own: the Item waits for a person.
+    w.clock.ms += 60_000;
+    await w.run();
+    assert.deepEqual(roles(w), ["triage"]);
+  }
 });
 
 // --- agents push back: questions with options from the implementer and the fixer, and proposed rewrites of the item ---

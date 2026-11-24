@@ -121,9 +121,10 @@ for (const deployment of ["cloud", "datacenter"] as const) {
         ["30002", "Scope Soup Bot", "2026-11-20T09:20:00.000Z", "Scope Soup question Q1\n\nWhich page should the redirect go to?", { scopesoup: { kind: "question", n: 1 } }],
       ]);
       assert.deepEqual(thread.properties, { "scopesoup.log": { lines: [{ kind: "claimed", at: "2026-11-20T09:00:00Z" }] } });
-      // Cloud's fake expands properties on the list; Data Center's reads them per comment.
+      // Cloud's fake expands properties on the list; Data Center's reads them per comment. On Cloud the token's own comment that
+      // came back with an empty list (30001: the token is Robin's here) is read again on its own, in case the expand gave nothing.
       const perComment = fake.calls.filter((call) => call.path.includes("/comment/")).length;
-      assert.equal(perComment, deployment === "cloud" ? 0 : 3);
+      assert.equal(perComment, deployment === "cloud" ? 1 : 3);
     });
   });
 }

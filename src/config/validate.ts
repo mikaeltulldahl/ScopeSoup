@@ -369,7 +369,7 @@ function resourcesOf(value: unknown, shared: boolean, err: (message: string) => 
 }
 
 const GITHUB_KEYS = ["kind", "repo", "write"];
-const JIRA_KEYS = ["kind", "site", "project", "deployment", "write", "email", "priorities", "abandonedResolutions", "blocksLink", "issueType", "childIssueType", "transitions", "resolutions", "relatesLink", "duplicateLink", "commentLimit"];
+const JIRA_KEYS = ["kind", "site", "project", "deployment", "write", "email", "priorities", "abandonedResolutions", "blocksLink", "issueType", "childIssueType", "transitions", "resolutions", "relatesLink", "duplicateLink", "commentLimit", "answerers"];
 const TRANSITION_TARGETS = ["todo", "doing", "done", "abandoned"] as const;
 const RESOLUTION_TARGETS = ["done", "abandoned", "duplicate"] as const;
 const PRIORITY_NAMES = ["blocker", "critical", "major", "minor"] as const;
@@ -450,6 +450,11 @@ function jiraHostOf(value: Obj, write: boolean, text: (key: string) => string | 
   if (transitions) config.transitions = transitions;
   const resolutions = names("resolutions", RESOLUTION_TARGETS, `{ "abandoned": "Won't Fix" }`);
   if (resolutions) config.resolutions = resolutions;
+  if (value.answerers !== undefined) {
+    const given = value.answerers;
+    if (!Array.isArray(given) || !given.every((entry) => typeof entry === "string" && entry.trim() !== "")) err(`host.answerers must be a list of Jira account ids (Cloud) or user names (Data Center) whose answers count, as ["robin"].`);
+    else config.answerers = given.map((entry: string) => entry.trim());
+  }
   if (value.commentLimit !== undefined) {
     const given = value.commentLimit;
     if (typeof given !== "number" || !Number.isInteger(given) || given < 1000 || given > 1_000_000) err("host.commentLimit must be a whole number of characters from 1000 to 1000000 (Jira's default limit is 32767).");
