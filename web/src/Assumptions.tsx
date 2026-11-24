@@ -76,11 +76,11 @@ function Decision({ decision, now, canSettle, pick, busy, onPick }: { decision: 
           </button>
         </p>
       ) : (
-        <p>
-          <button type="button" class="choice" disabled={busy} onClick={() => onPick({ action: "accept", answer: "" })}>
+        <p class="decision-choices">
+          <button type="button" class="decision-choice" disabled={busy} onClick={() => onPick({ action: "accept", answer: "" })}>
             Accept
-          </button>{" "}
-          <button type="button" class="choice" disabled={busy} onClick={() => onPick({ action: "overturn", answer: "" })}>
+          </button>
+          <button type="button" class="decision-choice" disabled={busy} onClick={() => onPick({ action: "overturn", answer: "" })}>
             Overturn
           </button>
         </p>
@@ -96,7 +96,7 @@ function openIds(list: AssumptionView[]): Map<string, string[]> {
   return ids;
 }
 
-/** The Item's decisions, newest first, one at a time with arrows and a counter like its questions, with the held picks and one Send. */
+/** The Item's decisions, oldest first (opening on the first open one), one at a time with arrows and a counter like its questions, with the held picks and one Send. */
 export function Assumptions({ list, now, canSettle, onDone }: { list: AssumptionView[]; now: number; canSettle: (decision: AssumptionView) => boolean; onDone?: () => void }) {
   const ids = openIds(list);
   // Read from this browser on every render, so picks made on another page (the Item's, or the overview) show here too.

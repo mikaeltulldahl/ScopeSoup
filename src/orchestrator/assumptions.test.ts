@@ -158,7 +158,7 @@ test("the board shows how many decisions an Item has open, and none is your turn
   // The cards count the open ones only; none is your turn.
   assert.deepEqual(board.lanes.flatMap((lane) => lane.cards).map((card) => [card.label, card.openDecisions]).sort(), [["#1", 1], ["#2", 1]]);
   assert.deepEqual(board.yourTurn, []);
-  assert.deepEqual(buildItemPage(loadSnapshot(store), "fake:work:2", now)?.assumptions.map((each) => each.id), ["b", "c"]);
+  assert.deepEqual(buildItemPage(loadSnapshot(store), "fake:work:2", now)?.assumptions.map((each) => each.id), ["c", "b"]);
 
   // A third Item with three open decisions, sent together; its change is under way, so an overturn goes into the work.
   store.put(item("3", [decision("d", "2026-11-22T09:00:00Z"), decision("e", "2026-11-22T09:01:00Z"), decision("f", "2026-11-22T09:02:00Z")]), "sync", now.toISOString());

@@ -232,7 +232,7 @@ const CHAT_PANEL = "item-chat";
  * A person talks to one of the item's sessions. Each message is one more turn of that session; the reply shows as it is
  * written (polled each second while a turn runs, refetched on every event otherwise). Text only: no reply is set as HTML.
  */
-function Chat({ itemKey, now, picked, setPicked }: { itemKey: string; now: number; picked: string | null; setPicked: (agentSession: string) => void }) {
+function Chat({ itemKey, now, picked, setPicked, finished }: { itemKey: string; now: number; picked: string | null; setPicked: (agentSession: string) => void; finished: boolean }) {
   const { data, reload } = useView(() => fetchChat(itemKey), `chat:${itemKey}`);
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
@@ -279,7 +279,7 @@ function Chat({ itemKey, now, picked, setPicked }: { itemKey: string; now: numbe
         ))}
       </select>
       {chosen.turns.length === 0 ? (
-        <p class="empty">No messages to this session yet. What you write becomes part of it, so its next step sees it.</p>
+        <p class="empty">{finished ? "No messages to this session." : "No messages to this session yet. What you write becomes part of it, so its next step sees it."}</p>
       ) : (
         <ol class="chat-turns">
           {chosen.turns.map((turn) => (
@@ -303,6 +303,11 @@ function Chat({ itemKey, now, picked, setPicked }: { itemKey: string; now: numbe
           ))}
         </ol>
       )}
+      {/* A finished Item takes no more messages: no box to write in, only the past turns and why. */}
+      {finished ? (
+        <p class="reason chat-blocked">The {itemNoun(false, true)} is finished, so its sessions take no more messages.</p>
+      ) : (
+      <>
       <div class="answer">
         <label for={`${id}-text`}>Your message to the {roleWord.toLowerCase()}. It gets it word for word (Ctrl+Enter sends).</label>
         <textarea
@@ -323,6 +328,8 @@ function Chat({ itemKey, now, picked, setPicked }: { itemKey: string; now: numbe
           {sending ? "Sending…" : "Send"}
         </button>
       </div>
+      </>
+      )}
     </section>
   );
 }
@@ -1034,7 +1041,8 @@ function Body({ page, reload, resources }: { page: ItemPage; reload: () => void;
       )}
 
       {page.assumptions.length > 0 && (
-        <section class="panel">
+        // The questions' orange border while any decision waits for an answer.
+        <section class={`panel${page.assumptions.some((decision) => !decision.settled) ? " panel-yours" : ""}`}>
           <h3>Decided by the implementor</h3>
           <p class="muted">Cheap to change later, so the work went on. Pick Accept, or Overturn with your decision, for each (the arrows go to the others); nothing is recorded until you press Send.</p>
           <Assumptions list={page.assumptions} now={now} canSettle={() => page.canSettle === true} onDone={reload} />
@@ -1168,7 +1176,7 @@ function Body({ page, reload, resources }: { page: ItemPage; reload: () => void;
         />
       </section>
 
-      <Chat itemKey={item.key} now={now} picked={chatWith} setPicked={setChatWith} />
+      <Chat itemKey={item.key} now={now} picked={chatWith} setPicked={setChatWith} finished={item.state === "done" || item.state === "abandoned"} />
 
       <section class="panel">
         <h3>Change</h3>

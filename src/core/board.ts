@@ -23,14 +23,14 @@ export function itemLink(ref: Ref, index: Index): ItemLink {
   return { ref, key: refKey(ref), label: refLabel(ref), title: index.work.get(refKey(ref))?.title ?? "(not synced)" };
 }
 
-/** An item's decisions as views, newest first. */
+/** An item's decisions as views, oldest first (the order they were taken in; the page opens on the first one still open). */
 export function assumptionViews(item: WorkItem, index: Index): AssumptionView[] {
   return (item.assumptions ?? [])
     .map((each): AssumptionView => ({ ...each, item: itemLink(item.ref, index), ...(each.settled?.item ? { newItem: itemLink(each.settled.item, index) } : {}) }))
-    .sort(newestFirst);
+    .sort(oldestFirst);
 }
 
-const newestFirst = (a: AssumptionView, b: AssumptionView): number => Date.parse(b.at) - Date.parse(a.at) || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0);
+const oldestFirst = (a: AssumptionView, b: AssumptionView): number => Date.parse(a.at) - Date.parse(b.at) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
 
 export function changeLink(change: Change): ChangeLink {
   const link: ChangeLink = { ref: change.ref, label: refLabel(change.ref), title: change.title, draft: change.draft };

@@ -33,8 +33,11 @@ function useUpgrade(): [UpgradeView | null, (next: UpgradeView) => void] {
   return [view, setView];
 }
 
-/** After an upgrade or a going back: what was started again, until it is dismissed or an hour has passed. */
-export function UpgradeNote() {
+/**
+ * After an upgrade or a going back: what was started again, until it is dismissed, an hour has passed or a switch changed
+ * (`switches`, the four states: a change reads the note again).
+ */
+export function UpgradeNote({ switches }: { switches: string }) {
   const [note, setNote] = useState<UpgradeView["note"]>(null);
   useEffect(() => {
     let gone = false;
@@ -45,7 +48,7 @@ export function UpgradeNote() {
       gone = true;
       clearInterval(timer);
     };
-  }, []);
+  }, [switches]);
   if (!note) return null;
   const dismiss = () => {
     setNote(null);

@@ -124,10 +124,10 @@ test("the demo's item 63 has two decisions its implementor took itself, open on 
   const board = buildBoard(loadSnapshot(store), now);
   assert.deepEqual(board.lanes.flatMap((lane) => lane.cards).filter((card) => card.openDecisions).map((card) => [card.label, card.openDecisions]), [["#63", 2]]);
   const page = buildItemPage(loadSnapshot(store), refKey(ref("work", 63)), now);
-  assert.equal(page?.assumptions.length, 2);
+  // The page lists them oldest first: the one answered earlier, then the two open ones (the same time, so by id).
+  assert.deepEqual(page?.assumptions.map((each) => !!each.settled), [true, false, false]);
   const host = demoAssumptionHost(store);
-  // The page lists them newest first: both have the session's time, so the second one comes first.
-  const [second, first] = page!.assumptions;
+  const [, first, second] = page!.assumptions;
   // Both picks in one Send: nothing is settled before it.
   const server = createServer({ store, port: 0, now: () => now, assumptions: [host] });
   const base = (await server.start()).url;
@@ -140,10 +140,10 @@ test("the demo's item 63 has two decisions its implementor took itself, open on 
     await server.stop();
   }
   const after = store.get<WorkItem>(ref("work", 63))!;
-  assert.deepEqual(after.assumptions?.map((each) => each.settled?.verdict), ["accepted", "overturned"]);
+  assert.deepEqual(after.assumptions?.map((each) => each.settled?.verdict), ["accepted", "accepted", "overturned"]);
   // Its change has not merged: no new Item, the answer is kept for its implementor, and the verdict says so.
   assert.deepEqual(sent.settled.map((each) => [each.verdict, each.work]), [["accepted", undefined], ["overturned", true]]);
-  assert.equal(after.assumptions?.[1]?.settled?.work, true);
+  assert.equal(after.assumptions?.[2]?.settled?.work, true);
   assert.deepEqual(overturnsFor(store, refKey(ref("work", 63))).map((each) => each.answer), ["Mixed in by score"]);
   store.close();
 });
