@@ -3,21 +3,24 @@
 import { useState } from "preact/hooks";
 import type { CardView, SessionView } from "./api.ts";
 import { postVote, useNow, usePerson } from "./api.ts";
-import { cardText, heldByViewer } from "./cardText.ts";
+import { cardText, sessionShown } from "./cardText.ts";
 import { ago, dateOf, laneLabel } from "./format.ts";
 import { fill, words } from "./theme.ts";
 import { itemHref } from "./route.ts";
 import { browserStorage, heldCount } from "./heldAnswers.ts";
 import { picksCount, unsentNote } from "./heldDecisions.ts";
 
-/** "anyone" is a question: in every person's "Your turn", so it is yours too. */
-const ACTORS = (): Record<CardView["actor"], string> => ({ anyone: words().turnYours, person: "", agent: "agent", queue: "queue", runner: "runner", nobody: "" });
-
-/** Whose turn, in a tag: yours, or the person's by name. */
+/**
+ * Whose turn, in a tag: yours, or the person's by name. "anyone" is a question: in every person's "Your turn", so it is yours
+ * too. An agent's, the queue's or a runner's turn has no tag: the lane and the text say it.
+ */
 export function actorWords(card: Pick<CardView, "actor" | "person">): string {
   if (card.actor === "person" && card.person) return card.person.mine ? words().turnYours : fill(words().turnOf, { name: card.person.name });
-  return ACTORS()[card.actor];
+  return card.actor === "anyone" ? words().turnYours : "";
 }
+
+/** In the Your turn box every card is the viewer's turn: the tag would only repeat the box's title. */
+const yoursAnyway = (card: Pick<CardView, "actor" | "person">): boolean => card.actor === "anyone" || (card.actor === "person" && card.person?.mine === true);
 
 /** The tag's colour: everyone's turn and a person's turn that is yours look the same; another person's is dashed. */
 export function actorClass(card: Pick<CardView, "actor" | "person">): string {
@@ -95,16 +98,11 @@ export function Card({ card, showLane = false }: { card: CardView; showLane?: bo
         </p>
       )}
       <div class="tags">
-        {actorWords(card) && <span class={`tag ${actorClass(card)}`}>{actorWords(card)}</span>}
+        {actorWords(card) && !(showLane && yoursAnyway(card)) && <span class={`tag ${actorClass(card)}`}>{actorWords(card)}</span>}
         {showLane && <span class="tag">{laneLabel(card.lane)}</span>}
-        {card.heldBy && !showLane && text.kind !== "held" && !card.reason.includes(`held by ${card.heldBy}`) && (
-          <span class="tag">
-            held by <Mention name={card.heldBy} mine={heldByViewer(card, viewer)} />
-          </span>
-        )}
         {card.openDecisions && <span class="tag tag-decisions">{card.openDecisions} {card.openDecisions === 1 ? "decision" : "decisions"} to look at</span>}
         {unsent && <span class="tag">{unsent}</span>}
-        {card.session && <SessionChip session={card.session} />}
+        {card.session && sessionShown(card.session) && <SessionChip session={card.session} />}
         {running && theme.sessionBadge && <span class="tag tag-flair">{fill(theme.sessionBadge, { n: card.session!.attempt })}</span>}
         {quiet && theme.staleBadge && <span class="tag tag-flair tag-stale">{fill(theme.staleBadge, { date: dateOf(card.since!) })}</span>}
         {card.priority && card.priority !== "major" && <span class={`tag tag-priority-${card.priority}`}>{card.priority}</span>}

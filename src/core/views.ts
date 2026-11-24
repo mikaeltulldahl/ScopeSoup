@@ -448,6 +448,8 @@ export interface ItemPage {
     openChildren: number;
     updatedAt: string;
     url?: string;
+    /** The link to `url` in words, naming the host: "Open on GitHub", "Open in Jira". */
+    openWords?: string;
   };
   /** Null for an abandoned item. */
   lane: Lane | null;
@@ -455,6 +457,10 @@ export interface ItemPage {
   /** For actor "person": the person's name, and whether it is this board's person. */
   person?: { name: string; mine: boolean };
   reason: string;
+  /** What waits on a person, short, as on the card ("2 questions"). */
+  waits?: string;
+  /** Who holds the Item, by name, as on the card. */
+  heldBy?: string;
   /** A backlog Item's place and why, as on its card. */
   why?: string;
   /** Vote up and Vote down are offered: the Item is open and its host can keep a vote. */

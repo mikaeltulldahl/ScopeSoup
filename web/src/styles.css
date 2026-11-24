@@ -282,6 +282,12 @@ a.member:hover { border-color: var(--accent); }
 .panel h3 { font-size: 0.78rem; letter-spacing: 0.05em; text-transform: uppercase; color: var(--muted); }
 .panel-yours { border: 2px solid var(--yours-line); }
 .panel-yours h3 { color: var(--yours); }
+/* A section with nothing in it yet: the heading and one line, side by side. */
+.panel-empty { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; padding: 6px 12px; }
+.panel-empty .empty { padding: 0; }
+/* The Item section's backlog place: the line, then ▲ ▼ side by side. */
+.place { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
+.place .vote-small { flex-direction: row; align-self: center; }
 .body-text { white-space: pre-wrap; }
 .verification { padding: 6px 8px; background: var(--sunken); border-radius: 6px; font-size: 0.9rem; }
 .facts { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 2px 12px; font-size: 0.86rem; }

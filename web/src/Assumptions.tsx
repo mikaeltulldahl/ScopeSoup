@@ -97,7 +97,8 @@ function openIds(list: AssumptionView[]): Map<string, string[]> {
 }
 
 /** The Item's decisions, oldest first (opening on the first open one), one at a time with arrows and a counter like its questions, with the held picks and one Send. */
-export function Assumptions({ list, now, canSettle, onDone }: { list: AssumptionView[]; now: number; canSettle: (decision: AssumptionView) => boolean; onDone?: () => void }) {
+/** `primary`: Send is the page's one primary button (the Item page gives it to the first panel that waits for the person). */
+export function Assumptions({ list, now, canSettle, onDone, primary = true }: { list: AssumptionView[]; now: number; canSettle: (decision: AssumptionView) => boolean; onDone?: () => void; primary?: boolean }) {
   const ids = openIds(list);
   // Read from this browser on every render, so picks made on another page (the Item's, or the overview) show here too.
   const [, setVersion] = useState(0);
@@ -153,7 +154,7 @@ export function Assumptions({ list, now, canSettle, onDone }: { list: Assumption
           <p class="muted num">
             {count} picked{picked > count ? `, ${picked - count} overturn${picked - count > 1 ? "s" : ""} still without your decision` : ""}. Nothing is recorded until you send; your picks are kept in this browser.
           </p>
-          <button type="button" class="primary" onClick={() => void sendAll()} disabled={busy || count === 0}>
+          <button type="button" class={primary ? "primary" : undefined} onClick={() => void sendAll()} disabled={busy || count === 0}>
             {busy ? "Sending…" : count > 1 ? `Send ${count} decisions` : "Send"}
           </button>
           {error && <p class="error">{error}</p>}

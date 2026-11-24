@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { LogRecord, WorkItem } from "../model/types.ts";
 import { holdDetails } from "./holdings.ts";
-import { buildItemPage } from "./item-page.ts";
+import { buildItemPage, hostLinkWords } from "./item-page.ts";
 import type { Snapshot } from "./snapshot.ts";
 
 const NOW = new Date("2026-11-19T12:00:00.000Z");
@@ -27,4 +27,18 @@ test("the item page carries the same details for 'held by'", () => {
   const snapshot = { works: [held()], changes: [], runs: [], batches: [], sessions: [], runners: [], answers: [], settings: {}, now: NOW.toISOString() } as unknown as Snapshot;
   const page = buildItemPage(snapshot, "metaBranch:work:A-5", new Date("2026-11-21T12:00:00.000Z"));
   assert.deepEqual([page?.item.holder?.actor.name, page?.item.holder?.from, page?.item.holder?.quiet], ["robin on laptop-a", "claude-code", true]);
+});
+
+test("the item page names the holder as the card does, and links nowhere for the meta branch", () => {
+  const snapshot = { works: [held()], changes: [], runs: [], batches: [], sessions: [], runners: [], answers: [], settings: {}, now: NOW.toISOString() } as unknown as Snapshot;
+  const page = buildItemPage(snapshot, "metaBranch:work:A-5", NOW);
+  assert.equal(page?.heldBy, "robin");
+  assert.equal(page?.item.openWords, undefined);
+});
+
+test("the link to the item names its host", () => {
+  assert.equal(hostLinkWords({ host: "github", kind: "work", id: "7", url: "https://github.com/sam/tidepool/issues/7" }), "Open on GitHub");
+  assert.equal(hostLinkWords({ host: "jira", kind: "work", id: "DEMO-7", url: "https://example.atlassian.net/browse/DEMO-7" }), "Open in Jira");
+  assert.equal(hostLinkWords({ host: "demo", kind: "work", id: "7", url: "https://forge.example/tidepool/issues/7" }), "Open on forge.example");
+  assert.equal(hostLinkWords({ host: "metaBranch", kind: "work", id: "A-7" }), undefined);
 });
