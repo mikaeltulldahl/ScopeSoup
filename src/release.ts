@@ -111,6 +111,22 @@ export interface ReleaseManifest {
   formats: { config: number; meta: number; store: number };
 }
 
+/** The `package.json` scripts of a release: the commands a person or a skill runs with `pnpm --dir <release>`, as in a checkout. */
+export function releaseScripts(): Record<string, string> {
+  return {
+    start: `node ${NODE_FLAGS} src/main.ts`,
+    // Makes this release the current version of the home it was unpacked into, and writes the launcher.
+    "setup-home": `node ${NODE_FLAGS} src/scopesoup.ts setup-home`,
+    item: `node ${NODE_FLAGS} src/item.ts`,
+    offboard: `node ${NODE_FLAGS} src/offboard/cli.ts`,
+    "config:check": `node ${NODE_FLAGS} src/config/check.ts`,
+    "config:register": `node ${NODE_FLAGS} src/config/register.ts`,
+    "settings:init": `node ${NODE_FLAGS} src/config/settingsInit.ts`,
+    "config:setup": `node ${NODE_FLAGS} src/config/setupScript.ts`,
+    "meta:accept": `node ${NODE_FLAGS} src/hosts/metaBranch/accept.ts`,
+  };
+}
+
 /** Builds the release folder. Throws when the web app is not built or a source imports a package. */
 export function buildRelease(options: ReleaseOptions): string {
   const root = options.root ?? SCOPESOUP_ROOT;
@@ -134,14 +150,7 @@ export function buildRelease(options: ReleaseOptions): string {
   writeFileSync(join(out, "package.json"), JSON.stringify({
     name: "scopesoup", version, license: "MIT", private: true, type: "module", engines: { node: ">=22.18" },
     // The commands a person or the onboarding skill runs with `pnpm --dir <release>`, as in a checkout.
-    scripts: {
-      start: `node ${NODE_FLAGS} src/main.ts`,
-      // Makes this release the current version of the home it was unpacked into, and writes the launcher.
-      "setup-home": `node ${NODE_FLAGS} src/scopesoup.ts setup-home`,
-      item: `node ${NODE_FLAGS} src/item.ts`,
-      "config:check": `node ${NODE_FLAGS} src/config/check.ts`,
-      "meta:accept": `node ${NODE_FLAGS} src/hosts/metaBranch/accept.ts`,
-    },
+    scripts: releaseScripts(),
   }, null, 2) + "\n");
   writeFileSync(join(out, "scopesoup.cmd"), [
     "@echo off",
