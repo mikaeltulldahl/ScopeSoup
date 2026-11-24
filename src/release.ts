@@ -118,6 +118,8 @@ export function releaseScripts(): Record<string, string> {
     // Makes this release the current version of the home it was unpacked into, and writes the launcher.
     "setup-home": `node ${NODE_FLAGS} src/scopesoup.ts setup-home`,
     item: `node ${NODE_FLAGS} src/item.ts`,
+    open: `node ${NODE_FLAGS} src/open.ts`,
+    shortcut: `node ${NODE_FLAGS} src/shortcut.ts`,
     offboard: `node ${NODE_FLAGS} src/offboard/cli.ts`,
     "config:check": `node ${NODE_FLAGS} src/config/check.ts`,
     "config:register": `node ${NODE_FLAGS} src/config/register.ts`,

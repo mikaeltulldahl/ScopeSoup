@@ -151,6 +151,7 @@ Show, in plain words:
 - The import, when the backlog moves from GitHub Issues to Items (step 3b): the command in full, that it imports the open issues (and the closed ones only if asked), and what happens on GitHub in plain words (left as it is, labelled, or labelled and closed). The person's yes to the summary is the yes to that step on GitHub; it is never done without it.
 - The first Items to write, when the person picked that optional step (step 3), by title.
 - What the person does themselves: set `SCOPESOUP_GITHUB_TOKEN` for a github host, or for the import.
+- On Windows, an optional shortcut (step 6c), offered as: "A Start menu shortcut 'Scope Soup – <project>' that starts Scope Soup and opens the board (also on the desktop? start at login?)". Say it needs no admin rights and no PATH change, goes in the person's own folders, and is removed by offboarding. Not offered elsewhere (`scopesoup open` still works there).
 - Two optional steps, each only if the person picks it: the plugin in the project's `.claude/settings.json` (step 8), and the Scope Soup section in the project's `CLAUDE.md` (step 9).
 
 Ask once: "Do all of this?" Change the plan if they correct it and ask again. Do nothing until a clear yes.
@@ -213,9 +214,19 @@ Without the token in this session, do not ask for it: give the person the same c
 
 When the person picked writing the first Items (step 3), file them now with `pnpm --silent --dir "SCOPESOUP" item new --title "..." --config "<absolute path to scopesoup.config.json>"`, one per Item shown in the summary.
 
+## 6c. The shortcut (optional, Windows)
+
+Only when the person picked it in the summary. Run, in the person's own clone (the folder the shortcut runs `scopesoup open` in), adding `--desktop` and/or `--startup` only for what they chose:
+
+```
+pnpm --silent --dir "SCOPESOUP" shortcut --name "<project>" --repo "<the person's clone>" --config "<absolute path to scopesoup.config.json>" [--desktop] [--startup]
+```
+
+It writes "Scope Soup – <project>" into the person's Start menu (and the desktop, and the Startup folder, when asked) and records each file on the manifest. If it says there is no launcher, run `setup-home` (step 6) first.
+
 ## 7. How to start Scope Soup
 
-Do not start it unless asked. PowerShell:
+Do not start it unless asked. If the shortcut was made (step 6c), tell the person to click "Scope Soup – <project>" in the Start menu: it starts Scope Soup in the background if needed and opens the board (`scopesoup open` does the same from the project's repository). Otherwise, PowerShell:
 
 ```
 $env:SCOPESOUP_CONFIG = "<config folder>\scopesoup.config.json"
