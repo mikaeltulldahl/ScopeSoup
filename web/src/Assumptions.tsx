@@ -12,6 +12,7 @@ import type { HeldPick } from "./heldDecisions.ts";
 import { clearPicks, loadPicks, readyPicks, savePicks } from "./heldDecisions.ts";
 import { itemNoun } from "./theme.ts";
 import { itemHref } from "./route.ts";
+import { Stepper } from "./Stepper.tsx";
 
 function Decision({ decision, now, showItem, canSettle, pick, busy, onPick }: { decision: AssumptionView; now: number; showItem: boolean; canSettle: boolean; pick: HeldPick | undefined; busy: boolean; onPick: (pick: HeldPick | null) => void }) {
   const settled = decision.settled;
@@ -103,7 +104,8 @@ function openIds(list: AssumptionView[]): Map<string, string[]> {
 
 /**
  * The decisions, newest first, with the held picks and one Send. `showItem`: the list spans Items (the overview), so each names
- * its Item, and Send sends each Item's picks as one request.
+ * its Item, and Send sends each Item's picks as one request. On one Item's page (not `showItem`) they show one at a time, with
+ * arrows and a counter, like its questions.
  */
 export function Assumptions({ list, now, showItem, canSettle, onDone }: { list: AssumptionView[]; now: number; showItem: boolean; canSettle: (decision: AssumptionView) => boolean; onDone?: () => void }) {
   const ids = openIds(list);
@@ -140,22 +142,27 @@ export function Assumptions({ list, now, showItem, canSettle, onDone }: { list: 
     setVersion((version) => version + 1);
     onDone?.();
   };
+  const row = (decision: AssumptionView) => (
+    <Decision
+      key={`${decision.item.key}:${decision.id}`}
+      decision={decision}
+      now={now}
+      showItem={showItem}
+      canSettle={canSettle(decision)}
+      pick={decision.settled ? undefined : picksOf(decision.item.key)[decision.id]}
+      busy={busy}
+      onPick={(pick) => change(decision, pick)}
+    />
+  );
+  // Answered: settled, or a pick held here that Send would send (an Overturn once its decision is written).
+  const answered = list.map((decision) => !!decision.settled || readyPicks(picksOf(decision.item.key), [decision.id]).length > 0);
   return (
     <>
-      <ul class="rows decisions">
-        {list.map((decision) => (
-          <Decision
-            key={`${decision.item.key}:${decision.id}`}
-            decision={decision}
-            now={now}
-            showItem={showItem}
-            canSettle={canSettle(decision)}
-            pick={decision.settled ? undefined : picksOf(decision.item.key)[decision.id]}
-            busy={busy}
-            onPick={(pick) => change(decision, pick)}
-          />
-        ))}
-      </ul>
+      {showItem ? (
+        <ul class="rows decisions">{list.map(row)}</ul>
+      ) : (
+        list.length > 0 && <Stepper noun="Decision" answered={answered}>{(index) => <ul class="rows decisions">{row(list[index]!)}</ul>}</Stepper>
+      )}
       {picked > 0 && (
         <div class="answer">
           <p class="muted num">

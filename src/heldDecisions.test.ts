@@ -4,7 +4,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { HeldStorage } from "../web/src/heldAnswers.ts";
-import { clearPicks, loadPicks, picksKey, readyPicks, savePicks } from "../web/src/heldDecisions.ts";
+import { clearPicks, loadPicks, picksCount, picksKey, readyPicks, savePicks, unsentNote } from "../web/src/heldDecisions.ts";
 
 function memory(): HeldStorage & { data: Map<string, string> } {
   const data = new Map<string, string>();
@@ -38,4 +38,15 @@ test("storage that is missing, refuses or holds rubbish is no error: nothing is 
   const storage = memory();
   storage.setItem(picksKey("k"), JSON.stringify({ a: { action: "maybe", answer: "" }, b: { action: "accept", answer: "" } }));
   assert.deepEqual(loadPicks(storage, "k", ["a", "b"]), { b: { action: "accept", answer: "" } });
+});
+
+test("the card's note counts held picks too, an Overturn still being written included", () => {
+  const storage = memory();
+  assert.equal(picksCount(storage, "k"), 0);
+  savePicks(storage, "k", { a: { action: "accept", answer: "" }, b: { action: "overturn", answer: "" } });
+  assert.equal(picksCount(storage, "k"), 2);
+  assert.equal(unsentNote(0, 0), null);
+  assert.equal(unsentNote(2, 0), "answers not sent");
+  assert.equal(unsentNote(0, 1), "decisions not sent");
+  assert.equal(unsentNote(1, 1), "answers and decisions not sent");
 });
