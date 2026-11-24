@@ -16,6 +16,7 @@ import { agentsState, setRolesForTest } from "../store/control.ts";
 import { openStore } from "../store/store.ts";
 import type { Store } from "../store/store.ts";
 import type { Job } from "./jobs.ts";
+import { releaseJob } from "./jobs.ts";
 import type { Actions } from "./ports.ts";
 import { dryActions } from "./ports.ts";
 import { createRunner } from "./runner.ts";
@@ -50,8 +51,10 @@ interface World {
   store: Store;
   config: ProjectConfig;
   lines: { kind: string; fields: Record<string, unknown> }[];
-  /** Ticks until the item's job parked or `rounds` run out; returns the roles started, with the remote's main after each session. */
-  run(rounds?: number): Promise<{ role: SessionRole; mainAfter: string }[]>;
+  /** Ticks until the item's job parked (or `until` holds) or `rounds` run out; returns the roles started, with the remote's main after each session. */
+  run(rounds?: number, until?: (job: Job | undefined) => boolean): Promise<{ role: SessionRole; mainAfter: string }[]>;
+  /** A person answers the Item's parked question. */
+  answer(): void;
   job(): Job | undefined;
   events(kind: string): string[];
 }
@@ -95,9 +98,12 @@ function world(level: 2 | 3, env: Record<string, string>): World {
   return {
     dir, remote, store, config, lines, job,
     events: (kind) => store.eventsAfter(0, 10_000).filter((event) => event.kind === kind).map((event) => String((event.data as { reason?: string } | null)?.reason ?? "")),
-    async run(rounds = 10) {
+    answer() {
+      assert.equal(releaseJob(store, ITEM, "Pat", now(), "Pat answered: run the check, and merge if it passes."), true);
+    },
+    async run(rounds = 10, until) {
       const roles: { role: SessionRole; mainAfter: string }[] = [];
-      for (let round = 0; round < rounds && !job()?.parked; round++) {
+      for (let round = 0; round < rounds && !job()?.parked && !until?.(job()); round++) {
         const report = await tick({ store, runner, config: fixedConfig(config), actions, now });
         for (const started of report.started) {
           assert.equal((await runner.finished(started.sessionId)).status, "succeeded");
@@ -195,5 +201,49 @@ describe("merging by the session", { concurrency: 7 }, () => {
     assert.equal(job?.parked?.retry, "hand-over");
     assert.match(job?.parked?.reason ?? "", /does not contain scopesoup\/1 \(at \w{7}\), and its answer names no pull request/);
     assert.equal(w.lines.some((line) => line.kind === "merged"), false);
+  });
+
+  // The implementor stopped before merging (it could not run the check), the Item escalated, and a person answered. The merge
+  // queue's switch is paused, as after every start-up, and is not shown below level 4.
+  test("level 2: the answer to a done-but-not-merged escalation resumes the implementor's own session, which merges", async () => {
+    const w = world(2, { FAKE_CLAUDE_PUSH: "when-resumed" });
+    const before = git(w.remote, "rev-parse", "main");
+    assert.deepEqual((await w.run()).map((each) => each.role), ["triage", "implement"]);
+    assert.equal(w.job()?.parked?.retry, "hand-over");
+    assert.equal(git(w.remote, "rev-parse", "main"), before);
+    w.answer();
+    const roles = await w.run();
+    assert.deepEqual(roles.map((each) => each.role), ["implement"], "no reviewer at level 2");
+    assert.equal(w.job()?.parked?.as, "queued", w.job()?.parked?.reason);
+    assert.notEqual(roles[0]!.mainAfter, before);
+    assert.deepEqual(w.lines.find((line) => line.kind === "merged")?.fields, { sha: roles[0]!.mainAfter, target: "main" });
+    assert.match(w.events("orchestrator.step").at(-1) ?? "", /Pat answered\. At level 2 the implementor merges it/);
+    assert.match(w.events("orchestrator.started").at(-1) ?? "", /resuming the implementor's session/);
+    assert.equal(w.events("orchestrator.escalated").length, 1, "escalated once, before the answer");
+  });
+
+  test("level 3: the same answer for a change built at level 2 sends it to review first, then the implementor merges", async () => {
+    const w = world(2, { FAKE_CLAUDE_PUSH: "when-resumed" });
+    await w.run();
+    assert.equal(w.job()?.parked?.retry, "hand-over");
+    (w.config as { level: number }).level = 3;
+    w.answer();
+    const roles = await w.run();
+    assert.deepEqual(roles.map((each) => each.role), ["review", "implement"]);
+    assert.equal(w.job()?.parked?.as, "queued", w.job()?.parked?.reason);
+    assert.match(w.events("orchestrator.step").find((reason) => /Pat answered/.test(reason)) ?? "", /Next: review/);
+  });
+
+  test("a job at the review step when the level is lowered to 2 goes back to its implementor's own session, which merges", async () => {
+    const w = world(3, { FAKE_CLAUDE_PUSH: "when-resumed" });
+    const before = git(w.remote, "rev-parse", "main");
+    const first = await w.run(10, (job) => job?.step === "review" && !job.sessionId);
+    assert.deepEqual(first.map((each) => each.role), ["triage", "implement"]);
+    (w.config as { level: number }).level = 2;
+    const roles = await w.run();
+    assert.deepEqual(roles.map((each) => each.role), ["implement"]);
+    assert.match(w.events("orchestrator.step").find((reason) => /waited at the review step/.test(reason)) ?? "", /project is at level 2, where nobody reviews.*Next: the implementor's own session merges it/);
+    assert.equal(w.job()?.parked?.as, "queued", w.job()?.parked?.reason);
+    assert.notEqual(git(w.remote, "rev-parse", "main"), before);
   });
 });

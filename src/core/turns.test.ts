@@ -130,6 +130,24 @@ test("review reasons: waiting for a reviewer, findings, failed checks, a new rev
   assert.match(turnOf(snap, 5).reason, /new revision since the last review/);
 });
 
+test("a change not merged below level 3 waits for its implementor, and no reason names a switch hidden at the level", () => {
+  const snap = snapshot({ works: [work(1)], changes: [change(10, [1])] });
+  const paused = { review: "paused", implement: "paused", triage: "paused", mergeQueue: "paused" } as const;
+  // Level 2, everything paused after a start-up (the sandbox's A-1): the implementors' switch, shown on In progress.
+  const two = turnOf({ ...snap, ...paused, level: 2 }, 1);
+  assert.deepEqual([two.actor, two.reason], ["agent", "its change is not merged; nobody reviews at level 2: its implementor merges it, but implementors are paused (Resume on In progress)"]);
+  assert.equal(turnOf({ ...snap, level: 2 }, 1).reason, "its change is not merged; nobody reviews at level 2: its implementor merges it");
+  assert.equal(turnOf({ ...snap, ...paused, level: 1 }, 1).reason, "its change is not merged, and at level 1 nothing is built or merged (raise the level to go on)");
+  // From level 3 the review switch is shown, and named when paused.
+  assert.equal(turnOf({ ...snap, ...paused, level: 3 }, 1).reason, "waiting for a reviewer session, and review is paused (Resume on In review)");
+  for (const level of [0, 1, 2]) assert.doesNotMatch(turnOf({ ...snap, ...paused, level }, 1).reason, /review is paused|In review|queue/);
+  // An approved change below level 4 is not in a queue: Scope Soup merges nothing itself there.
+  const approved = snapshot({ works: [work(2)], changes: [change(20, [2], { verdicts: [verdict("review", "pass")] })] });
+  assert.equal(turnOf({ ...approved, ...paused, paused: true, level: 3 }, 2).reason, "approved; at level 3 Scope Soup merges nothing itself: its implementor or a person merges it");
+  assert.doesNotMatch(turnOf({ ...approved, ...paused, paused: true, level: 3 }, 2).reason, /queue/);
+  assert.equal(turnOf({ ...approved, ...paused, paused: true, level: 4 }, 2).reason, "approved, but the queue is paused");
+});
+
 test("a pull request Scope Soup will not review says who it waits for", () => {
   const person = { id: "ada", name: "ada" };
   const snap = snapshot({
