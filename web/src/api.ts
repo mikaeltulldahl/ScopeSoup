@@ -7,6 +7,7 @@ import type { ProjectConfig } from "../../src/config/types.ts";
 import type { BoardView, ChatView, FolderName, CommitView, DiffView, HistoryView, ItemBranchState, ItemListView, ItemPage, SessionDetailsView, UsageView } from "../../src/core/views.ts";
 import type { ProposedPart } from "../../src/model/types.ts";
 import { currentPerson, onPersonChange, personHeaders } from "./person.ts";
+import type { PickEntry } from "./heldDecisions.ts";
 
 export type { ProjectConfig };
 export type { BoardView, DiffView, ItemPage };
@@ -355,10 +356,12 @@ export function useNow(): number {
   return now;
 }
 
-/** A person accepts a decision an implementor took itself, or overturns it with an answer (a new Item reworks it). */
-export async function postAssumption(ref: string, id: string, action: "accept" | "overturn", answer?: string): Promise<{ item?: string }> {
-  const response = await call("/api/assumption", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ref, id, action, ...(answer !== undefined ? { answer } : {}) }) });
-  const body = (await response.json().catch(() => null)) as { item?: string; error?: { message?: string } } | null;
+/**
+ * The picks on an Item's decisions that its implementor took itself, sent together (Accept, or Overturn with a person's decision):
+ * recorded together or not at all.
+ */
+export async function postDecisions(ref: string, decisions: PickEntry[]): Promise<void> {
+  const response = await call("/api/decisions", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ref, decisions }) });
+  const body = (await response.json().catch(() => null)) as { error?: { message?: string } } | null;
   if (!response.ok) throw new Error(body?.error?.message ?? `The server answered ${response.status}.`);
-  return body?.item ? { item: body.item } : {};
 }
