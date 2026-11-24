@@ -1,6 +1,6 @@
 # People doing the work
 
-Status: design, agreed in outline on 2026-11-18. It is built together with three laptops, next after the queue follow-ups (decision 39). Built so far: claiming an item and handing it back with a branch from the command line (`pnpm item`, `docs/RUNNING.md`), the board showing who holds what, each person's own "your turn" and no stall timer for people, and people as equals: a person picker on the board, questions in everyone's "your turn", and anyone releasing anyone's hold. Also built: the board's own buttons for claim, hand back and release, and Take showing the Item's branch with Hand back reading it from the remote. Not built: a person taking one step of an item rather than the whole item.
+Status: design, agreed in outline on 2026-11-18. It is built together with three laptops, next after the queue follow-ups (decision 39). Built so far: claiming an item and handing it back with a branch from the command line (`pnpm item`, `docs/RUNNING.md`), the board's cards and Item pages showing who holds what, each person's own "your turn" and no stall timer for people, and people as equals: a person picker on the board, questions in everyone's "your turn", and anyone releasing anyone's hold. Also built: the board's own buttons for claim, hand back and release, and Take showing the Item's branch with Hand back reading it from the remote. Not built: a person taking one step of an item rather than the whole item.
 
 Scope Soup is not only for agents. Any step of an item's cycle can be done by a person, item by item.
 

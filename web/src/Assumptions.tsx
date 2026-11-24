@@ -14,20 +14,14 @@ import { itemNoun } from "./theme.ts";
 import { itemHref } from "./route.ts";
 import { Stepper } from "./Stepper.tsx";
 
-function Decision({ decision, now, showItem, canSettle, pick, busy, onPick }: { decision: AssumptionView; now: number; showItem: boolean; canSettle: boolean; pick: HeldPick | undefined; busy: boolean; onPick: (pick: HeldPick | null) => void }) {
+function Decision({ decision, now, canSettle, pick, busy, onPick }: { decision: AssumptionView; now: number; canSettle: boolean; pick: HeldPick | undefined; busy: boolean; onPick: (pick: HeldPick | null) => void }) {
   const settled = decision.settled;
   return (
     <li class={`row decision${settled ? " decision-settled" : ""}${pick ? " decision-picked" : ""}`}>
       <div class="row-head">
-        {showItem && (
-          <a class="num" href={itemHref(decision.item.key)}>
-            {decision.item.label}
-          </a>
-        )}
         <span class="row-title">{decision.question}</span>
         <span class="muted num">{ago(decision.at, now)}</span>
       </div>
-      {showItem && <p class="muted decision-item">{decision.item.title}</p>}
       <p>
         <span class="muted">Chose:</span> {decision.chosen}
       </p>
@@ -102,12 +96,8 @@ function openIds(list: AssumptionView[]): Map<string, string[]> {
   return ids;
 }
 
-/**
- * The decisions, newest first, with the held picks and one Send. `showItem`: the list spans Items (the overview), so each names
- * its Item, and Send sends each Item's picks as one request. On one Item's page (not `showItem`) they show one at a time, with
- * arrows and a counter, like its questions.
- */
-export function Assumptions({ list, now, showItem, canSettle, onDone }: { list: AssumptionView[]; now: number; showItem: boolean; canSettle: (decision: AssumptionView) => boolean; onDone?: () => void }) {
+/** The Item's decisions, newest first, one at a time with arrows and a counter like its questions, with the held picks and one Send. */
+export function Assumptions({ list, now, canSettle, onDone }: { list: AssumptionView[]; now: number; canSettle: (decision: AssumptionView) => boolean; onDone?: () => void }) {
   const ids = openIds(list);
   // Read from this browser on every render, so picks made on another page (the Item's, or the overview) show here too.
   const [, setVersion] = useState(0);
@@ -147,7 +137,6 @@ export function Assumptions({ list, now, showItem, canSettle, onDone }: { list: 
       key={`${decision.item.key}:${decision.id}`}
       decision={decision}
       now={now}
-      showItem={showItem}
       canSettle={canSettle(decision)}
       pick={decision.settled ? undefined : picksOf(decision.item.key)[decision.id]}
       busy={busy}
@@ -158,11 +147,7 @@ export function Assumptions({ list, now, showItem, canSettle, onDone }: { list: 
   const answered = list.map((decision) => !!decision.settled || readyPicks(picksOf(decision.item.key), [decision.id]).length > 0);
   return (
     <>
-      {showItem ? (
-        <ul class="rows decisions">{list.map(row)}</ul>
-      ) : (
-        list.length > 0 && <Stepper noun="Decision" answered={answered}>{(index) => <ul class="rows decisions">{row(list[index]!)}</ul>}</Stepper>
-      )}
+      {list.length > 0 && <Stepper noun="Decision" answered={answered}>{(index) => <ul class="rows decisions">{row(list[index]!)}</ul>}</Stepper>}
       {picked > 0 && (
         <div class="answer">
           <p class="muted num">

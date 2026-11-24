@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { LogRecord, WorkItem } from "../model/types.ts";
-import { buildHoldings, holdDetails } from "./holdings.ts";
+import { holdDetails } from "./holdings.ts";
 import { buildItemPage } from "./item-page.ts";
 import type { Snapshot } from "./snapshot.ts";
 
@@ -17,10 +17,8 @@ function held(): WorkItem {
   };
 }
 
-test("a person's hold from a session says so, hides its far end, and is quiet after a day", () => {
-  const view = buildHoldings([held()], NOW, { machine: "laptop-a", person: "robin" });
-  const entry = view.groups[0]?.items[0];
-  assert.deepEqual([entry?.from, entry?.until, entry?.expired, entry?.quiet, entry?.since], ["claude-code", undefined, false, false, "2026-11-19T09:00:00.000Z"]);
+test("a person's hold from a session says so, and is quiet after a day", () => {
+  assert.deepEqual(holdDetails(held(), NOW), { since: "2026-11-19T09:00:00.000Z", from: "claude-code", quiet: false });
   assert.deepEqual(holdDetails(held(), new Date("2026-11-21T12:00:00.000Z")), { since: "2026-11-19T09:00:00.000Z", from: "claude-code", quiet: true });
   assert.equal(holdDetails({ ...held(), holder: undefined }, NOW), undefined);
 });

@@ -1,4 +1,4 @@
-// Overview: the your-turn list first, then the lanes. Columns on a wide screen, stacked
+// Overview: the your-turn list first (what waits on a person, not the details), then the lanes. Columns on a wide screen, stacked
 // and collapsible on a phone.
 
 import { Fragment } from "preact";
@@ -6,15 +6,13 @@ import { useState } from "preact/hooks";
 import type { BoardView, LaneView } from "./api.ts";
 import { BatchMini } from "./Batch.tsx";
 import { Card } from "./Card.tsx";
-import { Holdings } from "./Holdings.tsx";
 import { Resources } from "./Resources.tsx";
 import { ItemForm } from "./ItemForm.tsx";
-import { Assumptions } from "./Assumptions.tsx";
 import { laneIcon, laneLabel } from "./format.ts";
 import { itemHref } from "./route.ts";
 import { itemNoun, words } from "./theme.ts";
 import { useTheme } from "./useTheme.ts";
-import { postItem, useNow } from "./api.ts";
+import { postItem } from "./api.ts";
 
 const STORE_KEY = "scopesoup.closedLanes";
 
@@ -82,22 +80,6 @@ function NoTriage({ count }: { count: number }) {
     <p class="panel no-triage">
       {count} {count === 1 ? `${itemNoun(false, true)} has` : `${itemNoun(true, true)} have`} no triage: set level 1 and press Start agents.
     </p>
-  );
-}
-
-/** Decisions implementors took themselves, newest first. Not blocking: the work went on, so they are not "your turn". */
-function Decisions({ board }: { board: BoardView }) {
-  const now = useNow();
-  const open = board.assumptions.filter((each) => !each.settled).length;
-  const settles = new Set(board.settles ?? []);
-  return (
-    <section class="panel decisions-panel" aria-labelledby="decisions-title">
-      <h2 id="decisions-title">
-        Decided by implementors <span class="count num">{open}</span>
-      </h2>
-      <p class="muted">Cheap to change later, so the work went on: nothing waits on these. Pick Accept, or Overturn with your decision, for each; nothing is recorded until you press Send.</p>
-      <Assumptions list={board.assumptions} now={now} showItem canSettle={(each) => settles.has(each.item.ref.host)} />
-    </section>
   );
 }
 
@@ -190,8 +172,6 @@ export function Overview({ board }: { board: BoardView }) {
           </div>
         )}
       </section>
-      {board.assumptions.length > 0 && <Decisions board={board} />}
-      {board.holdings && <Holdings holdings={board.holdings} />}
       {board.resources && <Resources resources={board.resources} />}
       <div class="lanes">
         {board.lanes.map((lane) => (

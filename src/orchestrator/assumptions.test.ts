@@ -147,7 +147,7 @@ test("an overturn's new Item carries the answer as the decision: rework before t
   assert.match(revert.body, /A-3's change has merged\. Change the code to follow a person's decision, or revert/);
 });
 
-test("the board lists open and recent decisions newest first, outside your turn; POST /api/decisions sends the picks of an Item together", async () => {
+test("the board shows how many decisions an Item has open, and none is your turn; POST /api/decisions sends the picks of an Item together", async () => {
   const store = openStore(":memory:");
   const now = new Date("2026-11-22T12:00:00Z");
   const decision = (id: string, at: string, settled?: Assumption["settled"]): Assumption => ({ id, at, question: `Q ${id}?`, chosen: "x", others: [], why: "", ...(settled ? { settled } : {}) });
@@ -155,8 +155,8 @@ test("the board lists open and recent decisions newest first, outside your turn;
   store.put(item("1", [decision("a", "2026-11-22T09:00:00Z"), decision("old", "2026-11-01T09:00:00Z", { verdict: "accepted", at: "2026-11-02T09:00:00Z", by: "robin" })]), "sync", now.toISOString());
   store.put(item("2", [decision("b", "2026-11-22T11:00:00Z"), decision("c", "2026-11-21T09:00:00Z", { verdict: "accepted", at: "2026-11-21T10:00:00Z", by: "robin" })]), "sync", now.toISOString());
   const board = buildBoard(loadSnapshot(store), now);
-  // Newest first; a decision settled more than a week ago is left out; none is your turn.
-  assert.deepEqual(board.assumptions.map((each) => `${each.item.label} ${each.id}`), ["#2 b", "#1 a", "#2 c"]);
+  // The cards count the open ones only; none is your turn.
+  assert.deepEqual(board.lanes.flatMap((lane) => lane.cards).map((card) => [card.label, card.openDecisions]).sort(), [["#1", 1], ["#2", 1]]);
   assert.deepEqual(board.yourTurn, []);
   assert.deepEqual(buildItemPage(loadSnapshot(store), "fake:work:2", now)?.assumptions.map((each) => each.id), ["b", "c"]);
 
@@ -199,8 +199,6 @@ test("the board lists open and recent decisions newest first, outside your turn;
   };
   const personEvents = () => store.eventsAfter(0, 100).filter((event) => event.kind.startsWith("person.assumption_")).map((event) => `${event.kind} ${(event.data as { id: string }).id}`);
   try {
-    const shown = (await (await fetch(`${base}/api/board`)).json()) as { settles?: string[] };
-    assert.deepEqual(shown.settles, ["fake"]);
     const page = (await (await fetch(`${base}/api/item?ref=fake:work:1`)).json()) as { canSettle?: boolean };
     assert.equal(page.canSettle, true);
     // Malformed picks are refused before anything is looked at.

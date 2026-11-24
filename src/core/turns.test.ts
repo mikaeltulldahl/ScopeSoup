@@ -208,6 +208,13 @@ test("every kind of parked Item for people starts with what to do, and nothing a
   assert.match(reasonOf(parked("not-ready")), /^Answer or edit the item/);
   assert.match(reasonOf(parked("escalated")), /^Look at it and decide/);
 
+  // The your-turn list says only what waits and how many, not the text of the question.
+  const waitsOf = (r: ReturnType<typeof parked>, changes: Change[] = []) => turnOf(snapshot({ works: [work(1)], changes, parked: [r] }), 1).waits;
+  assert.equal(waitsOf(parked("needs-decision", { decision, questions })), "2 questions");
+  assert.equal(waitsOf(parked("needs-decision", { decision })), "1 question");
+  assert.equal(waitsOf(parked("needs-decision", { proposal: { reason: "Too large.", parts } })), "a split to accept");
+  assert.deepEqual([waitsOf(parked("handed-over")), waitsOf(parked("not-ready")), waitsOf(parked("escalated"))], ["to merge", "not ready", "escalated"]);
+
   const mixed = snapshot({ works: [work(1), work(2, { needsDecision: true }), work(3)], parked: [parked("escalated")] });
   const listed = yourTurn(assessAll(buildIndex(mixed), now));
   assert.deepEqual(listed.map((each) => each.turn.subject.id).sort(), ["1", "2"]);

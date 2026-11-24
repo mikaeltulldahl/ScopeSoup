@@ -10,7 +10,6 @@ import type { IncomingMessage, Server, ServerResponse } from "node:http";
 import { createServer as createHttpServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { buildBoard } from "../core/board.ts";
-import { buildHoldings } from "../core/holdings.ts";
 import type { ResourceConfig } from "../config/types.ts";
 import type { OffboardView } from "../offboard/plan.ts";
 import type { Upgrader } from "../upgrade/upgrader.ts";
@@ -21,7 +20,7 @@ import { buildItemList, parseListQuery } from "../core/item-list.ts";
 import { buildItemPage } from "../core/item-page.ts";
 import { toStatusView } from "../core/status.ts";
 import { PRIORITIES, isPriority } from "../model/priority.ts";
-import type { CommitView, DiffView, HistoryView, HoldingsView, ItemBranchState, ItemPage } from "../core/views.ts";
+import type { CommitView, DiffView, HistoryView, ItemBranchState, ItemPage } from "../core/views.ts";
 import type { Assumption, CreatedPart, LabelChange, LogWriter, OpenQuestion, Priority, ProposedPart, Ref, Parked, ParkedQuestion, TextProposal, WorkItem, WorkState } from "../model/types.ts";
 import { asParts, refKey } from "../model/types.ts";
 import { applyChange, asLabelChange, changeText, isEmptyChange } from "../model/labels.ts";
@@ -300,7 +299,6 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
     // From level 1 the backlog has a divider above the Items not triaged yet.
     const divided = options.configFile !== undefined && (plan.level ?? 0) >= 1;
     const board = buildBoard(snapshot, at, order.map((item) => refKey(item.ref)), self(), divided ? withoutTriageKeys(snapshot.works, jobs) : undefined);
-    const settles = (options.assumptions ?? []).map((each) => each.host);
     // The limited resources, who holds their units and what waits for one.
     const resources = plan.resources && plan.resources.length > 0 ? resourcesView(plan.resources, readResourceState(store)) : undefined;
     // Each numbered backlog card says why it is where it is.
@@ -316,7 +314,9 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
         return { ...card, why: why.get(card.key)!, ...(off && (off.up || off.down) ? { voteOff: off } : {}) };
       });
     }
-    return { ...board, ...(settles.length > 0 ? { settles } : {}), ...(resources ? { resources } : {}) };
+    // On a project that several machines share: which machine merges now.
+    const mergeQueue = options.machine ? readMergeQueueNote((key) => store.getValue(key)) : null;
+    return { ...board, ...(mergeQueue ? { queue: { ...board.queue, mergeQueue } } : {}), ...(resources ? { resources } : {}) };
   };
   /**
    * `{ ref, direction: "up" | "down" }`: sets the Item's vote so it moves exactly one place in the backlog (`voteForPlace`),
@@ -357,11 +357,6 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
 
   /** Where an item's decisions are accepted and overturned, if anywhere. */
   const assumptionHost = (subject: Ref): AssumptionHost | undefined => (options.assumptions ?? []).find((each) => each.host === subject.host);
-  const holdingsNow = (): HoldingsView => {
-    const view = buildHoldings(loadSnapshot(store).works, now(), self());
-    const mergeQueue = readMergeQueueNote((key) => store.getValue(key));
-    return mergeQueue ? { ...view, mergeQueue } : view;
-  };
   const host = options.host ?? "127.0.0.1";
   if (!isLoopback(host) && options.allowLan !== true) {
     throw new Error(`Refusing to listen on ${host}: the board has no login yet. Use 127.0.0.1, or set allowLan to accept that anyone on the network can use it.`);
@@ -1534,7 +1529,7 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
         const snapshot = loadSnapshot(store);
         const without = withoutTriageNow(snapshot);
         const project = projectNow();
-        return sendJson(response, 200, { ...boardNow(), ...(project ? { project: projectView(project) } : {}), canWrite: items?.write.createWork !== undefined, people: knownPeople(snapshot.works, loadAnswers(store)), ...(options.machine ? { holdings: holdingsNow() } : {}), ...(without > 0 ? { withoutTriage: without } : {}) });
+        return sendJson(response, 200, { ...boardNow(), ...(project ? { project: projectView(project) } : {}), canWrite: items?.write.createWork !== undefined, people: knownPeople(snapshot.works, loadAnswers(store)), ...(without > 0 ? { withoutTriage: without } : {}) });
       }
       if (path === "/api/items") return sendJson(response, 200, buildItemList(loadSnapshot(store), parseListQuery(url.searchParams), now(), picked()));
       // The item commands' list: who holds what, as one person sees it (`?as=name`).

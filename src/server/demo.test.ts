@@ -122,7 +122,7 @@ test("the demo's item 63 has two decisions its implementor took itself, open on 
   const now = new Date(T0);
   seedDemo(store, now);
   const board = buildBoard(loadSnapshot(store), now);
-  assert.deepEqual(board.assumptions.map((each) => [each.item.label, each.settled]), [["#63", undefined], ["#63", undefined]]);
+  assert.deepEqual(board.lanes.flatMap((lane) => lane.cards).filter((card) => card.openDecisions).map((card) => [card.label, card.openDecisions]), [["#63", 2]]);
   const page = buildItemPage(loadSnapshot(store), refKey(ref("work", 63)), now);
   assert.equal(page?.assumptions.length, 2);
   const host = demoAssumptionHost(store);

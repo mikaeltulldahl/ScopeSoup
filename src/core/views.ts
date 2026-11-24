@@ -118,6 +118,12 @@ export interface CardView extends ItemLink {
   person?: { name: string; mine: boolean };
   /** Why it is where it is and what it waits for, in words. Always set. */
   reason: string;
+  /** In "Your turn": only what waits and how many ("2 questions", "a draft to accept", "escalated"). Absent when the reason is short already. */
+  waits?: string;
+  /** Who holds the Item, by name. */
+  heldBy?: string;
+  /** How many of the implementors' decisions on the Item nobody has accepted or overturned yet. */
+  openDecisions?: number;
   tone: Tone;
   since?: string;
   /** Open items transitively blocked behind this one. */
@@ -196,6 +202,15 @@ export interface WaitingView {
   since: string;
 }
 
+/** What the merge queue lease said when this machine last asked: only one machine merges at a time. */
+export interface MergeQueueView {
+  /** The machine that holds it; null when nobody did. */
+  holder: string | null;
+  mine: boolean;
+  until?: string;
+  at: string;
+}
+
 export interface QueueView {
   /** Checking or bisecting. */
   batches: BatchView[];
@@ -205,6 +220,8 @@ export interface QueueView {
   recent: BatchView[];
   /** Why it is paused, its flakes and problems, what it measured. Absent when it never ran. */
   health?: QueueHealth;
+  /** Set by the server on a project that several machines share: which machine merges now. */
+  mergeQueue?: MergeQueueView;
 }
 
 export interface RunnerView {
@@ -248,54 +265,6 @@ export interface StatusLine {
   alerts: string[];
 }
 
-/** One item someone holds, as the item's log tells it. */
-export interface HeldItem {
-  key: string;
-  label: string;
-  title: string;
-  /** When the holder took it. */
-  since?: string;
-  /** When an agent's claim lapses without a renewal. A person's hold has none. */
-  until?: string;
-  /** An agent's claim that ran out. */
-  expired: boolean;
-  /** A person's hold with no log line for a day: the board asks, nothing is released by itself. */
-  quiet: boolean;
-  /** Where the hold came from, when the claim says: `claude-code` is an interactive Claude Code session. */
-  from?: string;
-  /** The newest session line in the item's log, whichever machine wrote it. The text is data. */
-  last?: { at: string; words: string; machine?: string };
-}
-
-/** Everything one holder (a person, or the agents of one machine) holds. */
-export interface HolderGroup {
-  id: string;
-  who: string;
-  machine?: string;
-  person: boolean;
-  /** This board's own machine, or its own person. */
-  mine: boolean;
-  items: HeldItem[];
-}
-
-export interface MachineView {
-  name: string;
-  mine: boolean;
-  /** The newest line any of its writers put in a log. */
-  lastAt: string;
-  holding: number;
-  quietFor?: number;
-}
-
-/** What the merge queue lease triaged like when this machine last asked: only one machine merges at a time. */
-export interface MergeQueueView {
-  /** The machine that holds it; null when nobody did. */
-  holder: string | null;
-  mine: boolean;
-  until?: string;
-  at: string;
-}
-
 /** `resources` of the board: each limited resource, who holds its units and what waits for one. */
 export interface ResourcesView {
   resources: {
@@ -310,15 +279,6 @@ export interface ResourcesView {
   }[];
 }
 
-/** `holdings` of the board: who holds what, by machine and person. */
-export interface HoldingsView {
-  now: string;
-  self?: { machine?: string; person?: string };
-  groups: HolderGroup[];
-  machines: MachineView[];
-  mergeQueue?: MergeQueueView;
-}
-
 export interface BoardView {
   /** The server's clock when the view was built. The browser animates from it. */
   now: string;
@@ -328,8 +288,6 @@ export interface BoardView {
   status: StatusLine;
   /** Set by the server: items can be created here (the project's host can be written to). */
   canWrite?: boolean;
-  /** Set by the server on a project that several machines share: who holds what. */
-  holdings?: HoldingsView;
   /** Set by the server when the project declares limited resources. */
   resources?: ResourcesView;
   /** Set by the server: the people Scope Soup knows (holds, log lines, answers), for the board's person picker. */
@@ -339,13 +297,6 @@ export interface BoardView {
    * `session` line in their log, no stored triage result). Left out when there are none.
    */
   withoutTriage?: number;
-  /**
-   * Decisions implementors took themselves, newest first: every open one and those settled in the last week. They do not
-   * block: the work went on, and they are not in `yourTurn`.
-   */
-  assumptions: AssumptionView[];
-  /** Set by the server for the hosts whose decisions can be accepted and overturned here. */
-  settles?: string[];
   /** Set by the server: which project this board belongs to. */
   project?: ProjectView;
 }

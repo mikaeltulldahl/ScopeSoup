@@ -403,6 +403,8 @@ export interface Turn {
   /** For actor "person": who (`who@machine` on the meta branch, the login on GitHub). */
   person?: Actor;
   reason: string;
+  /** Only what waits and how many ("2 questions", "a draft to accept"), for "Your turn". */
+  waits?: string;
   since?: string;
   /** How many other items wait behind this one. Used to order the "Your turn" list. */
   unblocks?: number;
