@@ -75,14 +75,15 @@ export function hasTriage(item: WorkItem, job: Job | undefined): boolean {
 }
 
 /**
- * Already started means code has been written: the Item is in the implement or review step, or the job records a
- * branch head (the head last written to the log in a `revision` line) that differs from the main commit when the first implement
- * session began (`base`; with no `base` recorded any head counts). An answered question, a session besides the triage
- * and a revision line alone do not count: clarifying an Item's intent does not make it more important.
+ * Already started means code has been written: the Item is in the review step, or an implement session has run for the job
+ * (it recorded its answer, or `base` marks where main was when the first one began), or the job records a branch head (the
+ * head last written to the log in a `revision` line) that differs from `base` (with no `base` recorded any head counts).
+ * The implement step alone does not count, since a job has it right after the triage. An answered question, a session
+ * besides the triage and a revision line alone do not count: clarifying an Item's intent does not make it more important.
  */
 export function isStarted(_item: WorkItem, job: Job | undefined): boolean {
   if (!job) return false;
-  return job.step === "implement" || job.step === "review" || (job.head !== undefined && job.head !== job.base);
+  return job.step === "review" || job.implement !== undefined || job.base !== undefined || (job.head !== undefined && job.head !== job.base);
 }
 
 /** The scores of `items`, in the context of all Items. */

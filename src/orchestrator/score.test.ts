@@ -14,7 +14,7 @@ import { compareItems } from "./candidates.ts";
 
 const TRIAGED = { log: [{ at: "2026-03-02T10:00:00.000Z", by: { who: "scopesoup", agent: true as const }, kind: "session" as const, fields: { role: "triage" } }] };
 const job = (id: number, size: "small" | "medium" | "large" = "medium", started = false) =>
-  ({ [refKey(work(id).ref)]: { step: started ? "implement" : "triage", triage: { size, ready: true, paths: [], hidesDecision: false } } }) as unknown as Jobs;
+  ({ [refKey(work(id).ref)]: { step: started ? "implement" : "triage", ...(started ? { base: "aaa" } : {}), triage: { size, ready: true, paths: [], hidesDecision: false } } }) as unknown as Jobs;
 const order = (items: WorkItem[], jobs: Jobs = {}): string[] => [...items].sort(compareItems(["bug"], jobs, items)).map((item) => item.ref.id);
 
 test("score: a started Item beats a fresh one of slightly higher priority", () => {
@@ -62,6 +62,15 @@ test("score: started means code written; an answer or a past session is not a st
   // A head equal to main is no code.
   const none = { ...job(1), [key]: { ...base, step: "triage", head: "aaa", base: "aaa" } } as unknown as Jobs;
   assert.deepEqual(order(items, none), ["1", "2"]);
+  // The implement step right after the triage, with no implement session yet, is no start.
+  const fresh = { ...job(1), [key]: { ...base, step: "implement" } } as unknown as Jobs;
+  assert.deepEqual(order(items, fresh), ["1", "2"]);
+  // Once an implement session has run it is.
+  const ran = { ...job(1), [key]: { ...base, step: "implement", base: "aaa" } } as unknown as Jobs;
+  assert.deepEqual(order(items, ran), ["2", "1"]);
+  // The review step counts.
+  const review = { ...job(1), [key]: { ...base, step: "review" } } as unknown as Jobs;
+  assert.deepEqual(order(items, review), ["2", "1"]);
 });
 
 const ctx = (items: WorkItem[], jobs: Jobs) => ({ all: items, jobs, bugLabels: ["bug"] });

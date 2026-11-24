@@ -67,8 +67,8 @@ function Lane({ lane, board, closed, toggle, onAdd, control }: { lane: LaneView;
       {/* The switch's row under the title; lanes without one keep an empty row on a wide screen, so the columns line up. */}
       {control.row && (
         <div class={`lane-control${own || paused ? "" : " lane-control-empty"}`}>
-          {/* On its own lane the switch says only "paused" (or "stopped"); Checking names the merge queue. */}
-          {paused && mutedBy && (
+          {/* On its own lane the Pause / Resume button says it all; only a stopped switch is also named. Checking names the merge queue. */}
+          {paused && mutedBy && !(own && states[mutedBy] === "paused") && (
             <span class="lane-state" title={switchTitle(mutedBy, states[mutedBy])}>
               {own ? states[mutedBy] : `${SWITCH_WORDS[mutedBy]} ${states[mutedBy]}`}
             </span>
