@@ -38,6 +38,8 @@ export interface HostInfo {
   claimMachine?: string;
   /** The log per machine is shared with other machines (meta branch with writes and a remote), so Scope Soup claims what it starts. */
   shared?: true;
+  /** About the most a comment Scope Soup posts on this host may hold, in characters; `COMMENT_LIMIT` when not given. */
+  commentLimit?: number;
   /** The host's own API budget, when it reports one. */
   apiBudget?(): Promise<{ remaining: number; resetAt: string } | null>;
 }
@@ -220,7 +222,7 @@ export interface DraftWrite {
   labels?: LabelChange;
 }
 
-/** About the most a comment Scope Soup posts may hold; a draft or split over it stays on Scope Soup's board (GitHub allows 65,536). */
+/** About the most a comment Scope Soup posts on GitHub may hold (GitHub allows 65,536); a draft or split over a host's limit stays on Scope Soup's board. Other hosts give their own (`HostInfo.commentLimit`). */
 export const COMMENT_LIMIT = 60_000;
 
 /** The answer Scope Soup posts on an item's host (GitHub: an answer comment). Its text is already inert. */
@@ -273,11 +275,14 @@ export class WriteLater extends Error {
   }
 }
 
-/** The comment would be over `COMMENT_LIMIT`; nothing was posted. */
+/** The comment would be over the host's comment limit (`COMMENT_LIMIT` on GitHub); nothing was posted. */
 export class TooLarge extends Error {
-  constructor(message: string) {
+  /** The host's limit, in characters. */
+  limit: number;
+  constructor(message: string, limit: number = COMMENT_LIMIT) {
     super(message);
     this.name = "TooLarge";
+    this.limit = limit;
   }
 }
 

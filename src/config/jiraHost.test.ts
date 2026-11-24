@@ -35,9 +35,21 @@ test("a Jira host, Cloud or Data Center, is read with write false and the site w
   assert.deepEqual(mapped, { kind: "jira", site: "https://jira.example.test/jira", project: "DEMO", deployment: "datacenter", write: false, priorities: { P1: "blocker", P2: "minor" }, abandonedResolutions: ["Nope"], blocksLink: "Dependency" });
 });
 
-test("a Jira host is refused with writes on, above level 0, or with a bad site, key, deployment, email or map", () => {
-  assert.match(bad({ ...base, host: { ...dc, write: true } }), /read-only in this version/);
-  assert.match(bad({ ...base, level: 1, host: dc }), /level is 1, but the Jira host is read-only.*Set level to 0/);
+test("a Jira host with writes on takes the write settings, and any level", () => {
+  const host = good({ ...base, level: 2, host: { ...dc, write: true, issueType: "Story", childIssueType: "Subtask", transitions: { done: "Close Issue" }, resolutions: { abandoned: "Won't Fix" }, relatesLink: "Relates", duplicateLink: "Duplicate", commentLimit: 30000 } }).host;
+  assert.deepEqual(host, {
+    kind: "jira", site: "https://jira.example.test/jira", project: "DEMO", deployment: "datacenter", write: true, issueType: "Story", childIssueType: "Subtask",
+    transitions: { done: "Close Issue" }, resolutions: { abandoned: "Won't Fix" }, relatesLink: "Relates", duplicateLink: "Duplicate", commentLimit: 30000,
+  });
+  assert.match(bad({ ...base, host: { ...dc, write: true, transitions: { closed: "Close" } } }), /host.transitions: unknown key "closed"/);
+  assert.match(bad({ ...base, host: { ...dc, write: true, resolutions: { done: "" } } }), /host.resolutions.done must be a non-empty name/);
+  assert.match(bad({ ...base, host: { ...dc, write: true, commentLimit: 10 } }), /host.commentLimit must be a whole number/);
+  const choices = levelChoices(good({ ...base, host: { ...dc, write: true } }), () => true);
+  assert.equal(choices[2]?.pickable, true);
+});
+
+test("a Jira host is refused above level 0 with writes off, or with a bad site, key, deployment, email or map", () => {
+  assert.match(bad({ ...base, level: 1, host: dc }), /level is 1, but the Jira host has writes off.*Set host.write to true, or level to 0/);
   assert.match(bad({ ...base, host: { ...dc, site: "jira.example.test" } }), /host.site .* must be an http or https address/);
   assert.match(bad({ ...base, host: { ...dc, site: undefined } }), /host.site must be the Jira site's address/);
   assert.match(bad({ ...base, host: { ...dc, project: "demo" } }), /must be a Jira project key/);
@@ -79,12 +91,12 @@ test("config:check accepts a Jira host and says it is read-only", () => {
   }
 });
 
-test("the level picker offers only level 0 for a Jira host", () => {
+test("the level picker offers only level 0 for a Jira host with writes off", () => {
   const config = good({ ...base, host: dc });
   const choices = levelChoices(config, () => true);
   assert.equal(choices[0]?.pickable, true);
   assert.equal(choices[1]?.pickable, false);
-  assert.match(choices[1]?.blocked ?? "", /the Jira host is read-only/);
+  assert.match(choices[1]?.blocked ?? "", /writes on for the Jira host/);
 });
 
 test("the Jira host is created from the file with SCOPESOUP_JIRA_TOKEN, and refused without it", () => {
@@ -97,4 +109,11 @@ test("the Jira host is created from the file with SCOPESOUP_JIRA_TOKEN, and refu
   assert.equal(host?.info.id, "jira");
   assert.equal(host?.write, undefined);
   assert.ok(host?.work);
+  const writing = good({ ...base, host: { ...cloud, write: true } });
+  const ws = hostSettings(writing, {}, (path) => path);
+  assert.doesNotMatch(describeHosts(ws), /read-only/);
+  const [jira] = createHosts(ws, { SCOPESOUP_JIRA_TOKEN: "jira-token-synthetic" });
+  assert.ok(jira?.write?.createWork);
+  assert.equal(jira?.info.claimMachine, "laptop-a");
+  assert.equal(jira?.write?.openChange, undefined);
 });

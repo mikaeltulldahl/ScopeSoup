@@ -51,8 +51,8 @@ function ownNeeds(level: Level, config: ProjectConfig, found: (command: string) 
       const provider = providerFor(config, "triage");
       const program = provider.program(config);
       return [
-        // The Jira host only reads in this version, so Scope Soup can show a Jira project and do nothing more.
-        ...(config.host?.kind === "jira" ? [{ text: "a host Scope Soup can write to (the Jira host is read-only in this version)" }] : []),
+        // A Jira host with writes off: Scope Soup can show the project and do nothing more.
+        ...(config.host?.kind === "jira" && !config.host.write ? [{ text: "writes on for the Jira host (host.write true)" }] : []),
         ...(found(program) ? [] : [{ text: `${provider.label} (the program "${program}" was not found)` }]),
       ];
     }

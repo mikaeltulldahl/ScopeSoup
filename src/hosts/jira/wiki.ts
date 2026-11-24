@@ -71,7 +71,7 @@ function linkTo(label: string, target: string, simplified: Simplified): string {
   return escapeInline(label || target.replace(/^[#^]/, ""));
 }
 
-const BLOCK_MACRO = /\{(code|noformat|quote|panel)(?::([^}]*))?\}([\s\S]*?)\{\1\}/g;
+const BLOCK_MACRO = /(?<![{\\])\{(code|noformat|quote|panel)(?::([^}]*))?\}([\s\S]*?)\{\1\}/g;
 
 /** The language of `{code:java}` or `{code:language=java|title=x}`; none for `{code:title=x}`. */
 function languageOf(params: string | undefined): string {

@@ -1,14 +1,19 @@
-// The Jira host: one Jira project (Cloud or Data Center) as a host of work items. Read-only in this version: it has no write
-// port, whatever the configuration says. No project-specific conventions here.
+// The Jira host: one Jira project (Cloud or Data Center) as a host of work items. It writes only with `allowWrites`
+// (write.ts). With `conventions`, Scope Soup's questions, answers, drafts, decisions, claims and log are read into each item
+// (conventions.ts). Jira has no pull requests: a Jira project's changes stay on its git remote.
 
 import type { Actor, Priority, Ref, WorkItem } from "../../model/types.ts";
-import type { Capability, Cursor, Host, HostInfo, Page, WorkPort } from "../../ports/host.ts";
+import type { Capability, Cursor, Host, HostInfo, Page, WorkPort, WritePort } from "../../ports/host.ts";
 import { WorkGone } from "../../ports/host.ts";
 import type { Deployment, FetchLike, JiraClient } from "./client.ts";
 import { createJiraClient, JiraError } from "./client.ts";
 import type { JiraScope } from "./map.ts";
-import { actorOf, DEFAULT_ABANDONED_RESOLUTIONS, DEFAULT_BLOCKS_LINK, DEFAULT_PRIORITIES, ISSUE_FIELDS, isoTime, issueToWork, jqlString, jqlTime, PROPERTY_PREFIX, projectOf, textOf } from "./map.ts";
+import { actorOf, DEFAULT_ABANDONED_RESOLUTIONS, DEFAULT_BLOCKS_LINK, DEFAULT_PRIORITIES, ISSUE_FIELDS, isoTime, issueToWork, jqlString, jqlTime, PROPERTY_PREFIX, projectOf, textOf, workRef } from "./map.ts";
 import type { JiraComment, JiraIssue, JiraProperty, JiraUser } from "./rest.ts";
+import type { JiraRead } from "./conventions.ts";
+import { applyJiraThread, readJiraThread } from "./conventions.ts";
+import type { TransitionTarget } from "./write.ts";
+import { createJiraWrite, DEFAULT_CHILD_ISSUE_TYPE, DEFAULT_DUPLICATE_LINK, DEFAULT_ISSUE_TYPE, DEFAULT_RELATES_LINK, DEFAULT_RESOLUTIONS, DEFAULT_TRANSITIONS, descriptionSha, JIRA_COMMENT_LIMIT } from "./write.ts";
 
 export interface JiraConfig {
   site: string;
@@ -31,6 +36,26 @@ export interface JiraConfig {
   abandonedResolutions?: string[];
   /** The link type read as "blocked by". Default "Blocks". */
   blocksLink?: string;
+  /** Read Scope Soup's comment and issue properties into each item: more requests per changed issue. */
+  conventions?: boolean;
+  /** Must be true for the host to get a write port. */
+  allowWrites?: boolean;
+  /** This machine's name in Scope Soup's claims. Claims need it, the conventions and writes. */
+  machine?: string;
+  /** The issue type of a new Item. Default "Task". */
+  issueType?: string;
+  /** The issue type of a split's child, created under its parent. Default "Sub-task". */
+  childIssueType?: string;
+  /** The transition (or the status it goes to) Scope Soup uses per target; defaults `DEFAULT_TRANSITIONS`. */
+  transitions?: Partial<Record<TransitionTarget, string>>;
+  /** The resolution a transition's screen gets, when it asks for one; defaults `DEFAULT_RESOLUTIONS`. */
+  resolutions?: Partial<Record<"done" | "abandoned" | "duplicate", string>>;
+  /** The link type from a follow-up to the Item it came from. Default "Relates". */
+  relatesLink?: string;
+  /** The link type from a duplicate to its original. Default "Duplicate". */
+  duplicateLink?: string;
+  /** About the most a comment Scope Soup posts may hold. Default `JIRA_COMMENT_LIMIT`. */
+  commentLimit?: number;
 }
 
 /** One comment as read, with Scope Soup's properties on it. Its text is data: people and agents wrote it. */
@@ -54,8 +79,11 @@ export interface JiraThread {
 export interface JiraHost extends Host {
   info: HostInfo;
   work: WorkPort;
-  /** An issue's comments and Scope Soup's comment and issue properties, for the conventions layer (a later slice). */
+  /** An issue's comments and Scope Soup's comment and issue properties, as read. */
   thread(ref: Ref): Promise<JiraThread>;
+  /** The same through the trust rule, as the conventions read it. */
+  read(ref: Ref): Promise<JiraRead>;
+  write?: WritePort;
   /** What reading the issue's description simplified, as of its last read (node or macro names); empty when nothing. */
   simplified(id: string): string[];
   stats(): { sent: number; retried: number };
@@ -96,20 +124,27 @@ export function createJiraHost(config: JiraConfig): JiraHost {
     return me;
   }
 
+  const commentLimit = config.commentLimit ?? JIRA_COMMENT_LIMIT;
+  const claims = config.conventions && config.allowWrites && config.machine ? config.machine : undefined;
   const info: HostInfo = {
     id: scope.host,
-    capabilities: new Set<Capability>(["work"]),
+    capabilities: new Set<Capability>(config.allowWrites ? ["work", "write"] : ["work"]),
     whoami: async () => (await myself()).actor,
+    commentLimit,
+    ...(claims ? { claimMachine: claims } : {}),
   };
+  /** The sha256 of each issue's description as last read: is a draft's original still the description? */
+  const bodyShas = new Map<string, string>();
 
   const toWork = (issue: JiraIssue): WorkItem => {
+    bodyShas.set(issue.key, descriptionSha(issue.fields.description));
     const { item, simplified } = issueToWork(scope, issue);
     if (simplified.length > 0) simplifiedByKey.set(issue.key, simplified);
     else simplifiedByKey.delete(issue.key);
     return item;
   };
 
-  const work: WorkPort = {
+  const plainWork: WorkPort = {
     async listWork(since?: Cursor): Promise<Page<WorkItem>> {
       const project = `project = ${jqlString(scope.project)}`;
       let jql: string;
@@ -174,10 +209,97 @@ export function createJiraHost(config: JiraConfig): JiraHost {
     return { comments: read, properties: await propertiesAt(`${api}/issue/${key}/properties`) };
   }
 
+  /** The token's own account, lower case, or null when it cannot be read (then only people's answers count). */
+  async function selfId(): Promise<string | null> {
+    try {
+      return (await myself()).actor.id.toLowerCase();
+    } catch {
+      return null;
+    }
+  }
+
+  async function read(ref: Ref): Promise<JiraRead> {
+    return readJiraThread(scope.host, ref, await thread(ref), await selfId());
+  }
+
+  /** Issues with an open question: read again each listing, so a deleted question comment is seen. */
+  const parked = new Set<string>();
+  const fill = async (item: WorkItem): Promise<WorkItem> => {
+    const filled = applyJiraThread(item, await read(item.ref), (sha) => !!sha && bodyShas.get(item.ref.id) === sha, now());
+    if ((filled.openQuestions?.length ?? 0) > 0) parked.add(item.ref.id);
+    else parked.delete(item.ref.id);
+    return filled;
+  };
+
+  // With the conventions, every listed or fetched issue gets its comments and properties read: a comment bumps the issue's
+  // `updated` [known], so a new answer lists its issue.
+  const work: WorkPort = config.conventions
+    ? {
+      async listWork(since) {
+        const page = await plainWork.listWork(since);
+        const listed = new Set(page.items.map((item) => item.ref.id));
+        const items = [...page.items];
+        const removed: Ref[] = [];
+        const movedTo: Record<string, string> = {};
+        for (const id of [...parked]) {
+          if (listed.has(id)) continue;
+          const ref = workRef(scope, id);
+          try {
+            const item = await plainWork.getWork(ref);
+            if (item) items.push(item);
+            else {
+              parked.delete(id);
+              removed.push(ref);
+            }
+          } catch (error) {
+            if (!(error instanceof WorkGone)) throw error;
+            parked.delete(id);
+            removed.push(ref);
+            if (error.movedTo) movedTo[`${ref.host}:${ref.kind}:${ref.id}`] = error.movedTo;
+          }
+        }
+        for (const item of items) await fill(item);
+        return { ...page, items, ...(removed.length > 0 ? { removed: [...(page.removed ?? []), ...removed], movedTo: { ...page.movedTo, ...movedTo } } : {}) };
+      },
+      async getWork(ref) {
+        const item = await plainWork.getWork(ref);
+        return item ? fill(item) : null;
+      },
+    }
+    : plainWork;
+
+  const write = config.allowWrites
+    ? createJiraWrite({
+      client, scope,
+      settings: {
+        issueType: config.issueType ?? DEFAULT_ISSUE_TYPE,
+        childIssueType: config.childIssueType ?? DEFAULT_CHILD_ISSUE_TYPE,
+        transitions: { ...DEFAULT_TRANSITIONS, ...config.transitions },
+        resolutions: { ...DEFAULT_RESOLUTIONS, ...config.resolutions },
+        relatesLink: config.relatesLink ?? DEFAULT_RELATES_LINK,
+        duplicateLink: config.duplicateLink ?? DEFAULT_DUPLICATE_LINK,
+        commentLimit,
+      },
+      ...(claims ? { machine: claims } : {}),
+      self: async () => (await myself()).actor.id,
+      read,
+      now,
+    })
+    : undefined;
+  // The conventions' writes are read back only with the conventions on.
+  if (write && !config.conventions) {
+    for (const name of ["askQuestions", "answerQuestion", "answerQuestions", "withdrawQuestions", "postDraft", "checkDraft", "logLine", "settleQuestions", "postAssumptions", "settleAssumptions"] as const) delete write[name];
+  }
+
+  // The labels the triage may propose: every label on the site (Cloud's `GET /label`; Data Center has no such list [known]).
+  if (scope.deployment === "cloud") work.labels = async () => (await client.paged<string>(`${api}/label`, "values")).map((name) => ({ name }));
+
   return {
     info,
     work,
+    ...(write ? { write } : {}),
     thread,
+    read,
     simplified: (id) => simplifiedByKey.get(id) ?? [],
     stats: () => client.stats(),
   };

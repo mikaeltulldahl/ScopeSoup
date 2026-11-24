@@ -151,7 +151,7 @@ async function askOnHost(ctx: Context, job: Job, questions: readonly (Decision &
     asked = await actions.askQuestions!(job.item, asking);
   } catch (error) {
     // A split too large for a comment stays on Scope Soup's board, and the parked Item says so.
-    if (error instanceof TooLarge) return keptLocal(ctx, job, "split");
+    if (error instanceof TooLarge) return keptLocal(ctx, job, "split", error.limit);
     await hostFailed(ctx, job, `the question${asking.length > 1 ? "s" : ""}`, error, `The question${asking.length > 1 ? "s were" : " was"}: ${asking.map((each) => each.question.trim()).join(" ")}`);
     return true;
   }
@@ -162,8 +162,8 @@ async function askOnHost(ctx: Context, job: Job, questions: readonly (Decision &
 }
 
 /** A draft or split over the comment limit is not posted: the parked state's reason says so, and a person's list and log take it as before. */
-function keptLocal(ctx: Context, job: Job, what: "draft" | "split"): false {
-  const note = `The ${what} is over ${COMMENT_LIMIT.toLocaleString("en-GB")} characters, too large for a comment on ${job.item.host}: it stays on Scope Soup's board.`;
+function keptLocal(ctx: Context, job: Job, what: "draft" | "split", limit: number = COMMENT_LIMIT): false {
+  const note = `The ${what} is over ${limit.toLocaleString("en-GB")} characters, too large for a comment on ${job.item.host}: it stays on Scope Soup's board.`;
   job.parked = { ...job.parked!, reason: `${job.parked!.reason} ${note}` };
   ctx.commit("orchestrator.kept_local", note, refKey(job.item), { what });
   return false;
@@ -207,7 +207,7 @@ async function draftOnHost(ctx: Context, job: Job): Promise<boolean> {
   try {
     draft = await actions.postDraft!(job.item, { round: refine.round, draft: refine.draft, ...(refine.labels ? { labels: refine.labels } : {}) });
   } catch (error) {
-    if (error instanceof TooLarge) return keptLocal(ctx, job, "draft");
+    if (error instanceof TooLarge) return keptLocal(ctx, job, "draft", error.limit);
     await hostFailed(ctx, job, `the draft of round ${refine.round}`, error, `The triage's draft (round ${refine.round}) waits on Scope Soup's board.`);
     return true;
   }

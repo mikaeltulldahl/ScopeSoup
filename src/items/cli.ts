@@ -124,7 +124,7 @@ export function loadSetup(deps: CliDeps, configPath: string | undefined): Setup 
     config = state.config;
   } else if (found.ok) throw new Refused(`There is no configuration file ${file}.`);
   const settings = hostSettings(config, deps.env, (path) => resolve(deps.cwd, path));
-  if (settings.jira) throw new Refused(`The host is the Jira project ${settings.jira.project}, which Scope Soup only reads in this version: the item commands do not work on it. Use Jira itself.`);
+  if (settings.jira) throw new Refused(`The host is the Jira project ${settings.jira.project}: the item commands do not work on a Jira host yet. Use Jira itself, or the board.`);
   if (!settings.meta && !settings.github) throw new Refused(`No item host is configured: ${file} has no \`host\` and neither SCOPESOUP_META_REPO nor SCOPESOUP_GITHUB_REPO is set.`);
   const identity = config ? projectInfo(config, file, deps.remoteUrlOf ?? gitRemoteUrl) : null;
   return {
