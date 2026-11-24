@@ -307,6 +307,19 @@ button.choice-mark:hover:not(:disabled) { background: none; }
 .answer button { justify-self: start; }
 .version { margin: 10px 0; }
 .version-text { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 0.85rem; padding: 8px; border: 1px solid var(--line); border-radius: 6px; margin: 4px 0 6px; max-height: 18rem; overflow: auto; }
+.diff-unified { font-family: var(--mono); font-size: 0.82rem; line-height: 1.4; border: 1px solid var(--line); border-radius: 6px; margin: 4px 0 6px; max-height: 28rem; overflow: auto; }
+.dl { display: flex; gap: 6px; padding: 0 8px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.dl-mark { flex: none; width: 1ch; color: var(--muted); user-select: none; }
+.dl-text { min-width: 0; }
+.dl-del { background: var(--blocked-soft); }
+.dl-del .dl-mark { color: var(--blocked); }
+.dl-del .dl-text { text-decoration: line-through; text-decoration-color: var(--blocked); }
+.dl-add { background: var(--moving-soft); }
+.dl-add .dl-mark { color: var(--moving); }
+.dl mark { color: inherit; border-radius: 2px; }
+.dl-del mark { background: color-mix(in srgb, var(--blocked) 30%, transparent); }
+.dl-add mark { background: color-mix(in srgb, var(--moving) 30%, transparent); }
+.dl-fold { display: block; width: 100%; text-align: left; font: inherit; color: var(--muted); background: var(--sunken); border: 0; border-block: 1px solid var(--line); padding: 1px 8px; cursor: pointer; }
 .draft-compare { display: grid; grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr)); gap: 0 12px; }
 
 /* --- Writing items --- */
