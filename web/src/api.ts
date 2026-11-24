@@ -85,7 +85,7 @@ export async function fetchUpgrade(): Promise<UpgradeView | null> {
   return (await response.json()) as UpgradeView;
 }
 
-export async function postUpgrade(what: "check" | "get" | "back" | "cancel"): Promise<UpgradeView> {
+export async function postUpgrade(what: "check" | "get" | "back" | "cancel" | "dismiss"): Promise<UpgradeView> {
   const response = await call(`/api/upgrade/${what}`, { method: "POST" });
   const body = (await response.json().catch(() => null)) as (UpgradeView & { error?: { message?: string } }) | null;
   if (!response.ok || !body) throw new Error(body?.error?.message ?? `The server answered ${response.status}.`);

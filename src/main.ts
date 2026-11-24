@@ -84,7 +84,7 @@ import type { ProjectInfo } from "./server/project.ts";
 import { gitRemoteUrl } from "./config/mergeQueue.ts";
 import type { AssumptionHost } from "./server/server.ts";
 import { createChat } from "./orchestrator/chat.ts";
-import { agentsState, applyControl, mergeQueueOn, mergeQueueStopped } from "./store/control.ts";
+import { agentsState, applyControl, mergeQueueOn, mergeQueueStopped, readControl } from "./store/control.ts";
 import { KEYS } from "./store/keys.ts";
 import { NEWER_STORE, STORE_VERSION } from "./store/schema.ts";
 import { openStore } from "./store/store.ts";
@@ -316,7 +316,15 @@ async function main(): Promise<void> {
       const parts = [sessions > 0 ? `${sessions} session${sessions === 1 ? "" : "s"}` : "", batches > 0 ? `${batches} queue batch${batches === 1 ? "" : "es"}` : ""].filter(Boolean);
       return parts.length > 0 ? `${parts.join(" and ")} still running` : null;
     },
-    pause: () => void applyControl(store, "pause", iso(), "upgrade", "scopesoup"),
+    pause: () => {
+      const before = readControl(store);
+      applyControl(store, "pause", iso(), "upgrade", "scopesoup");
+      return { agents: before.agents === "started", mergeQueue: before.mergeQueue === "started" };
+    },
+    resume: (what) => {
+      if (what.agents) applyControl(store, "agents.start", iso(), "upgrade", "scopesoup");
+      if (what.mergeQueue) applyControl(store, "mergeQueue.start", iso(), "upgrade", "scopesoup");
+    },
     backup: (dir) => {
       const copies: string[] = [];
       const db = join(dir, "scopesoup.sqlite");
@@ -333,6 +341,10 @@ async function main(): Promise<void> {
     record: (kind, data) => void store.appendEvent({ kind, actor: "scopesoup", data }, iso()),
     loadCheck: () => store.getValue(KEYS.updateCheck),
     saveCheck: (value) => store.setValue(KEYS.updateCheck, value),
+    loadResume: () => store.getValue(KEYS.upgradeResume),
+    saveResume: (value) => store.setValue(KEYS.upgradeResume, value),
+    loadNote: () => store.getValue(KEYS.upgradeNote),
+    saveNote: (value) => store.setValue(KEYS.upgradeNote, value),
   });
 
   const server = createServer({
@@ -450,6 +462,8 @@ async function main(): Promise<void> {
   if (configured.length > 0) sync.start();
   const stopMigration = startMetaMigration(configured, mergeQueue, hostSet.meta, store);
   loop?.start();
+  // The orchestrator came up paused: start again what Get latest or Go back paused, as it was before.
+  upgrader.restore();
   console.log(`Scope Soup is listening on ${where.url}`);
   console.log(describeHosts(hostSet));
   console.log(loop ? `Orchestrator on, configuration ${configFile}.` : `Orchestrator off: no ${configFile}.`);

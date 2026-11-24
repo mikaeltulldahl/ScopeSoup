@@ -51,6 +51,7 @@ pnpm --dir <home>/scopesoup-0.5.0 setup-home
 3. Agents and merging are paused (as Pause agents and Pause merge queue), and Scope Soup waits until no session and no queue batch runs. A running session finishes its step and a running check finishes; nothing is cut off. The panel says what it waits for, and Cancel stops the wait (agents and the merge queue stay paused).
 4. The database (a whole copy, `VACUUM INTO`) and this machine's `scopesoup.config.json` are copied to `<home>/backups/before-scopesoup-<version>/`, replacing the copy of the upgrade before.
 5. The pointer is switched, and Scope Soup exits with code 75. The launcher starts the version `current` names. The new version migrates what it must at start ("The file's format and upgrades", "The meta branch's format and upgrades", "The database's schema version and upgrades"), comes up paused as after every start, and the board reloads on it.
+6. When the new version listens, it starts again what step 3 paused: agents and the merge queue run if they ran before Get latest, and stay paused if they were paused (Go back does the same; Cancel leaves both paused). The board says so for an hour or until dismissed ("Upgraded to 0.6.0; agents started again as before").
 
 Scope Soup started without the launcher (`pnpm start`, or a version folder's own `scopesoup.cmd`) switches the pointer and says to start it again with `scopesoup start`. A development checkout has no Get latest: update it with git.
 

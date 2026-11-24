@@ -18,5 +18,9 @@ export const KEYS = {
   idle: "orchestrator.idle_reason",
   /** JSON: the last update check (when, the newest release, a problem), so a restart does not ask again within the day. */
   updateCheck: "scopesoup.update_check",
+  /** JSON: what Get latest or Go back paused and the next start is to start again (`{ agents, mergeQueue, kind, to, at }`); "" when none. */
+  upgradeResume: "scopesoup.upgrade_resume",
+  /** JSON `{ text, at }`: the note on the board after that ("Upgraded to 0.6.0; agents started again as before"); "" when none. */
+  upgradeNote: "scopesoup.upgrade_note",
 } as const;
 
