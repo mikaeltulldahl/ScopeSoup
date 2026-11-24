@@ -2,7 +2,8 @@
 
 import type { Actor, Assumption, BatchMemberState, DecisionOption, BatchStatus, ConflictVersions, HistoryLine, LinkType, LogWriter, OpenQuestion, Priority, ProposedPart, Ref, ParkedDraft, ParkedKind, ParkedQuestion, RunStatus, SessionRole, SessionStatus, TurnActor, UsageWindowKind, VerdictValue, WorkState } from "../model/types.ts";
 import type { BisectMark } from "./bisect.ts";
-import type { UsageAttribution } from "./usage.ts";
+import type { ForecastPoint, UsageAttribution, UsagePlot } from "./usage.ts";
+import type { UsageForecast } from "./forecast.ts";
 import type { Progress } from "./estimates.ts";
 import type { Lane } from "./lanes.ts";
 import type { AgentsState, MergeQueueState, QueueHealth } from "./snapshot.ts";
@@ -609,14 +610,26 @@ export type CommitView =
   | { now: string; available: true; sha: string; message: string; files: DiffFile[]; omitted: number; totalAdded: number; totalRemoved: number };
 
 /** Who used the usage windows over a span (`GET /api/usage`). */
+/** One usage window on the Usage page. */
+export interface UsagePageWindow extends UsageAttribution {
+  /** The newest reading, with the status line's forecast; absent before the first reading. */
+  current?: { utilization: number; resetsAt: string; at: string; forecast?: UsageForecast };
+  /** The share kept for people's own use: Scope Soup starts nothing once the window is at 1 minus this. Absent without a configuration. */
+  reserve?: number;
+  /** How full the window got over the span, split by role. */
+  plot: UsagePlot;
+  /** The forecast from now to the reset; empty without one. */
+  forecastLine: ForecastPoint[];
+}
+
 export interface UsageView {
   now: string;
   /** "5h", "7d" or "<N>d". */
   span: string;
   from: string;
   to: string;
-  /** One per usage window: how much of it went to each role over the span. */
-  windows: UsageAttribution[];
+  /** One per usage window: how full it is now, how full it got over the span, and how much went to each role. */
+  windows: UsagePageWindow[];
   /** Sessions that ran in the span, and how many had token counts in their stream. */
   sessions: number;
   withTokens: number;

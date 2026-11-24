@@ -21,7 +21,7 @@ import { buildItemPage } from "../core/item-page.ts";
 import { toStatusView } from "../core/status.ts";
 import { PRIORITIES, isPriority } from "../model/priority.ts";
 import type { CommitView, DiffView, HistoryView, ItemBranchState, ItemPage } from "../core/views.ts";
-import type { Assumption, CreatedPart, LabelChange, LogWriter, OpenQuestion, Priority, ProposedPart, Ref, Parked, ParkedQuestion, TextProposal, WorkItem, WorkState } from "../model/types.ts";
+import type { Assumption, CreatedPart, LabelChange, LogWriter, OpenQuestion, Priority, ProposedPart, Ref, Parked, ParkedQuestion, TextProposal, UsageWindowKind, WorkItem, WorkState } from "../model/types.ts";
 import { asParts, refKey } from "../model/types.ts";
 import { applyChange, asLabelChange, changeText, isEmptyChange } from "../model/labels.ts";
 import { planOrder } from "../orchestrator/candidates.ts";
@@ -94,7 +94,7 @@ export interface ServerOptions {
    */
   configFile?: string;
   /** The orchestrator's labels, which order the backlog column. Defaults to bug label "bug". */
-  planning?: () => { bugLabels: string[]; plannedSessions?: number; level?: number; resources?: ResourceConfig[] };
+  planning?: () => { bugLabels: string[]; plannedSessions?: number; level?: number; resources?: ResourceConfig[]; reserve?: Record<UsageWindowKind, number> };
   /** Reads the diff of an item's branch for `GET /api/diff`. Absent in board-only mode. */
   diff?: (ref: Ref) => Promise<DiffView>;
   /** The newest `limit` commits of the project for `GET /api/history`, and one commit for `GET /api/commit`. Absent in board-only mode. */
@@ -1619,7 +1619,10 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
       if (path === "/api/usage") {
         const span = parseSpan(url.searchParams.get("span"));
         if (!span) return sendError(response, 400, "SPAN_INVALID", "Give the span as ?span=5h, 7d or <N>d with N from 1 to 30.");
-        return sendJson(response, 200, buildUsageView(store, loadSnapshot(store).sessions, span, now()));
+        const snapshot = loadSnapshot(store);
+        const plan = options.planning?.();
+        if (plan?.plannedSessions !== undefined) snapshot.plannedSessions = plan.plannedSessions;
+        return sendJson(response, 200, buildUsageView(store, snapshot, span, now(), plan?.reserve));
       }
       if (path === "/api/history") {
         if (!options.history) return sendJson(response, 200, { now: now().toISOString(), available: false, reason: "This server has no project configuration, so it has no history to show." });

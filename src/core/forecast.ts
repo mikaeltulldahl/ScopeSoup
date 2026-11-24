@@ -19,6 +19,8 @@ export interface UsageForecast {
   at?: string;
   /** "used up about 21:40" or "lasts to the reset". */
   words: string;
+  /** For "lasts": how full the window is expected to be at the reset (0 to 1). */
+  atReset?: number;
 }
 
 /** Fewer session-hours than this in the span, and the per-session rate is noise: use the raw rate. */
@@ -96,9 +98,9 @@ export function forecastWindow(samples: readonly UsageSample[], kind: UsageWindo
     if (load.paused || !load.workReady) rate = 0;
   }
   if (last.utilization >= 1) return { outcome: "used_up", at: new Date(last.at).toISOString(), words: "used up" };
-  if (rate <= 0) return { outcome: "lasts", words: "lasts to the reset" };
+  if (rate <= 0) return { outcome: "lasts", words: "lasts to the reset", atReset: last.utilization };
   const full = last.at + (1 - last.utilization) / rate;
-  if (full >= last.resetsAt) return { outcome: "lasts", words: "lasts to the reset" };
+  if (full >= last.resetsAt) return { outcome: "lasts", words: "lasts to the reset", atReset: Math.min(1, last.utilization + rate * (last.resetsAt - last.at)) };
   const when = new Date(Math.max(full, nowMs));
   return { outcome: "used_up", at: when.toISOString(), words: `used up about ${clock(when, now)}` };
 }

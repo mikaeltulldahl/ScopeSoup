@@ -21,11 +21,15 @@ test("a steady rate gives the time the window is used up", () => {
 
 test("a rate that will not reach 100 % before the reset lasts to the reset", () => {
   const forecast = forecastWindow([sample(-60, 0.2, 60), sample(0, 0.3, 60)], "five_hour", now);
-  assert.deepEqual(forecast, { outcome: "lasts", words: "lasts to the reset" });
+  // 0.1 per hour from 0.3, one hour to the reset: about 0.4 then.
+  assert.equal(forecast?.outcome, "lasts");
+  assert.equal(forecast?.words, "lasts to the reset");
+  assert.ok(Math.abs((forecast?.atReset ?? 0) - 0.4) < 1e-9);
 });
 
 test("no use lasts to the reset", () => {
-  assert.equal(forecastWindow([sample(-60, 0.3, 120), sample(0, 0.3, 120)], "five_hour", now)?.outcome, "lasts");
+  const flat = forecastWindow([sample(-60, 0.3, 120), sample(0, 0.3, 120)], "five_hour", now);
+  assert.deepEqual([flat?.outcome, flat?.atReset], ["lasts", 0.3]);
 });
 
 test("too few readings give no forecast", () => {
@@ -70,7 +74,8 @@ test("a slider change takes effect at once", () => {
 });
 
 test("paused or idle lasts to the reset", () => {
-  const lasts = { outcome: "lasts", words: "lasts to the reset" };
+  // Nothing more is used: the window stays at its last reading.
+  const lasts = { outcome: "lasts", words: "lasts to the reset", atReset: 0.4 };
   assert.deepEqual(forecastWindow(history, "five_hour", now, load({ paused: true })), lasts);
   assert.deepEqual(forecastWindow(history, "five_hour", now, load({ workReady: false })), lasts);
   assert.deepEqual(forecastWindow(history, "five_hour", now, load({ paused: true, sessions: [] })), lasts);
