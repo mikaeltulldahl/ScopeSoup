@@ -19,6 +19,7 @@
     "shortcut": "node --disable-warning=ExperimentalWarning src/shortcut.ts",
     "offboard": "node --disable-warning=ExperimentalWarning src/offboard/cli.ts",
     "release": "node --disable-warning=ExperimentalWarning src/release.ts",
+    "release:publish": "node --disable-warning=ExperimentalWarning src/releasePublish.ts",
     "standin": "node --disable-warning=ExperimentalWarning src/standin.ts",
     "queue-trial": "node --disable-warning=ExperimentalWarning src/queueTrial.ts",
     "config:check": "node --disable-warning=ExperimentalWarning src/config/check.ts",
