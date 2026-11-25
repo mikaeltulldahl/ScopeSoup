@@ -2,7 +2,13 @@
 // HTML text, so nothing in an item can become markup; `Markdown.tsx` turns the tree into elements.
 // No imports and no DOM, so the tests in `src/` run it directly.
 
-export type Inline = string | { t: "code"; v: string } | { t: "b"; c: Inline[] } | { t: "i"; c: Inline[] } | { t: "a"; href: string; c: Inline[] };
+export type Inline = string | { t: "code"; v: string } | { t: "b"; c: Inline[] } | { t: "i"; c: Inline[] } | { t: "a"; href: string; c: Inline[] } | MediaImage;
+
+/**
+ * An image an agent attached: `![alt](media/<name>)`. Only a relative `media/` path with a plain file name is one; the board
+ * serves it from the Item's images (`src/core/media.ts`). Any other image syntax stays text: no URL is ever loaded.
+ */
+export type MediaImage = { t: "img"; name: string; alt: string };
 
 export type Block =
   | { t: "p"; c: Inline[] }
@@ -18,22 +24,45 @@ export type ListItem = { c: Inline[]; children: Block[] };
 /** Only these links are made; any other target stays plain text. */
 const SAFE_URL = /^(https?:\/\/|mailto:)/i;
 
-const INLINE =
-  /`([^`]+)`|\[([^\]]+)\]\(([^)\s]+)\)|\*\*(?=\S)(.+?)(?<=\S)\*\*|(?<![\w*])\*(?=[^\s*])([^*]+?)(?<=[^\s*])\*(?![\w*])|(?<![\w_])_(?=[^\s_])([^_]+?)(?<=[^\s_])_(?![\w_])/g;
+/** The name of an image an agent attached, as `src/core/media.ts` accepts it. */
+const MEDIA_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,94}\.(png|jpe?g|gif|webp|svg)$/i;
 
-/** Inline code, links, bold and italic in one run of text. */
+const IMAGE = /!\[([^\]]*)\]\(media\/([^)\s]+)\)/g;
+
+const image = (alt: string, name: string): MediaImage | null => (MEDIA_NAME.test(name) && !name.includes("..") ? { t: "img", name, alt: alt.trim() } : null);
+
+/** Plain text with the images in it taken out, for agents' text the board shows as it is (a summary, a question, an option). */
+export function imageParts(text: string): (string | MediaImage)[] {
+  const parts: (string | MediaImage)[] = [];
+  let last = 0;
+  for (const m of text.matchAll(new RegExp(IMAGE.source, "g"))) {
+    const found = image(m[1]!, m[2]!);
+    if (!found) continue;
+    if (m.index > last) parts.push(text.slice(last, m.index));
+    parts.push(found);
+    last = m.index + m[0].length;
+  }
+  if (last < text.length) parts.push(text.slice(last));
+  return parts;
+}
+
+const INLINE =
+  /!\[([^\]]*)\]\(media\/([^)\s]+)\)|`([^`]+)`|\[([^\]]+)\]\(([^)\s]+)\)|\*\*(?=\S)(.+?)(?<=\S)\*\*|(?<![\w*])\*(?=[^\s*])([^*]+?)(?<=[^\s*])\*(?![\w*])|(?<![\w_])_(?=[^\s_])([^_]+?)(?<=[^\s_])_(?![\w_])/g;
+
+/** Images, inline code, links, bold and italic in one run of text. */
 export function inline(text: string): Inline[] {
   const parts: Inline[] = [];
   const pattern = new RegExp(INLINE.source, "g");
   let last = 0;
   for (let m = pattern.exec(text); m; m = pattern.exec(text)) {
     if (m.index > last) parts.push(text.slice(last, m.index));
-    if (m[1] !== undefined) parts.push({ t: "code", v: m[1] });
-    else if (m[2] !== undefined) {
-      if (SAFE_URL.test(m[3]!)) parts.push({ t: "a", href: m[3]!, c: inline(m[2]) });
+    if (m[2] !== undefined) parts.push(image(m[1]!, m[2]) ?? m[0]);
+    else if (m[3] !== undefined) parts.push({ t: "code", v: m[3] });
+    else if (m[4] !== undefined) {
+      if (SAFE_URL.test(m[5]!)) parts.push({ t: "a", href: m[5]!, c: inline(m[4]) });
       else parts.push(m[0]);
-    } else if (m[4] !== undefined) parts.push({ t: "b", c: inline(m[4]) });
-    else parts.push({ t: "i", c: inline((m[5] ?? m[6])!) });
+    } else if (m[6] !== undefined) parts.push({ t: "b", c: inline(m[6]) });
+    else parts.push({ t: "i", c: inline((m[7] ?? m[8])!) });
     last = m.index + m[0].length;
   }
   if (last < text.length) parts.push(text.slice(last));

@@ -45,6 +45,7 @@ import type { Upgrader } from "../upgrade/upgrader.ts";
 import type { UpgradeTask, UpgradeView } from "../upgrade/view.ts";
 import { versionOf } from "../upgrade/version.ts";
 import { KEYS } from "./snapshot.ts";
+import { demoMedia } from "./demoMedia.ts";
 import { demoCommit, demoHistory, demoSettingsLog, demoSha, seedDemoActivity } from "./demoHistory.ts";
 
 const SUITE = "full suite";
@@ -187,7 +188,7 @@ function roundsLog66(at: (minutes: number) => string): LogRecord[] {
     logLine(at(-141), "review", { sha: demoSha("sunrise-1"), verdict: "fail", findings: ["[must] src/day/SunRow.tsx: The sunset time is shown in UTC, not in the harbour's own time zone.", "[should] The row could hide on days the sun does not set."], model: "opus" }),
     logLine(at(-141), "session", { role: "review", model: "opus", outcome: "succeeded", summary: "changes, 2 finding(s)", durationMs: 540_000, sessionId: "r-66", costUsd: 0.88, next: "implement" }),
     logLine(at(-106), "revision", { sha: demoSha("sunrise-2"), branch: "scopesoup/66" }),
-    logLine(at(-106), "session", { role: "implement", model: "sonnet", outcome: "succeeded", summary: "Shows sunrise and sunset in the harbour's own time zone, with a test across the change to summer time.", durationMs: 840_000, sessionId: "i-66b", costUsd: 0.57, next: "review" }),
+    logLine(at(-106), "session", { role: "implement", model: "sonnet", outcome: "succeeded", summary: "Shows sunrise and sunset in the harbour's own time zone, with a test across the change to summer time. The polar day before and after: ![before: 00:00 on a day without a sunset](media/polar-before.png) ![after: the sunset left out](media/polar-after.png)", durationMs: 840_000, sessionId: "i-66b", costUsd: 0.57, next: "review" }),
     logLine(at(-88), "review", { sha: demoSha("sunrise-2"), verdict: "fail", findings: ["[must] src/day/SunRow.tsx: A day without a sunset (polar day) shows 00:00 instead of leaving the time out."], model: "opus" }),
     logLine(at(-88), "session", { role: "review", model: "opus", outcome: "succeeded", summary: "changes, 1 finding(s)", durationMs: 420_000, sessionId: "r-66b", costUsd: 0.74, next: "implement" }),
   ];
@@ -316,7 +317,19 @@ export function seedDemo(store: Store, now: Date, dir?: string): void {
     // Item 66: a triage, an implementor and a reviewer ran; the review sent findings back twice, and the implementor's own
     // session was resumed with them. Nothing runs on it now, so a person can talk to any of its sessions, and one earlier
     // message to the first reviewer is on record. Its log gives the Rounds table; each session has a short stream.
-    item(66, "Sunrise and sunset row", { state: "doing", body: "A row under each day with the sunrise and sunset times at the harbour, in its own time zone.", log: roundsLog66(at) });
+    item(66, "Sunrise and sunset row", {
+      state: "doing", body: "A row under each day with the sunrise and sunset times at the harbour, in its own time zone.", log: roundsLog66(at),
+      // The implementor asks how a day without a sunset shows, with a picture of each option (synthetic, `demoMedia.ts`).
+      openQuestions: [{
+        at: at(-80), by: { who: "implementor", machine: "demo", agent: true },
+        question: "How should a day without a sunset show its sunset time?",
+        options: [
+          { label: "Leave it out", description: "Only the sunrise is shown on that day. ![the polar day with the sunset left out](media/polar-none.png)" },
+          { label: "Show a dash", description: "A dash stands where the time would be. ![the polar day with a dash](media/polar-dash.png)" },
+        ],
+        recommendation: "Leave it out",
+      }],
+    });
     changeFor(66, "Sunrise and sunset row", { verdicts: [verdict("review", "fail", { by: reviewer })] });
     const streamOf = (id: string) => (dir ? { streamPath: writeDemoStream(dir, id) } : {});
     step("t-66", 66, "triage", "opus", 240, 4, { costUsd: 0.31, ...streamOf("t-66") });
@@ -855,6 +868,8 @@ async function main(): Promise<void> {
     history: async (limit) => demoHistory(store, new Date(), limit),
     commit: async (sha) => demoCommit(sha, new Date()),
     upgrade: demoUpgrader(),
+    // Item 66's images: synthetic pictures drawn in code, kept in memory.
+    media: demoMedia(store),
   });
   const { url } = await server.start();
   let step = 0;

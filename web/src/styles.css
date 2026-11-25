@@ -367,6 +367,16 @@ ul.md-list ul.md-list { list-style: circle; }
 .md code { font-family: var(--mono); font-size: 0.85em; background: var(--sunken); padding: 0 3px; border-radius: 3px; }
 .md-code { overflow-x: auto; max-width: 100%; padding: 8px 10px; background: var(--sunken); border-radius: 6px; }
 .md-code code { background: none; padding: 0; }
+/* Images agents attached: side by side when next to each other (a before and after), each with its caption and Delete. */
+.md-images { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-start; margin: 4px 0; }
+.md-figure { display: inline-flex; flex-direction: column; gap: 3px; max-width: min(100%, 420px); vertical-align: top; margin: 4px 0; }
+.md-images .md-figure { flex: 1 1 140px; min-width: 0; margin: 0; }
+.md-figure img { display: block; max-width: 100%; max-height: 320px; height: auto; object-fit: contain; border: 1px solid var(--line); border-radius: 6px; background: var(--sunken); }
+.md-figure-caption { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px; font-size: 0.82rem; color: var(--muted); }
+.md-figure-delete { font: inherit; font-size: 0.78rem; padding: 1px 6px; white-space: nowrap; flex-shrink: 0; }
+.md-image-gone { color: var(--muted); font-style: italic; }
+.media-note { font-size: 0.85rem; }
+.choice-images { padding: 0 10px 4px 34px; }
 .history { list-style: none; margin: 0; padding: 0; }
 .history-text { margin: 2px 0 0; white-space: pre-wrap; }
 /* Settings */

@@ -33,6 +33,7 @@ import { readMergeQueueNote } from "../orchestrator/mergeQueueLease.ts";
 import { answerQuestion, answerRefusal, draftRefusal, keepsRecommendations, loadJobs, questionsSettled, releaseJob, parkedDraft, resumesStep, settleDraft } from "../orchestrator/jobs.ts";
 import type { AnswerRefusal, DraftRefusal, Refinement } from "../orchestrator/jobs.ts";
 import { workBranch } from "../orchestrator/paths.ts";
+import type { Media } from "../orchestrator/media.ts";
 import type { Chat } from "../orchestrator/chat.ts";
 import { requestQueueResume } from "../orchestrator/queueHealth.ts";
 import { acceptSplit, adoptFound, childWork, currentSplit, finishSplit, markedParts, recordSplitChild, splitText } from "../orchestrator/split.ts";
@@ -175,6 +176,11 @@ export interface ServerOptions {
   offboard?: () => Promise<OffboardView>;
   /** Scope Soup's version, the update check, Get latest and Go back (`src/upgrade/upgrader.ts`). */
   upgrade?: Pick<Upgrader, "view" | "check" | "getLatest" | "goBack" | "cancel" | "dismissNote">;
+  /**
+   * Agents' images (`src/orchestrator/media.ts`): listed on the Item page, served at `/media/<item>/<name>`, deleted from the page.
+   * Absent: the page shows none.
+   */
+  media?: Pick<Media, "list" | "read" | "remove" | "pushing">;
   /** The board's warning about an unprotected main branch on the GitHub remote (`branchProtection.ts`). Absent: no GitHub host, so none. */
   branchProtection?: BranchProtection;
 }
@@ -1467,7 +1473,52 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
   };
 
   /** The POST endpoints that record who did it; the board names its picked person, or the request is refused. */
-  const NEEDS_PERSON = new Set(["/api/answer", "/api/answers", "/api/proposal", "/api/draft", "/api/start-over", "/api/chat", "/api/decisions", "/api/item/edit", "/api/item/vote", "/api/item/resolve"]);
+  const NEEDS_PERSON = new Set(["/api/answer", "/api/answers", "/api/proposal", "/api/draft", "/api/start-over", "/api/chat", "/api/decisions", "/api/item/edit", "/api/item/vote", "/api/item/resolve", "/api/item/media/delete"]);
+
+  /** The Item a request names by its key, as the store has it. */
+  const workByKey = (key: string): WorkItem | undefined => loadSnapshot(store).works.find((work) => refKey(work.ref) === key);
+
+  /** `GET /media/<item key>/<name>`: one image, as the image it is and nothing else (no sniffing, no script, no frame). */
+  async function serveMedia(path: string, response: ServerResponse, headOnly: boolean): Promise<void> {
+    const parts = path.slice("/media/".length).split("/");
+    let key = "";
+    try {
+      key = decodeURIComponent(parts[0] ?? "");
+    } catch {
+      key = "";
+    }
+    const work = parts.length === 2 ? workByKey(key) : undefined;
+    const found = work && options.media ? await options.media.read(work.ref, parts[1]!).catch(() => null) : null;
+    if (!found) {
+      response.writeHead(404, { "Content-Type": "text/plain; charset=utf-8", "X-Content-Type-Options": "nosniff" });
+      response.end("No such image.\n");
+      return;
+    }
+    response.writeHead(200, {
+      "Content-Type": found.type,
+      "Content-Length": String(found.bytes.length),
+      "X-Content-Type-Options": "nosniff",
+      // Opened on its own (an SVG above all): nothing it holds may run, load or be framed.
+      "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; img-src data:; sandbox",
+      "Content-Disposition": "inline",
+      "Cross-Origin-Resource-Policy": "same-origin",
+      "Cache-Control": "private, no-cache",
+    });
+    response.end(headOnly ? undefined : found.bytes);
+  }
+
+  /** `POST /api/item/media/delete` with `{ ref, name }`: the image goes here and, when it was pushed, from the media ref. */
+  async function deleteMedia(request: IncomingMessage, response: ServerResponse): Promise<void> {
+    const body = await readJson(request);
+    const ref = typeof body.ref === "string" ? body.ref : "";
+    const name = typeof body.name === "string" ? body.name : "";
+    const work = workByKey(ref);
+    if (!work) return sendError(response, 404, "ITEM_NOT_FOUND", `No item ${ref}.`);
+    if (!options.media) return sendError(response, 404, "NO_MEDIA", "This server keeps no images.");
+    const result = await options.media.remove(work.ref, name, picked() ?? "board");
+    if (!result.removed) return sendError(response, 404, "MEDIA_NOT_FOUND", `No image ${name} on ${work.ref.id}.`);
+    return sendJson(response, 200, result);
+  }
 
   async function handle(request: IncomingMessage, response: ServerResponse): Promise<void> {
     const person = readPersonHeader(request.headers[PERSON_HEADER]);
@@ -1498,6 +1549,7 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
         if (path === "/api/item/edit") return editItem(request, response);
         if (path === "/api/item/vote") return vote(request, response);
         if (path === "/api/item/resolve") return resolve(request, response);
+        if (path === "/api/item/media/delete") return deleteMedia(request, response);
         if (path === "/api/item/claim") return person(request, response, "claim");
         if (path === "/api/item/handback") return person(request, response, "handback");
         if (path === "/api/item/release") return person(request, response, "release");
@@ -1679,6 +1731,9 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
         const onHost = options.hostEdit !== undefined && page.item.ref.host === options.hostEdit.host;
         if (assumptionHost(page.item.ref)) page.canSettle = true;
         const hold = ours ? holdButtons(snapshot.works.find((each) => refKey(each.ref) === refKey(page.item.ref))) : undefined;
+        // The Item's images, and whether everyone with the repository sees them (the page reminds the viewer).
+        const images = options.media ? await options.media.list(page.item.ref).catch(() => []) : [];
+        if (images.length > 0) page.media = { names: images, shared: options.media!.pushing() };
         return sendJson(response, 200, { ...page, canEdit: (ours && items.write.editWork !== undefined) || onHost, ...(hold ? { hold } : {}), states: onHost ? HOST_STATES : STATES });
       }
       return sendError(response, 404, "NOT_FOUND", `No such endpoint: GET ${path}`);
@@ -1688,6 +1743,7 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
       response.setHeader("Allow", "GET, HEAD");
       return sendError(response, 405, "METHOD_NOT_ALLOWED", `${method} is not supported.`);
     }
+    if (path.startsWith("/media/")) return serveMedia(path, response, method === "HEAD");
     if (options.staticDir && (await serveStatic(options.staticDir, path, response, method === "HEAD"))) return;
     response.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
     response.end(options.staticDir ? "Not found. Is the web app built? Run: pnpm web:build\n" : "Not found.\n");

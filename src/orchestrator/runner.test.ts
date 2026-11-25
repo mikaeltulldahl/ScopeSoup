@@ -20,7 +20,7 @@ import type { RunCheck } from "./checkRunner.ts";
 import { realProcesses } from "./process.ts";
 import type { ProcessControl } from "./process.ts";
 import { createRunner, readSessionResult } from "./runner.ts";
-import type { Runner } from "./runner.ts";
+import type { Runner, RunnerDeps } from "./runner.ts";
 import { execFileSyncRetrying } from "../hosts/spawnRetry.ts";
 import type { AgentProvider } from "./agent.ts";
 import { providerFor } from "./providers/index.ts";
@@ -50,7 +50,7 @@ interface World {
   resources?: Resources;
 }
 
-function world(mode: string, options: { raw?: Record<string, unknown>; env?: NodeJS.ProcessEnv; processes?: Partial<ProcessControl>; runSetup?: RunCheck; provider?: AgentProvider; resources?: true } = {}): World {
+function world(mode: string, options: { raw?: Record<string, unknown>; env?: NodeJS.ProcessEnv; processes?: Partial<ProcessControl>; runSetup?: RunCheck; provider?: AgentProvider; resources?: true; media?: RunnerDeps["media"] } = {}): World {
   const dir = mkdtempSync(join(tmpdir(), "scopesoup-runner-"));
   dirs.push(dir);
   const repo = join(dir, "repo");
@@ -90,6 +90,7 @@ function world(mode: string, options: { raw?: Record<string, unknown>; env?: Nod
     store, config: () => config, now: () => clock.ms, processes, ...(options.runSetup ? { runSetup: options.runSetup } : {}),
     ...(options.provider ? { provider: () => options.provider! } : {}),
     ...(resources ? { resources } : {}),
+    ...(options.media ? { media: options.media } : {}),
     env: { ...process.env, ANTHROPIC_API_KEY: "must-not-reach-the-child", FAKE_CLAUDE_MODE: mode, ...options.env },
   });
   cleanups.push(() => runner.stopAll("test over"));
@@ -418,6 +419,17 @@ test("a provider that cannot hold a session to its role's command list starts no
   assert.match(session.endReason ?? "", /^Refused: the agent provider sandboxed cannot hold a session to the role's allowedTools/);
   assert.equal(session.pid, undefined);
   assert.equal(w.runner.running(), 0);
+});
+
+test("the clone's media folder is made before the session and its images taken after, before anyone hears it is over", async () => {
+  const calls: string[] = [];
+  const w = world("ok", { env: { FAKE_CLAUDE_OUTPUT: '{"done":true,"summary":"did it"}' }, media: { prepare: (cwd) => calls.push(`prepare ${cwd}`), collect: (subject, cwd) => calls.push(`collect ${subject.id} ${cwd}`) } });
+  const started = await w.runner.start(request());
+  const session = await w.runner.finished(started.ref.id);
+  const cwd = workspacePath(w.config, slotName(1));
+  assert.deepEqual(calls, [`prepare ${cwd}`, `collect 42 ${cwd}`]);
+  // The agent is told where images go, and that only this machine sees them by default.
+  assert.match(String(fakeEvents(session).find((event) => event.subtype === "fake")?.prompt), /\.scopesoup\/media\/.*this machine only/s);
 });
 
 test("failures each end with one reason", async () => {

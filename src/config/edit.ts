@@ -44,6 +44,8 @@ const SAFE: Record<string, true | ((value: unknown, err: (message: string) => vo
   // The limited resources, each list whole (this machine's, and the shared ones on the meta ref); null removes the list.
   resources: true,
   sharedResources: true,
+  // Agents' images: pushed to the remote or not, and how long a closed Item's are kept (validation checks the form).
+  media: true,
 };
 
 /** Fields a null in the change removes from the file. */

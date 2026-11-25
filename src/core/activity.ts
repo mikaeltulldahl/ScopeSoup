@@ -36,7 +36,7 @@ export const ACTIVITY_EVENTS: readonly string[] = [
   "control.stopped", "control.startup_paused", "control.paused", "control.resumed", "control.queue_resume", "orchestrator.queue_paused",
   "scopesoup.upgraded", "scopesoup.went_back", "scopesoup.upgrade_failed",
   "orchestrator.draft_accepted", "orchestrator.draft_edited", "orchestrator.draft_rejected", "orchestrator.draft_answered",
-  "orchestrator.questions_asked", "person.answered", "orchestrator.merged", "config.changed",
+  "orchestrator.questions_asked", "person.answered", "orchestrator.merged", "config.changed", "media.deleted", "media.expired",
 ];
 
 /** Most rows in one view. */
@@ -352,6 +352,14 @@ export function buildActivity(input: ActivityInput, now: string, limit = MAX_ACT
         if (data.shared) break;
         const fields = Array.isArray(data.fields) ? data.fields.filter((each): each is string => typeof each === "string") : [];
         add({ ...base, kind: "settings", text: `Changed this machine's own settings${fields.length > 0 ? `: ${fields.join(", ")}` : ""}` });
+        break;
+      }
+      case "media.deleted":
+        add({ ...base, kind: "item", items, who: str(data.by) || event.actor, agent: false, text: `Deleted the image ${clip(str(data.name), 100)}${data.ref === "updated" ? ", also from the remote" : ""}` });
+        break;
+      case "media.expired": {
+        const names = Array.isArray(data.names) ? data.names.length : 0;
+        add({ ...base, kind: "item", items, who: "Scope Soup", agent: false, text: `Deleted ${names} image${names === 1 ? "" : "s"} after the Item closed (media.keepDaysAfterClose)` });
         break;
       }
       default:

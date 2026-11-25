@@ -2,14 +2,17 @@
 
 import type { ConflictVersions, DecisionOption, ProposedPart, ParkedDraft } from "../../src/model/types.ts";
 import type { BoardView, DiffFile, DiffView, ItemPage, RoundRow, SessionDetailsView } from "./api.ts";
+import { Fragment } from "preact";
+import type { ComponentChildren } from "preact";
 import { useEffect, useId, useState } from "preact/hooks";
-import { fetchChat, fetchDiff, fetchItem, fetchItemBranch, fetchSession, postAnswers, postChat, postDraft, postEdit, postHandBack, postProposal, postRelease, postResolve, postStartOver, postClaim, useNow, usePerson, useView } from "./api.ts";
+import { fetchChat, fetchDiff, fetchItem, fetchItemBranch, fetchSession, postAnswers, postChat, postDraft, postEdit, postHandBack, postProposal, postRelease, postResolve, postStartOver, postClaim, postMediaDelete, useNow, usePerson, useView } from "./api.ts";
 import { actorClass, actorWords, Mention, VoteButtons } from "./Card.tsx";
 import { placeText, statusText } from "./cardText.ts";
 import { ItemForm } from "./ItemForm.tsx";
 import { Assumptions } from "./Assumptions.tsx";
 import { Stepper } from "./Stepper.tsx";
-import { Markdown } from "./Markdown.tsx";
+import { AgentText, Markdown, MediaContext, TextImages, withoutImages } from "./Markdown.tsx";
+import type { MediaView } from "./Markdown.tsx";
 import { BatchBox } from "./Batch.tsx";
 import type { ChatSessionView } from "../../src/core/views.ts";
 import { hostDiffers } from "../../src/core/lanes.ts";
@@ -120,19 +123,19 @@ function Rounds({ rows, now, onTalk }: { rows: RoundRow[]; now: number; onTalk: 
                   {row.resumed && <span class="round-resumed muted">resumed {row.resumed}</span>}
                 </th>
                 <td class="round-found">
-                  {row.found && <p>{row.found}</p>}
+                  {row.found && <p><AgentText text={row.found} /></p>}
                   {row.findings.length > 0 && (
                     <ul class="round-findings">
                       {row.findings.map((finding, at) => (
                         <li key={at}>
-                          {finding.severity && <span class={`tag severity-${finding.severity}`}>{finding.severity}</span>} <span class="round-finding">{finding.text}</span>
+                          {finding.severity && <span class={`tag severity-${finding.severity}`}>{finding.severity}</span>} <span class="round-finding"><AgentText text={finding.text} /></span>
                         </li>
                       ))}
                     </ul>
                   )}
                 </td>
                 <td class="round-did">
-                  {row.did && <p>{row.did}</p>}
+                  {row.did && <p><AgentText text={row.did} /></p>}
                   {row.commits.length > 0 && (
                     <p class="muted num">
                       {row.kind === "step" ? (row.commits.length === 1 ? "Commit " : "Commits ") : ""}
@@ -394,8 +397,8 @@ function QuestionCard({ question, held, canAnswer, busy, onChange }: { question:
   const id = useId();
   return (
     <div class="parked-question">
-      <p class="question">{question.question}</p>
-      {question.context && <p class="choice-why">{question.context}</p>}
+      <p class="question"><AgentText text={question.question} /></p>
+      {question.context && <p class="choice-why"><AgentText text={question.context} /></p>}
       {question.asked && <p class="muted">{question.asked}</p>}
       {multi && question.answered === undefined && <p class="muted">Pick one or more.</p>}
       {question.answered !== undefined ? (
@@ -412,14 +415,19 @@ function QuestionCard({ question, held, canAnswer, busy, onChange }: { question:
           {unmatched && <p class="choice-why">Recommended: {unmatched}</p>}
           {rows.map((row) => {
             const picked = held?.picked.includes(row.label) ?? false;
+            // A picture of the option sits under its button, not in it: a button holds no link and no Delete.
+            const pictured = `${row.label} ${row.description ?? ""}`;
             return (
-              <button type="button" key={row.label} class={picked ? "choice choice-picked" : "choice"} role={multi ? "checkbox" : "radio"} aria-checked={picked} disabled={!canAnswer || busy} onClick={() => onChange(pick(held, row.label, multi))}>
-                <span class="choice-mark" aria-hidden="true">{multi ? (picked ? "☑" : "☐") : picked ? "●" : "○"}</span>
-                <span class="choice-text">
-                  <span class="choice-label">{row.label}{row.recommended ? " (Recommended)" : ""}</span>
-                  {row.description && <span class="choice-why">{row.description}</span>}
-                </span>
-              </button>
+              <Fragment key={row.label}>
+                <button type="button" class={picked ? "choice choice-picked" : "choice"} role={multi ? "checkbox" : "radio"} aria-checked={picked} disabled={!canAnswer || busy} onClick={() => onChange(pick(held, row.label, multi))}>
+                  <span class="choice-mark" aria-hidden="true">{multi ? (picked ? "☑" : "☐") : picked ? "●" : "○"}</span>
+                  <span class="choice-text">
+                    <span class="choice-label">{withoutImages(row.label)}{row.recommended ? " (Recommended)" : ""}</span>
+                    {row.description && <span class="choice-why">{withoutImages(row.description)}</span>}
+                  </span>
+                </button>
+                {pictured.includes("](media/") && <div class="choice-images"><TextImages text={pictured} /></div>}
+              </Fragment>
             );
           })}
           {canAnswer && (
@@ -479,7 +487,7 @@ function useHeld(itemKey: string, ids: readonly string[], start: () => Record<st
  * Send posts all of them at once (one write on the host); the item is picked up once, after them. Questions left unanswered
  * stay open. With a parked Item, the panel shows its title, why it is parked, and Start over.
  */
-function QuestionsPanel({ page, questions, now, reload, primary }: { page: ItemPage; questions: PanelQuestion[]; now: number; reload: () => void; primary: boolean }) {
+function QuestionsPanel({ page, questions, now, reload, primary, note }: { page: ItemPage; questions: PanelQuestion[]; now: number; reload: () => void; primary: boolean; note?: ComponentChildren }) {
   const parked = page.parked && !page.parked.refine && !page.proposal ? page.parked : undefined;
   const canAnswer = parked ? parked.canAnswer : true;
   const ids = questions.map((question) => question.id);
@@ -500,6 +508,7 @@ function QuestionsPanel({ page, questions, now, reload, primary }: { page: ItemP
   return (
     <section class={parked?.as === "queued" ? "panel" : "panel panel-yours"}>
       <h3>{parked ? (parked.as === "queued" && page.item.state === "done" ? "Merged" : PARKED_TITLES[parked.as]) : questions.length > 1 ? "Questions" : "Question"}</h3>
+      {note}
       {parked && (several ? (
         <p class="question">{parked.questions!.length} questions wait for your answers. The {itemNoun()} is picked up once all are answered.</p>
       ) : !parked.decision && open.length === 0 ? (
@@ -1047,6 +1056,19 @@ function Place({ page }: { page: ItemPage }) {
 /** "held by mira; Scope Soup leaves it alone until …": the explanation after the short text the header shows. */
 const holdWhy = (page: ItemPage): string | undefined => (page.heldBy && page.reason.startsWith("held by ") && page.reason.includes("; ") ? page.reason.slice(page.reason.indexOf("; ") + 2) : undefined);
 
+/** Who sees the Item's images, both ways, with the way to the setting that decides it. */
+function MediaNote({ media, error }: { media: NonNullable<ItemPage["media"]>; error: string | null }) {
+  return (
+    <>
+      <p class="muted media-note">
+        {media.shared ? "Everyone with the repository sees these images: they are pushed to the project's remote." : "Only this machine sees these images: they are not pushed to the project's remote."}
+        {" "}<a class="tag-link" href="#/settings">Change it in Settings, Images</a>.
+      </p>
+      {error && <p class="notice notice-bad" role="alert">{error}</p>}
+    </>
+  );
+}
+
 function Body({ page, reload, resources }: { page: ItemPage; reload: () => void; resources?: BoardView["resources"] }) {
   const now = useNow();
   const { item } = page;
@@ -1071,8 +1093,22 @@ function Body({ page, reload, resources }: { page: ItemPage; reload: () => void;
   const primary = asking[0];
   const holdWords = holdWhy(page);
   const finished = item.state === "done" || item.state === "abandoned";
+  const [mediaError, setMediaError] = useState<string | null>(null);
+  const media: MediaView | null = page.media
+    ? {
+      base: `/media/${encodeURIComponent(item.key)}/`,
+      names: new Set(page.media.names),
+      onDelete: (name) => {
+        if (!confirm(`Delete the image ${name}? It goes from this machine${page.media?.shared ? " and from the project's remote" : ""}, and cannot be brought back here.`)) return;
+        setMediaError(null);
+        postMediaDelete(item.key, name).then(reload, (problem: unknown) => setMediaError(problem instanceof Error ? problem.message : String(problem)));
+      },
+    }
+    : null;
+  const imagesInQuestions = questions.some((question) => [question.question, question.context ?? "", ...question.options.map((option) => JSON.stringify(option))].some((text) => text.includes("](media/")));
 
   return (
+    <MediaContext.Provider value={media}>
     <article class="item">
       <header class={`item-head tone-${page.tone}`}>
         <h2>
@@ -1203,7 +1239,7 @@ function Body({ page, reload, resources }: { page: ItemPage; reload: () => void;
       {/* What waits for you, each with the orange border while it is open. */}
       {page.parked?.refine && <DraftPanel key={page.parked.at} page={page} draft={page.parked.refine} reload={reload} primary={primary === "draft"} />}
 
-      {showQuestions && <QuestionsPanel key={`${page.parked?.at ?? ""}:${questions.map((question) => question.id).join(",")}`} page={page} questions={questions} now={now} reload={reload} primary={primary === "questions"} />}
+      {showQuestions && <QuestionsPanel note={page.media && imagesInQuestions ? <MediaNote media={page.media} error={mediaError} /> : null} key={`${page.parked?.at ?? ""}:${questions.map((question) => question.id).join(",")}`} page={page} questions={questions} now={now} reload={reload} primary={primary === "questions"} />}
 
       {page.assumptions.length > 0 && (
         <section class={`panel${page.assumptions.some((decision) => !decision.settled) ? " panel-yours" : ""}`}>
@@ -1237,6 +1273,7 @@ function Body({ page, reload, resources }: { page: ItemPage; reload: () => void;
       ) : (
         <section class="panel">
           <h3>Rounds</h3>
+          {page.media && <MediaNote media={page.media} error={mediaError} />}
           <Rounds
             rows={page.rounds}
             now={now}
@@ -1364,6 +1401,7 @@ function Body({ page, reload, resources }: { page: ItemPage; reload: () => void;
         </section>
       )}
     </article>
+    </MediaContext.Provider>
   );
 }
 

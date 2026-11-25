@@ -51,6 +51,8 @@ interface Draft {
   setup: { command: string; watch: string };
   /** The limited resources, as the form holds them. */
   resources: ResourceDraft[];
+  /** Agents' images: pushed to the remote or not, and the days a closed Item's are kept ("" keeps them). */
+  media: { push: boolean; keepDays: string };
 }
 
 /** One resource in the form: the units as typed, the environment one `NAME=value` per line. */
@@ -105,7 +107,7 @@ function draftOf(config: ProjectConfig, raw: unknown, mergeQueue: MergeQueueSetu
   // The command as the shared file holds it, with {{ownClone}} unexpanded (the configuration in use has this machine's path in it).
   const command = (raw as { setupCommand?: unknown } | null)?.setupCommand;
   const setup = { command: Array.isArray(command) ? commandText(command as string[]) : config.setupCommand ? commandText(config.setupCommand) : "", watch: (config.setupWatch ?? []).join("\n") };
-  return { level: config.level, settings: { maxParallelSessions: setting("maxParallelSessions"), budgetReserve: setting("budgetReserve"), triageMaxAgeDays: setting("triageMaxAgeDays") }, roles, mergeQueue: asked, setup, resources: resourceDrafts(config) };
+  return { level: config.level, settings: { maxParallelSessions: setting("maxParallelSessions"), budgetReserve: setting("budgetReserve"), triageMaxAgeDays: setting("triageMaxAgeDays") }, roles, mergeQueue: asked, setup, resources: resourceDrafts(config), media: { push: config.media?.push ?? false, keepDays: config.media?.keepDaysAfterClose === null || config.media?.keepDaysAfterClose === undefined ? "" : String(config.media.keepDaysAfterClose) } };
 }
 
 /** The watched files as the file holds them: one per line, blank lines dropped. */
@@ -137,6 +139,10 @@ function changeOf(draft: Draft, base: Draft, asks: readonly AskedField[], showsC
     if (role.model.trim() !== "" && role.model !== base.roles[name]?.model) roles[name] = role;
   }
   if (Object.keys(roles).length > 0) change.roles = roles;
+  // Both media values together, when either differs.
+  if (draft.media.push !== base.media.push || draft.media.keepDays.trim() !== base.media.keepDays.trim()) {
+    change.media = { push: draft.media.push, keepDaysAfterClose: draft.media.keepDays.trim() === "" ? null : Number(draft.media.keepDays) };
+  }
   // Each list whole, when it differs; an emptied list is removed from its file.
   const lists = resourceLists(draft.resources);
   const before = resourceLists(base.resources);
@@ -422,6 +428,22 @@ export function Settings({ project, openHistory = false }: { project?: ProjectVi
         })}
         <div>
           <button type="button" disabled={busy} onClick={() => set({ resources: [...draft.resources, { name: "", units: "1", shared: false, neededBy: ["implement"], env: "" }] })}>Add a resource</button>
+        </div>
+
+        <h4 id="images">Images</h4>
+        <p class="muted">
+          Agents may attach images to what they answer (a screenshot, a before and after of a UI change). Scope Soup keeps them in this machine's data folder and shows them on the Item page. Hosts (GitHub, Jira) get only the words "image on the board", never the picture.
+        </p>
+        <div class="settings-grid">
+          <label class="resource-check">
+            <input type="checkbox" checked={draft.media.push} disabled={busy} onChange={(event) => set({ media: { ...draft.media, push: (event.target as HTMLInputElement).checked } })} />
+            {" "}Push images to the project's remote, so that everyone with the repository sees them (a project setting; off: only the machine that ran the session sees them)
+          </label>
+          <label>
+            <b>Delete a closed Item's images after</b>
+            <input type="number" min={0} max={3650} step={1} value={draft.media.keepDays} placeholder="never: keep them" disabled={busy} onInput={(event) => set({ media: { ...draft.media, keepDays: (event.target as HTMLInputElement).value } })} />
+            <span class="muted">days, here and on the remote. Empty: they are kept, so the Item's history keeps its pictures.</span>
+          </label>
         </div>
 
         <h4>Models</h4>
