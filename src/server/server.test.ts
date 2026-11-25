@@ -535,7 +535,7 @@ test("POST /api/start-over drops a job parked on an implement question, offers t
   assert.equal((await pageOf()).parked?.canStartOver, undefined);
   assert.equal(loadSnapshot(store).parked?.find((parked) => refKey(parked.subject) === key)?.canStartOver, undefined);
   assert.equal((await post({ ref: key })).status, 409);
-  saveJobs(store, { [key]: { ...job, parked: { as: "needs-decision", reason: "split?", at: T0 }, proposal: { reason: "too large", parts: [{ title: "Part one", description: "", verification: "" }] } } });
+  saveJobs(store, { [key]: { ...job, parked: { as: "needs-decision", reason: "restructure?", at: T0 }, proposal: { id: "abc12345", reason: "too large", original: "umbrella" as const, parts: [{ title: "Part one", description: "", verification: "", goes: "child" as const }] } } });
   assert.equal((await pageOf()).parked?.canStartOver, undefined);
   assert.equal((await post({ ref: key })).status, 409);
   saveJobs(store, { [key]: { ...job, parked: { as: "handed-over", reason: "The session opened a pull request.", at: T0 } } });

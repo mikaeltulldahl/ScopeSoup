@@ -2810,40 +2810,47 @@ test("a job stored parked on a proposed rewrite (removed) is released after the 
 });
 
 const PARTS = [
-  { title: "Part one", description: "Do the first half.", verification: "Test one." },
-  { title: "Part two", description: "Do the second half.", verification: "Test two." },
+  { title: "Part one", description: "Do the first half.", verification: "Test one.", goes: "child" as const },
+  { title: "Part two", description: "Do the second half.", verification: "Test two.", goes: "into" as const, into: "2" },
 ];
+const RESTRUCTURE = { reason: "Two changes; the second belongs to item 2.", original: "umbrella", parts: PARTS.map((part) => (part.into ? { ...part, into: "#2" } : part)) };
+const RESTRUCTURE_REASON = "Triage proposes to restructure the Item: 1 new child Item, 1 into #2; the Item becomes an umbrella. Two changes; the second belongs to item 2.";
 
-test("a too-large triage with parts parks a proposed split, with a person's recorded answers carried over; without parts it is parked as before", async () => {
+test("a triage that proposes a restructuring parks it, with a person's recorded answers carried over; one that does not hold together is left out", async () => {
   const w = world(config(), [item("1")]);
   addAnswer(w.store, { subject: ref("1"), answer: "Keep the old format.", by: "Ada", at: "2026-11-18T08:00:00.000Z", question: "Which format?" });
   await w.run();
-  await step(w, "1", "succeeded", { ...TRIAGE_OK, size: "large", parts: [...PARTS, { title: " ", description: "no title: dropped" }] });
+  // Proposed whatever the size: a duplicate can be small.
+  await step(w, "1", "succeeded", { ...TRIAGE_OK, restructure: RESTRUCTURE });
   const job = w.job("1");
   assert.equal(job?.parked?.as, "needs-decision");
-  assert.deepEqual(job?.proposal?.parts, PARTS);
+  assert.deepEqual(job?.proposal?.parts, PARTS, "the Item a part goes into is named by its id");
+  assert.equal(job?.proposal?.original, "umbrella");
   assert.equal(job?.proposal?.carried, "- Asked: Which format?\n  Answered: Keep the old format.");
-  assert.match(job?.proposal?.reason ?? "", /^Triage: too large for one change; it proposes 2 parts\.$/);
+  assert.equal(job?.proposal?.reason, RESTRUCTURE_REASON);
   assert.deepEqual(w.calls, ["answerTurn 1 decision"]);
-  // In the log too, so a restart (or another machine) puts the split back.
-  assert.match(w.lines[0] ?? "", /^1 question \{"question":"Triage: too large.*"proposal":\{"reason":"Triage: too large.*","parts":\[\{"title":"Part one".*\],"carried":"- Asked: Which format\?.*"\},"parked":"needs-decision"\}$/);
-  // The board shows it as a person's turn on the split.
+  // In the log too, so a restart (or another machine) puts it back.
+  assert.match(w.lines[0] ?? "", /^1 question \{"question":"Triage proposes.*"proposal":\{"id":"[0-9a-f]{8}","reason":"Triage proposes.*","original":"umbrella","parts":\[\{"title":"Part one".*"goes":"child"\},\{.*"goes":"into","into":"2"\}\],"carried":"- Asked: Which format\?.*"\},"parked":"needs-decision"\}$/);
+  // The board shows it as a person's turn.
   const held = loadSnapshot(w.store).parked?.find((each) => each.subject.id === "1");
   assert.deepEqual(held?.proposal?.parts, PARTS);
 
   // A verdict on an earlier proposal is not a decision to carry.
   const later = world(config(), [item("1")]);
-  addAnswer(later.store, { subject: ref("1"), answer: "Rejected the proposed split of the item into 4 parts.", by: "Ada", at: "2026-11-18T08:00:00.000Z", question: "Proposed split: Triage: too large." });
+  addAnswer(later.store, { subject: ref("1"), answer: "Rejected the proposed restructuring of the item.", by: "Ada", at: "2026-11-18T08:00:00.000Z", question: "Proposed restructuring: Triage proposes." });
   await later.run();
-  await step(later, "1", "succeeded", { ...TRIAGE_OK, size: "large", parts: PARTS });
+  await step(later, "1", "succeeded", { ...TRIAGE_OK, restructure: RESTRUCTURE });
   assert.equal(later.job("1")?.proposal?.carried, undefined);
 
-  // Parts on an item that is not large mean nothing; a large one without parts parked as "not ready" as before.
-  const small = world(config(), [item("1")]);
-  await small.run();
-  await step(small, "1", "succeeded", { ...TRIAGE_OK, parts: PARTS });
-  assert.equal(small.job("1")?.step, "implement");
-  assert.equal(small.job("1")?.triage?.parts, undefined);
+  // The Item keeps a part but none goes to it, or a part has no title: left out, and the triage goes on as if none was given.
+  for (const restructure of [{ ...RESTRUCTURE, original: "keeps" }, { ...RESTRUCTURE, parts: [...PARTS, { title: " ", description: "", verification: "", goes: "child" }] }]) {
+    const odd = world(config(), [item("1")]);
+    await odd.run();
+    await step(odd, "1", "succeeded", { ...TRIAGE_OK, restructure });
+    assert.equal(odd.job("1")?.step, "implement");
+    assert.equal(odd.job("1")?.triage?.restructure, undefined);
+  }
+  // A large one without a restructuring is parked as "not ready".
   const bare = world(config(), [item("1")]);
   await bare.run();
   await step(bare, "1", "succeeded", { ...TRIAGE_OK, size: "large" });
@@ -3256,7 +3263,7 @@ test("questions GitHub does not take (the label is dropped) post nothing, write 
   assert.match(parked?.reason ?? "", /^github could not be written: .* The questions were: Round up or down\? Which unit\?/);
 });
 
-// --- on GitHub each triage round's draft is a comment, and so is a proposed split ---
+// --- on GitHub each triage round's draft is a comment, and so is a proposed restructuring ---
 
 test("a triage round posts its draft as a comment with the hash of the body it read, and its questions as question comments naming it", async () => {
   const { w, fake, deps } = await questionWorld();
@@ -3291,18 +3298,20 @@ test("a draft over 60,000 characters stays on the board, and the parked Item say
   assert.equal(w.calls.filter((call) => call.startsWith("answerTurn")).length, 1);
 });
 
-test("a proposed split is a question comment with the split in its marker", async () => {
+test("a proposed restructuring is a question comment with the restructuring in its marker", async () => {
   const { w, fake, deps } = await questionWorld();
-  w.runner.end("1", "succeeded", { ...TRIAGE_OK, size: "large", parts: PARTS });
+  w.runner.end("1", "succeeded", { ...TRIAGE_OK, restructure: RESTRUCTURE });
   await tick(deps);
   const job = loadJobs(w.store)[ghKey("1")]!;
   const [asked] = fake.comments.get("1")!;
   assert.deepEqual(job.parked?.questions, [String(asked!.id)]);
-  assert.match(asked!.body!, /^\*\*Q1: Proposed split: Triage: too large for one change; it proposes 2 parts\.\*\*\n\n1\. \*\*Part one\*\*: Do the first half\.\n2\. \*\*Part two\*\*: Do the second half\.\n\nAccept, edit or reject the split on Scope Soup's board\./);
-  assert.deepEqual(readMarker(asked!.body)?.data.proposal, { reason: "Triage: too large for one change; it proposes 2 parts.", parts: PARTS });
-  // The Item page reads the split from the comment; the children are found on GitHub, none yet.
+  assert.equal(asked!.body!.split("\n\n<!--")[0], `**Q1: Proposed restructuring: ${RESTRUCTURE_REASON}**\n\n1. **Part one** (new sub-issue): Do the first half.\n2. **Part two** (added to #2): Do the second half.\n\nThis Item becomes an umbrella over its sub-issues.\n\nAccept, edit or reject the restructuring on Scope Soup's board.`);
+  assert.deepEqual(readMarker(asked!.body)?.data.proposal, { id: job.proposal!.id, reason: RESTRUCTURE_REASON, original: "umbrella", parts: PARTS });
+  assert.match(job.proposal!.id, /^[0-9a-f]{8}$/, "its own id, carried by its marker lines");
+  // The Item page reads it from the comment; the parts are found on GitHub, none yet.
   const page = buildItemPage(loadSnapshot(w.store), ghKey("1"), new Date(w.clock.ms))!;
   assert.deepEqual(page.proposal?.parts, PARTS);
+  assert.equal(page.proposal?.original, "umbrella");
   assert.equal(page.proposal?.created, undefined);
   assert.deepEqual(w.calls.filter((call) => call.startsWith("answerTurn")), []);
 });

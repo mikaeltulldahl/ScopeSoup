@@ -128,6 +128,20 @@ for (const deployment of ["cloud", "datacenter"] as const) {
       await write.editWork!(ref("DEMO-3"), { state: "abandoned", duplicateOf: ref("DEMO-1") });
       assert.equal(fake.issues.get("DEMO-3")!.fields.resolution?.name, "Duplicate");
       assert.ok(fake.issues.get("DEMO-3")!.fields.issuelinks?.some((link) => link.type.name === "Duplicate" && link.outwardIssue?.key === "DEMO-1"));
+      // Done again (a retry): no second Duplicate link.
+      await write.editWork!(ref("DEMO-3"), { state: "abandoned", duplicateOf: ref("DEMO-1") });
+      assert.equal(fake.issues.get("DEMO-3")!.fields.issuelinks?.filter((link) => link.type.name === "Duplicate").length, 1);
+    });
+
+    test("a restructuring's related part is linked \"relates to\" once, however often it is asked", async () => {
+      const { fake, write, ref } = writable(deployment);
+      const related = await write.createWork!({ title: "Tide chart" });
+      const relates = (): number => (fake.issues.get("DEMO-1")!.fields.issuelinks ?? []).filter((link) => link.type.name === "Relates").length;
+      const before = relates();
+      await write.linkRelated!(ref("DEMO-1"), related.work);
+      await write.linkRelated!(ref("DEMO-1"), related.work);
+      assert.equal(relates(), before + 1);
+      assert.ok(fake.issues.get(related.work.id)!.fields.issuelinks?.some((link) => link.type.name === "Relates"));
     });
 
     test("a person's hold is the assignee, set and taken off", async () => {

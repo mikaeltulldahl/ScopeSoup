@@ -9,6 +9,7 @@ import { actorParts, holdDetails } from "./holdings.ts";
 import { situate } from "./lanes.ts";
 import { buildRounds } from "./rounds.ts";
 import type { Snapshot } from "./snapshot.ts";
+import type { Index } from "./snapshot.ts";
 import { buildIndex, refLabel } from "./snapshot.ts";
 import { assess, isMyTurn, turnContext } from "./turns.ts";
 import type { ItemChangeView, ItemPage, RunView } from "./views.ts";
@@ -16,7 +17,7 @@ import type { ItemChangeView, ItemPage, RunView } from "./views.ts";
 /** Where the decision is. A host with a log (meta branch) has it on this page; another host has it at the item's link. */
 function decisionWords(item: WorkItem): string {
   if (!item.needsDecision) return "No decision is waiting.";
-  if ((item.openQuestions ?? []).some((question) => question.proposal)) return "This item waits for your decision on the proposed split below.";
+  if ((item.openQuestions ?? []).some((question) => question.proposal)) return "This item waits for your decision on the proposed restructuring below.";
   if ((item.openQuestions ?? []).length > 0) return "This item waits for your answer to the question below.";
   if (item.hostState.includes("conflict:")) return "The item's text was changed on two machines. Keep one version or write the result below.";
   if (!item.ref.url) return "This item waits for your decision.";
@@ -156,15 +157,23 @@ export function buildItemPage(snapshot: Snapshot, ref: Ref | string, now: Date, 
   const proposed = (item.openQuestions ?? []).filter((question) => question.proposal).pop();
   const proposal = proposed?.proposal ?? parked?.proposal;
   if (proposal) {
-    // The children made so far are only in Scope Soup's store (the rest), not in the log's question line; the parts are fixed once one exists.
+    // The parts made so far are only in Scope Soup's store (the rest), not in the log's question line; the parts are fixed once one exists.
     const created = parked?.proposal?.created ?? [];
-    // The stored parts are a person's edit (or fixed once a child exists); the log's line keeps triage's.
-    const parts = parked?.proposal?.parts ?? proposal.parts;
+    // The stored version is a person's edit (or fixed once a part exists); the log's line keeps triage's.
+    const chosen = parked?.proposal ?? proposal;
     page.proposal = {
       reason: proposal.reason,
-      parts,
+      original: chosen.original,
+      parts: chosen.parts,
+      // The Item each part into an existing one names, as it stands: its title and state, and what is going on in it.
+      targets: chosen.parts.map((part) => {
+        const target = part.goes === "into" ? index.work.get(refKey({ host: item.ref.host, kind: "work", id: part.into ?? "" })) : undefined;
+        if (!target) return null;
+        const busy = busyWords(index, refKey(target.ref));
+        return { ...itemLink(target.ref, index), state: target.state, ...(busy ? { busy } : {}) };
+      }),
       ...(proposal.carried ? { carried: proposal.carried } : {}),
-      ...(created.length > 0 ? { created: created.map((child) => itemLink(child.ref, index)) } : {}),
+      ...(created.length > 0 ? { created: created.map((made) => ({ part: made.part, ...itemLink(made.ref, index) })) } : {}),
       ...(proposed ? { at: proposed.at, by: proposed.by } : {}),
     };
   }
@@ -182,4 +191,12 @@ export function buildItemPage(snapshot: Snapshot, ref: Ref | string, now: Date, 
     });
   }
   return page;
+}
+
+/** What stands in the way of changing an Item now: an open change, or an agent session on it. Undefined when nothing does. */
+export function busyWords(index: Index, key: string): string | undefined {
+  const open = (index.changesByWork.get(key) ?? []).find((change) => change.state === "open");
+  if (open) return `it has an open change ${refLabel(open.ref)}`;
+  const running = (index.sessionsBySubject.get(key) ?? []).some((session) => session.status === "starting" || session.status === "running" || session.status === "stalled");
+  return running ? "an agent is working on it" : undefined;
 }

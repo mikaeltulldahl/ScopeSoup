@@ -252,8 +252,8 @@ test("every kind of parked Item for people starts with what to do, and nothing a
   const questions = [{ ...decision, question: "First?", answer: "a" }, { ...decision, question: "Second?" }, { ...decision, question: "Third?" }];
   assert.match(reasonOf(parked("needs-decision", { decision, questions })), /^Answer 2 of 3 questions: Second\?/);
   assert.match(reasonOf(parked("needs-decision", { decision: { ...decision, options: [] } })), /^Answer the question: Which\?/);
-  const parts = [{ title: "One", description: "", verification: "" }];
-  assert.match(reasonOf(parked("needs-decision", { proposal: { reason: "Too large.", parts } })), /^Accept, edit or reject the proposed split: Too large./);
+  const parts = [{ title: "One", description: "", verification: "", goes: "child" }];
+  assert.match(reasonOf(parked("needs-decision", { proposal: { reason: "Too large.", original: "umbrella", parts } })), /^Accept, edit or reject the proposed restructuring: Too large./);
   assert.match(reasonOf(parked("handed-over")), /^Merge branch scopesoup\/1: /);
   assert.match(reasonOf(parked("handed-over"), [change(77, [1])]), /^Merge pull request 77: /);
   assert.match(reasonOf(parked("not-ready")), /^Answer or edit the item/);
@@ -263,7 +263,7 @@ test("every kind of parked Item for people starts with what to do, and nothing a
   const waitsOf = (r: ReturnType<typeof parked>, changes: Change[] = []) => turnOf(snapshot({ works: [work(1)], changes, parked: [r] }), 1).waits;
   assert.equal(waitsOf(parked("needs-decision", { decision, questions })), "2 questions");
   assert.equal(waitsOf(parked("needs-decision", { decision })), "1 question");
-  assert.equal(waitsOf(parked("needs-decision", { proposal: { reason: "Too large.", parts } })), "a split to accept");
+  assert.equal(waitsOf(parked("needs-decision", { proposal: { reason: "Too large.", original: "umbrella", parts } })), "a restructuring to accept");
   assert.deepEqual([waitsOf(parked("handed-over")), waitsOf(parked("not-ready")), waitsOf(parked("escalated"))], ["to merge", "not ready", "escalated"]);
 
   const mixed = snapshot({ works: [work(1), work(2, { needsDecision: true }), work(3)], parked: [parked("escalated")] });

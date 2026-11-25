@@ -15,7 +15,7 @@ The cycle is the same whoever does it: triage, implement, review, merge. Each st
 | Triage | Writing or refining the item, splitting it, answering what it leaves open |
 | Implement | Pushing commits to the item's branch from their own machine and editor |
 | Review | Giving the verdict and the findings, on the item page or with the host's own review |
-| Decide, approve | Anyone's, at any board (built: the answer box on the item page, Accept, Edit and Reject for a triage draft or a proposed split, and a Start over button for an item that is parked on a question or escalation of implement, whose answer otherwise resumes that step) |
+| Decide, approve | Anyone's, at any board (built: the answer box on the item page, Accept, Edit and Reject for a triage draft or a proposed restructuring, and a Start over button for an item that is parked on a question or escalation of implement, whose answer otherwise resumes that step) |
 | Verify | A check only a person can make ("upload the file and see that it is accepted") |
 
 ## Claiming and handing back
@@ -36,7 +36,7 @@ What differs for people:
 - **Their attention is shown.** "Your turn" is per person: what waits for me, most unblocking first (built). The board's person is the one picked at its top: the people Scope Soup knows (from holds, log lines and answers) are offered, and a new name can be typed. The pick is remembered in that browser only, and every request names it, so answers, claims and releases record who did them. Their list has:
   - the Items they hold: their turn until they hand back or release;
   - an Item parked after they handed it back (the hand-over at level 2 or an escalation after their hand-back): that person's turn, until Scope Soup's own work supersedes the hand-back;
-  - every question Scope Soup asks (a triage's questions and draft, a split, a decision, what an Item needs before it can start), and parked Items no person holds or handed back: everyone's turn, in every person's list until someone answers. The answer records who answered.
+  - every question Scope Soup asks (a triage's questions and draft, a restructuring, a decision, what an Item needs before it can start), and parked Items no person holds or handed back: everyone's turn, in every person's list until someone answers. The answer records who answered.
   A person is not tied to a machine: their hold is theirs on every board where they are picked, whatever machine wrote it, and they hand it back or release it from any board. Only agents' claims are machine-bound.
   Another person's turn is on the board too, named ("bob's turn"), but not in this person's list. A board with nobody picked shows every person's turn, and asks who is there before it records anything.
 

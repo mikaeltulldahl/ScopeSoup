@@ -33,12 +33,12 @@ test("the demo data covers every lane, one batch being bisected, the triages' qu
   assert.deepEqual(bisecting.members.map((each) => each.mark), ["good", "good", "in-doubt", "in-doubt"]);
   assert.equal(bisecting.members.filter((each) => each.suspect).length, 1);
   assert.deepEqual([board.queue.forming.length, board.queue.waiting.length, board.queue.recent.length], [0, 7, 2]);
-  // Everyone's two questions and Mira's own hold (she is picked); Jonas's hold is on the board, named, but not in her list.
-  assert.deepEqual(board.yourTurn.map((card) => card.label).sort(), ["#41", "#48", "#52"]);
+  // Everyone's questions, the proposed restructuring and Mira's own hold (she is picked); Jonas's hold is on the board, named, but not in her list.
+  assert.deepEqual(board.yourTurn.map((card) => card.label).sort(), ["#41", "#48", "#52", "#53"]);
   assert.deepEqual(board.lanes.flatMap((lane) => lane.cards).find((card) => card.label === "#49")?.person, { name: "jonas", mine: false });
   // A person is not tied to a machine: picked on the demo's board, Jonas has his laptop-b hold in his list.
   const jonas = buildBoard(loadSnapshot(store), now, undefined, { person: "jonas", machine: "demo" });
-  assert.deepEqual(jonas.yourTurn.map((card) => card.label).sort(), ["#41", "#49", "#52"]);
+  assert.deepEqual(jonas.yourTurn.map((card) => card.label).sort(), ["#41", "#49", "#52", "#53"]);
   assert.deepEqual(jonas.lanes.flatMap((lane) => lane.cards).find((card) => card.label === "#49")?.person, { name: "jonas", mine: true });
   assert.ok(board.lanes.flatMap((lane) => lane.cards).some((card) => card.session?.live && card.session.model === "opus"));
   assert.deepEqual([board.status.runners.online, board.status.runners.total, board.status.usage?.windows.length], [2, 3, 2]);
@@ -119,6 +119,10 @@ test("the demo shows today's Scope Soup: triage questions and a draft, sessions 
     const questions = pages.find((page) => page.item.label === "#52")!.parked?.questions ?? [];
     assert.deepEqual(questions.map((each) => each.multiSelect === true), [false, true]);
     assert.ok(pages.find((page) => page.item.label === "#41")!.parked?.refine?.draft);
+    // Item 53 waits on a proposed restructuring: it keeps one part, and the others go elsewhere.
+    const restructuring = pages.find((page) => page.item.label === "#53")!.proposal;
+    assert.equal(restructuring?.original, "keeps");
+    assert.deepEqual(restructuring?.parts.map((part) => part.goes), ["original", "child", "into", "related"]);
     // Item 66 has a triage, an implementor (resumed once) and two reviewers to talk to, and nothing runs on it; item 58's implementor runs.
     const of = (id: number) => chat.view(refKey(ref("work", id)));
     assert.deepEqual(of(66).sessions.map((each) => each.role), ["review", "implement", "review", "triage"]);

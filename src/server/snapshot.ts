@@ -5,7 +5,7 @@ import type { Batch, Change, CreatedPart, ProposedPart, Ref, Parked, ParkedQuest
 import { refKey } from "../model/types.ts";
 import { loadJobs, jobQuestions, resumesStep } from "../orchestrator/jobs.ts";
 import { busyFiles, waitsForSameFiles } from "../orchestrator/candidates.ts";
-import { markedParts } from "../orchestrator/split.ts";
+import { markedParts, partLinked } from "../orchestrator/restructure.ts";
 import { readQueueHealth } from "../orchestrator/queueHealth.ts";
 import { knownAnswers } from "../store/answers.ts";
 import { loadOwnBlockers, withOwnBlockers } from "../store/blockers.ts";
@@ -55,8 +55,8 @@ export function loadSnapshot(store: Store): Snapshot {
       const stored = asked && job.proposal?.parts?.length ? job.proposal : undefined;
       // On GitHub each question is a comment, and its answer is read from there.
       const onHost = job.parked.questions;
-      // There a split's children are the sub-issues that carry its part lines; they are not stored.
-      const proposal = stored && onHost ? { ...stored, created: hostParts(store, job.item, stored.parts) } : stored;
+      // There a restructuring's parts are the items that carry its part lines; they are not stored.
+      const proposal = stored && onHost ? { ...stored, created: hostParts(store, job.item, stored) } : stored;
       const hostAnswers = onHost ? store.get<WorkItem>(job.item)?.answers ?? [] : [];
       const questions = jobQuestions(job).map((each, index): ParkedQuestion => {
         const answer = onHost ? hostAnswers.find((given) => given.to !== undefined && given.to === onHost[index])?.answer : job.answered?.find((given) => given.index === index)?.answer;
@@ -82,9 +82,9 @@ export function loadSnapshot(store: Store): Snapshot {
   };
 }
 
-/** The parts of an item's split that exist on its host, found by their part lines; `linked` when it is a sub-issue of the item. */
-export function hostParts(store: Store, item: Ref, parts: readonly ProposedPart[]): CreatedPart[] {
-  return [...markedParts(store.list<WorkItem>("work", item.host), item, parts)]
-    .map(([part, work]) => ({ part, ref: work.ref, linked: work.parent !== undefined && refKey(work.parent) === refKey(item) }))
+/** The parts of an item's restructuring that exist on its host, found by their part lines; a child is `linked` when it is a sub-issue of the item. */
+export function hostParts(store: Store, item: Ref, proposal: { id: string; parts: readonly ProposedPart[] }): CreatedPart[] {
+  return [...markedParts(store.list<WorkItem>("work", item.host), item, proposal)]
+    .map(([part, work]) => ({ part, ref: work.ref, linked: partLinked(proposal.parts[part]!, work, item) }))
     .sort((a, b) => a.part - b.part);
 }

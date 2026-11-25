@@ -151,7 +151,7 @@ export function buildActivity(input: ActivityInput, now: string, limit = MAX_ACT
         case "question": {
           const proposal = obj(f.proposal);
           const parts = Array.isArray(proposal.parts) ? proposal.parts.length : 0;
-          const text = parts > 0 ? `Proposed splitting the Item into ${parts} parts` : `${typeof f.refine === "number" ? `The triage's draft (round ${f.refine}) asks` : "Asked"}: ${clip(str(f.question))}`;
+          const text = parts > 0 ? `Proposed restructuring the Item into ${parts} parts` : `${typeof f.refine === "number" ? `The triage's draft (round ${f.refine}) asks` : "Asked"}: ${clip(str(f.question))}`;
           add({ ...base, kind: "question", text });
           break;
         }

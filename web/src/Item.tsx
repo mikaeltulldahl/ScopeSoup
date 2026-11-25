@@ -1,6 +1,7 @@
 // The item page: the item with everything attached. The item is the one thing a person follows.
 
-import type { ConflictVersions, DecisionOption, ProposedPart, ParkedDraft } from "../../src/model/types.ts";
+import type { ConflictVersions, DecisionOption, OriginalFate, PartGoes, ProposedPart, ParkedDraft } from "../../src/model/types.ts";
+import { ORIGINAL_FATES, PART_GOES, restructuringProblem } from "../../src/model/types.ts";
 import type { BoardView, DiffFile, DiffView, ItemPage, RoundRow, SessionDetailsView } from "./api.ts";
 import { Fragment } from "preact";
 import type { ComponentChildren } from "preact";
@@ -644,56 +645,153 @@ function useSend(): { busy: boolean; error: string | null; send: (write: () => P
   return { busy, error, send };
 }
 
+/** Where a part goes, as the board says it. */
+const GOES_LABEL: Record<PartGoes, string> = { original: "Stays in this item", child: "New sub-item", related: "New related item", unlinked: "New item, not linked", into: "Into an existing item" };
+/** What becomes of this item, as the board says it. */
+const FATE_LABEL: Record<OriginalFate, string> = { keeps: "Keeps one part", umbrella: "Becomes an umbrella", replaced: "Is closed, replaced by the parts" };
+
+/** Where one part goes, in a few words: "New sub-item", "Into #12". */
+const goesText = (part: ProposedPart): string => (part.goes === "into" ? `Into ${/^\d+$/.test(part.into ?? "") ? "#" : ""}${part.into ?? "?"}` : GOES_LABEL[part.goes]);
+
+/** An existing Item a part goes into, as it stands. */
+type IntoTarget = { key: string; label: string; title: string; state: string; busy?: string };
+
+/** The target's title, and a warning when it is closed or being worked on. */
+function TargetNote({ target }: { target: IntoTarget | null | undefined }) {
+  if (target === undefined) return null;
+  if (target === null) return <span class="error"> no such item here</span>;
+  const closed = target.state === "done" || target.state === "abandoned";
+  return (
+    <>
+      {" "}<a href={itemHref(target.key)}>{target.title}</a>
+      {closed && <span class="error"> ({target.state}: Accept refuses it)</span>}
+      {!closed && target.busy && <span class="muted"> ({target.busy})</span>}
+    </>
+  );
+}
+
+/** The existing Items typed into Edit, looked up as they are typed: id to the target, null when there is none, absent while unknown. */
+function useTargets(host: string, ids: readonly string[]): Map<string, IntoTarget | null> {
+  const [found, setFound] = useState<Map<string, IntoTarget | null>>(new Map());
+  const wanted = [...new Set(ids.filter(Boolean))];
+  useEffect(() => {
+    const missing = wanted.filter((id) => !found.has(id));
+    if (missing.length === 0) return;
+    let live = true;
+    const timer = setTimeout(() => {
+      void Promise.all(missing.map(async (id) => {
+        try {
+          const page = await fetchItem(`${host}:work:${id}`);
+          const target: IntoTarget = { key: page.item.key, label: page.item.label, title: page.item.title, state: page.item.state };
+          return [id, target] as [string, IntoTarget | null];
+        } catch {
+          return [id, null] as [string, IntoTarget | null];
+        }
+      })).then((pairs) => {
+        if (live) setFound((before) => new Map<string, IntoTarget | null>([...before, ...pairs]));
+      });
+    }, 400);
+    return () => {
+      live = false;
+      clearTimeout(timer);
+    };
+  }, [host, wanted.join(",")]);
+  return found;
+}
+
 /**
- * Triage found the item too large and proposes its parts: each part's text, and Accept, Edit and Reject. Where the host can be
- * written here, accepting creates the parts as sub-items; otherwise the parts are text for a person to create by hand.
+ * Triage proposes to restructure the item: each part's text and where it goes, what becomes of this item, and Accept, Edit and
+ * Reject. Edit changes the parts' text, where each goes, and this item's fate. Where the host can be written here, accepting makes
+ * the parts; otherwise it is text for a person to carry out by hand.
  */
-function SplitProposal({ page, proposal, parts, now, reload, primary }: { page: ItemPage; proposal: NonNullable<ItemPage["proposal"]>; parts: ProposedPart[]; now: number; reload: () => void; primary: boolean }) {
+function RestructureProposal({ page, proposal, now, reload, primary }: { page: ItemPage; proposal: NonNullable<ItemPage["proposal"]>; now: number; reload: () => void; primary: boolean }) {
   const main = primary ? "primary" : undefined;
   const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState<ProposedPart[]>(parts);
+  const [draft, setDraft] = useState<ProposedPart[]>(proposal.parts);
+  const [fate, setFate] = useState<OriginalFate>(proposal.original);
   const { busy, error, send } = useSend();
   const created = proposal.created ?? [];
-  const decide = (action: "accept" | "edit" | "reject") =>
-    send(() => postProposal(page.item.key, action, { ...(action === "edit" ? { parts: draft } : {}), ...(proposal.at ? { to: proposal.at } : {}) }).then(reload));
-  const change = (index: number, field: keyof ProposedPart, value: string) => setDraft(draft.map((part, at) => (at === index ? { ...part, [field]: value } : part)));
+  const madeFor = (index: number) => created.find((made) => made.part === index);
+  const host = page.item.key.split(":")[0] ?? "";
+  const typed = useTargets(host, editing ? draft.flatMap((part) => (part.goes === "into" && part.into ? [part.into] : [])) : []);
+  const shownTarget = (part: ProposedPart, index: number): IntoTarget | null | undefined => {
+    if (part.goes !== "into" || !part.into) return undefined;
+    const known = proposal.targets?.[index];
+    if (known && proposal.parts[index]?.into === part.into) return known;
+    return typed.has(part.into) ? typed.get(part.into)! : undefined;
+  };
+  const problem = editing ? restructuringProblem(fate, draft) ?? (draft.some((part) => !part.title.trim()) ? "Each part needs a title." : undefined) : undefined;
+  const decide = (action: "accept" | "edit" | "reject" | "stop") =>
+    send(() => postProposal(page.item.key, action, { ...(action === "edit" ? { parts: draft, original: fate } : {}), ...(proposal.at ? { to: proposal.at } : {}) }).then(reload));
+  const change = (index: number, patch: Partial<ProposedPart>) => setDraft(draft.map((part, at) => (at === index ? { ...part, ...patch } : part)));
+  const value = (event: Event) => (event.target as HTMLInputElement).value;
   return (
     <section class="panel panel-yours">
-      <h3>Proposed split into {parts.length} parts</h3>
+      <h3>Proposed restructuring</h3>
       <p class="question">{proposal.reason}</p>
       {proposal.at && <p class="muted">Proposed {ago(proposal.at, now)}.</p>}
       {created.length > 0 && (
         <p class="muted">
-          Already created: {created.map((child, index) => <span key={child.key}>{index > 0 ? ", " : ""}<a href={itemHref(child.key)}>{child.label}</a></span>)}. Accept again to create the rest.
+          Already made: {created.map((made, index) => <span key={made.key}>{index > 0 ? ", " : ""}<a href={itemHref(made.key)}>{made.label}</a></span>)}. Accept again to make the rest.
         </p>
       )}
-      {!editing &&
-        parts.map((part, index) => (
-          <div class="version" key={index}>
-            <p class="num">{index + 1}. {part.title}</p>
-            {part.description ? <Markdown text={part.description} /> : <p class="empty">No description.</p>}
-            <p class="muted">Verification: {part.verification || "none given"}</p>
-          </div>
-        ))}
+      {!editing && (
+        <>
+          <p><strong>This item:</strong> {FATE_LABEL[proposal.original].toLowerCase()}.</p>
+          {proposal.parts.map((part, index) => (
+            <div class="version" key={index}>
+              <p class="num">{index + 1}. {part.title} <span class="tag">{goesText(part)}</span><TargetNote target={shownTarget(part, index)} />{madeFor(index) && part.goes !== "into" && <> <a href={itemHref(madeFor(index)!.key)}>{madeFor(index)!.label}</a></>}</p>
+              {part.description ? <Markdown text={part.description} /> : <p class="empty">No description.</p>}
+              <p class="muted">Verification: {part.verification || "none given"}</p>
+            </div>
+          ))}
+        </>
+      )}
       {proposal.carried && (
         <div class="version">
-          <p class="muted num">Decisions carried over into each part</p>
+          <p class="muted num">Decisions carried over into each new item</p>
           <pre class="diff-text">{proposal.carried}</pre>
         </div>
       )}
       {editing && (
         <div class="answer">
+          <label for="restructure-fate">This item</label>
+          <select id="restructure-fate" value={fate} onChange={(event) => setFate(value(event) as OriginalFate)} disabled={busy}>
+            {ORIGINAL_FATES.map((each) => <option key={each} value={each}>{FATE_LABEL[each]}</option>)}
+          </select>
           {draft.map((part, index) => (
             <div key={index}>
               <label for={`part-title-${index}`}>Part {index + 1}: title</label>
-              <input id={`part-title-${index}`} value={part.title} onInput={(event) => change(index, "title", (event.target as HTMLInputElement).value)} disabled={busy} />
+              <input id={`part-title-${index}`} value={part.title} onInput={(event) => change(index, { title: value(event) })} disabled={busy} />
+              <label for={`part-goes-${index}`}>Goes</label>
+              <select id={`part-goes-${index}`} value={part.goes} onChange={(event) => change(index, { goes: value(event) as PartGoes })} disabled={busy}>
+                {PART_GOES.map((each) => <option key={each} value={each}>{GOES_LABEL[each]}</option>)}
+              </select>
+              {part.goes === "into" && (
+                <>
+                  <label for={`part-into-${index}`}>Existing item (its number or id)</label>
+                  <input id={`part-into-${index}`} value={part.into ?? ""} onInput={(event) => change(index, { into: value(event).trim().replace(/^#/, "") })} disabled={busy} />
+                  <p class="muted">{part.into ? <>Into {/^\d+$/.test(part.into) ? "#" : ""}{part.into}<TargetNote target={shownTarget(part, index)} /></> : "Name the item this part's text is added to."}</p>
+                </>
+              )}
               <label for={`part-description-${index}`}>Description</label>
-              <textarea id={`part-description-${index}`} rows={5} value={part.description} onInput={(event) => change(index, "description", (event.target as HTMLTextAreaElement).value)} disabled={busy} />
+              <textarea id={`part-description-${index}`} rows={5} value={part.description} onInput={(event) => change(index, { description: value(event) })} disabled={busy} />
               <label for={`part-verification-${index}`}>Verification</label>
-              <textarea id={`part-verification-${index}`} rows={2} value={part.verification} onInput={(event) => change(index, "verification", (event.target as HTMLTextAreaElement).value)} disabled={busy} />
+              <textarea id={`part-verification-${index}`} rows={2} value={part.verification} onInput={(event) => change(index, { verification: value(event) })} disabled={busy} />
+              {draft.length > 1 && (
+                <button type="button" onClick={() => setDraft(draft.filter((_, at) => at !== index))} disabled={busy}>
+                  Remove part {index + 1}
+                </button>
+              )}
             </div>
           ))}
-          <button type="button" class={main} onClick={() => decide("edit")} disabled={busy || draft.some((part) => !part.title.trim())}>
+          <p>
+            <button type="button" onClick={() => setDraft([...draft, { title: "", description: "", verification: "", goes: "child" }])} disabled={busy}>
+              Add a part
+            </button>
+          </p>
+          {problem && <p class="error">{problem}</p>}
+          <button type="button" class={main} onClick={() => decide("edit")} disabled={busy || problem !== undefined}>
             {busy ? "Saving…" : "Accept my version"}
           </button>{" "}
           <button type="button" onClick={() => setEditing(false)} disabled={busy}>
@@ -716,13 +814,18 @@ function SplitProposal({ page, proposal, parts, now, reload, primary }: { page: 
               Reject
             </button>
           )}
+          {created.length > 0 && (
+            <button type="button" onClick={() => decide("stop")} disabled={busy}>
+              Stop here
+            </button>
+          )}
         </p>
       )}
       <p class="muted">
         {proposal.canCreate
-          ? "Accept creates the parts as sub-items of this item, in order, with the decisions above carried over. This item then becomes an umbrella: the work happens in the parts."
-          : "Scope Soup cannot create items on this host. Accept records your decision; create the parts by hand as sub-items of this item, from the text above."}{" "}
-        {created.length === 0 ? "Reject starts the item over at triage, and triage is told not to propose this split again." : "Some parts exist already, so the split can only be finished, not rejected."}
+          ? "Accept makes the parts in order, with the decisions above carried over into each new item, then changes this item as it says. Nothing is made before."
+          : "Scope Soup cannot write items on this host. Accept records your decision; carry it out by hand from the text above."}{" "}
+        {created.length === 0 ? "Reject starts the item over at triage, and triage is told not to propose this again." : "Some parts exist already, so it can no longer be edited or rejected: Accept finishes it, and Stop here ends it with what exists, leaving the rest as text on this item for a person."}
       </p>
       {error && <p class="error">{error}</p>}
     </section>
@@ -1130,7 +1233,7 @@ function Body({ page, reload, resources }: { page: ItemPage; reload: () => void;
     page.parked?.refine ? "draft" : "",
     questionsAsk ? "questions" : "",
     openDecisions ? "decisions" : "",
-    page.proposal ? "split" : "",
+    page.proposal ? "restructure" : "",
     page.conflict ? "conflict" : "",
   ].filter(Boolean);
   const primary = asking[0];
@@ -1310,7 +1413,7 @@ function Body({ page, reload, resources }: { page: ItemPage; reload: () => void;
         </section>
       )}
 
-      {page.proposal && <SplitProposal key={page.proposal.at ?? "split"} page={page} proposal={page.proposal} parts={page.proposal.parts} now={now} reload={reload} primary={primary === "split"} />}
+      {page.proposal && <RestructureProposal key={page.proposal.at ?? "restructure"} page={page} proposal={page.proposal} now={now} reload={reload} primary={primary === "restructure"} />}
 
       {page.conflict && <Conflict itemKey={item.key} conflict={page.conflict} reload={reload} primary={primary === "conflict"} />}
 

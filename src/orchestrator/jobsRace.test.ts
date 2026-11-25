@@ -36,12 +36,12 @@ test("a release given while a tick holds its jobs is not undone by the tick's sa
 
 test("a proposal accepted while a tick holds its jobs is not undone by the tick's save", () => {
   const store = openStore(":memory:");
-  const proposal = { reason: "too large", parts: [{ title: "Part one", description: "", verification: "" }] };
+  const proposal = { id: "abc12345", reason: "too large", original: "umbrella" as const, parts: [{ title: "Part one", description: "", verification: "", goes: "child" as const }] };
   const asNeedsDecision = { ...parked, as: "needs-decision" } as unknown as NonNullable<Job["parked"]>;
   store.tx(() => saveJobs(store, { [K1]: job("1", { parked: asNeedsDecision, proposal }), [K2]: job("2") }));
   const tick = loadJobs(store);
   tick[K2]!.fixRounds = 2;
-  assert.equal(releaseJob(store, { host: "h", kind: "work", id: "1" }, "Ada", "2026-11-20T10:05:00Z", "Ada rejected the proposed split."), true);
+  assert.equal(releaseJob(store, { host: "h", kind: "work", id: "1" }, "Ada", "2026-11-20T10:05:00Z", "Ada rejected the proposed restructuring."), true);
   store.tx(() => saveJobs(store, tick));
   const after = loadJobs(store);
   assert.equal(after[K1], undefined, "the accepted proposal's job is not parked again");

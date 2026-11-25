@@ -18,7 +18,7 @@ import { at as plus, batch, change, member, ref, run, session, verdict, work } f
 import type { DiffView } from "../core/views.ts";
 import type { LogEntry } from "../hosts/metaBranch/log.ts";
 import { actorOf, describeLine } from "../hosts/metaBranch/map.ts";
-import type { Assumption, Change, LogRecord, LogWriter, Ref, Run, Runner, Session, WorkItem } from "../model/types.ts";
+import type { Assumption, Change, LogRecord, LogWriter, Ref, Restructuring, Run, Runner, Session, WorkItem } from "../model/types.ts";
 import type { RemoteBranches } from "../items/remoteBranch.ts";
 import type { LogLineInput, WorkPort, WriteOutcome, WritePort } from "../ports/host.ts";
 import type { AssumptionOutcome } from "../orchestrator/assumptions.ts";
@@ -82,6 +82,19 @@ export const DEMO_QUESTIONS: Decision[] = [
     multiSelect: true,
   },
 ];
+
+/** The triage's proposed restructuring of item 53. */
+const DEMO_RESTRUCTURING: Restructuring = {
+  id: "5eed0053",
+  reason: "Triage proposes to restructure the Item: 1 new child Item, 1 new related Item, 1 into #82; the Item keeps one part. Four changes that each merge on their own; sharing by link is already item 82.",
+  original: "keeps",
+  parts: [
+    { title: "Mark harbours as favourites", description: "A star on each harbour's page marks it as a favourite; the favourites are kept on the device.", verification: "Starring North Quay and reopening the app keeps it starred.", goes: "original" },
+    { title: "Favourites on the start screen", description: "The start screen lists the favourite harbours first, each with its next tide.", verification: "With two favourites the start screen lists them above the rest.", goes: "child" },
+    { title: "Share a favourite by link", description: "The share button on a favourite copies the same link item 82 makes.", verification: "", goes: "into", into: "82" },
+    { title: "Keep favourites' tables offline", description: "The tide tables of the favourite harbours are fetched daily and shown without a connection, marked with their age.", verification: "In flight mode a favourite shows yesterday's table with its age.", goes: "related" },
+  ],
+};
 
 /** The triage's question with its draft on item 41. */
 const DRAFT_QUESTION: Decision = {
@@ -282,6 +295,15 @@ export function seedDemo(store: Store, now: Date, dir?: string): void {
     job(52, {
       triage: { ready: true, size: "small", paths: [], hidesDecision: true, decision: DEMO_QUESTIONS[0]!, decisions: DEMO_QUESTIONS },
       parked: { as: "needs-decision", reason: `The triage asks ${DEMO_QUESTIONS.length} questions.`, at: at(-25) },
+    });
+    // A triage proposes to restructure item 53: it keeps one part, one becomes a sub-item, one goes into item 82, one stands on its own.
+    item(53, "Favourite harbours, shared by link and kept offline", {
+      body: "Let people mark harbours as favourites, list them on the start screen, share one by link, and keep their tables for use offline.",
+    });
+    step("t-53", 53, "triage", "opus", 20, 4);
+    job(53, {
+      proposal: DEMO_RESTRUCTURING,
+      parked: { as: "needs-decision", reason: `${DEMO_RESTRUCTURING.reason} Accept, edit or reject it on the item page.`, at: at(-16) },
     });
     item(44, "Export a harbour's table as PDF", { blockedBy: [ref("work", 52)] });
     item(47, "Offline copy of the last viewed harbour", { blockedBy: [ref("work", 44)] });

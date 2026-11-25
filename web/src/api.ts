@@ -5,7 +5,7 @@ import type { MergeQueueSetup, LevelChoice } from "../../src/config/levels.ts";
 import type { Sliders } from "../../src/config/sliders.ts";
 import type { ProjectConfig } from "../../src/config/types.ts";
 import type { ActivityView, BoardView, ChatView, FolderName, CommitView, DiffView, HistoryView, ItemBranchState, ItemListView, ItemPage, SessionDetailsView, UsageView } from "../../src/core/views.ts";
-import type { ProposedPart } from "../../src/model/types.ts";
+import type { OriginalFate, ProposedPart } from "../../src/model/types.ts";
 import { currentPerson, onPersonChange, personHeaders } from "./person.ts";
 import type { PickEntry } from "./heldDecisions.ts";
 
@@ -175,9 +175,6 @@ export async function postStartOver(ref: string): Promise<void> {
   }
 }
 
-/**
- * A person's decision on a proposed split: accept it, accept it with a person's own `parts` (edit), or reject it.
- */
 /** Settles the triage's draft, or sends answers that run the triage again. */
 export async function postDraft(ref: string, parkedAt: string, answers: string[], action: "accept" | "edit" | "reject", text?: string, labels?: { add: string[]; remove: string[] }): Promise<{ rerun: boolean; settled?: string }> {
   const response = await call("/api/draft", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ref, parkedAt, answers, action, ...(text !== undefined ? { text } : {}), ...(labels !== undefined ? { labels } : {}) }) });
@@ -186,7 +183,10 @@ export async function postDraft(ref: string, parkedAt: string, answers: string[]
   return { rerun: body?.rerun === true, ...(body?.settled ? { settled: body.settled } : {}) };
 }
 
-export async function postProposal(ref: string, action: "accept" | "edit" | "reject", fields: { parts?: ProposedPart[]; to?: string } = {}): Promise<{ released: boolean }> {
+/**
+ * A person's decision on a proposed restructuring: accept it, accept it with a person's own `parts` and `original` (edit), or reject it.
+ */
+export async function postProposal(ref: string, action: "accept" | "edit" | "reject" | "stop", fields: { parts?: ProposedPart[]; original?: OriginalFate; to?: string } = {}): Promise<{ released: boolean }> {
   const response = await call("/api/proposal", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ref, action, ...fields }) });
   const body = (await response.json().catch(() => null)) as { released?: boolean; error?: { message?: string } } | null;
   if (!response.ok) throw new Error(body?.error?.message ?? `The server answered ${response.status}.`);
