@@ -1,4 +1,4 @@
-// The Usage page, from /api/usage: how full each usage window is now (with the reserve and the forecast), a line plot per
+// The Usage page, from /api/usage: how full each usage window is now (a bar by role, with the forecast and the draggable reserve marker), a line plot per
 // window of how full it got over the span by who used it, and who used how much. Inline SVG and CSS only; the maths (plot
 // points, forecast line, ticks, stacking) is in src/core/usage.ts.
 
@@ -7,7 +7,7 @@ import type { UsagePageWindow, UsageView } from "./api.ts";
 import type { ConfigView } from "./api.ts";
 import { fetchConfig, fetchUsage, postConfig, useView } from "./api.ts";
 import { clockTime, span as spanWords } from "./format.ts";
-import { paceLines, resetMarks, stackPlot, timeTicks, usageParts, WINDOW_MS } from "../../src/core/usage.ts";
+import { expectedAtReset, nearestPosition, paceLines, resetMarks, stackPlot, timeTicks, usageBar, usageParts, WINDOW_MS } from "../../src/core/usage.ts";
 import type { UsageKey, UsagePlotKey } from "../../src/core/usage.ts";
 
 /** Bottom to top in the plot, top to bottom in the table. */
@@ -49,75 +49,81 @@ function useWidth(): [{ current: HTMLDivElement | null }, number] {
   return [ref, width];
 }
 
-/**
- * The pacing settings next to the meters: parallel sessions and the usage reserve, saved with the same call as the Settings
- * page (so a shared setting is saved for every machine and History says who changed it).
- */
-function Pacing({ onSaved }: { onSaved: () => void }) {
+/** The configuration as the Settings page saves it, so a shared setting is saved for every machine and History says who changed it. */
+interface Saver {
+  view: ConfigView | null;
+  busy: boolean;
+  error: string | null;
+  note: string | null;
+  save: (name: "maxParallelSessions" | "budgetReserve", value: number) => Promise<boolean>;
+}
+
+function useSaver(onSaved: () => void): Saver {
   const [view, setView] = useState<ConfigView | null>(null);
-  const [draft, setDraft] = useState<{ maxParallelSessions?: number; budgetReserve?: number }>({});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   useEffect(() => {
     fetchConfig().then(setView, () => setView(null));
   }, []);
-  if (!view || !view.present || !view.config) return null;
-  const settings = view.config.settings;
-  const level = view.config.level;
-  const parallel = draft.maxParallelSessions ?? settings.maxParallelSessions.value;
-  const position = draft.budgetReserve ?? settings.budgetReserve.value;
-  const table = view.sliders.budgetReserve;
-  const row = table[Math.min(table.length, Math.max(1, Math.round(position))) - 1];
   const save = (name: "maxParallelSessions" | "budgetReserve", value: number) => {
     setBusy(true);
     setError(null);
     setNote(null);
-    postConfig({ settings: { [name]: { value } } }).then(
+    return postConfig({ settings: { [name]: { value } } }).then(
       (next) => {
         setView(next);
-        setDraft({});
         setNote(next.shared ?? "Saved.");
         setBusy(false);
         onSaved();
+        return true;
       },
       (problem: unknown) => {
-        setDraft({});
         setError(problem instanceof Error ? problem.message : String(problem));
         setBusy(false);
+        return false;
       },
     );
   };
-  const range = (name: "maxParallelSessions" | "budgetReserve", value: number, min: number, max: number) => (
-    <input
-      type="range" min={min} max={max} step={1} value={value} disabled={busy}
-      onInput={(event) => setDraft({ ...draft, [name]: Number((event.target as HTMLInputElement).value) })}
-      onChange={(event) => save(name, Number((event.target as HTMLInputElement).value))}
-    />
-  );
+  return { view, busy, error, note, save };
+}
+
+/** The parallel sessions slider next to the meters; the reserve is the marker on each meter. */
+function Pacing({ saver }: { saver: Saver }) {
+  const [draft, setDraft] = useState<number | null>(null);
+  const { view, busy, error, note } = saver;
+  if (!view || !view.present || !view.config) return null;
+  const parallel = draft ?? view.config.settings.maxParallelSessions.value;
   return (
     <div class="usage-pacing">
       <label>
         <b>Parallel sessions</b>
-        {range("maxParallelSessions", parallel, 1, Math.max(8, parallel))}
+        <input
+          type="range" min={1} max={Math.max(8, parallel)} step={1} value={parallel} disabled={busy}
+          onInput={(event) => setDraft(Number((event.target as HTMLInputElement).value))}
+          onChange={(event) => void saver.save("maxParallelSessions", Number((event.target as HTMLInputElement).value)).then(() => setDraft(null))}
+        />
         <span>{parallel} at once, of every role</span>
       </label>
-      {level >= 1 && (
-        <label>
-          <b>Usage reserve</b>
-          {range("budgetReserve", position, 1, 5)}
-          <span>Position {position}{row ? `: keeps ${Math.round(row.fiveHour * 100)} % of the 5-hour window and ${Math.round(row.sevenDay * 100)} % of the week for you` : ""}</span>
-        </label>
-      )}
       {error && <p class="notice notice-bad" role="alert">{error}</p>}
       {note && !error && <p class="muted" role="status">{note}</p>}
     </div>
   );
 }
 
-function Meter({ window, now }: { window: UsagePageWindow; now: number }) {
+/** The reserve of each slider position for one window, position 1 first; absent when the reserve cannot be changed here. */
+function reservesOf(view: ConfigView | null, kind: UsagePageWindow["kind"]): number[] | undefined {
+  if (!view || !view.present || !view.config || view.config.level < 1) return undefined;
+  return view.sliders.budgetReserve.map((row) => (kind === "five_hour" ? row.fiveHour : row.sevenDay));
+}
+
+function Meter({ window, now, saver, picked, pick }: { window: UsagePageWindow; now: number; saver: Saver; picked: number | null; pick: (position: number | null) => void }) {
+  const track = useRef<HTMLDivElement>(null);
   const current = window.current;
-  const limit = window.reserve === undefined ? undefined : 1 - window.reserve;
+  const reserves = reservesOf(saver.view, window.kind);
+  // While the marker is dragged (or its saving is on its way) it shows the picked position's reserve.
+  const reserve = reserves && picked !== null ? reserves[picked - 1] : window.reserve;
+  const limit = reserve === undefined ? undefined : 1 - reserve;
   if (!current) {
     return (
       <div class="usage-meter">
@@ -127,23 +133,72 @@ function Meter({ window, now }: { window: UsagePageWindow; now: number }) {
     );
   }
   const used = Math.min(1, current.utilization);
-  const over = limit !== undefined && used >= limit;
   const resetsIn = Date.parse(current.resetsAt) - now;
+  const last = window.plot.points.at(-1);
+  const bar = usageBar(last?.parts ?? {}, current.utilization, STACK, limit, expectedAtReset(current.utilization, current.forecast));
+  const percent = (share: number) => `${(share * 100).toFixed(2)}%`;
+  const place = (span: { from: number; to: number }) => ({ left: percent(span.from), width: percent(span.to - span.from) });
+  const move = (event: PointerEvent) => {
+    const box = track.current?.getBoundingClientRect();
+    if (!box || !reserves || box.width <= 0) return;
+    pick(nearestPosition(reserves, 1 - (event.clientX - box.left) / box.width));
+  };
+  const drop = (event: PointerEvent) => {
+    (event.currentTarget as HTMLElement).releasePointerCapture?.(event.pointerId);
+    const saved = saver.view?.present && saver.view.config ? saver.view.config.settings.budgetReserve.value : undefined;
+    if (picked === null || picked === saved) return pick(null);
+    void saver.save("budgetReserve", picked).then((ok) => {
+      if (!ok) pick(null);
+    });
+  };
+  const warnNow = limit !== undefined && used >= limit;
+  const kinds = [...new Set(bar.used.map((segment) => segment.key))];
   return (
     <div class="usage-meter">
       <div class="usage-meter-head">
         <b>{TITLE[window.kind]}</b>
         <span><b class="usage-big">{pct(current.utilization)}</b> used</span>
       </div>
-      <div class="usage-track" role="meter" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(used * 100)} aria-label={`${TITLE[window.kind]} used`}>
-        {limit !== undefined && <div class="usage-track-reserve" style={{ left: `${limit * 100}%` }} />}
-        <div class={`usage-track-fill${over ? " over" : ""}`} style={{ width: `${used * 100}%` }} />
-        {limit !== undefined && <div class="usage-track-mark" style={{ left: `${limit * 100}%` }} title={`Reserve: Scope Soup starts nothing from ${pct(limit)}`} />}
+      <div class="usage-bar" ref={track}>
+        <div class="usage-track" role="meter" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(used * 100)} aria-label={`${TITLE[window.kind]} used`}>
+          {bar.reserve && <div class="usage-track-reserve" style={place(bar.reserve)} />}
+          {bar.used.map((segment) => (
+            <div key={segment.key} class="usage-seg" style={{ ...place(segment), background: COLOR[segment.key] }} title={`${LABEL[segment.key]} ${pct(segment.to - segment.from)}`} />
+          ))}
+          {bar.forecast.map((segment) => (
+            <div key={segment.from} class={`usage-seg usage-seg-forecast${segment.warn ? " warn" : ""}`} style={place(segment)} title={segment.warn ? "Forecast: past the reserve" : "Forecast up to the reset"} />
+          ))}
+        </div>
+        {limit !== undefined && (
+          reserves ? (
+            <div
+              class={`usage-thumb${picked !== null ? " dragging" : ""}${saver.busy ? " busy" : ""}`} style={{ left: percent(limit) }}
+              role="slider" aria-label={`Reserve of the ${TITLE[window.kind]}`} aria-valuemin={1} aria-valuemax={reserves.length}
+              aria-valuenow={picked ?? nearestPosition(reserves, reserve ?? 0)} aria-valuetext={`Scope Soup starts nothing from ${pct(limit)}`}
+              title={`Reserve: Scope Soup starts nothing from ${pct(limit)}. Drag to change.`}
+              onPointerDown={(event) => {
+                if (saver.busy) return;
+                (event.currentTarget as HTMLElement).setPointerCapture?.(event.pointerId);
+                pick(nearestPosition(reserves, reserve ?? 0));
+              }}
+              onPointerMove={(event) => picked !== null && (event.buttons & 1) !== 0 && move(event)}
+              onPointerUp={drop}
+              onPointerCancel={() => pick(null)}
+            ><span /></div>
+          ) : (
+            <div class="usage-thumb fixed" style={{ left: percent(limit) }} title={`Reserve: Scope Soup starts nothing from ${pct(limit)}`}><span /></div>
+          )
+        )}
       </div>
+      <ul class="usage-legend" aria-label="Colours of the bar">
+        {kinds.map((key) => <li key={key}><span class="usage-dot" style={{ background: COLOR[key] }} /> {SHORT[key]}</li>)}
+        {bar.forecast.length > 0 && <li><span class={`usage-dot usage-dot-forecast${bar.forecast.some((segment) => segment.warn) ? " warn" : ""}`} /> Forecast</li>}
+        {bar.reserve && <li><span class="usage-dot usage-dot-reserve" /> Reserve</li>}
+      </ul>
       <ul class="usage-facts">
         <li>{resetsIn > 0 ? `Resets ${clockTime(current.resetsAt, now)} (in ${spanWords(resetsIn)})` : `Reset due ${clockTime(current.resetsAt, now)}`}</li>
         {current.forecast && <li class={current.forecast.outcome === "used_up" ? "usage-warn" : ""}>Forecast: {current.forecast.words}</li>}
-        {limit !== undefined && <li>Reserve: Scope Soup starts nothing from {pct(limit)}</li>}
+        {limit !== undefined && <li class={warnNow ? "usage-warn" : ""}>Reserve: Scope Soup starts nothing from {pct(limit)}{reserves ? " (drag the marker to change)" : ""}</li>}
       </ul>
     </div>
   );
@@ -247,15 +302,15 @@ function Plot({ window, from, to }: { window: UsagePageWindow; from: number; to:
             </g>
           )}
           <g clip-path={`url(#clip-${window.kind})`}>
-            {pace.map((segment) => (
-              <line key={segment.to} class="usage-pace" x1={x(segment.from)} y1={y(0)} x2={x(segment.to)} y2={y(segment.level)} />
-            ))}
             {bands.map((band) => {
               const top = times.map((at, i) => `${x(at).toFixed(1)},${y(band.hi[i]!).toFixed(1)}`);
               const bottom = times.map((at, i) => `${x(at).toFixed(1)},${y(band.lo[i]!).toFixed(1)}`).reverse();
               return <polygon key={band.key} class={`usage-band${band.key === "earlier" ? " earlier" : ""}`} points={[...top, ...bottom].join(" ")} fill={COLOR[band.key]} />;
             })}
             {times.length > 0 && <polyline class={`usage-total${times.length > inner / 3 ? " dense" : ""}`} points={times.map((at, i) => `${x(at).toFixed(1)},${y(total(i)).toFixed(1)}`).join(" ")} />}
+            {pace.map((segment) => (
+              <line key={segment.to} class="usage-pace" x1={x(segment.from)} y1={y(0)} x2={x(segment.to)} y2={y(segment.level)} />
+            ))}
             {line.length > 1 && <polyline class="usage-forecast" points={line.map((point) => `${x(Date.parse(point.at)).toFixed(1)},${y(point.value).toFixed(1)}`).join(" ")} />}
           </g>
           {resets.map((reset) => (
@@ -373,6 +428,12 @@ export function Usage() {
   const [span, setSpan] = useState("7d");
   const { data, error, reload } = useView(() => fetchUsage(span), `usage:${span}`);
   const now = data ? Date.parse(data.now) : Date.now();
+  const saver = useSaver(reload);
+  // The reserve position being dragged, or saved and not yet reloaded.
+  const [picked, pick] = useState<number | null>(null);
+  useEffect(() => {
+    if (data) pick(null);
+  }, [data]);
   return (
     <section class="usage">
       <div class="panel">
@@ -394,10 +455,10 @@ export function Usage() {
         {!data && !error && <p class="empty">Loading…</p>}
         {data && (
           <div class="usage-meters">
-            {data.windows.map((window) => <Meter key={window.kind} window={window} now={now} />)}
+            {data.windows.map((window) => <Meter key={window.kind} window={window} now={now} saver={saver} picked={picked} pick={pick} />)}
           </div>
         )}
-        {data && <Pacing onSaved={reload} />}
+        {data && <Pacing saver={saver} />}
       </div>
       {data && data.windows.map((window) => <WindowBlock key={window.kind} window={window} view={data} />)}
     </section>

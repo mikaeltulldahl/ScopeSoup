@@ -424,3 +424,65 @@ export function paceAt(segment: PaceSegment, at: number): number | undefined {
   if (at < segment.from || at > segment.to) return undefined;
   return (segment.level * (at - segment.from)) / Math.max(1, segment.to - segment.from);
 }
+
+/** A stretch of a bar, as shares of the window (0 to 1). */
+export interface BarSpan {
+  from: number;
+  to: number;
+}
+
+export interface UsageBar {
+  /** The used part split by who used it, in the order of the keys given, from 0; always ends at the (capped) level used. */
+  used: (BarSpan & { key: UsagePlotKey })[];
+  /** From what is used to the level expected at the reset; `warn` is the part past the reserve limit. Empty when nothing more is expected. */
+  forecast: (BarSpan & { warn: boolean })[];
+  /** The reserve, from the limit to the end: the part Scope Soup keeps for people. Absent without a limit or with none kept. */
+  reserve?: BarSpan;
+}
+
+/**
+ * The "Now" bar of a usage window as segments: the used part split by role (`parts` as the plot's last point gives them; scaled to
+ * `utilization`, and what they leave out counts as "earlier"), then the forecast up to `expected` (how full it should be at the
+ * reset), in warning past `limit` (1 minus the reserve), and the reserve from `limit` to the end.
+ */
+export function usageBar(parts: Partial<Record<UsagePlotKey, number>>, utilization: number, keys: readonly UsagePlotKey[], limit: number | undefined, expected: number | undefined): UsageBar {
+  const level = Math.min(1, Math.max(0, utilization));
+  const sum = keys.reduce((total, key) => total + (parts[key] ?? 0), 0);
+  // Parts that add up to more than the reading are scaled down; less, the rest was used before anything was read.
+  const scale = sum > level && sum > 0 ? level / sum : 1;
+  const used: UsageBar["used"] = [];
+  let at = 0;
+  const add = (key: UsagePlotKey, width: number) => {
+    if (width <= 1e-9) return;
+    const to = Math.min(level, at + width);
+    if (to > at) used.push({ key, from: at, to });
+    at = to;
+  };
+  for (const key of keys) add(key, (parts[key] ?? 0) * scale);
+  if (level - at > 0.005) add("earlier", level - at);
+  const reach = expected === undefined ? level : Math.min(1, Math.max(level, expected));
+  const forecast: UsageBar["forecast"] = [];
+  if (reach - level > 1e-9) {
+    const split = limit === undefined ? reach : Math.min(reach, Math.max(level, limit));
+    if (split > level) forecast.push({ from: level, to: split, warn: false });
+    if (reach > split) forecast.push({ from: split, to: reach, warn: true });
+  }
+  const bar: UsageBar = { used, forecast };
+  if (limit !== undefined && limit < 1) bar.reserve = { from: Math.max(0, limit), to: 1 };
+  return bar;
+}
+
+/** The share the forecast expects at the reset: 1 when the window is used up before it, else the level expected then. */
+export function expectedAtReset(utilization: number, forecast: { outcome: "used_up" | "lasts"; atReset?: number } | undefined): number | undefined {
+  if (!forecast) return undefined;
+  return forecast.outcome === "used_up" ? 1 : Math.min(1, forecast.atReset ?? utilization);
+}
+
+/** The slider position (1-based) whose reserve is nearest to `reserve`; the lower position when two are equally near. */
+export function nearestPosition(reserves: readonly number[], reserve: number): number {
+  let best = 0;
+  reserves.forEach((value, index) => {
+    if (Math.abs(value - reserve) < Math.abs(reserves[best]! - reserve) - 1e-12) best = index;
+  });
+  return best + 1;
+}
