@@ -57,7 +57,7 @@ test("a Jira host is refused above level 0 with writes off, or with a bad site, 
   assert.match(bad({ ...base, host: { ...dc, site: undefined } }), /host.site must be the Jira site's address/);
   assert.match(bad({ ...base, host: { ...dc, project: "demo" } }), /must be a Jira project key/);
   assert.match(bad({ ...base, host: { ...dc, deployment: "server" } }), /host.deployment must be "cloud" .* or "datacenter"/);
-  // A Cloud host without this machine's email is valid: the board asks this machine to set up (decision 95).
+  // A Cloud host without this machine's email is valid: the board asks this machine to set up (decision 98).
   assert.equal(good({ ...base, host: { ...cloud, email: undefined } }).host?.kind, "jira");
   assert.match(bad({ ...base, host: { ...dc, email: "robin@example.test" } }), /needs no email/);
   assert.match(bad({ ...base, host: { ...dc, priorities: { P1: "urgent" } } }), /host.priorities.P1 must be one of blocker, critical, major, minor/);
@@ -75,7 +75,7 @@ test("the Cloud email is this machine's own: jira.email in the private file, nev
   assert.match(inShared.ok ? "" : inShared.errors.join("\n"), /host.email belongs to one person: it goes in that machine's scopesoup.config.json as jira.email/);
   const token = validateFiles({ ...own, jira: { email, token: "x" } }, { project: "p", host: shared }, BASE);
   assert.match(token.ok ? "" : token.errors.join("\n"), /jira.token: a token is never kept/);
-  // Each host's part stays side by side: a leftover one is ignored, never an error (decision 95).
+  // Each host's part stays side by side: a leftover one is ignored, never an error (decision 98).
   const leftover = validateFiles({ ...own, jira: { email }, meta: { prefix: "A" } }, { project: "p", host: { kind: "metaBranch" } }, BASE);
   assert.equal(leftover.ok, true, leftover.ok ? "" : leftover.errors.join("\n"));
   const onDataCenter = validateFiles({ ...own, jira: { email } }, { project: "p", host: dc }, BASE);

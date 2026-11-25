@@ -7,6 +7,8 @@ import { asOptions, asRestructuring, refKey } from "../model/types.ts";
 import { asLabelChange } from "../model/labels.ts";
 import type { Store } from "../store/store.ts";
 import { itemTextHash } from "../core/answerReuse.ts";
+import type { ProposedDraft } from "./drafts.ts";
+import { asDrafts } from "./drafts.ts";
 
 export type JobStep = "triage" | "implement" | "review";
 
@@ -40,7 +42,7 @@ export const LINK_TYPES: readonly LinkType[] = ["blockedBy", "blocks", "duplicat
 export type { ItemLinkAnswer, LinkType };
 
 /**
- * The triage's draft of the Item's description, parked for a person with its questions (each recommendation
+ * The triage's rewrite of the Item's description, parked for a person with its questions (each recommendation
  * pre-selected on the Item page). Keeping every recommendation, a person accepts, edits or rejects the draft in one action;
  * any other answer runs the triage again with the answers.
  */
@@ -111,6 +113,8 @@ export interface TriageAnswer {
   labels?: LabelChange;
   /** Questions about other Items, each with a draft of that Item's description when it needs one. */
   aboutOthers?: AboutOther[];
+  /** New Items it proposes, filed as drafts for a person (decision 95). */
+  drafts?: ProposedDraft[];
 }
 
 /** The implementor's answer. A refused command is read from the session's result, not asked for. */
@@ -125,6 +129,8 @@ export interface ImplementAnswer {
   decisions?: TakenDecision[];
   /** Questions about other Items (never a draft). */
   aboutOthers?: AboutOther[];
+  /** New Items it proposes, filed as drafts for a person (decision 95). */
+  drafts?: ProposedDraft[];
 }
 
 /** A decision the implementor took itself: what had to be decided, what it chose, the other options and why. Text from an agent: data. */
@@ -146,6 +152,8 @@ export interface Finding {
 export interface ReviewAnswer {
   verdict: "approve" | "changes";
   findings: Finding[];
+  /** New Items it proposes, filed as drafts for a person (decision 95). */
+  drafts?: ProposedDraft[];
 }
 
 export interface Job {
@@ -206,7 +214,7 @@ export interface Job {
   decision?: Decision;
   /** The restructuring triage proposed; the job parked until a person decides. */
   proposal?: Proposal;
-  /** The triage's draft description and its questions, parked for a person, or settled and about to go on. */
+  /** The triage's rewrite description and its questions, parked for a person, or settled and about to go on. */
   refine?: Refinement;
   /** Rounds of the refinement loop so far, kept while the triage runs again with the answers. */
   refineRounds?: number;
@@ -229,8 +237,13 @@ export interface Job {
    * (their count and `findingKey`s), cleared by an approval. `mergeQueue`: the last merging failure's key (`failureKey`).
    */
   progress?: { must?: number; findings?: string[]; mergeQueue?: string };
-  /** The `findingKey`s of the `should` findings already filed as follow-up Items, so one is filed once. */
-  followUps?: string[];
+  /**
+   * With `review.shouldFindings: "fix"`: the `findingKey`s of the `should` findings of an approval sent back to the implementor. They
+   * go back once; what an approval still says `should` after that merges and becomes a draft (decision 95).
+   */
+  shouldSent?: string[];
+  /** The implement step running now is that round for the `should` findings: one that commits nothing goes on to the merge. */
+  shouldRound?: true;
   /** The change a person saw at the fence and let go on (its paths and lines): the fence is widened to it. */
   fence?: FenceSeen;
   /**
@@ -550,12 +563,12 @@ export function settleDraft(store: Store, item: Ref, answers: readonly string[],
   if (stop) refine.stop = stop.stopsOn;
   if (stop?.duplicateOf) refine.duplicateOf = stop.duplicateOf;
   saveJobs(store, jobs);
-  store.appendEvent({ kind: `orchestrator.draft_${settled}`, subject: key, actor, data: { reason: `A person ${settled} the triage's draft (round ${refine.round}).${stop ? ` Answered: ${stop.stopsOn}.` : ""}`, round: refine.round, original: refine.original, draft: refine.draft } }, at);
+  store.appendEvent({ kind: `orchestrator.draft_${settled}`, subject: key, actor, data: { reason: `A person ${settled} the triage's rewrite (round ${refine.round}).${stop ? ` Answered: ${stop.stopsOn}.` : ""}`, round: refine.round, original: refine.original, draft: refine.draft } }, at);
   return { settled };
 }
 
 /**
- * A person accepted or edited the triage's draft, so Scope Soup wrote the description itself: the text it wrote
+ * A person accepted or edited the triage's rewrite, so Scope Soup wrote the description itself: the text it wrote
  * counts as the text the triage saw, not as an edit. `bodies` are the forms it may have been written in (as given, made inert).
  */
 export function adoptWritten(triaged: Triaged, bodies: readonly string[]): Triaged {
@@ -595,7 +608,7 @@ function asDecision(value: unknown): Decision | undefined {
  * Tool-call markup inside a string: the model ran fields together. Only `<parameter name=` or a closing tag named
  * after a field of the triage answer counts; an HTML closing tag such as `</summary>` in a reason is ordinary text.
  */
-const MARKUP = /<parameter\s+name\s*=|<\/(?:ready|notReadyReason|size|paths|blockers|questions|hidesDecision|decisions|decision|question|options|recommendation|context|proposal|parts|title|description|verification|reason|risk|riskReason|draft|links|aboutOthers|done|mergedAs|chosen|others|why|verdict|findings|severity|parameter)\s*>/;
+const MARKUP = /<parameter\s+name\s*=|<\/(?:ready|notReadyReason|size|paths|blockers|questions|hidesDecision|decisions|decision|question|options|recommendation|context|proposal|parts|title|description|verification|reason|risk|riskReason|draft|links|aboutOthers|drafts|done|mergedAs|chosen|others|why|verdict|findings|severity|parameter)\s*>/;
 
 /** True when any string anywhere in the value holds tool-call markup. */
 export function hasMarkup(value: unknown): boolean {
@@ -701,6 +714,8 @@ export function asTriage(value: unknown): TriageAnswer | null {
   if (labels) answer.labels = labels;
   const others = asAboutOthers(value.aboutOthers, true);
   if (others.length > 0) answer.aboutOthers = others;
+  const drafts = asDrafts(value.drafts, hasMarkup);
+  if (drafts.length > 0) answer.drafts = drafts;
   return answer;
 }
 
@@ -739,8 +754,8 @@ export function asLinks(value: unknown): ItemLinkAnswer[] {
 export function asImplement(value: unknown): ImplementAnswer | null {
   if (!isObj(value) || typeof value.done !== "boolean") return null;
   // Markup left inside a string (`recoverFields` could not take the fields out): the fields cannot be trusted to be complete.
-  // An `aboutOthers` entry with markup is dropped alone (`asAboutOthers`).
-  if (hasMarkup({ ...value, aboutOthers: undefined })) return null;
+  // An `aboutOthers` or `drafts` entry with markup is dropped alone (`asAboutOthers`, `asDrafts`).
+  if (hasMarkup({ ...value, aboutOthers: undefined, drafts: undefined })) return null;
   const answer: ImplementAnswer = { done: value.done, summary: typeof value.summary === "string" ? value.summary : "" };
   // `question`, or `decision` from an older answer or a fix session that was running at the upgrade.
   const decision = asDecision(value.question) ?? asDecision(value.decision);
@@ -750,6 +765,8 @@ export function asImplement(value: unknown): ImplementAnswer | null {
   if (decisions.length > 0) answer.decisions = decisions;
   const others = asAboutOthers(value.aboutOthers, false);
   if (others.length > 0) answer.aboutOthers = others;
+  const drafts = asDrafts(value.drafts, hasMarkup);
+  if (drafts.length > 0) answer.drafts = drafts;
   return answer;
 }
 
@@ -779,7 +796,7 @@ export function takenText(decisions: readonly TakenDecision[]): string {
 
 export function asReview(value: unknown): ReviewAnswer | null {
   if (!isObj(value) || (value.verdict !== "approve" && value.verdict !== "changes") || !Array.isArray(value.findings)) return null;
-  if (hasMarkup(value)) return null;
+  if (hasMarkup({ ...value, drafts: undefined })) return null;
   const findings: Finding[] = [];
   for (const entry of value.findings as unknown[]) {
     if (!isObj(entry) || typeof entry.text !== "string") return null;
@@ -789,7 +806,8 @@ export function asReview(value: unknown): ReviewAnswer | null {
     if (entry.ask === true) Object.assign(finding, { severity: "must", ask: true });
     findings.push(finding);
   }
-  return { verdict: value.verdict, findings };
+  const drafts = asDrafts(value.drafts, hasMarkup);
+  return { verdict: value.verdict, findings, ...(drafts.length > 0 ? { drafts } : {}) };
 }
 
 /** How a finding that should have been a question is marked for the implementor (prompts/implement.md names it). */

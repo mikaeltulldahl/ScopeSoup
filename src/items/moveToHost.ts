@@ -1,5 +1,5 @@
 // Moving Items from the meta branch to GitHub Issues or Jira, when the project connects to that host from Settings (#127,
-// decision 97). Only the Items a person ticked move, in four rounds, so a run that stops anywhere is finished by the next:
+// decision 98). Only the Items a person ticked move, in four rounds, so a run that stops anywhere is finished by the next:
 //   1. each becomes a new issue (title, description, verification, made inert) whose text ends with a marker line naming the old
 //      id; an issue an earlier run made is found by that marker (on Jira through an unfiltered look at the project) and reused;
 //      one that falls outside the host's filter stops the move before any old Item is touched;

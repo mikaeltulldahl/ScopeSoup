@@ -12,8 +12,8 @@ const card = (fields: Partial<Card>): Card => ({ lane: "backlog", tone: "waiting
 test("a person's turn shows what waits, not the question", () => {
   const asked = card({ actor: "anyone", tone: "yours", reason: "Answer the question: Triage, round 1: which harbour?", waits: "1 question" });
   assert.deepEqual(cardText(asked, ""), { kind: "text", text: "1 question" });
-  const draft = card({ actor: "person", person: { name: "mira", mine: false }, tone: "waiting", reason: "Answer 0 of 2 questions: x", waits: "a draft to accept" });
-  assert.deepEqual(cardText(draft, "olle"), { kind: "text", text: "a draft to accept" });
+  const draft = card({ actor: "person", person: { name: "mira", mine: false }, tone: "waiting", reason: "Answer 0 of 2 questions: x", waits: "a rewrite to accept" });
+  assert.deepEqual(cardText(draft, "olle"), { kind: "text", text: "a rewrite to accept" });
 });
 
 test("an agent's turn keeps its reason", () => {

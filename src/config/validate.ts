@@ -10,8 +10,8 @@ import { EFFORT_LEVELS, LEVELS, mcpToolEntry, PROVIDER_NAMES, ROLES } from "./ty
 import { CHECK_ROLES, withCheckRules } from "./checkRule.ts";
 import { proposeCheckCommand } from "./mergeQueue.ts";
 import { migrateConfig } from "./migrate.ts";
-import type { HostConfig, JiraHostConfig, MediaConfig, MergeQueueConfig, ResourceConfig, ResourceUser, WorkspacesConfig } from "./types.ts";
-import { RESOURCE_USERS } from "./types.ts";
+import type { HostConfig, JiraHostConfig, MediaConfig, MergeQueueConfig, ResourceConfig, ReviewConfig, ResourceUser, WorkspacesConfig } from "./types.ts";
+import { RESOURCE_USERS, SHOULD_FINDINGS } from "./types.ts";
 import { DEFAULT_CI_TIMEOUT_MINUTES } from "./types.ts";
 import { win32 } from "node:path";
 
@@ -56,7 +56,7 @@ const LEGACY_SETTINGS = ["reserveFiveHour", "reserveSevenDay"];
 const TOP_KEYS = [
   "workspaces", "remoteUrl", "checkCommand", "rerunFilesCommand", "setupCommand", "setupWatch",
   "version", "project", "repoPath", "ownClone", "mainBranch", "remote", "realPaths", "level", "keepAwake", "multiplayer", "machineName", "workspacesDir",
-  "streamsDir", "promptsDir", "bugLabels", "claude", "copilot", "settings", "roles", "host", "mergeQueue", "resources", "sharedResources", "media",
+  "streamsDir", "promptsDir", "bugLabels", "claude", "copilot", "settings", "roles", "host", "mergeQueue", "resources", "sharedResources", "media", "review",
 ];
 
 function isObj(value: unknown): value is Obj {
@@ -164,6 +164,16 @@ export function validateConfig(given: unknown, baseDir: string): ConfigResult {
   if (raw.media !== undefined) {
     if (isObj(raw.media)) media = mediaOf(raw.media, err);
     else err('media must be an object: "push" and "keepDaysAfterClose".');
+  }
+  let review: ReviewConfig | undefined;
+  if (raw.review !== undefined) {
+    const given = isObj(raw.review) ? raw.review : null;
+    if (!given) err('review must be an object: "shouldFindings".');
+    else {
+      for (const key of Object.keys(given)) if (key !== "shouldFindings") err(`review: unknown key "${key}". Known keys: shouldFindings.`);
+      if (!SHOULD_FINDINGS.includes(given.shouldFindings as ReviewConfig["shouldFindings"])) err(`review.shouldFindings must be one of ${SHOULD_FINDINGS.map((each) => `"${each}"`).join(", ")}.`);
+      else review = { shouldFindings: given.shouldFindings as ReviewConfig["shouldFindings"] };
+    }
   }
   let checkCommand: string[] | undefined;
   if (raw.checkCommand !== undefined) {
@@ -363,6 +373,7 @@ export function validateConfig(given: unknown, baseDir: string): ConfigResult {
       ...(setupCommand === undefined ? {} : { setupCommand }), ...(setupWatch === undefined ? {} : { setupWatch }),
       ...(mergeQueue === undefined ? {} : { mergeQueue }),
       ...(media === undefined ? {} : { media }),
+      ...(review === undefined ? {} : { review }),
       ...(resources.length > 0 ? { resources } : {}),
       claude, copilot, settings, roles,
     },

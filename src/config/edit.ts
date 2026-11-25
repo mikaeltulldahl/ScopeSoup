@@ -48,6 +48,8 @@ const SAFE: Record<string, true | ((value: unknown, err: (message: string) => vo
   sharedResources: true,
   // Agents' images: pushed to the remote or not, and how long a closed Item's are kept (validation checks the form).
   media: true,
+  // What a reviewer's `should` findings on an approved change do: "fix" or "draft" (decision 95).
+  review: true,
   // Singleplayer (false) or multiplayer (true): this machine's, in its private file (decision 93).
   multiplayer: true,
 };
@@ -303,7 +305,7 @@ export async function editConfig(file: string, change: unknown, options: EditOpt
 
   const read = readFiles(file, options);
   if (!read.ok) return { ok: false, status: 500, errors: read.errors };
-  // Singleplayer to multiplayer: the remote's shared settings first (decision 97). Joining them is checked against them, and
+  // Singleplayer to multiplayer: the remote's shared settings first (decision 98). Joining them is checked against them, and
   // done only after every other check, just before this machine's file is written.
   let join: { commit: string; raw: Obj; backup: string } | undefined;
   if (change.multiplayer === true && read.files.raw.multiplayer === false) {
@@ -404,7 +406,7 @@ export async function connectHost(file: string, connection: HostConnection, opti
     const old = isObj(current.host) && current.host.kind === connection.host.kind ? Object.fromEntries(Object.entries(current.host).filter(([key]) => !CONNECT_KEYS.includes(key))) : {};
     return { ...current, host: { ...old, ...connection.host } };
   };
-  // This machine's part of each host stays side by side (`meta`, `jira`): only the active host's is read (decision 95).
+  // This machine's part of each host stays side by side (`meta`, `jira`): only the active host's is read (decision 98).
   const nextOwn: Obj = { ...migrated.raw };
   if (connection.email !== undefined) nextOwn.jira = { ...(isObj(nextOwn.jira) ? nextOwn.jira : {}), email: connection.email };
   const nextShared = options.join ? files.shared.raw : withHost(files.shared.raw);

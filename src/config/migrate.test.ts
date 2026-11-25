@@ -31,7 +31,8 @@ type Obj = Record<string, unknown>;
 function ownPart(raw: Obj): Obj {
   const own: Obj = {};
   for (const [key, value] of Object.entries(raw)) {
-    if ((SHARED_KEYS.includes(key) && key !== "settings") || key === "dryRun" || key === "mergeQueue") continue;
+    // Format 0's `review` (a checklist) was this file's and is dropped by the migration; today's `review` is shared.
+    if ((SHARED_KEYS.includes(key) && key !== "settings" && key !== "review") || key === "dryRun" || key === "mergeQueue") continue;
     if (key === "settings") own.settings = Object.fromEntries(Object.entries(value as Obj).filter(([name]) => !SHARED_SETTINGS.includes(name)));
     else own[key] = value;
   }

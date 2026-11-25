@@ -1,4 +1,4 @@
-// Settings' Players switch from singleplayer to multiplayer (decision 95): the remote's shared settings are read first. When they
+// Settings' Players switch from singleplayer to multiplayer (decision 98): the remote's shared settings are read first. When they
 // name another project or host the switch waits for the person: "Join theirs" backs this clone's meta ref up under
 // refs/scopesoup-backup/ and uses the remote's; "Make mine the project's" goes on as before. The same project and host need no
 // question. Real repositories: a bare remote with the project's settings, and a clone that played alone.

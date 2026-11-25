@@ -3,6 +3,10 @@
   "additionalProperties": false,
   "required": ["done", "summary"],
   "properties": {
+    "drafts": { "type": "array", "items": {
+      "type": "object", "additionalProperties": false, "required": ["title", "description", "verification"],
+      "properties": { "title": { "type": "string" }, "description": { "type": "string" }, "verification": { "type": "string" } }
+    } },
     "done": { "type": "boolean" },
     "summary": { "type": "string" },
     "mergedAs": { "type": "string" },

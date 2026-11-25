@@ -1,4 +1,4 @@
-// Settings' "Connect to GitHub Issues" and "Connect to Jira" (#127, decision 95): what the dialog sent, read into the shared
+// Settings' "Connect to GitHub Issues" and "Connect to Jira" (#127, decision 98): what the dialog sent, read into the shared
 // `host` (and Jira Cloud's email for this machine), then one look at the host with the token from the environment, so the dialog
 // can say what connecting would do before anything is written. The token is only read from the environment: never asked for,
 // shown or kept. The Items a person ticks move with `src/items/moveToHost.ts`; the rest stay on the meta branch. The same dialog

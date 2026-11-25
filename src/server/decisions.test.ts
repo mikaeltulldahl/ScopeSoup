@@ -194,7 +194,7 @@ test("a triage's draft: keeping the recommendation accepts it in one action, the
     item: subject, workspace: "w", branch: `scopesoup/${subject.id}`, step: "triage", failures: 0, fixRounds: 0, startedAt: at,
     triage: { ready: true, size: "small", paths: [], hidesDecision: true, decision: question, decisions: [question], draft: "Show the tide table in metres." },
     refine: { original: "Tide table units.", draft: "Show the tide table in metres.", questions: [question], round: 1 }, refineRounds: 1,
-    parked: { as: "needs-decision", reason: "Triage, round 1: a draft description and 1 question(s) wait for an answer: 1. Metric or imperial?", at },
+    parked: { as: "needs-decision", reason: "Triage, round 1: a rewrite of the description and 1 question(s) wait for an answer: 1. Metric or imperial?", at },
   };
   store.tx(() => saveJobs(store, { ...loadJobs(store), [ref]: job }));
 
@@ -212,7 +212,7 @@ test("a triage's draft: keeping the recommendation accepts it in one action, the
   const after = await page(ref);
   assert.equal(after.item.body?.trim(), "Show the tide table in metres.");
   assert.ok(after.history.some((line) => /Changed description \(triage, round 1\)\. Before: Tide table units\./.test(line.text)), JSON.stringify(after.history));
-  assert.deepEqual(after.answers.map((each) => each.question), ["Metric or imperial?", "Triage draft, round 1"]);
+  assert.deepEqual(after.answers.map((each) => each.question), ["Metric or imperial?", "Triage rewrite, round 1"]);
   assert.equal(after.parked, undefined);
   assert.equal(loadJobs(store)[ref]?.refine?.settled, "accepted");
   // Answered once: a second press finds no draft.
@@ -250,7 +250,7 @@ async function labelDraft(title: string): Promise<{ ref: string; at: string }> {
     item: subject, workspace: "w", branch: `scopesoup/${subject.id}`, step: "triage", failures: 0, fixRounds: 0, startedAt: at,
     triage: { ready: true, size: "small", paths: [], hidesDecision: false, draft: `${title}, in metres.` },
     refine: { original: `${title}.`, draft: `${title}, in metres.`, questions: [], round: 1, labels: { add: ["bug"], remove: ["question"] } }, refineRounds: 1,
-    parked: { as: "needs-decision", reason: "Triage, round 1: a draft description waits for a person to accept, edit or reject. Labels: +bug, −question.", at },
+    parked: { as: "needs-decision", reason: "Triage, round 1: a rewrite of the description waits for a person to accept, edit or reject. Labels: +bug, −question.", at },
   } }));
   return { ref, at };
 }

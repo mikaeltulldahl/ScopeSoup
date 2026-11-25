@@ -224,6 +224,6 @@ describe("recovery from GitHub", () => {
     const { jobs } = await deletedStore();
     const job = jobs[key("6")]!;
     assert.deepEqual(job.refine, { original: "Show the tides, edited by a person.", draft: "Show the tides, kindly.", questions: [], round: 1 });
-    assert.match(job.parked?.reason ?? "", /The description the draft read is no longer known: the current one is shown as the original\.$/);
+    assert.match(job.parked?.reason ?? "", /The description the rewrite read is no longer known: the current one is shown as the original\.$/);
   });
 });

@@ -206,7 +206,7 @@ function progressTurn(situation: Situation, ctx: TurnContext): Draft {
     return { actor: "agent", tone: "blocked", since: batch.finishedAt, reason: `it broke ${batchName(batch.ref)} and was taken out; waiting for an implementor session` };
   }
   if (session) return sessionTurn(session, ctx);
-  if (change) return { actor: "agent", tone: "waiting", since: change.updatedAt, reason: "its change is still a draft and no session is running; waiting for a free agent slot" };
+  if (change) return { actor: "agent", tone: "waiting", since: change.updatedAt, reason: "its pull request is not marked ready for review and no session is running; waiting for a free agent slot" };
   if (item.holder) return heldTurn(item, ctx);
   return { actor: "agent", tone: "blocked", reason: "marked in progress on the host, but nobody holds it and no session is running" };
 }
@@ -294,9 +294,9 @@ function parkedTurn(parked: Parked, situation: Situation): Draft {
     const count = (n: number): string => `${n} question${n === 1 ? "" : "s"}`;
     if (parked.proposal) return { ...base, waits: "a restructuring to accept", reason: `Accept, edit or reject the proposed restructuring: ${parked.proposal.reason}` };
     const open = (parked.questions ?? []).filter((question) => question.answer === undefined);
-    if ((parked.questions ?? []).length > 0) return { ...base, waits: open.length === 0 && parked.refine ? "a draft to accept" : count(open.length), reason: `Answer ${open.length} of ${parked.questions!.length} questions: ${(open[0] ?? parked.questions![0]!).question}` };
+    if ((parked.questions ?? []).length > 0) return { ...base, waits: open.length === 0 && parked.refine ? "a rewrite to accept" : count(open.length), reason: `Answer ${open.length} of ${parked.questions!.length} questions: ${(open[0] ?? parked.questions![0]!).question}` };
     if (parked.decision && parked.decision.options.length > 0) return { ...base, waits: "1 question", reason: `Pick an option: ${parked.decision.question}` };
-    return { ...base, waits: parked.refine ? "a draft to accept" : "1 question", reason: `Answer the question: ${parked.decision?.question ?? parked.reason}` };
+    return { ...base, waits: parked.refine ? "a rewrite to accept" : "1 question", reason: `Answer the question: ${parked.decision?.question ?? parked.reason}` };
   }
   if (parked.as === "handed-over") {
     const { change, item } = situation;

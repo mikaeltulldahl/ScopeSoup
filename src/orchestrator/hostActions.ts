@@ -14,8 +14,7 @@ import type { AnswerWrite, AssumptionWrite, DraftWrite, Host, QuestionWrite, Wor
 import { AlreadyAnswered } from "../ports/host.ts";
 import type { Store } from "../store/store.ts";
 import type { Actions } from "./ports.ts";
-import type { FollowUpItem } from "./followUp.ts";
-import { inertText, withoutMarks } from "./hostText.ts";
+import { inertText } from "./hostText.ts";
 import { isOwnLabel } from "../model/labels.ts";
 import { loadJobs } from "./jobs.ts";
 import type { Git } from "./process.ts";
@@ -427,27 +426,6 @@ export function createHostActions(deps: HostActionsDeps): Actions {
             : {}),
         };
       })()
-      : {}),
-
-    // A follow-up Item for the `should` findings of an approved change, found again by its mark.
-    ...(write?.createWork
-      ? {
-        async fileFollowUp(item: Ref, work: FollowUpItem) {
-          if (!mine(item)) return null;
-          const filed = deps.store.list<WorkItem>("work", host.info.id).find((each) => refKey(each.ref) !== refKey(item) && (each.body ?? "").includes(work.mark));
-          if (filed) return filed.ref;
-          const created = await write.createWork!({
-            // Agent text never carries a mark of Scope Soup's own: only the one the code adds counts.
-            title: inertText(work.title), body: `${withoutMarks(inertText(work.body))}
-
-${work.mark}`, verification: inertText(work.verification),
-            followUpOf: work.of,
-            ...(write.appendLog ? { log: [{ kind: "created", by: SCOPESOUP, fields: { via: `review of ${item.id}` } }] } : {}),
-          });
-          await reread(created.work);
-          return created.work;
-        },
-      }
       : {}),
 
     async appendLog(item, kind, fields) {

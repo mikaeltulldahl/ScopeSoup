@@ -147,7 +147,7 @@ export function describeHosts(settings: HostSettings): string {
   return `Syncing ${names.join(" and ")} (host from the ${settings.from === "file" ? "configuration file" : "environment"}).`;
 }
 
-/** What this machine still needs for the project's host, before it starts agents (decision 95). */
+/** What this machine still needs for the project's host, before it starts agents (decision 98). */
 export interface MachineSetup {
   kind: "github" | "jira";
   /** In words, each with where it goes: `jira.email` (this machine's file), `SCOPESOUP_JIRA_TOKEN` (the environment). */

@@ -156,7 +156,7 @@ async function main(): Promise<void> {
   if (first && !first.config) throw new Error(`${configFile}: ${first.error ?? "could not be read"}`);
   const hostSet = hostSettings(first?.config ?? null, env, (path) => resolve(path));
   // What this machine lacks for the project's host (a token, the Jira Cloud email): the board asks for it ("Set up this machine"),
-  // and until it is there the host is not read and no agent starts (decision 95).
+  // and until it is there the host is not read and no agent starts (decision 98).
   const setup = machineSetup(first?.config ?? null, env);
   if (setup) {
     delete hostSet.github;

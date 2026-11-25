@@ -1,4 +1,4 @@
-// Settings' connect dialogs (#127, decision 95): `POST /api/connect` says what connecting would do, or why it cannot, and writes
+// Settings' connect dialogs (#127, decision 98): `POST /api/connect` says what connecting would do, or why it cannot, and writes
 // only when confirmed; from the meta branch it moves the ticked Items; in join mode it sets up this machine only. The token comes
 // from the given environment, the hosts are the fakes, the shared settings are in memory and the meta branch's writes are recorded.
 

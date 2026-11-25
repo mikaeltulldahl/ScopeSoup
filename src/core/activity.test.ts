@@ -30,9 +30,9 @@ test("an Item's log gives created, the accepted draft, questions and answers, ho
     ["merge", "Scope Soup", "Merged abcdef1 to main, by the implementor"],
     ["item", "mira", "Let the Item go"],
     ["item", "mira", "Took the Item"],
-    ["triage", "mira", "Accepted the triage's draft (round 1)"],
+    ["triage", "mira", "Accepted the triage's rewrite (round 1)"],
     ["question", "mira", "Answered: Lowest astronomical tide"],
-    ["question", "Scope Soup", "The triage's draft (round 1) asks: Which datum?"],
+    ["question", "Scope Soup", "The triage's rewrite (round 1) asks: Which datum?"],
     ["item", "mira", "Created the Item"],
   ]);
   assert.deepEqual(view.rows[0]!.items, [{ key: "demo:work:12", id: "12", title: "Tide table" }]);
@@ -107,7 +107,7 @@ test("switches pressed together are one row; upgrades, drafts rejected and setti
   assert.deepEqual(rows.map((row) => [row.kind, row.who, row.text]), [
     ["settings", "mira", "Level 3 → 4; Models: triage Sonnet → Haiku"],
     ["settings", "mira", "Changed this machine's own settings: settings"],
-    ["triage", "ines", "Rejected the triage's draft (round 2)"],
+    ["triage", "ines", "Rejected the triage's rewrite (round 2)"],
     ["upgrade", "scopesoup", "Upgraded Scope Soup from 0.7.0 to 0.8.0"],
     ["switch", "jonas", "Pressed Stop: every switch stopped and running sessions ended"],
     ["switch", "main-guard", "Paused the implementors"],

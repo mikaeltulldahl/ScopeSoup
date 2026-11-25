@@ -1,4 +1,4 @@
-// Settings' "Connect to GitHub Issues" and "Connect to Jira" (#127, decision 95): a dialog that asks what the host needs, lets the
+// Settings' "Connect to GitHub Issues" and "Connect to Jira" (#127, decision 98): a dialog that asks what the host needs, lets the
 // server check it (the configuration, the token from the environment, one look at the host, no agent session running anywhere) and
 // say what connecting would do, and only then connects. From the meta branch it lists the open Items; the ticked ones move.
 // In join mode ("Set up this machine") the host is the project's, shown and not changed: only this machine's part is asked for.

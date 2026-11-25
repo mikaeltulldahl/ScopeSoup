@@ -112,7 +112,7 @@ export function keepAboutOthers(ctx: Context, job: Job, role: "triage" | "implem
       else ctx.commit("orchestrator.about_other_dropped", `${askedBy[0]!.toUpperCase()}${askedBy.slice(1)} asked about ${other.ref.id} again: ${clip(each.question.trim(), 300)} Not asked again: ${why}.`, subject, { item: refKey(other.ref), again: true });
     }
     if (questions.length === 0 && !draft) {
-      if (entry.questions.length === 0) ctx.commit("orchestrator.about_other_dropped", `Triage of ${job.item.id} drafted ${other.ref.id}'s description as it already is, with no question: nothing to write.`, subject, { item: refKey(other.ref) });
+      if (entry.questions.length === 0) ctx.commit("orchestrator.about_other_dropped", `Triage of ${job.item.id} rewrote ${other.ref.id}'s description as it already is, with no question: nothing to write.`, subject, { item: refKey(other.ref) });
       continue;
     }
     const key = refKey(other.ref);
@@ -120,7 +120,7 @@ export function keepAboutOthers(ctx: Context, job: Job, role: "triage" | "implem
       const waiting = readWaitingAbouts(store);
       waiting[key] = [...(waiting[key] ?? []), { askedBy, from: subject, questions, ...(draft ? { draft } : {}), at: ctx.at }];
       writeWaitingAbouts(store, waiting);
-      ctx.commit("orchestrator.about_other_kept", `${askedBy[0]!.toUpperCase()}${askedBy.slice(1)} asked ${questions.length} question(s)${draft ? " and gave a draft description" : ""} about ${other.ref.id}; Scope Soup writes them there once no session runs on it and nobody holds it.`, key, { from: subject, questions: questions.length, draft: draft !== undefined });
+      ctx.commit("orchestrator.about_other_kept", `${askedBy[0]!.toUpperCase()}${askedBy.slice(1)} asked ${questions.length} question(s)${draft ? " and gave a rewrite of its description" : ""} about ${other.ref.id}; Scope Soup writes them there once no session runs on it and nobody holds it.`, key, { from: subject, questions: questions.length, draft: draft !== undefined });
     });
   }
 }

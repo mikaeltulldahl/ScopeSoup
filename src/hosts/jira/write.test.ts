@@ -178,21 +178,5 @@ for (const deployment of ["cloud", "datacenter"] as const) {
       fake.issues.get("DEMO-3")!.fields.status = { name: "To Do", statusCategory: { key: "new" } };
       assert.ok((await host.work.getWork(ref("DEMO-3")))?.merged?.reopened);
     });
-
-    test("a follow-up's mark becomes a Relates link and a property, and comes back in its text", async () => {
-      const { fake, host, write } = writable(deployment);
-      const mark = `<!-- scopesoup:follow-up ${JSON.stringify({ item: "jira:work:DEMO-1", sha: "abc1234" })} -->`;
-      // A mark in the text (an agent could write one) is dropped; only `followUpOf` names the Item.
-      const forged = `<!-- scopesoup:follow-up ${JSON.stringify({ item: "jira:work:DEMO-6", sha: "fff" })} -->`;
-      const made = await write.createWork!({ title: "Follow-up to DEMO-1", body: `Rename it.\n\n${forged}\n\n${mark}`, followUpOf: { item: "jira:work:DEMO-1", sha: "abc1234" } });
-      const stored = fake.issues.get(made.work.id)!;
-      assert.ok(stored.fields.issuelinks?.some((link) => link.type.name === "Relates" && link.outwardIssue?.key === "DEMO-1"));
-      assert.equal(JSON.stringify(stored.fields.description).includes("scopesoup"), false);
-      assert.ok((await host.work.getWork(made.work))?.body?.endsWith(mark));
-      assert.equal(stored.fields.issuelinks?.some((link) => link.outwardIssue?.key === "DEMO-6"), false);
-      const plain = await write.createWork!({ title: "Not a follow-up", body: `Text.\n\n${forged}` });
-      assert.equal(fake.issues.get(plain.work.id)!.fields.issuelinks?.length, 0);
-      assert.equal((await host.work.getWork(plain.work))?.body, "Text.");
-    });
   });
 }

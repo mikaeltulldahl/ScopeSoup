@@ -580,3 +580,14 @@ test("media: images stay on this machine and are kept unless the project says ot
   assert.equal(files.ok, false);
   if (!files.ok) assert.match(files.errors.join(" "), /media is a project setting/);
 });
+
+test("review.shouldFindings: \"fix\" (the default) or \"draft\"; anything else is refused with what it may be", () => {
+  const base = { project: "synthetic", machineName: "laptop-a", repoPath: "/srv/clone", version: 1 };
+  const read = (review: unknown) => validateConfig({ ...base, review }, "/srv/scopesoup");
+  const fine = read({ shouldFindings: "draft" });
+  assert.deepEqual(fine.ok ? fine.config.review : fine.errors, { shouldFindings: "draft" });
+  const none = validateConfig(base, "/srv/scopesoup");
+  assert.equal(none.ok ? none.config.review : "refused", undefined);
+  const wrong = read({ shouldFindings: "later", other: 1 });
+  assert.deepEqual(wrong.ok ? [] : wrong.errors, ['review: unknown key "other". Known keys: shouldFindings.', 'review.shouldFindings must be one of "fix", "draft".']);
+});

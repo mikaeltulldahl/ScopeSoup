@@ -1,6 +1,7 @@
 // Overview: the your-turn list first (what waits on a person, not the details), then the lanes. Columns on a wide screen, stacked
 // and collapsible on a phone.
 
+import { DraftCard } from "./DraftCard.tsx";
 import { Fragment } from "preact";
 import type { ComponentChildren } from "preact";
 import { useState } from "preact/hooks";
@@ -177,7 +178,9 @@ export function Overview({ board, busy, onSwitch }: { board: BoardView; busy: bo
         />
       </Dialog>
     ) : null;
-  const empty = board.lanes.every((lane) => lane.total === 0) && board.yourTurn.length === 0;
+  const drafts = board.drafts ?? [];
+  const waiting = board.yourTurn.length + drafts.length;
+  const empty = board.lanes.every((lane) => lane.total === 0) && waiting === 0;
   if (empty) {
     return (
       <section class="panel empty-board">
@@ -212,16 +215,19 @@ export function Overview({ board, busy, onSwitch }: { board: BoardView; busy: bo
       )}
       {dialog}
       {board.withoutTriage ? <NoTriage count={board.withoutTriage} /> : null}
-      <section class={board.yourTurn.length > 0 ? "your-turn waiting" : "your-turn"} aria-labelledby="your-turn-title">
+      <section class={waiting > 0 ? "your-turn waiting" : "your-turn"} aria-labelledby="your-turn-title">
         <h2 id="your-turn-title">
-          {theme.words.yourTurn} <span class="count num">{board.yourTurn.length}</span>
+          {theme.words.yourTurn} <span class="count num">{waiting}</span>
         </h2>
-        {board.yourTurn.length === 0 ? (
+        {waiting === 0 ? (
           <p class="empty">Nothing waits for you.</p>
         ) : (
           <div class="your-turn-list">
             {board.yourTurn.map((card) => (
               <Card key={card.key} card={card} showLane />
+            ))}
+            {drafts.map((draft) => (
+              <DraftCard key={draft.id} draft={draft} />
             ))}
           </div>
         )}

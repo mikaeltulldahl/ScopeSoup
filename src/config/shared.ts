@@ -28,7 +28,7 @@ export const PRIVATE_KEYS: readonly string[] = [
 /** Top-level keys of the shared settings. */
 export const SHARED_KEYS: readonly string[] = [
   "project", "host", "mainBranch", "level", "checkCommand", "rerunFilesCommand", "setupCommand", "setupWatch", "mergeQueue", "bugLabels",
-  "roles", "settings", "sharedResources", "media",
+  "roles", "settings", "sharedResources", "media", "review",
 ];
 /** What this machine may spend, and how often it looks: in the private file's `settings`. */
 export const PRIVATE_SETTINGS: readonly string[] = ["maxParallelSessions", "budgetReserve", "reserveFiveHour", "reserveSevenDay", "tickSeconds"];
@@ -86,7 +86,7 @@ export function combineFiles(privateRaw: Obj, sharedRaw: Obj): { combined: Obj; 
   for (const [key, value] of Object.entries(privateRaw)) if (key !== "meta" && key !== "jira" && key !== "settings") combined[key] = value;
   for (const [key, value] of Object.entries(sharedRaw)) if (key !== "settings" && !Object.hasOwn(combined, key)) combined[key] = value;
   if (isObj(host) && host.kind === "metaBranch" && isObj(meta)) combined.host = { ...host, ...meta };
-  // Each host's part of this machine stays side by side (decision 95): only the active host's is used, and a leftover one is ignored.
+  // Each host's part of this machine stays side by side (decision 98): only the active host's is used, and a leftover one is ignored.
   if (isObj(host) && host.kind === "jira" && host.deployment !== "datacenter" && isObj(jira)) combined.host = { ...host, ...Object.fromEntries(Object.entries(jira).filter(([key]) => JIRA_PRIVATE_KEYS.includes(key))) };
   if (privateRaw.settings !== undefined || sharedRaw.settings !== undefined) {
     if (privateRaw.settings !== undefined && !isObj(privateRaw.settings)) errors.push(`settings in ${PRIVATE_NAME} must be an object.`);

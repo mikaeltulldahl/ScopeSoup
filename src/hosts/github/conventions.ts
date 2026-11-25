@@ -237,7 +237,7 @@ export function readThread(subject: Ref, comments: RestComment[], self: string |
           const draft = target ? undefined : drafts.find((each) => Number(each.id) === entry.to && !each.answered);
           if (draft) {
             draft.answered = true;
-            answer(comment, text, undefined, { ...extra, question: `Triage draft, round ${draft.round}` });
+            answer(comment, text, undefined, { ...extra, question: `Triage rewrite, round ${draft.round}` });
             answers[answers.length - 1]!.to = draft.id;
           }
         }
