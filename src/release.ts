@@ -129,6 +129,7 @@ export function releaseScripts(): Record<string, string> {
     "config:register": `node ${NODE_FLAGS} src/config/register.ts`,
     "settings:init": `node ${NODE_FLAGS} src/config/settingsInit.ts`,
     "config:setup": `node ${NODE_FLAGS} src/config/setupScript.ts`,
+    "config:host": `node ${NODE_FLAGS} src/hostPart.ts`,
     "meta:accept": `node ${NODE_FLAGS} src/hosts/metaBranch/accept.ts`,
   };
 }
