@@ -17,6 +17,24 @@ export interface NewEvent {
   data?: unknown;
 }
 
+interface EventRow {
+  seq: number;
+  at: string;
+  kind: string;
+  subject: string | null;
+  actor: string;
+  json: string;
+}
+
+const eventOf = (row: EventRow): ScopeSoupEvent => ({
+  seq: Number(row.seq),
+  at: row.at,
+  kind: row.kind,
+  subject: row.subject ?? undefined,
+  actor: row.actor,
+  data: JSON.parse(row.json) as unknown,
+});
+
 export interface PutResult {
   /** False when the stored object was already identical; no event was written. */
   changed: boolean;
@@ -40,6 +58,8 @@ export interface Store {
   appendEvent(event: NewEvent, at: string): number;
   /** Events with seq greater than `afterSeq`, oldest first. */
   eventsAfter(afterSeq: number, limit: number): ScopeSoupEvent[];
+  /** The newest `limit` events whose kind is one of `kinds`, newest first. */
+  eventsOfKinds(kinds: readonly string[], limit: number): ScopeSoupEvent[];
   lastSeq(): number;
   /** Calls back after each committed event. Returns a function that stops it. */
   onEvent(listener: (event: ScopeSoupEvent) => void): () => void;
@@ -277,22 +297,14 @@ function storeOn(db: DatabaseSync, format: StoreFormat, known: number): Store {
     appendEvent,
 
     eventsAfter(afterSeq, limit) {
-      const rows = selectEvents.all(afterSeq, limit) as {
-        seq: number;
-        at: string;
-        kind: string;
-        subject: string | null;
-        actor: string;
-        json: string;
-      }[];
-      return rows.map((row) => ({
-        seq: Number(row.seq),
-        at: row.at,
-        kind: row.kind,
-        subject: row.subject ?? undefined,
-        actor: row.actor,
-        data: JSON.parse(row.json) as unknown,
-      }));
+      const rows = selectEvents.all(afterSeq, limit) as unknown as EventRow[];
+      return rows.map(eventOf);
+    },
+
+    eventsOfKinds(kinds, limit) {
+      if (kinds.length === 0 || limit <= 0) return [];
+      const rows = db.prepare(`SELECT seq, at, kind, subject, actor, json FROM events WHERE kind IN (${kinds.map(() => "?").join(", ")}) ORDER BY seq DESC LIMIT ?`).all(...kinds, limit) as unknown as EventRow[];
+      return rows.map(eventOf);
     },
 
     lastSeq() {

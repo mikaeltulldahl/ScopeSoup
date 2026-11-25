@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import type { MergeQueueSetup, LevelChoice } from "../../src/config/levels.ts";
 import type { Sliders } from "../../src/config/sliders.ts";
 import type { ProjectConfig } from "../../src/config/types.ts";
-import type { BoardView, ChatView, FolderName, CommitView, DiffView, HistoryView, ItemBranchState, ItemListView, ItemPage, SessionDetailsView, UsageView } from "../../src/core/views.ts";
+import type { ActivityView, BoardView, ChatView, FolderName, CommitView, DiffView, HistoryView, ItemBranchState, ItemListView, ItemPage, SessionDetailsView, UsageView } from "../../src/core/views.ts";
 import type { ProposedPart } from "../../src/model/types.ts";
 import { currentPerson, onPersonChange, personHeaders } from "./person.ts";
 import type { PickEntry } from "./heldDecisions.ts";
@@ -41,6 +41,8 @@ export const fetchItem = (key: string) => getJson<ItemPage>(`/api/item?ref=${enc
 export const fetchDiff = (key: string) => getJson<DiffView>(`/api/diff?ref=${encodeURIComponent(key)}`);
 /** The newest `limit` commits of the project, laid out as lanes. */
 export const fetchHistory = (limit: number) => getJson<HistoryView>(`/api/history?limit=${limit}`);
+/** What happened in the project, newest first: the History page's timeline. */
+export const fetchActivity = () => getJson<ActivityView>("/api/activity");
 
 /** One save of the shared settings, from their log on the meta ref: who changed what. */
 export interface SettingsLogEntry {

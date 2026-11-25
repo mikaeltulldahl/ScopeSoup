@@ -118,7 +118,7 @@ function App() {
         {board && route.view === "overview" && <Overview board={board} busy={busy} onSwitch={act} />}
         {board && route.view === "queue" && <Queue board={board} />}
         {route.view === "items" && <ItemList key={route.query} query={route.query} />}
-        {route.view === "settings" && <Settings project={board?.project} />}
+        {route.view === "settings" && <Settings project={board?.project} openHistory={route.history === true} />}
         {route.view === "stop" && <StopUsing stopped={allStopped} busy={busy} onStop={() => act("/api/stop")} />}
         {route.view === "history" && <History />}
         {route.view === "usage" && <Usage />}

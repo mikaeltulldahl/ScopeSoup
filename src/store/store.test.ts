@@ -39,6 +39,15 @@ test("put writes an event only when the object changed", () => {
   store.close();
 });
 
+test("the newest events of some kinds, newest first", () => {
+  const store = openStore(":memory:");
+  for (const kind of ["test.one", "test.two", "test.one", "test.three", "test.one"]) store.appendEvent({ kind, actor: "test", data: { kind } }, T0);
+  assert.deepEqual(store.eventsOfKinds(["test.one", "test.three"], 3).map((event) => [event.seq, event.kind]), [[5, "test.one"], [4, "test.three"], [3, "test.one"]]);
+  assert.deepEqual(store.eventsOfKinds([], 3), []);
+  assert.deepEqual(store.eventsOfKinds(["test.two"], 10)[0]?.data, { kind: "test.two" });
+  store.close();
+});
+
 test("events cannot be changed or deleted, even behind the interface", () => {
   const dir = mkdtempSync(join(tmpdir(), "scopesoup-"));
   const path = join(dir, "test.sqlite");

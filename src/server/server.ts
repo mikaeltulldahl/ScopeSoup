@@ -43,6 +43,7 @@ import type { RemoteBranches } from "../items/remoteBranch.ts";
 import { branchCommands, farUntil, handBackItem, holdsIt, itemDetails, listItems, Refused, releaseItem, claimItem, whyNotHandBack, whyNotRelease, whyNotClaim } from "../items/service.ts";
 import { editConfig, readConfigView, type SharedSaved } from "../config/edit.ts";
 import type { SettingsLogEntry, SharedSettings } from "../config/shared.ts";
+import { activityView } from "./activity.ts";
 import type { MergeQueueOptions } from "../config/mergeQueue.ts";
 import { addAnswer, loadAnswers } from "../store/answers.ts";
 import { applyControl } from "../store/control.ts";
@@ -1615,6 +1616,15 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
         if (!options.upgrade) return sendError(response, 404, "NO_UPGRADE", "This server has no upgrade.");
         return sendJson(response, 200, options.upgrade.view());
       }
+      if (path === "/api/activity") {
+        let settings: SettingsLogEntry[] = [];
+        try {
+          settings = options.settingsLog?.() ?? [];
+        } catch {
+          // A settings' log that cannot be read leaves only its rows out.
+        }
+        return sendJson(response, 200, activityView(store, settings, now()));
+      }
       if (path === "/api/settings/log") return sendJson(response, 200, { now: now().toISOString(), entries: options.settingsLog?.() ?? [] });
       if (path === "/api/diff") {
         const ref = url.searchParams.get("ref");
@@ -1633,14 +1643,14 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
         return sendJson(response, 200, buildUsageView(store, snapshot, span, now(), plan?.reserve));
       }
       if (path === "/api/history") {
-        if (!options.history) return sendJson(response, 200, { now: now().toISOString(), available: false, reason: "This server has no project configuration, so it has no history to show." });
+        if (!options.history) return sendJson(response, 200, { now: now().toISOString(), available: false, reason: "Commits show when Scope Soup runs with a project configuration; this board reads no repository." });
         const asked = url.searchParams.get("limit");
         return sendJson(response, 200, await options.history(asked === null ? Number.NaN : Number(asked)));
       }
       if (path === "/api/commit") {
         const sha = url.searchParams.get("sha") ?? "";
         if (!isSha(sha)) return sendError(response, 400, "SHA_INVALID", "Give the commit as ?sha=<hex id>.");
-        if (!options.commit) return sendJson(response, 200, { now: now().toISOString(), available: false, reason: "This server has no project configuration, so it has no history to show." });
+        if (!options.commit) return sendJson(response, 200, { now: now().toISOString(), available: false, reason: "Commits show when Scope Soup runs with a project configuration; this board reads no repository." });
         return sendJson(response, 200, await options.commit(sha));
       }
       if (path === "/api/item") {

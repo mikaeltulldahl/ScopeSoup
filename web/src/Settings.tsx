@@ -10,6 +10,7 @@
 import { ThemePicker } from "./ThemePicker.tsx";
 import { useEffect, useState } from "preact/hooks";
 import { VersionPanel } from "./Version.tsx";
+import { SettingsHistory } from "./SettingsHistory.tsx";
 import type { ConfigView, ProjectConfig, ProjectView } from "./api.ts";
 import { FolderButton } from "./ProjectHeader.tsx";
 import type { AskedField, MergeQueueSetup } from "../../src/config/levels.ts";
@@ -158,7 +159,7 @@ function Folders({ project }: { project: ProjectView | undefined }) {
   );
 }
 
-export function Settings({ project }: { project?: ProjectView | undefined } = {}) {
+export function Settings({ project, openHistory = false }: { project?: ProjectView | undefined; openHistory?: boolean } = {}) {
   const [view, setView] = useState<ConfigView | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
@@ -463,6 +464,7 @@ export function Settings({ project }: { project?: ProjectView | undefined } = {}
         {committed && <p class="notice settings-committed" role="status">{committed}</p>}
         {error && <pre class="notice notice-bad settings-errors" role="alert">{error}</pre>}
       </form>
+      <SettingsHistory open={openHistory} />
     </div>
   );
 }

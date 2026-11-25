@@ -589,6 +589,8 @@ export interface HistoryCommit {
   item?: string;
   /** A main commit that an item merged. */
   merged?: boolean;
+  /** Item branches that point at this main commit but have no commits of their own yet: they start here, nothing merged. */
+  starts?: string[];
   /** Where the commit sits in the graph (src/core/graph.ts). */
   graph: LaneRow;
 }
@@ -603,6 +605,43 @@ export interface LaneRow {
 export type HistoryView =
   | { now: string; available: false; reason: string }
   | { now: string; available: true; mainBranch: string; commits: HistoryCommit[]; lanes: number; limit: number; more: boolean };
+
+/** What a row of the activity timeline is about, for its filter: one word each. */
+export type ActivityKind = "item" | "triage" | "question" | "decision" | "session" | "merge" | "batch" | "switch" | "upgrade" | "settings";
+
+/** An Item a row links to. The title is data from people and agents. */
+export interface ActivityItem {
+  key: string;
+  id: string;
+  title?: string;
+  /** No Item with this key is known here (removed, or never synced): named, not linked. */
+  gone?: true;
+}
+
+/** One thing that happened (`GET /api/activity`), in words. Text from people and agents is data, never markup. */
+export interface ActivityRow {
+  /** Unique in the view, the same on every read. */
+  id: string;
+  at: string;
+  kind: ActivityKind;
+  /** The person, the agent's role ("implementor"), "merge queue" or "Scope Soup". */
+  who: string;
+  agent: boolean;
+  text: string;
+  /** A quote under the line: a session's summary, the decisions taken. */
+  detail?: string;
+  /** The Items it is about; the first is the main one. */
+  items: ActivityItem[];
+  tone?: "good" | "bad";
+}
+
+export interface ActivityView {
+  now: string;
+  /** Newest first. */
+  rows: ActivityRow[];
+  /** Older rows were left out to keep the view bounded. */
+  more: boolean;
+}
 
 /** One commit's full message and the files it changed (`GET /api/commit`). */
 export type CommitView =
