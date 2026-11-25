@@ -75,7 +75,7 @@ import { createSetupRunner } from "./orchestrator/setup.ts";
 import { createQueueDriver, githubCiRefusal } from "./orchestrator/queueDriver.ts";
 import { remoteMismatch } from "./orchestrator/remote.ts";
 import { createRunner } from "./orchestrator/runner.ts";
-import { usageReserve } from "./orchestrator/tick.ts";
+import { copilotPlan, usageReserve } from "./orchestrator/tick.ts";
 import type { Runner } from "./orchestrator/runner.ts";
 import type { AnswerWrite, Host, WorkPatch } from "./ports/host.ts";
 import { createServer } from "./server/server.ts";
@@ -391,6 +391,7 @@ async function main(): Promise<void> {
                   bugLabels: loaded.bugLabels,
                   plannedSessions: loaded.settings.maxParallelSessions.value,
                   reserve: usageReserve(loaded),
+                  ...(copilotPlan(loaded) ? { copilot: copilotPlan(loaded)! } : {}),
                   level: loaded.level,
                   ...(loaded.resources ? { resources: loaded.resources } : {}),
                 }

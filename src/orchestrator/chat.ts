@@ -14,13 +14,12 @@ import { roleStopped, SWITCH_WORDS } from "../store/control.ts";
 import type { Resources } from "./resources.ts";
 import type { Store } from "../store/store.ts";
 import { errorText } from "./context.ts";
-import { decide } from "./usageCheck.ts";
 import { loadJobs, saveJobs } from "./jobs.ts";
 import type { Job } from "./jobs.ts";
 import { workspacePath } from "./paths.ts";
 import { heldSlot, holderOf, lastSlotPath, slotPathFor } from "./slots.ts";
 import type { AgentRunner } from "./ports.ts";
-import { usageReserve } from "./tick.ts";
+import { usageDecision } from "./tick.ts";
 import { providerNamed } from "./providers/index.ts";
 import { poolRepoPath, readHoldings, samePath } from "./workspaces.ts";
 
@@ -201,7 +200,7 @@ export function createChat(deps: ChatDeps): Chat {
     if (holder && !holder.actor.bot) {
       return `${holder.actor.name} holds this Item, so Scope Soup leaves it alone.`;
     }
-    const budget = decide({ sample: store.latestUsageSample(), now: at, reserve: usageReserve(current), runningSessions: runner.running() });
+    const budget = usageDecision(store, current, job.step, at, runner.running());
     if (!budget.allow) return `The usage stop: ${budget.reason}`;
     return null;
   }

@@ -4,6 +4,8 @@
 // Every decision is an `orchestrator.*` event with its reason, including "nothing to do because".
 
 import { budgetReserve } from "../config/budgetReserve.ts";
+import { copilotCheck, copilotPeriod, copilotUse } from "../core/copilotBudget.ts";
+import type { CopilotSessionUse } from "../core/copilotBudget.ts";
 import { clearWithoutTriage } from "../core/statedSize.ts";
 import { answersText, knownAnswers } from "../store/answers.ts";
 import { mergeQueueOn, ROLES, SWITCH_WORDS, switchState } from "../store/control.ts";
@@ -25,6 +27,8 @@ import { createLog, errorText } from "./context.ts";
 import { afterRefine, backToImplement, emptyBranch, followDraft, followQuestions, overturnsBack, park, retryHandOver, retryPost, reviewOffAtLevel2, settle, writeAboutOthers } from "./cycle.ts";
 import { loadOwnBlockers, withOwnBlockers } from "../store/blockers.ts";
 import { decide } from "./usageCheck.ts";
+import { roleProvider } from "../config/defaults.ts";
+import type { Store } from "../store/store.ts";
 import type { UsageCheckDecision } from "./usageCheck.ts";
 import type { Job, Jobs } from "./jobs.ts";
 import { loadJobs, NO_DECISIONS, takenText } from "./jobs.ts";
@@ -78,6 +82,33 @@ export function usageReserve(config: ProjectConfig): Record<UsageWindowKind, num
     five_hour: config.settings.reserveFiveHour?.value ?? budgetReserve(config.settings.budgetReserve.value).fiveHour,
     seven_day: config.settings.reserveSevenDay?.value ?? budgetReserve(config.settings.budgetReserve.value).sevenDay,
   };
+}
+
+/** The Copilot budget for the Usage page; absent when no role runs on Copilot. */
+export function copilotPlan(config: ProjectConfig): { allowance?: number; resetDay: number; reserve: number } | undefined {
+  if (!Object.values(config.roles).some((role) => roleProvider(role) === "copilot")) return undefined;
+  return { ...(config.copilot?.monthlyRequests !== undefined ? { allowance: config.copilot.monthlyRequests } : {}), resetDay: config.copilot?.resetDay ?? 1, reserve: usageReserve(config).seven_day };
+}
+
+/** The Copilot sessions' use as their results recorded it (premium requests and AI credits), for the month's budget. */
+export function copilotSessionUse(store: Store): CopilotSessionUse[] {
+  return store.list<Session>("session").filter((session) => session.provider === "copilot").map((session) => {
+    const result = readSessionResult(store, session.ref.id);
+    return { role: session.role, startedAt: session.startedAt, ...(result.premiumRequests !== undefined ? { premiumRequests: result.premiumRequests } : {}), ...(result.aiCredits !== undefined ? { aiCredits: result.aiCredits } : {}) };
+  });
+}
+
+/**
+ * The usage check for a session of `role`: a role on Copilot is paced by the Copilot budget (the month's premium requests against
+ * the allowance minus the reserve), every other role by Claude's windows.
+ */
+export function usageDecision(store: Store, config: ProjectConfig, role: SessionRole, at: string, running: number): UsageCheckDecision {
+  const reserve = usageReserve(config);
+  if (roleProvider(config.roles[role] ?? {}) === "copilot") {
+    const period = copilotPeriod(Date.parse(at), config.copilot?.resetDay ?? 1);
+    return copilotCheck({ ...(config.copilot?.monthlyRequests !== undefined ? { allowance: config.copilot.monthlyRequests } : {}), used: copilotUse(copilotSessionUse(store), period).requests, reserve: reserve.seven_day, period });
+  }
+  return decide({ sample: store.latestUsageSample(), now: at, reserve, runningSessions: running });
 }
 
 /** Writes an event for each number changed since the last tick, and for a change of level. */
@@ -527,15 +558,11 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
   }
 
   // 4. The budget. Paid extra usage stops what is running too.
-  const budget = (): UsageCheckDecision =>
-    decide({
-      sample: store.latestUsageSample(),
-      now: at,
-      // From level 1 the stop at the reserve is always on (nothing is dispatched at level 0).
-      reserve: usageReserve(config),
-      runningSessions: running,
-    });
-  const first = budget();
+  const budget = (role: SessionRole): UsageCheckDecision =>
+    // From level 1 the stop at the reserve is always on (nothing is dispatched at level 0).
+    usageDecision(store, config, role, at, running);
+  // Paid extra usage is Claude's: it stops what runs on any provider.
+  const first = decide({ sample: store.latestUsageSample(), now: at, reserve: usageReserve(config), runningSessions: running });
   if (first.stopRunning) {
     const stopped = running > 0 ? runner.stopAll(first.reason) : 0;
     if (stopped > 0) ctx.commit("orchestrator.budget_stop", `${first.reason} Stopped ${stopped} running session(s).`);
@@ -570,7 +597,7 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
       reasons.push("the free slot is kept for the next step of work under way");
       break;
     }
-    const decision = budget();
+    const decision = budget(step);
     if (!decision.allow) {
       reasons.push(decision.reason);
       ctx.say("orchestrator.budget_wait", decision.reason, undefined, { resumeAt: decision.resumeAt });

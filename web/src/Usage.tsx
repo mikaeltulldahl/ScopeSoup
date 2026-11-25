@@ -3,7 +3,7 @@
 // points, forecast line, ticks, stacking) is in src/core/usage.ts.
 
 import { useEffect, useRef, useState } from "preact/hooks";
-import type { UsagePageWindow, UsageView } from "./api.ts";
+import type { CopilotUsageView, UsagePageWindow, UsageView } from "./api.ts";
 import type { ConfigView } from "./api.ts";
 import { fetchConfig, fetchUsage, postConfig, useView } from "./api.ts";
 import { clockTime, span as spanWords } from "./format.ts";
@@ -460,6 +460,95 @@ function WindowBlock({ window, view }: { window: UsagePageWindow; view: UsageVie
   );
 }
 
+const requests = (n: number) => `${Number.isInteger(n) ? n : n.toFixed(1)}`;
+
+/** Copilot has no window: the month's premium requests against the plan's allowance (`copilot.monthlyRequests`), by role. */
+function CopilotSection({ copilot, now }: { copilot: CopilotUsageView; now: number }) {
+  const [track, width] = useWidth();
+  const allowance = copilot.allowance;
+  const limit = allowance === undefined ? undefined : 1 - copilot.reserve;
+  const used = allowance === undefined ? 0 : Math.min(1, copilot.requests / allowance);
+  const parts = Object.fromEntries(ROLES.filter((key) => key !== "outside").map((key) => [key, allowance ? copilot.byRole[key as keyof CopilotUsageView["byRole"]].requests / allowance : 0]));
+  const bar = usageBar(parts, used, STACK, limit, undefined);
+  const percent = (share: number) => `${(share * 100).toFixed(2)}%`;
+  const place = (span: { from: number; to: number }) => ({ left: percent(span.from), width: percent(span.to - span.from) });
+  const rows = ROLES.filter((key): key is "implement" | "review" | "triage" => key !== "outside" && copilot.byRole[key].sessions > 0);
+  const resetsIn = Date.parse(copilot.resetsAt) - now;
+  const usedText = `${requests(copilot.requests)} of ${allowance}`;
+  const usedLeft = Math.min(Math.max(used * width, labelWidth(usedText) / 2), width - labelWidth(usedText) / 2);
+  const warnNow = limit !== undefined && used >= limit;
+  return (
+    <>
+      <div class="panel">
+        <div class="usage-meter">
+          <div class="usage-meter-head">
+            <b>Premium requests this month</b>
+            <span class="muted">resets {clockTime(copilot.resetsAt, now)}, in {spanWords(Math.max(0, resetsIn))}</span>
+          </div>
+          {allowance === undefined ? (
+            <p class="empty">{requests(copilot.requests)} premium requests used this month. Copilot reports no limit: set <code>copilot.monthlyRequests</code> (and <code>copilot.resetDay</code>) in this machine's configuration file to see the meter and to pace Copilot sessions.</p>
+          ) : (
+            <div class="usage-bar" ref={track}>
+              <div class="usage-track" role="meter" aria-valuemin={0} aria-valuemax={allowance} aria-valuenow={Math.round(copilot.requests)} aria-label="Premium requests used this month">
+                {bar.reserve && <div class="usage-track-reserve" style={place(bar.reserve)} />}
+                {bar.used.map((segment) => (
+                  <div key={segment.key} class="usage-seg" style={{ ...place(segment), background: COLOR[segment.key] }} title={`${LABEL[segment.key]} ${requests(Math.round(((segment.to - segment.from) * allowance) * 10) / 10)} requests`} />
+                ))}
+              </div>
+              <span class={`usage-used-out${warnNow ? " warn" : ""}`} style={{ left: `${usedLeft}px` }}>{usedText}</span>
+              {limit !== undefined && limit < 1 && (
+                <>
+                  <div class="usage-thumb fixed" style={{ left: percent(limit) }} title={`Reserve: Scope Soup starts no Copilot session from ${requests(Math.round(limit * allowance))} requests`}><span /></div>
+                  <span class="usage-reserve-label flip" style={{ left: percent(limit) }}>Reserve {pct(copilot.reserve)}</span>
+                </>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+      <section class="panel usage-window">
+        <h3>Who used it</h3>
+        {rows.length === 0 ? (
+          <p class="empty">No Copilot sessions this month.</p>
+        ) : (
+          <table class="usage-table">
+            <thead>
+              <tr>
+                <th scope="col">Who</th>
+                <th scope="col" class="num">Premium requests</th>
+                <th scope="col" class="num">Sessions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((key) => (
+                <tr key={key}>
+                  <th scope="row"><span class="usage-dot" style={{ background: COLOR[key] }} /> {LABEL[key]}</th>
+                  <td class="num">{requests(copilot.byRole[key].requests)}</td>
+                  <td class="num">{copilot.byRole[key].sessions}</td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot>
+              <tr>
+                <th scope="row">In all</th>
+                <td class="num">{requests(copilot.requests)}</td>
+                <td class="num">{copilot.sessions}</td>
+              </tr>
+            </tfoot>
+          </table>
+        )}
+        <details class="usage-how">
+          <summary>How this is counted</summary>
+          <p>
+            Each Copilot session's result records the premium requests it used; the month runs from the reset day (UTC) to the next. {copilot.credits > 0 && `Copilot reported ${copilot.credits.toFixed(2)} AI credits in all. `}
+            Scope Soup starts no Copilot session once the month's use reaches the allowance minus the reserve (the weekly share of the usage reserve). Claude's readings do not pace Copilot roles, and Copilot's use does not pace Claude's.
+          </p>
+        </details>
+      </section>
+    </>
+  );
+}
+
 export function Usage() {
   const [span, setSpan] = useState("7d");
   const { data, error, reload } = useView(() => fetchUsage(span), `usage:${span}`);
@@ -468,6 +557,9 @@ export function Usage() {
   // The reserve position being dragged, or saved and not yet reloaded.
   const [picked, pick] = useState<number | null>(null);
   const [hint, dismissHint] = useHint();
+  // One tab per provider, when a role runs on Copilot.
+  const [provider, setProvider] = useState<"claude" | "copilot">("claude");
+  const showCopilot = data?.copilot !== undefined && provider === "copilot";
   useEffect(() => {
     if (data) pick(null);
   }, [data]);
@@ -488,16 +580,30 @@ export function Usage() {
             ))}
           </div>
         </div>
+        {data?.copilot && (
+          <div class="usage-spans" role="group" aria-label="Provider">
+            <span class="muted">Provider:</span>
+            {(["claude", "copilot"] as const).map((each, index) => (
+              <span key={each} class="usage-span">
+                {index > 0 && <span class="muted" aria-hidden="true">·</span>}
+                <button type="button" class={each === provider ? "primary" : ""} aria-pressed={each === provider} onClick={() => setProvider(each)}>
+                  {each === "claude" ? "Claude" : "Copilot"}
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
         {error && <p class="notice notice-bad" role="alert">{error}</p>}
         {!data && !error && <p class="empty">Loading…</p>}
-        {data && (
+        {data && !showCopilot && (
           <div class="usage-meters">
             {data.windows.map((window) => <Meter key={window.kind} window={window} now={now} saver={saver} picked={picked} pick={pick} hint={hint} dismissHint={dismissHint} />)}
           </div>
         )}
-        {data && <Pacing saver={saver} />}
+        {data && !showCopilot && <Pacing saver={saver} />}
       </div>
-      {data && data.windows.map((window) => <WindowBlock key={window.kind} window={window} view={data} />)}
+      {data && showCopilot && data.copilot && <CopilotSection copilot={data.copilot} now={now} />}
+      {data && !showCopilot && data.windows.map((window) => <WindowBlock key={window.kind} window={window} view={data} />)}
     </section>
   );
 }

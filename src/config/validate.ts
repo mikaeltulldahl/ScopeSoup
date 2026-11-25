@@ -217,11 +217,13 @@ export function validateConfig(given: unknown, baseDir: string): ConfigResult {
   if (raw.copilot !== undefined) {
     if (!isObj(raw.copilot)) err("copilot must be an object.");
     else {
-      unknownKeys(raw.copilot, Object.keys(copilot), "copilot");
+      unknownKeys(raw.copilot, [...Object.keys(copilot), "monthlyRequests", "resetDay"], "copilot");
       copilot.path = str(raw.copilot, "path", "copilot.", copilot.path);
       if (/[\\/]/.test(copilot.path)) copilot.path = path(copilot.path);
       copilot.prefixArgs = strList(raw.copilot, "prefixArgs", "copilot.", copilot.prefixArgs);
       copilot.extraArgs = strList(raw.copilot, "extraArgs", "copilot.", copilot.extraArgs);
+      if (raw.copilot.monthlyRequests !== undefined) copilot.monthlyRequests = num(raw.copilot.monthlyRequests, "copilot.monthlyRequests", 1, 1_000_000, true, 0) || undefined;
+      if (raw.copilot.resetDay !== undefined) copilot.resetDay = num(raw.copilot.resetDay, "copilot.resetDay", 1, 28, true, 1);
     }
   }
 

@@ -64,6 +64,20 @@ test("the demo's usage on the 30-day span has several 5-hour resets, a weekly re
   store.close();
 });
 
+test("the demo's Copilot section adds up the month's premium requests of the triage role against the allowance", () => {
+  const store = openStore(":memory:");
+  const now = new Date(T0);
+  seedDemo(store, now);
+  const span = { span: "7d", ms: 7 * 24 * 3600_000 };
+  assert.equal(buildUsageView(store, loadSnapshot(store), span, now).copilot, undefined);
+  const copilot = buildUsageView(store, loadSnapshot(store), span, now, undefined, { allowance: 150, resetDay: 15, reserve: 0.1 }).copilot!;
+  assert.equal(copilot.allowance, 150);
+  assert.ok(copilot.requests >= 20 && copilot.requests < 150, `${copilot.requests} requests`);
+  assert.equal(copilot.requests, copilot.byRole.triage.requests);
+  assert.equal(copilot.byRole.implement.sessions, 0);
+  store.close();
+});
+
 test("the demo's item 68, put back in the queue from a failed batch, lists that batch and its runs", () => {
   const store = openStore(":memory:");
   const now = new Date(T0);
