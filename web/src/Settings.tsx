@@ -17,6 +17,7 @@ import type { AskedField, MergeQueueSetup } from "../../src/config/levels.ts";
 import type { Sliders } from "../../src/config/sliders.ts";
 import { commandText, commandWords } from "../../src/config/commandLine.ts";
 import { fetchConfig, postConfig } from "./api.ts";
+import { EFFORT_LEVELS } from "../../src/config/types.ts";
 
 const ONBOARDING = "https://github.com/mikaeltulldahl/scopesoup/blob/main/docs/ONBOARDING.md";
 
@@ -44,7 +45,7 @@ function budgetReserveText(position: number, table: Sliders["budgetReserve"]): s
 interface Draft {
   level: number;
   settings: Record<SettingName, string>;
-  roles: Record<string, { model: string }>;
+  roles: Record<string, { model: string; effort: string }>;
   /** What level 4 asks for, as text: the check command as one line, the remote's URL. Saved only with level 4. */
   mergeQueue: Record<AskedField, string>;
   /** The setup of a fresh clone: the command as one line, the watched files one per line ("" for none in the file). */
@@ -100,7 +101,7 @@ function draftOf(config: ProjectConfig, raw: unknown, mergeQueue: MergeQueueSetu
   const setting = (name: SettingName) => String(config.settings[name].value);
   const roles: Draft["roles"] = {};
   const pinned = pinnedRoles(raw);
-  for (const [name] of ROLES) roles[name] = { model: pinned.has(name) ? (config.roles as Record<string, { model: string } | undefined>)[name]?.model ?? "" : "" };
+  for (const [name] of ROLES) roles[name] = { model: pinned.has(name) ? (config.roles as Record<string, { model: string } | undefined>)[name]?.model ?? "" : "", effort: (config.roles as Record<string, { effort?: string } | undefined>)[name]?.effort ?? "" };
   const asked = { checkCommand: mergeQueue?.checkCommand ? commandText(mergeQueue.checkCommand) : "", remoteUrl: mergeQueue?.remoteUrl ?? "" };
   // The command as the shared file holds it, with {{ownClone}} unexpanded (the configuration in use has this machine's path in it).
   const command = (raw as { setupCommand?: unknown } | null)?.setupCommand;
@@ -134,7 +135,10 @@ function changeOf(draft: Draft, base: Draft, asks: readonly AskedField[], showsC
   if (Object.keys(settings).length > 0) change.settings = settings;
   const roles: Record<string, unknown> = {};
   for (const [name, role] of Object.entries(draft.roles)) {
-    if (role.model.trim() !== "" && role.model !== base.roles[name]?.model) roles[name] = role;
+    const each: Record<string, string> = {};
+    if (role.model.trim() !== "" && role.model !== base.roles[name]?.model) each.model = role.model;
+    if (role.effort !== base.roles[name]?.effort) each.effort = role.effort;
+    if (Object.keys(each).length > 0) roles[name] = each;
   }
   if (Object.keys(roles).length > 0) change.roles = roles;
   // Each list whole, when it differs; an emptied list is removed from its file.
@@ -429,7 +433,7 @@ export function Settings({ project, openHistory = false }: { project?: ProjectVi
           {ROLES.map(([name, title]) => (
             <label key={name}>
               <b>{title}</b>
-              <input type="text" value={draft.roles[name]?.model ?? ""} placeholder={defaultModels[name] ?? ""} disabled={busy} onInput={(event) => set({ roles: { ...draft.roles, [name]: { model: (event.target as HTMLInputElement).value } } })} />
+              <input type="text" value={draft.roles[name]?.model ?? ""} placeholder={defaultModels[name] ?? ""} disabled={busy} onInput={(event) => set({ roles: { ...draft.roles, [name]: { effort: "", ...draft.roles[name], model: (event.target as HTMLInputElement).value } } })} />
               {pinned.has(name) ? (
                 <span class="muted">
                   {" "}set for the project; the default is {defaultModels[name]}{" "}
@@ -437,6 +441,16 @@ export function Settings({ project, openHistory = false }: { project?: ProjectVi
                 </span>
               ) : (
                 <span class="muted"> the default: {defaultModels[name]} (type a model to set it)</span>
+              )}
+              {view.config?.roles[name as "implement"]?.provider !== "copilot" && (
+                <span class="muted">
+                  {" "}Effort{" "}
+                  <select value={draft.roles[name]?.effort ?? ""} disabled={busy} onChange={(event) => set({ roles: { ...draft.roles, [name]: { model: "", ...draft.roles[name], effort: (event.target as HTMLSelectElement).value } } })}>
+                    <option value="">default</option>
+                    {EFFORT_LEVELS.map((level) => <option key={level} value={level}>{level}</option>)}
+                  </select>
+                  {" "}higher effort uses more of the usage windows
+                </span>
               )}
               {view.config?.roles[name as "implement"]?.provider === "copilot" && (
                 <span class="notice notice-paused copilot-warning" role="note"><b>Runs on Copilot.</b> {COPILOT_WARNING}</span>

@@ -9,7 +9,7 @@ export interface SettingChangeLike {
 }
 
 const ROLE_WORDS: Record<string, string> = { triage: "triage", implement: "implementor", review: "reviewer" };
-const ROLE_FIELDS: Record<string, string> = { model: "model", maxTurns: "turn limit", allowedTools: "allowed commands", permissionMode: "permission mode", provider: "agent CLI", autoTier: "automatic model" };
+const ROLE_FIELDS: Record<string, string> = { model: "model", maxTurns: "turn limit", allowedTools: "allowed commands", permissionMode: "permission mode", provider: "agent CLI", autoTier: "automatic model", effort: "effort" };
 
 /** The numbers in `settings`, with their unit. */
 const NUMBERS: Record<string, [string, string]> = {

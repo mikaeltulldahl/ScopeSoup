@@ -47,6 +47,7 @@ export function buildCommand(config: ProjectConfig, spec: { role: SessionRole; s
   args.push("--output-format", "stream-json", "--verbose");
   if (partial) args.push("--include-partial-messages");
   args.push("--model", role.model, "--max-turns", String(role.maxTurns), "--permission-mode", role.permissionMode);
+  if (role.effort) args.push("--effort", role.effort);
   if (role.allowedTools.length > 0) args.push("--allowedTools", role.allowedTools.join(","));
   args.push("--disallowedTools", disallowedTools(config.level).join(","));
   const mcp = mcpConfigJson(role.mcpServers);

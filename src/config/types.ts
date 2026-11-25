@@ -44,6 +44,9 @@ export interface Settings {
 
 export type SettingName = keyof Settings;
 
+/** What `claude --effort` accepts (`claude --help`, "--effort <level>"). Higher effort uses more of the usage windows. */
+export const EFFORT_LEVELS = ["low", "medium", "high", "xhigh", "max"] as const;
+
 /** The agent CLIs a role can run on (`src/orchestrator/providers/`). */
 export const PROVIDER_NAMES = ["claude", "copilot"] as const;
 export type ProviderName = (typeof PROVIDER_NAMES)[number];
@@ -55,6 +58,8 @@ export interface RoleConfig {
   model: string;
   /** Copilot only: the Auto routing profile (`--auto-tier`) when the model is "fusion" or "auto". Absent there: "balance". */
   autoTier?: string;
+  /** Claude only: the reasoning effort (`--effort`), one of `EFFORT_LEVELS`. Absent: the CLI's own default. */
+  effort?: string;
   maxTurns: number;
   /** Permission rules passed as `--allowedTools`. */
   allowedTools: string[];

@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import type { SessionRole } from "../model/types.ts";
 import { COPILOT_DEFAULT_AUTO_TIER, COPILOT_DEFAULT_MODEL, defaultClaude, defaultCopilot, defaultRoles, defaultSettings, expandScopesoup, MACHINE_NAME } from "./defaults.ts";
 import type { Level, McpServer, ProjectConfig, ProviderName, RoleConfig, SettingName, Settings } from "./types.ts";
-import { LEVELS, mcpToolEntry, PROVIDER_NAMES, ROLES } from "./types.ts";
+import { EFFORT_LEVELS, LEVELS, mcpToolEntry, PROVIDER_NAMES, ROLES } from "./types.ts";
 import { CHECK_ROLES, withCheckRules } from "./checkRule.ts";
 import { proposeCheckCommand } from "./mergeQueue.ts";
 import { migrateConfig } from "./migrate.ts";
@@ -260,7 +260,7 @@ export function validateConfig(given: unknown, baseDir: string): ConfigResult {
           err(`${where} must be an object.`);
           continue;
         }
-        unknownKeys(given, ["provider", "model", "autoTier", "maxTurns", "allowedTools", "permissionMode", "mcpServers"], where);
+        unknownKeys(given, ["provider", "model", "autoTier", "effort", "maxTurns", "allowedTools", "permissionMode", "mcpServers"], where);
         const target = roles[role];
         const provider = given.provider;
         if (provider !== undefined && !PROVIDER_NAMES.includes(provider as ProviderName)) {
@@ -271,6 +271,11 @@ export function validateConfig(given: unknown, baseDir: string): ConfigResult {
         target.model = str(given, "model", `${where}.`, copilotRole ? COPILOT_DEFAULT_MODEL : target.model);
         if (given.autoTier !== undefined) target.autoTier = str(given, "autoTier", `${where}.`, COPILOT_DEFAULT_AUTO_TIER);
         else if (copilotRole) target.autoTier = COPILOT_DEFAULT_AUTO_TIER;
+        if (given.effort !== undefined) {
+          const effort = str(given, "effort", `${where}.`, "");
+          if (!(EFFORT_LEVELS as readonly string[]).includes(effort)) err(`${where}.effort must be one of ${EFFORT_LEVELS.join(", ")}.`);
+          else target.effort = effort;
+        }
         if (given.maxTurns !== undefined) target.maxTurns = num(given.maxTurns, `${where}.maxTurns`, 1, 1000, true, target.maxTurns);
         target.allowedTools = strList(given, "allowedTools", `${where}.`, target.allowedTools);
         if (given.mcpServers !== undefined) {
