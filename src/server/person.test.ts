@@ -13,7 +13,7 @@ import { loadAnswers } from "../store/answers.ts";
 import type { Store } from "../store/store.ts";
 import { openStore } from "../store/store.ts";
 import { createSync } from "../sync/index.ts";
-import { knownPeople, readPersonHeader } from "./person.ts";
+import { knownPeople, peopleNames, readPersonHeader } from "./person.ts";
 import type { ScopeSoupServer } from "./server.ts";
 import { createServer } from "./server.ts";
 
@@ -40,6 +40,21 @@ test("the picker's people: holders, log writers and answerers, each once and sor
     work(2, { holder: { actor: { id: "scopesoup@laptop-a", name: "scopesoup", bot: true } }, log: [{ at: T0, by: { who: "bo", machine: "laptop-b", agent: false }, kind: "created", fields: {} }, { at: T0, by: { who: "scopesoup", machine: "laptop-a", agent: true }, kind: "session", fields: {} }] }),
   ];
   assert.deepEqual(knownPeople(works, [{ subject: works[0]!.ref, answer: "Yes", by: "cy", at: T0 }, { subject: works[0]!.ref, answer: "No", by: "ada", at: T0 }]), ["ada", "bo", "cy"]);
+});
+
+test("Jira holders are offered by account id (whole) with their display name; others as before", () => {
+  const onJira = (n: number, id: string, name: string, bot?: boolean) => {
+    const item = work(n, { holder: { actor: { id, name, ...(bot ? { bot } : {}) } } });
+    item.ref = { ...item.ref, host: "jira" };
+    return item;
+  };
+  const jira = onJira(7, "5b10a2844c20165700ede21g", "Robin Example");
+  const mail = onJira(8, "kim@example.invalid", "Kim Example");
+  const bot = onJira(9, "app1", "An App", true);
+  const other = work(10, { holder: { actor: { id: "ada@laptop-a", name: "ada on laptop-a" } } });
+  assert.deepEqual(knownPeople([jira, mail, bot, other], [], "jira"), ["5b10a2844c20165700ede21g", "ada", "kim@example.invalid"]);
+  assert.deepEqual(peopleNames([jira, mail, bot, other], "jira"), { "5b10a2844c20165700ede21g": "Robin Example", "kim@example.invalid": "Kim Example" });
+  assert.deepEqual(peopleNames([jira], undefined), {});
 });
 
 describe("the board's person over HTTP", { concurrency: 1 }, () => {

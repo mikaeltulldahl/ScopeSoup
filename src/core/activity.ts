@@ -36,7 +36,7 @@ export const ACTIVITY_EVENTS: readonly string[] = [
   "control.stopped", "control.startup_paused", "control.paused", "control.resumed", "control.queue_resume", "orchestrator.queue_paused",
   "scopesoup.upgraded", "scopesoup.went_back", "scopesoup.upgrade_failed",
   "orchestrator.draft_accepted", "orchestrator.draft_edited", "orchestrator.draft_rejected", "orchestrator.draft_answered",
-  "orchestrator.questions_asked", "person.answered", "orchestrator.merged", "config.changed", "media.deleted", "media.expired",
+  "orchestrator.questions_asked", "person.answered", "person.claimed", "person.handed_back", "person.released", "orchestrator.merged", "config.changed", "media.deleted", "media.expired",
 ];
 
 /** Most rows in one view. */
@@ -270,6 +270,9 @@ export function buildActivity(input: ActivityInput, now: string, limit = MAX_ACT
 
   // --- The store's events ---
   const events = [...input.events].sort((a, b) => a.seq - b.seq);
+  // A board action on Jira names the person by the account id when Jira knew them; a holder's display name says who that is.
+  const holderNames = new Map<string, string>();
+  for (const work of input.works) if (work.holder && !work.holder.actor.bot && work.holder.actor.name.trim()) holderNames.set(work.holder.actor.id, work.holder.actor.name.trim());
   /** Switches pressed together (one press resumes three roles) are one row. */
   let lastSwitch: { row: ActivityRow; verb: string; names: string[] } | null = null;
   for (const event of events) {
@@ -345,6 +348,16 @@ export function buildActivity(input: ActivityInput, now: string, limit = MAX_ACT
         if (subject && logged.has(subject)) break;
         add({ ...base, kind: "question", items, who: str(data.by) || event.actor, agent: false, text: `Answered: ${clip(str(data.answer))}` });
         break;
+      case "person.claimed":
+      case "person.handed_back":
+      case "person.released": {
+        const account = str(data.account);
+        const who = holderNames.get(account) ?? holderNames.get(event.actor) ?? event.actor;
+        const note = str(data.note);
+        const words = event.kind === "person.claimed" ? "Took the Item on the board" : event.kind === "person.handed_back" ? "Handed the Item back on the board" : "Let the Item go on the board";
+        add({ ...base, kind: "item", items, who, agent: false, text: words, ...(note ? { detail: clip(note) } : {}) });
+        break;
+      }
       case "orchestrator.merged":
         if (subject && logged.has(`merged:${subject}`)) break;
         add({ ...base, kind: "merge", items, text: `Merged ${short(data.sha)}${num(data.batch) !== undefined ? ` through the merge queue (batch ${data.batch})` : data.by === "session" ? ", by the implementor" : ""}`, tone: "good" });

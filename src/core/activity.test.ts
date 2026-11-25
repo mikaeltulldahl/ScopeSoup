@@ -194,3 +194,19 @@ test("a lone session is not folded, and a bad one makes the fold bad", () => {
   assert.equal(group.tone, "bad");
   assert.equal(group.text, "2 sessions on #5: implement, review · 1 min");
 });
+
+test("the Jira board buttons' events are rows with the Item link; an account id is shown as the holder's display name", () => {
+  const held = work(5, { title: "Jira thing", holder: { actor: { id: "5b10a2844c20165700ede21g", name: "Robin Example" } } });
+  const events = [
+    event(-30, "person.claimed", "5b10a2844c20165700ede21g", { reason: "x", via: "board", account: "5b10a2844c20165700ede21g" }, "demo:work:5"),
+    event(-20, "person.handed_back", "Kim", { reason: "x", via: "board", note: "Branch is pushed." }, "demo:work:5"),
+    event(-10, "person.released", "Robin Example", { reason: "x", via: "board", account: "5b10a2844c20165700ede21g" }, "demo:work:5"),
+  ];
+  const rows = buildActivity(input({ works: [held], events }), T0).rows;
+  assert.deepEqual(rows.map((row) => [row.who, row.text, row.agent, row.items[0]?.id, row.detail]), [
+    ["Robin Example", "Let the Item go on the board", false, "5", undefined],
+    ["Kim", "Handed the Item back on the board", false, "5", "Branch is pushed."],
+    ["Robin Example", "Took the Item on the board", false, "5", undefined],
+  ]);
+  assert.ok(ACTIVITY_EVENTS.includes("person.claimed") && ACTIVITY_EVENTS.includes("person.handed_back") && ACTIVITY_EVENTS.includes("person.released"));
+});

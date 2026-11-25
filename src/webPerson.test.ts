@@ -3,7 +3,7 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { cleanName, personHeaders, pickerNames, readPerson, writePerson } from "../web/src/person.ts";
+import { cleanName, personHeaders, pickerNames, pickerOptions, readPerson, writePerson } from "../web/src/person.ts";
 
 const memory = () => {
   const map = new Map<string, string>();
@@ -34,4 +34,13 @@ test("names are cleaned; the picker offers the known people and a new pick, each
 test("every request names the picked person, URI-encoded; none when nobody is picked", () => {
   assert.deepEqual(personHeaders("Åsa Öberg"), { "X-ScopeSoup-Person": "%C3%85sa%20%C3%96berg" });
   assert.deepEqual(personHeaders(""), {});
+});
+
+test("the picker shows a Jira holder by display name and keeps the account id as the value", () => {
+  assert.deepEqual(pickerOptions(["bo", "5b10a2844c20165700ede21g"], "", { "5b10a2844c20165700ede21g": "Robin Example" }), [
+    { value: "bo", label: "bo" },
+    { value: "5b10a2844c20165700ede21g", label: "Robin Example" },
+  ]);
+  assert.deepEqual(pickerOptions(["ada"], "cy"), [{ value: "ada", label: "ada" }, { value: "cy", label: "cy" }]);
+  assert.deepEqual(pickerOptions(["toString"], "", {}), [{ value: "toString", label: "toString" }]);
 });

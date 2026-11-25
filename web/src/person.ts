@@ -64,6 +64,13 @@ export function personHeaders(person: string = currentPerson()): Record<string, 
   return person ? { [PERSON_HEADER]: encodeURIComponent(person) } : {};
 }
 
+/** The picker's choices: each known person (the value, as the server matches) with the name shown, which is the display name when there is one. Sorted by what is shown. */
+export function pickerOptions(known: readonly string[], picked: string, names: Readonly<Record<string, string>> = {}): { value: string; label: string }[] {
+  return pickerNames(known, picked)
+    .map((value) => ({ value, label: cleanName(Object.hasOwn(names, value) ? names[value]! : "") || value }))
+    .sort((a, b) => a.label.localeCompare(b.label) || a.value.localeCompare(b.value));
+}
+
 /** The names the picker offers: the people Scope Soup knows, and the picked one when it is new to Scope Soup. Sorted, each once. */
 export function pickerNames(known: readonly string[], picked: string): string[] {
   const names = new Set(known.map(cleanName).filter(Boolean));
