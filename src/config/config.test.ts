@@ -394,7 +394,6 @@ test("host: mistakes are refused in words", () => {
   assert.match(bad({ ...base, host: { kind: "github" } }), /host.repo must be the repository as "owner\/name"/);
   assert.match(bad({ ...base, host: { kind: "github", repo: "name-only" } }), /host.repo \(name-only\) must be/);
   assert.match(bad({ ...base, host: { kind: "github", repo: "owner/name", token: "x" } }), /a token is never kept in the configuration file/);
-  assert.match(bad({ ...base, host: { kind: "metaBranch", write: true } }), /host.authorName and host.authorEmail are required/);
   assert.match(bad({ ...base, host: { kind: "metaBranch", write: "yes" } }), /host.write must be true or false/);
   assert.match(bad({ ...base, host: { kind: "metaBranch", fetchSeconds: -1 } }), /host.fetchSeconds must be a whole number/);
   assert.match(bad({ ...base, host: { kind: "metaBranch", repo: "owner/name" } }), /unknown key "repo" for kind "metaBranch"/);

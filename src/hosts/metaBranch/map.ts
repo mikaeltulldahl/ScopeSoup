@@ -114,6 +114,8 @@ export function describeLine(entry: LogEntry): string {
     case "merged":
       return `Merged ${short(d.sha)}${tail("in ", d.target)}.`;
     case "moved":
+      // Moved away (`to`), or moved here from GitHub or Jira (`from`), with the comments there as `history` (#134).
+      if (typeof d.from === "string") return `Moved here from ${words(d.from)}${d.host === "jira" ? " on Jira" : d.host === "github" ? " on GitHub" : ""}.${typeof d.history === "string" && d.history.trim() !== "" ? ` Comments there:\n${d.history.trim()}` : ""}`;
       return `Moved to ${words(d.to)}${d.host === "jira" ? " on Jira" : d.host === "github" ? " on GitHub" : ""}.`;
     default: {
       const rest = Object.fromEntries(Object.entries(d).filter(([key]) => key !== "at" && key !== "by" && key !== "kind"));

@@ -7,14 +7,19 @@
 import { createClient, type FetchLike } from "../hosts/github/client.ts";
 import { createJiraClient } from "../hosts/jira/client.ts";
 import { itemsJql } from "../hosts/jira/map.ts";
-import type { HostConnection } from "../config/edit.ts";
+import type { HostConnection, MetaPart } from "../config/edit.ts";
+import { isIdPrefix } from "../hosts/metaBranch/ids.ts";
 import type { HostConfig } from "../config/types.ts";
 import { createGitHubHost } from "../hosts/github/index.ts";
-import { createJiraHost } from "../hosts/jira/index.ts";
+import { createJiraHost, type JiraHost, type JiraThreadComment } from "../hosts/jira/index.ts";
+import { readIssues } from "../items/githubImport.ts";
+import { fromGitHub, fromJira, githubOldHost, jiraOldHost, type OldHost, type SourceItem } from "../items/moveToMeta.ts";
 import type { Session, WorkItem } from "../model/types.ts";
 import type { Host } from "../ports/host.ts";
 
 export type ConnectKind = "github" | "jira";
+/** What the dialogs connect to: GitHub or Jira (#127), or back to the meta branch (#134). */
+export type HostKind = ConnectKind | "metaBranch";
 
 /** How the look at the host is made; tests and the demo give fakes, so no real host is ever called from them. */
 export interface ConnectDeps {
@@ -60,12 +65,31 @@ export function busyText(busy: readonly string[], what: string): string {
   return `${what} waits until no agent session runs on any machine, so no session writes to the Items meanwhile. Busy now: ${busy.join(", ")}. Other machines are seen only through their agents' claims on Items. Pause the agents there and try again when their sessions have ended.`;
 }
 
-/** Join mode: the host the project already has, as the dialog would send it, with this machine's email for Jira Cloud. */
-export function joinConnection(host: HostConfig, email: unknown): { ok: true; kind: ConnectKind; connection: HostConnection } | { ok: false; error: string } {
+/**
+ * Join mode: the host the project already has, as the dialog would send it, with this machine's part: the email for Jira Cloud,
+ * the author and id prefix for the meta branch.
+ */
+export function joinConnection(host: HostConfig, body: Record<string, unknown>): { ok: true; kind: HostKind; connection: HostConnection } | { ok: false; error: string } {
   if (host.kind === "github") return { ok: true, kind: "github", connection: { host: { kind: "github", repo: host.repo, write: host.write } } };
-  if (host.kind !== "jira") return { ok: false, error: "The project's host is the meta branch: onboarding sets a machine up for it." };
+  if (host.kind === "metaBranch") return { ok: true, kind: "metaBranch", connection: { host: { kind: "metaBranch", write: host.write }, meta: metaPartIn(body) } };
   const { email: _own, ...shared } = host;
-  return { ok: true, kind: "jira", connection: { host: shared as unknown as Record<string, unknown>, ...(host.deployment === "cloud" ? { email: text(email) } : {}) } };
+  return { ok: true, kind: "jira", connection: { host: shared as unknown as Record<string, unknown>, ...(host.deployment === "cloud" ? { email: text(body.email) } : {}) } };
+}
+
+/** This machine's meta branch part as the dialog sent it. */
+const metaPartIn = (body: Record<string, unknown>): MetaPart => ({ authorName: text(body.authorName), authorEmail: text(body.authorEmail), prefix: text(body.prefix) });
+
+/**
+ * What is wrong with this machine's meta branch part, in words; empty when nothing. `jiraProject`: moving back from that Jira
+ * project, whose keys (`KEY-7`) an id with the same prefix would be mistaken for.
+ */
+export function metaPartProblems(meta: MetaPart | undefined, jiraProject?: string): string[] {
+  const problems: string[] = [];
+  if (!meta?.authorName) problems.push("Give your name: this machine's meta commits are made as you.");
+  if (!meta?.authorEmail || !/^[^\s@]+@[^\s@]+$/.test(meta.authorEmail)) problems.push("Give your email, as git writes it in a commit.");
+  if (!meta?.prefix || !isIdPrefix(meta.prefix)) problems.push("Give this machine's id prefix: a letter, then up to 15 letters or digits (A gives A-12). Each machine has its own.");
+  else if (jiraProject && meta.prefix.toUpperCase() === jiraProject.toUpperCase()) problems.push(`The id prefix ${meta.prefix} is the Jira project's key: its Items would have the issues' names (${jiraProject}-7). Pick another prefix.`);
+  return problems;
 }
 
 export const TOKEN_VARIABLE: Record<ConnectKind, string> = { github: "SCOPESOUP_GITHUB_TOKEN", jira: "SCOPESOUP_JIRA_TOKEN" };
@@ -74,8 +98,10 @@ export const HOST_NAME: Record<ConnectKind, string> = { github: "GitHub Issues",
 const text = (value: unknown): string => (typeof value === "string" ? value.trim() : "");
 
 /** The dialog's fields as the configuration holds them. Form problems are left to the configuration's validation. */
-export function connectionOf(body: Record<string, unknown>): { ok: true; kind: ConnectKind; connection: HostConnection } | { ok: false; error: string } {
+export function connectionOf(body: Record<string, unknown>): { ok: true; kind: HostKind; connection: HostConnection } | { ok: false; error: string } {
   const write = body.write !== false;
+  // Back to the meta branch (#134): always with writes on, and this machine's part.
+  if (body.kind === "metaBranch") return { ok: true, kind: "metaBranch", connection: { host: { kind: "metaBranch", write: true }, meta: metaPartIn(body) } };
   if (body.kind === "github") {
     // "owner/name", also when pasted as the repository's address.
     const repo = text(body.repo).replace(/^https?:\/\/github\.com\//i, "").replace(/\.git$/i, "").replace(/\/+$/, "");
@@ -90,7 +116,7 @@ export function connectionOf(body: Record<string, unknown>): { ok: true; kind: C
     if (components.length > 0) host.components = components;
     return { ok: true, kind: "jira", connection: { host, ...(deployment === "cloud" ? { email: text(body.email) } : {}) } };
   }
-  return { ok: false, error: 'Give "kind": "github" or "jira".' };
+  return { ok: false, error: 'Give "kind": "github", "jira" or "metaBranch".' };
 }
 
 const messageOf = (error: unknown): string => (error instanceof Error ? error.message : String(error));
@@ -149,3 +175,60 @@ export function hostWhere(host: { kind: string; repo?: string; project?: string 
   if (host.kind === "github") return `GitHub Issues (${host.repo})`;
   return `Jira (project ${host.project})`;
 }
+
+/** The host the Items move back from (#134): its open issues to tick, the ticked ones read in full, and the step on it after. */
+export interface MoveSource {
+  /** Where the issues come from, as their `moved` lines name it (`SourceItem.source`). */
+  source: string;
+  list(): Promise<{ id: string; title: string }[]>;
+  read(names: readonly string[]): Promise<SourceItem[]>;
+  old: OldHost;
+}
+
+/**
+ * GitHub through the import's reader (`readIssues`) and its step on GitHub (`moveIssues`); Jira through its host, with writes as
+ * the project's host has them. The token is the one from the environment; the deps' `fetch` in tests and the demo.
+ */
+export function sourceOf(host: Extract<HostConfig, { kind: "github" | "jira" }>, token: string, deps: ConnectDeps, machine: string | undefined): MoveSource {
+  const fetchImpl = deps.fetchImpl ? { fetchImpl: deps.fetchImpl } : {};
+  if (host.kind === "github") {
+    const client = createClient({ token, repo: host.repo, ...fetchImpl, ...(deps.githubApi ? { apiUrl: deps.githubApi } : {}) });
+    return {
+      source: `github:${host.repo.toLowerCase()}`,
+      list: async () => (await readIssues(client, "none", 0)).filter((issue) => issue.open).map((issue) => ({ id: `#${issue.number}`, title: issue.title })),
+      read: async (names) => fromGitHub((await readIssues(client, "none", ALL_COMMENTS)).filter((issue) => issue.open && names.includes(`#${issue.number}`)), host.repo),
+      old: githubOldHost(client),
+    };
+  }
+  const joined = joinConnection(host, { email: host.email });
+  if (!joined.ok) throw new Error(joined.error);
+  const jira = hostFor("jira", joined.connection, token, deps, machine) as JiraHost;
+  return {
+    source: `jira:${siteHost(host.site)}/${host.project}`,
+    list: async () => (await jira.work.listWork()).items.filter((work) => work.state !== "done" && work.state !== "abandoned").map((work) => ({ id: work.ref.id, title: work.title })),
+    async read(names) {
+      const works: WorkItem[] = [];
+      const comments = new Map<string, JiraThreadComment[]>();
+      for (const name of names) {
+        const ref = { host: jira.info.id, kind: "work" as const, id: name };
+        const work = await jira.work.getWork(ref);
+        if (!work || work.state === "done" || work.state === "abandoned") continue;
+        works.push(work);
+        comments.set(name, (await jira.thread(ref)).comments);
+      }
+      return fromJira(works, comments, host.site);
+    },
+    old: jiraOldHost(jira),
+  };
+}
+
+const siteHost = (site: string): string => {
+  try {
+    return new URL(site).host.toLowerCase();
+  } catch {
+    return site.toLowerCase();
+  }
+};
+
+/** Every comment of people on an issue comes along as its history. */
+const ALL_COMMENTS = 1000;

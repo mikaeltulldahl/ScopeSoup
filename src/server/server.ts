@@ -10,7 +10,7 @@ import type { IncomingMessage, Server, ServerResponse } from "node:http";
 import { createServer as createHttpServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { buildBoard } from "../core/board.ts";
-import type { ResourceConfig } from "../config/types.ts";
+import type { HostConfig, ResourceConfig } from "../config/types.ts";
 import type { OffboardView } from "../offboard/plan.ts";
 import type { BranchProtection } from "./branchProtection.ts";
 import type { Upgrader } from "../upgrade/upgrader.ts";
@@ -45,9 +45,10 @@ import type { Backend } from "../items/service.ts";
 import type { RemoteBranches } from "../items/remoteBranch.ts";
 import { branchCommands, farUntil, handBackItem, holdsIt, itemDetails, itemRef as itemRefOn, listItems, Refused, releaseItem, claimItem, whyNotHandBack, whyNotRelease, whyNotClaim } from "../items/service.ts";
 import type { JiraBoard } from "../items/jiraBackend.ts";
-import { connectHost, editConfig, readConfigView, type SharedSaved } from "../config/edit.ts";
-import { busyMachines, busyText, type ConnectDeps, connectionOf, HOST_NAME, hostFor, hostWhere, joinConnection, lookAtHost, TOKEN_VARIABLE } from "./connect.ts";
+import { connectHost, editConfig, type EditOptions, type HostConnection, type MetaPart, metaPartOf, readConfigView, type SharedSaved } from "../config/edit.ts";
+import { busyMachines, busyText, type ConnectDeps, connectionOf, HOST_NAME, hostFor, type HostKind, hostWhere, joinConnection, lookAtHost, metaPartProblems, type MoveSource, sourceOf, TOKEN_VARIABLE } from "./connect.ts";
 import { type MoveReport, moveItems, moveLines } from "../items/moveToHost.ts";
+import { type MetaTarget, moveBack, type MoveBackReport, moveBackLines } from "../items/moveToMeta.ts";
 import type { MachineSetup } from "../hostSetup.ts";
 import type { SettingsLogEntry, SharedSettings } from "../config/shared.ts";
 import { activityView } from "./activity.ts";
@@ -137,6 +138,11 @@ export interface ServerOptions {
   sharedSettings?: SharedSettings;
   /** How Settings' connect dialogs read the token and look at GitHub or Jira (#127): `process.env` and `fetch` by default. Tests and the demo give fakes. */
   connect?: ConnectDeps;
+  /**
+   * The meta branch on this machine, written with this machine's meta part, for "Move back to the meta branch" (#134) while the
+   * project's host is GitHub or Jira. `stop` ends its git processes after the move. Tests and the demo give a fake.
+   */
+  metaBranch?: (part: MetaPart) => MetaTarget & { stop?: () => Promise<void> };
   /** What this machine lacks for the project's host, found at start (`machineSetup`): the board asks "Set up this machine", and no agent runs. */
   machineSetup?: MachineSetup;
   /** The saves of the shared settings, newest first, for History (`GET /api/settings/log`). */
@@ -1666,11 +1672,13 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
     const view = readConfigView(options.configFile, configOptions);
     const current = view.present ? view.config?.host : undefined;
     const join = body.mode === "join";
-    const given = join ? (current ? joinConnection(current, body.email) : { ok: false as const, error: "The project has no host in its settings to set this machine up for." }) : connectionOf(body);
+    const given = join ? (current ? joinConnection(current, body) : { ok: false as const, error: "The project has no host in its settings to set this machine up for." }) : connectionOf(body);
     if (!given.ok) return sendError(response, 400, "BAD_FIELD", given.error);
-    const { kind, connection } = given;
+    const { connection } = given;
     const person = picked();
     const editOptions = { ...configOptions, ...(person ? { by: person } : {}), join };
+    if (given.kind === "metaBranch") return toMetaBranch(response, body, join, connection, current, person);
+    const kind = given.kind;
     const deps = options.connect ?? { env: process.env };
     const host = connection.host;
     const target = kind === "github" ? `GitHub Issues (${String(host.repo)})` : `Jira (project ${String(host.project)})`;
@@ -1686,7 +1694,7 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
     const checked = across ? null : await connectHost(options.configFile, connection, { ...editOptions, dryRun: true });
     const looked = checked?.ok ? await lookAtHost(kind, connection, deps) : { problems: [], lines: [] };
     const problems = [
-      ...(across ? [`The project's host is ${hostWhere(current)}. Going from there to ${HOST_NAME[kind]} goes through the meta branch, and going back to the meta branch is not supported yet.`] : []),
+      ...(across ? [`The project's host is ${hostWhere(current)}. Going from there to ${HOST_NAME[kind]} goes through the meta branch: "Move back to the meta branch" first, then Connect.`] : []),
       ...(checked && !checked.ok ? checked.errors : looked.problems),
       ...(busy.length > 0 ? [busyText(busy, "Connecting")] : []),
       ...(moving.length > 0 && host.write !== true ? ['Moving Items needs writes on: tick "Let Scope Soup write", or move none.'] : []),
@@ -1741,16 +1749,133 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
       // Not connected while a ticked Item is not moved: running it again finishes the move, making nothing twice.
       if (moved.failed) return sendJson(response, 500, { error: { code: "MOVE_FAILED", message: moveLines(moved).join(" ") }, problems: moveLines(moved), lines, ...listed });
     }
-    const result = await connectHost(options.configFile, connection, editOptions);
-    if (!result.ok) return sendJson(response, result.status, { error: { code: "CONNECT_REFUSED", message: result.errors.join(" ") }, problems: result.errors, lines, ...(moved ? { moved: moveLines(moved) } : {}) });
+    await connected(response, connection, editOptions, { kind, join, person, lines, ...(moved ? { moved: moveLines(moved) } : {}) });
+  }
+
+  /**
+   * The last step of a connect, a move back or a set-up: the host and this machine's part written, once everything moved. Answers the
+   * request; true when it was written.
+   */
+  async function connected(response: ServerResponse, connection: HostConnection, editOptions: EditOptions & { join: boolean }, done: { kind: HostKind; join: boolean; person: string | undefined; lines: string[]; moved?: string[] }): Promise<boolean> {
+    const { kind, join, person, lines, moved } = done;
+    const result = await connectHost(options.configFile!, connection, editOptions);
+    if (!result.ok) {
+      sendJson(response, result.status, { error: { code: "CONNECT_REFUSED", message: result.errors.join(" ") }, problems: result.errors, lines, ...(moved ? { moved } : {}) });
+      return false;
+    }
     let saved: string | undefined;
     if (result.changed) {
       const by = person ?? "board";
-      store.appendEvent({ kind: "config.changed", actor: by, data: { via: "board", fields: [join ? "jira" : "host"], connect: kind, ...(join ? { join: true } : {}), ...(result.shared ? { shared: { commit: result.shared.commit, changes: result.shared.changes } } : {}) } }, now().toISOString());
+      const fields = join ? [kind === "jira" ? "jira" : "meta"] : ["host", ...(connection.meta ? ["meta"] : [])];
+      store.appendEvent({ kind: "config.changed", actor: by, data: { via: "board", fields, connect: kind, ...(join ? { join: true } : {}), ...(result.shared ? { shared: { commit: result.shared.commit, changes: result.shared.changes } } : {}) } }, now().toISOString());
       if (result.shared) saved = sharedSavedText(result.shared, by);
       options.onConfigChanged?.();
     }
-    return sendJson(response, 200, { done: true, problems: [], lines, ...(moved ? { moved: moveLines(moved) } : {}), ...(saved ? { shared: saved } : {}), ...readConfigView(options.configFile, configOptions) });
+    sendJson(response, 200, { done: true, problems: [], lines, ...(moved ? { moved } : {}), ...(saved ? { shared: saved } : {}), ...readConfigView(options.configFile!, configOptions) });
+    return true;
+  }
+
+  /**
+   * Settings' "Move back to the meta branch" (#134, decision 99), and "Set up this machine" for a project on the meta branch. Without
+   * `confirm` it says what it would do: this machine's meta part checked, the old host's open issues listed to tick (`move`), no agent
+   * session on any machine. With `confirm` the ticked issues move (`src/items/moveToMeta.ts`), and only once every one moved the shared
+   * `host` becomes the meta branch (one meta commit) and this machine's `meta` part is written; the old host's part stays beside it.
+   */
+  async function toMetaBranch(response: ServerResponse, body: Record<string, unknown>, join: boolean, connection: HostConnection, current: HostConfig | undefined, person: string | undefined): Promise<void> {
+    const editOptions = { ...configOptions, ...(person ? { by: person } : {}), join };
+    const meta = connection.meta;
+    const prefix = meta?.prefix || "?";
+    const part = `this machine's meta part (commits as ${meta?.authorName || "?"} <${meta?.authorEmail || "?"}>, Item ids ${prefix}-1, ${prefix}-2, ...)`;
+    const checked = await connectHost(options.configFile!, connection, { ...editOptions, dryRun: true });
+    const problems = [...metaPartProblems(meta, !join && current?.kind === "jira" ? current.project : undefined), ...(checked.ok ? [] : checked.errors)];
+    if (join) {
+      const lines = [`Writes ${part} to this machine's scopesoup.config.json; the project's shared settings stay as they are.`, "Start Scope Soup again on this machine: it reads the meta branch, and starts agents, only then."];
+      if (body.confirm !== true) return sendJson(response, 200, { problems, lines });
+      if (problems.length > 0) return sendJson(response, 400, { error: { code: "CONNECT_REFUSED", message: problems.join(" ") }, problems, lines });
+      await connected(response, connection, editOptions, { kind: "metaBranch", join, person, lines });
+      return;
+    }
+    const from = current?.kind === "github" || current?.kind === "jira" ? current : undefined;
+    if (!from) problems.push(current?.kind === "metaBranch" ? "The project's Items are on the meta branch already." : "The project's host is set by the environment: there is nothing to move back from.");
+    const deps = options.connect ?? { env: process.env };
+    const variable = from ? TOKEN_VARIABLE[from.kind] : undefined;
+    const token = variable ? deps.env[variable] : undefined;
+    const snapshot = loadSnapshot(store);
+    const busy = busyMachines(snapshot.works, snapshot.sessions, options.machine, now());
+    if (busy.length > 0) problems.push(busyText(busy, "Moving back"));
+    const where = from ? hostWhere(from) : "";
+    const lines: string[] = [];
+    let source: MoveSource | undefined;
+    let open: { id: string; title: string }[] = [];
+    let unread = false;
+    if (from && token) {
+      try {
+        source = sourceOf(from, token, deps, options.machine);
+        open = await source.list();
+        lines.push(`${variable} is set and reads ${open.length} open issue(s) of ${where}.`);
+      } catch (error) {
+        unread = true;
+        source = undefined;
+        problems.push(`${where} could not be read with the token in ${variable}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    } else if (from) lines.push(`${variable} is not set in the environment Scope Soup was started in, so the open issues of ${where} cannot be listed and none can move. Set it and start Scope Soup again to move some.`);
+    const ticked = new Set(Array.isArray(body.move) ? body.move.filter((id): id is string => typeof id === "string") : []);
+    const moving = open.filter((issue) => ticked.has(issue.id));
+    const close = body.close === true;
+    if (moving.length > 0 && from && !from.write) problems.push(`${where} is read-only here (host.write is false), so its issues cannot be told where they went: move none, or connect it with writes on first.`);
+    if (moving.length > 0 && !options.metaBranch) problems.push("This Scope Soup cannot write the meta branch here, so nothing can move.");
+    const hostName = from?.kind === "jira" ? "Jira" : "GitHub";
+    const marked = close ? (from?.kind === "jira" ? "closed there" : "closed there as not planned") : from?.kind === "github" ? "left open, labelled moved-to-scopesoup" : "left open";
+    const stay = open.length - moving.length;
+    lines.push(
+      `Sets the project's host to the meta branch (refs/scopesoup/meta), with writes on: one commit to the shared settings${person ? `, named after ${person}` : ""}, for every machine.`,
+      `Writes ${part} to this machine's scopesoup.config.json, next to its other hosts' parts.`,
+      ...(moving.length > 0
+        ? [
+          `Moves ${moving.length} issue(s) to the meta branch: ${moving.map((issue) => issue.id).join(", ")}. All become Items in one meta commit, with their title, description and verification; references between them get the new ids (not in code or addresses); each issue's comments go to its Item's log as one line.`,
+          `Then each gets a comment on ${hostName} naming its new Item and is ${marked}.`,
+        ]
+        : []),
+      ...(source && !unread ? [stay > 0 ? `The other ${stay} open issue(s) stay on ${where}, readable there; the board shows the meta branch only.` : moving.length > 0 ? "No open issue stays behind." : "There are no open issues to move."] : []),
+      `Each other machine keeps its own settings: its board asks "Set up this machine for the meta branch" until it has its own meta part (name, email, id prefix), and starts no agent until then.`,
+      `This machine's agents are paused from the start and stay paused after a move back that succeeded, so none works on ${from ? where : "the old host"}, which this machine still reads until Scope Soup starts again: restart it, then press Start. If the move stops, they start again as they were.`,
+    );
+    const listed = source ? { items: open } : {};
+    if (body.confirm !== true) return sendJson(response, 200, { problems, lines, ...listed });
+    if (problems.length > 0) return sendJson(response, 400, { error: { code: "CONNECT_REFUSED", message: problems.join(" ") }, problems, lines, ...listed });
+    let moved: MoveBackReport | undefined;
+    const actor = person ?? "board";
+    // No new session starts on this machine from here. The old host is read until Scope Soup starts again, so after a move back that
+    // succeeded the switches stay paused (a person presses Start after the restart); they are put back only when it stops.
+    const paused = pauseRemembering(store, now().toISOString(), "connect", actor);
+    const resume = () => startAgain(store, paused, now().toISOString(), "connect", actor);
+    if (moving.length > 0 && source && from && meta && options.metaBranch) {
+      const target = options.metaBranch(meta);
+      try {
+        const items = await source.read(moving.map((issue) => issue.id));
+        moved = await moveBack({
+          kind: from.kind, source: source.source, items, to: target, from: source.old, close, by: actor,
+          beforeClose: () => {
+            const fresh = loadSnapshot(store);
+            const still = busyMachines(fresh.works, fresh.sessions, options.machine, now());
+            return still.length > 0 ? busyText(still, "Marking the old issues") : undefined;
+          },
+        });
+      } catch (error) {
+        resume();
+        const message = error instanceof Error ? error.message : String(error);
+        return sendJson(response, 400, { error: { code: "MOVE_REFUSED", message }, problems: [message], lines, ...listed });
+      } finally {
+        await target.stop?.().catch(() => undefined);
+      }
+      store.appendEvent({ kind: "items.moved", actor, data: { from: from.kind, to: "metaBranch", rows: moved.rows, ...(moved.failed ? { failed: moved.failed } : {}) } }, now().toISOString());
+      // Not switched while a ticked issue is not moved: running it again finishes the move, making nothing twice.
+      if (moved.failed) {
+        resume();
+        return sendJson(response, 500, { error: { code: "MOVE_FAILED", message: moveBackLines(moved).join(" ") }, problems: moveBackLines(moved), lines, ...listed });
+      }
+    }
+    if (!(await connected(response, connection, editOptions, { kind: "metaBranch", join, person, lines, ...(moved ? { moved: moveBackLines(moved) } : {}) }))) resume();
   }
 
   /** What this machine lacks for the project's host (decision 98), for the board's "Set up this machine" note; null when nothing. */
@@ -1758,8 +1883,8 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
     if (!options.machineSetup) return null;
     const host = options.configFile === undefined ? undefined : readConfigView(options.configFile, configOptions);
     const shared = host?.present ? host.config?.host : undefined;
-    if (!shared || (shared.kind !== "github" && shared.kind !== "jira")) return null;
-    const { email: _own, ...shown } = shared as Record<string, unknown>;
+    if (!shared) return null;
+    const { email: _own, authorName: _name, authorEmail: _email, prefix: _prefix, repoPath: _path, ...shown } = shared as Record<string, unknown>;
     return { setup: options.machineSetup, host: shown };
   }
 
@@ -2063,7 +2188,8 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
         return sendJson(response, 200, { ok: true, seq: store.lastSeq(), now: now().toISOString(), ...(project ? { project: { name: project.name, repository: project.repository } } : {}) });
       }
       if (path === "/api/config") return sendJson(response, 200, readConfigView(options.configFile, configOptions));
-      if (path === "/api/machine-setup") return sendJson(response, 200, setupNow() ?? { setup: null });
+      // This machine's meta part too, which the meta branch's dialogs fill in (names and a prefix, nothing secret).
+      if (path === "/api/machine-setup") return sendJson(response, 200, { ...(setupNow() ?? { setup: null }), ...(options.configFile ? { meta: metaPartOf(options.configFile) } : {}) });
       if (path === "/api/offboard") {
         if (!options.offboard) return sendJson(response, 200, { now: now().toISOString(), available: false, reason: "This server has no project configuration, so Scope Soup has left nothing for this project." });
         try {

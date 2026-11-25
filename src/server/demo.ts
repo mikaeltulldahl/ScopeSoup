@@ -46,6 +46,9 @@ import { offboardPlan, type Found } from "../offboard/plan.ts";
 import { defaultOutFolder } from "../offboard/scan.ts";
 import { projectInfo } from "./project.ts";
 import { fakeJira } from "../hosts/jira/fakeJira.ts";
+import { fakeIssues, ISSUES_API } from "../hosts/github/fakeIssues.ts";
+import { fakeMeta } from "../items/fakeMeta.ts";
+import type { FetchLike } from "../hosts/github/client.ts";
 import { CLOUD_EMAIL, CLOUD_ROBIN, cloudIssues, TOKEN as JIRA_TOKEN } from "../hosts/jira/fixtures.ts";
 import type { Upgrader } from "../upgrade/upgrader.ts";
 import type { UpgradeTask, UpgradeView } from "../upgrade/view.ts";
@@ -542,8 +545,9 @@ export async function writeDemoConfig(dir: string, settings: MetaSettings = meta
   };
   const shared = {
     project: "tidepool",
-    // The demo's Items are its own store's; named as a meta branch so Settings' Connect offers to move them.
-    host: { kind: "metaBranch", write: true },
+    // The demo's Items are its own store's; named as a meta branch so Settings' Connect offers to move them. DEMO_HOST=github names a
+    // fake GitHub repository instead, so Settings offers "Move back to the meta branch" (#134).
+    host: process.env.DEMO_HOST === "github" ? { kind: "github", repo: DEMO_REPO, write: true } : { kind: "metaBranch", write: true },
     level: 4,
     bugLabels: ["bug"],
     roles: allowanceDemo.roles,
@@ -576,9 +580,25 @@ export function demoConfigOptions(dir: string, settings: MetaSettings = metaSett
     // "Stop using Scope Soup" lists what a project Scope Soup ran for a while would leave; the demo has no git, so it is made up.
     offboard: async () => ({ now: new Date().toISOString(), available: true as const, plan: offboardPlan(demoFound(dir)), configFolder: dir, outFolder: defaultOutFolder(dir) }),
     // Settings' "Connect to Jira" looks at a fake Jira Cloud site (https://example.atlassian.net, project DEMO, synthetic issues)
-    // with a made-up token; "Connect to GitHub Issues" finds no token. No real host is ever asked.
-    connect: { env: { SCOPESOUP_JIRA_TOKEN: JIRA_TOKEN }, fetchImpl: fakeJira({ deployment: "cloud", token: JIRA_TOKEN, email: CLOUD_EMAIL, user: CLOUD_ROBIN, issues: cloudIssues() }).fetch },
+    // with a made-up token; "Connect to GitHub Issues" finds no token. With DEMO_HOST=github, "Move back to the meta branch" reads a
+    // fake GitHub repository and writes a meta branch in memory. No real host is ever asked.
+    connect: demoConnect(),
+    metaBranch: () => fakeMeta("D"),
   };
+}
+
+/** The repository DEMO_HOST=github names: synthetic, on the fake GitHub. */
+const DEMO_REPO = "example/tidepool";
+
+/** The connect dialogs' hosts: the fake Jira site, and with DEMO_HOST=github a fake GitHub repository with a token for it. */
+function demoConnect() {
+  const jira = fakeJira({ deployment: "cloud", token: JIRA_TOKEN, email: CLOUD_EMAIL, user: CLOUD_ROBIN, issues: cloudIssues() });
+  if (process.env.DEMO_HOST !== "github") return { env: { SCOPESOUP_JIRA_TOKEN: JIRA_TOKEN }, fetchImpl: jira.fetch };
+  const github = fakeIssues(DEMO_REPO, [41, 42, 43, 44]);
+  const titles = ["Tide table for the next seven days", "Moon phase on the chart", "Offline copy of the favourite harbours", "Swell height in metres"];
+  [41, 42, 43, 44].forEach((number, index) => Object.assign(github.issues.get(String(number))!, { title: titles[index], body: number === 42 ? "Drawn on the chart of #41." : "Synthetic demo issue." }));
+  const fetchImpl: FetchLike = (url, init) => (url.startsWith(ISSUES_API) ? github.fetch(url, init) : jira.fetch(url, init));
+  return { env: { SCOPESOUP_JIRA_TOKEN: JIRA_TOKEN, SCOPESOUP_GITHUB_TOKEN: "ghp-demo-synthetic" }, fetchImpl, githubApi: ISSUES_API };
 }
 
 /** What offboarding would find on the demo project: a batch left after a failure, labels, the refs, the copies. Synthetic. */

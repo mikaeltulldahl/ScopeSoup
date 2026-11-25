@@ -33,7 +33,7 @@ const KEEP = /(```[\s\S]*?(?:```|$)|~~~[\s\S]*?(?:~~~|$)|`[^`\n]*`|\bhttps?:\/\/
 export function rewriteIds(text: string, names: ReadonlyMap<string, string>): string {
   if (names.size === 0) return text;
   const ids = [...names.keys()].sort((a, b) => b.length - a.length).map((id) => id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
-  const pattern = new RegExp(`(?<![A-Za-z0-9_#/-])(${ids.join("|")})(?![A-Za-z0-9_-])`, "g");
+  const pattern = new RegExp(`(?<![A-Za-z0-9_#/&-])(${ids.join("|")})(?![A-Za-z0-9_-])`, "g");
   return text.split(KEEP).map((part, index) => (index % 2 === 1 ? part : part.replace(pattern, (id) => names.get(id) ?? id))).join("");
 }
 

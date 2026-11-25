@@ -15,8 +15,12 @@ import { CLOUD_EMAIL, CLOUD_ROBIN, cloudIssues, TOKEN } from "../hosts/jira/fixt
 import type { LogLineInput, WorkPatch, WritePort } from "../ports/host.ts";
 import type { Ref, WorkItem } from "../model/types.ts";
 import { openStore, type Store } from "../store/store.ts";
-import type { ConnectDeps } from "./connect.ts";
+import { type ConnectDeps, metaPartProblems } from "./connect.ts";
+import { applyControl, readControl } from "../store/control.ts";
 import { createServer } from "./server.ts";
+import { fakeIssues, ISSUES_API } from "../hosts/github/fakeIssues.ts";
+import { readMarker } from "../hosts/github/conventions.ts";
+import { type FakeMeta, fakeMeta } from "../items/fakeMeta.ts";
 
 const dirs: string[] = [];
 after(() => {
@@ -57,7 +61,7 @@ function metaWrites(failOn?: string) {
 }
 
 /** A server on a fresh private file and in-memory shared settings, connecting through `deps`. */
-async function setUp(deps: ConnectDeps, given: { own?: Record<string, unknown>; shared?: Record<string, unknown>; write?: WritePort } = {}) {
+async function setUp(deps: ConnectDeps, given: { own?: Record<string, unknown>; shared?: Record<string, unknown>; write?: WritePort; meta?: FakeMeta } = {}) {
   const own0 = given.own ?? OWN;
   const shared0 = given.shared ?? SHARED;
   const dir = mkdtempSync(join(tmpdir(), "scopesoup-connect-"));
@@ -70,6 +74,7 @@ async function setUp(deps: ConnectDeps, given: { own?: Record<string, unknown>; 
   const server = createServer({
     store, now: () => new Date(T0), port: 0, configFile: file, programFound: () => true, sharedSettings: settings, connect: deps, onConfigChanged: () => changes++, machine: "laptop-a",
     ...(given.write ? { items: { host: "demo", write: given.write } } : {}),
+    ...(given.meta ? { metaBranch: () => given.meta! } : {}),
   });
   const base = (await server.start()).url;
   const post = async (body: unknown, person = "Ada") => {
@@ -178,7 +183,7 @@ describe("POST /api/connect", { concurrency: 4 }, () => {
     try {
       const plan = await across.post({ ...jiraBody, confirm: true });
       assert.equal(plan.status, 400);
-      assert.match(plan.body.problems.join(" "), /goes through the meta branch, and going back to the meta branch is not supported yet/);
+      assert.match(plan.body.problems.join(" "), /goes through the meta branch: "Move back to the meta branch" first, then Connect/);
     } finally {
       await across.stop();
     }
@@ -264,7 +269,7 @@ describe("POST /api/connect", { concurrency: 4 }, () => {
     const s = await setUp({ env: { SCOPESOUP_JIRA_TOKEN: TOKEN }, fetchImpl: jira.fetch }, { own: { version: 1, machineName: "laptop-b", repoPath: "repo" }, shared });
     try {
       const setup = (await (await fetch(`${s.base}/api/machine-setup`)).json()) as { setup: unknown };
-      assert.deepEqual(setup, { setup: null }, "the server was not told this machine lacks anything");
+      assert.deepEqual(setup, { setup: null, meta: {} }, "the server was not told this machine lacks anything");
       const plan = await s.post({ mode: "join", email: CLOUD_EMAIL });
       assert.deepEqual(plan.body.problems, []);
       assert.match(plan.body.lines.join("\n"), /the project's shared settings stay as they are/);
@@ -327,6 +332,128 @@ describe("POST /api/connect", { concurrency: 4 }, () => {
       assert.equal(jira.issues.size, before + 1, "the retry found the issue by its marker");
       assert.deepEqual(meta.closed, []);
       assert.deepEqual(s.settings.current(), SHARED);
+    } finally {
+      await s.stop();
+    }
+  });
+});
+
+describe("POST /api/connect back to the meta branch (#134)", { concurrency: 4 }, () => {
+  const GITHUB = { project: "demo", host: { kind: "github", repo: "harbour/tides", write: true } };
+  const PART = { authorName: "Test Person", authorEmail: "test.person@example.invalid", prefix: "B" };
+  const BARE = { version: 1, machineName: "laptop-a", repoPath: "repo" };
+  const tides = () => {
+    const fake = fakeIssues("harbour/tides", [1, 2, 3]);
+    Object.assign(fake.issues.get("1")!, { title: "Tide table", body: "Before #2." });
+    Object.assign(fake.issues.get("2")!, { title: "Tide chart", body: "After #1." });
+    return fake;
+  };
+  const deps = (fake: ReturnType<typeof fakeIssues>): ConnectDeps => ({ env: { SCOPESOUP_GITHUB_TOKEN: "ghp-synthetic" }, fetchImpl: fake.fetch, githubApi: ISSUES_API });
+  const back = (extra: Record<string, unknown> = {}) => ({ kind: "metaBranch", ...PART, ...extra });
+
+  test("from GitHub: asks for this machine's part, lists the open issues, moves the ticked ones, then switches", async () => {
+    const github = tides();
+    const meta = fakeMeta("B");
+    const s = await setUp(deps(github), { own: BARE, shared: GITHUB, meta });
+    try {
+      const bare = await s.post({ kind: "metaBranch" });
+      assert.match(bare.body.problems.join(" "), /Give your name.*Give your email.*id prefix/);
+      const plan = await s.post(back({ move: ["#1", "#2"], close: true }));
+      assert.deepEqual(plan.body.problems, []);
+      assert.deepEqual(plan.body.items?.map((item) => item.id), ["#1", "#2", "#3"]);
+      const text = plan.body.lines.join("\n");
+      assert.match(text, /Moves 2 issue\(s\) to the meta branch: #1, #2\./);
+      assert.match(text, /a comment on GitHub naming its new Item and is closed there as not planned/);
+      assert.match(text, /The other 1 open issue\(s\) stay on GitHub Issues \(harbour\/tides\)/);
+      assert.match(text, /Set up this machine for the meta branch/);
+      assert.equal(meta.items.size, 0, "a plan writes nothing");
+      assert.deepEqual(s.settings.current(), GITHUB);
+
+      const done = await s.post(back({ move: ["#1", "#2"], close: true, confirm: true }));
+      assert.equal(done.status, 200, JSON.stringify(done.body));
+      assert.match((done.body.moved ?? []).join("\n"), /#1 "Tide table": B-1 \(created, labelled, commented, closed\)/);
+      assert.match(meta.items.get("B-2")!.input.body!, /^After B-1\./);
+      assert.deepEqual(s.settings.current(), { project: "demo", host: { kind: "metaBranch", write: true } });
+      assert.deepEqual(s.own(), { ...BARE, meta: PART });
+      assert.equal(github.issues.get("1")!.state, "closed");
+      assert.equal(github.issues.get("3")!.state, "open");
+      assert.equal((github.comments.get("2") ?? []).filter((comment) => readMarker(comment.body)?.kind === "moved").length, 1);
+      assert.equal(s.store.eventsOfKinds(["items.moved"], 10).length, 1);
+      assert.equal(readControl(s.store).implement, "paused", "this machine's agents stay paused: the old host is read until the restart");
+    } finally {
+      await s.stop();
+    }
+  });
+
+  test("a move that stops is not switched; Move back again finishes it and makes nothing twice", async () => {
+    const github = tides();
+    const meta = fakeMeta("B");
+    github.fail((call) => call === "POST /repos/harbour/tides/issues/2/comments", 502);
+    const s = await setUp(deps(github), { own: BARE, shared: GITHUB, meta });
+    try {
+      applyControl(s.store, "implement.start", T0, "test", "test");
+      const first = await s.post(back({ move: ["#1", "#2"], confirm: true }));
+      assert.equal(first.status, 500, JSON.stringify(first.body));
+      assert.equal(readControl(s.store).implement, "started", "a move that stops starts the agents again");
+      assert.match(first.body.problems.join(" "), /Stopped at #2/);
+      assert.deepEqual(s.settings.current(), GITHUB);
+      assert.deepEqual(s.own(), BARE);
+      const second = await s.post(back({ move: ["#1", "#2"], confirm: true }));
+      assert.equal(second.status, 200, JSON.stringify(second.body));
+      assert.equal(meta.items.size, 2);
+      assert.equal(meta.commits, 1);
+      assert.equal(github.issues.get("2")!.state, "open", "left open, as chosen");
+    } finally {
+      await s.stop();
+    }
+  });
+
+  test("refused while an agent session runs; read-only GitHub moves nothing; no token lists nothing", async () => {
+    const github = tides();
+    const s = await setUp(deps(github), { own: BARE, shared: GITHUB, meta: fakeMeta("B") });
+    try {
+      s.store.put(work(1, { holder: { actor: { id: "scopesoup@laptop-b", name: "scopesoup on laptop-b", bot: true } } }), "sync", T0);
+      const plan = await s.post(back({ move: ["#1"], confirm: true }));
+      assert.equal(plan.status, 400);
+      assert.match(plan.body.problems.join(" "), /Moving back waits until no agent session runs on any machine.*Busy now: laptop-b/);
+      assert.deepEqual(s.settings.current(), GITHUB);
+    } finally {
+      await s.stop();
+    }
+    const readOnly = await setUp(deps(tides()), { own: BARE, shared: { ...GITHUB, host: { ...GITHUB.host, write: false } }, meta: fakeMeta("B") });
+    try {
+      assert.match((await readOnly.post(back({ move: ["#1"] }))).body.problems.join(" "), /read-only here/);
+      assert.deepEqual((await readOnly.post(back())).body.problems, [], "switching without moving needs no writes on GitHub");
+    } finally {
+      await readOnly.stop();
+    }
+    const noToken = await setUp({ env: {}, fetchImpl: tides().fetch, githubApi: ISSUES_API }, { own: BARE, shared: GITHUB, meta: fakeMeta("B") });
+    try {
+      const plan = await noToken.post(back({ move: ["#1"] }));
+      assert.equal(plan.body.items, undefined);
+      assert.match(plan.body.lines.join(" "), /SCOPESOUP_GITHUB_TOKEN is not set .* none can move/);
+    } finally {
+      await noToken.stop();
+    }
+  });
+
+  test("an id prefix that is the Jira project's key is refused", () => {
+    assert.match(metaPartProblems({ ...PART, prefix: "harb" }, "HARB").join(" "), /is the Jira project's key/);
+    assert.deepEqual(metaPartProblems(PART, "HARB"), []);
+  });
+
+  test("join mode on the meta branch writes this machine's meta part only", async () => {
+    const shared = { project: "demo", host: { kind: "metaBranch", write: true } };
+    const s = await setUp({ env: {} }, { own: BARE, shared });
+    try {
+      const setup = (await (await fetch(`${s.base}/api/machine-setup`)).json()) as { meta: unknown };
+      assert.deepEqual(setup.meta, {});
+      assert.match((await s.post({ mode: "join", ...PART, prefix: "1x" })).body.problems.join(" "), /id prefix/);
+      const done = await s.post({ mode: "join", ...PART, confirm: true }, "");
+      assert.equal(done.status, 200, JSON.stringify(done.body));
+      assert.deepEqual(s.own(), { ...BARE, meta: PART });
+      assert.deepEqual(s.settings.current(), shared);
+      assert.equal(s.settings.saves, 0);
     } finally {
       await s.stop();
     }

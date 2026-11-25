@@ -385,10 +385,32 @@ export async function editConfig(file: string, change: unknown, options: EditOpt
 /** The host keys the Settings page's connect dialogs set; a reconnect to the same kind keeps the file's other host keys. */
 const CONNECT_KEYS = ["kind", "repo", "site", "project", "deployment", "filter", "components", "write"];
 
-/** A host to connect to from Settings (#127): the shared `host`, and on Jira Cloud this machine's `jira.email`. */
+/**
+ * A host to connect to from Settings (#127): the shared `host`, and on Jira Cloud this machine's `jira.email`; for the meta branch
+ * (#134) this machine's `meta` part (who its meta commits are made as, and the prefix of its Items' ids).
+ */
 export interface HostConnection {
   host: Obj;
   email?: string;
+  meta?: MetaPart;
+}
+
+/** This machine's part of a meta branch host, in its private file as `meta`. */
+export interface MetaPart {
+  authorName: string;
+  authorEmail: string;
+  prefix: string;
+}
+
+/** This machine's `meta` part as its private file has it now (kept while another host is in use), or nothing. */
+export function metaPartOf(file: string): Partial<MetaPart> {
+  try {
+    const raw = JSON.parse(readFileSync(resolve(file), "utf8")) as unknown;
+    const meta = isObj(raw) && isObj(raw.meta) ? raw.meta : {};
+    return Object.fromEntries(["authorName", "authorEmail", "prefix"].filter((key) => typeof meta[key] === "string").map((key) => [key, meta[key]])) as Partial<MetaPart>;
+  } catch {
+    return {};
+  }
 }
 
 /**
@@ -411,6 +433,7 @@ export async function connectHost(file: string, connection: HostConnection, opti
   // This machine's part of each host stays side by side (`meta`, `jira`): only the active host's is read (decision 98).
   const nextOwn: Obj = { ...migrated.raw };
   if (connection.email !== undefined) nextOwn.jira = { ...(isObj(nextOwn.jira) ? nextOwn.jira : {}), email: connection.email };
+  if (connection.meta !== undefined) nextOwn.meta = { ...(isObj(nextOwn.meta) ? nextOwn.meta : {}), ...connection.meta };
   const nextShared = options.join ? files.shared.raw : withHost(files.shared.raw);
   const result = validateFiles(nextOwn, nextShared, dirname(files.path));
   if (!result.ok) return { ok: false, status: 400, errors: result.errors };
