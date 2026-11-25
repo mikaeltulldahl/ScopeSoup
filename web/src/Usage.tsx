@@ -117,8 +117,33 @@ function reservesOf(view: ConfigView | null, kind: UsagePageWindow["kind"]): num
   return view.sliders.budgetReserve.map((row) => (kind === "five_hour" ? row.fiveHour : row.sevenDay));
 }
 
-function Meter({ window, now, saver, picked, pick }: { window: UsagePageWindow; now: number; saver: Saver; picked: number | null; pick: (position: number | null) => void }) {
-  const track = useRef<HTMLDivElement>(null);
+const HINT_KEY = "scopesoup.usageReserveHint";
+
+/** Whether the one-time "drag to change" hint is still to show, and how to dismiss it for good (kept in localStorage; the page works without it). */
+function useHint(): [boolean, () => void] {
+  const [show, setShow] = useState(() => {
+    try {
+      return localStorage.getItem(HINT_KEY) === null;
+    } catch {
+      return true;
+    }
+  });
+  const dismiss = () => {
+    setShow(false);
+    try {
+      localStorage.setItem(HINT_KEY, "1");
+    } catch {
+      // Not remembered: the hint comes back next time.
+    }
+  };
+  return [show, dismiss];
+}
+
+/** Room a label needs on the bar, in pixels, by its length. */
+const labelWidth = (text: string) => text.length * 7 + 8;
+
+function Meter({ window, now, saver, picked, pick, hint, dismissHint }: { window: UsagePageWindow; now: number; saver: Saver; picked: number | null; pick: (position: number | null) => void; hint: boolean; dismissHint: () => void }) {
+  const [track, width] = useWidth();
   const current = window.current;
   const reserves = reservesOf(saver.view, window.kind);
   // While the marker is dragged (or its saving is on its way) it shows the picked position's reserve.
@@ -152,14 +177,25 @@ function Meter({ window, now, saver, picked, pick }: { window: UsagePageWindow; 
     });
   };
   const warnNow = limit !== undefined && used >= limit;
+  // Labels on the bar: the used share inside its end when it fits, else under it; the forecast's end under the bar, on a second row when the two would meet.
+  const usedText = pct(used);
+  const usedInside = used * width >= labelWidth(usedText) + 8;
+  const reach = bar.forecast.at(-1)?.to;
+  const full = current.forecast?.outcome === "used_up";
+  const forecastText = reach === undefined ? undefined : full ? `full ${current.forecast?.at ? clockTime(current.forecast.at, now) : "before the reset"}` : `→ ${pct(reach)} at the reset`;
+  const forecastWarn = full || bar.forecast.some((segment) => segment.warn);
+  const usedLeft = Math.min(Math.max(used * width, labelWidth(usedText) / 2), width - labelWidth(usedText) / 2);
+  const forecastRight = Math.max(reach === undefined ? 0 : reach * width, forecastText ? labelWidth(forecastText) : 0);
+  const forecastLow = forecastText !== undefined && !usedInside && forecastRight - labelWidth(forecastText) < usedLeft + labelWidth(usedText) / 2 + 6;
+  const reserveText = limit === undefined ? "" : `Reserve ${pct(1 - limit)}`;
+  const reserveFlip = limit !== undefined && limit * width < labelWidth(reserveText) + 30;
   const kinds = [...new Set(bar.used.map((segment) => segment.key))];
   return (
     <div class="usage-meter">
       <div class="usage-meter-head">
         <b>{TITLE[window.kind]}</b>
-        <span><b class="usage-big">{pct(current.utilization)}</b> used</span>
       </div>
-      <div class="usage-bar" ref={track}>
+      <div class={`usage-bar${forecastLow ? " two-rows" : ""}`} ref={track}>
         <div class="usage-track" role="meter" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(used * 100)} aria-label={`${TITLE[window.kind]} used`}>
           {bar.reserve && <div class="usage-track-reserve" style={place(bar.reserve)} />}
           {bar.used.map((segment) => (
@@ -169,6 +205,14 @@ function Meter({ window, now, saver, picked, pick }: { window: UsagePageWindow; 
             <div key={segment.from} class={`usage-seg usage-seg-forecast${segment.warn ? " warn" : ""}`} style={place(segment)} title={segment.warn ? "Forecast: past the reserve" : "Forecast up to the reset"} />
           ))}
         </div>
+        {usedInside ? (
+          <span class="usage-used-in" style={{ right: percent(1 - used) }}>{usedText}</span>
+        ) : (
+          <span class="usage-used-out" style={{ left: `${usedLeft}px` }}>{usedText}</span>
+        )}
+        {forecastText !== undefined && reach !== undefined && (
+          <span class={`usage-fc-label${forecastWarn ? " warn" : ""}${forecastLow ? " low" : ""}`} style={{ left: `${forecastRight}px` }}>{forecastText}</span>
+        )}
         {limit !== undefined && (
           reserves ? (
             <div
@@ -178,16 +222,23 @@ function Meter({ window, now, saver, picked, pick }: { window: UsagePageWindow; 
               title={`Reserve: Scope Soup starts nothing from ${pct(limit)}. Drag to change.`}
               onPointerDown={(event) => {
                 if (saver.busy) return;
+                dismissHint();
                 (event.currentTarget as HTMLElement).setPointerCapture?.(event.pointerId);
                 pick(nearestPosition(reserves, reserve ?? 0));
               }}
               onPointerMove={(event) => picked !== null && (event.buttons & 1) !== 0 && move(event)}
               onPointerUp={drop}
               onPointerCancel={() => pick(null)}
-            ><span /></div>
+            ><i class="usage-knob" /><span /></div>
           ) : (
             <div class="usage-thumb fixed" style={{ left: percent(limit) }} title={`Reserve: Scope Soup starts nothing from ${pct(limit)}`}><span /></div>
           )
+        )}
+        {limit !== undefined && (
+          <span class={`usage-reserve-label${reserveFlip ? " flip" : ""}`} style={{ left: percent(limit) }}>
+            {reserveText}
+            {reserves && hint && <em> · drag to change</em>}
+          </span>
         )}
       </div>
       <ul class="usage-legend" aria-label="Colours of the bar">
@@ -431,6 +482,7 @@ export function Usage() {
   const saver = useSaver(reload);
   // The reserve position being dragged, or saved and not yet reloaded.
   const [picked, pick] = useState<number | null>(null);
+  const [hint, dismissHint] = useHint();
   useEffect(() => {
     if (data) pick(null);
   }, [data]);
@@ -455,7 +507,7 @@ export function Usage() {
         {!data && !error && <p class="empty">Loading…</p>}
         {data && (
           <div class="usage-meters">
-            {data.windows.map((window) => <Meter key={window.kind} window={window} now={now} saver={saver} picked={picked} pick={pick} />)}
+            {data.windows.map((window) => <Meter key={window.kind} window={window} now={now} saver={saver} picked={picked} pick={pick} hint={hint} dismissHint={dismissHint} />)}
           </div>
         )}
         {data && <Pacing saver={saver} />}
