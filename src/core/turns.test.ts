@@ -354,3 +354,10 @@ test("below level 2 a triaged Item is only \"ready\", never waiting for a slot",
   for (const level of [0, 1]) assert.equal(turnOf({ ...snap, level }, 1).reason, "ready");
   assert.equal(turnOf({ ...snap, level: 2 }, 1).reason, "ready; waiting for a free agent slot");
 });
+
+test("a triaged Item whose paths overlap an Item in progress waits for it, and says so instead of waiting for a slot", () => {
+  const snap = { ...snapshot({ works: [work(1), work(2)] }), sameFiles: [{ subject: ref("work", 2), waitsFor: [ref("work", 1)] }] };
+  const turn = turnOf(snap, 2);
+  assert.deepEqual([turn.actor, turn.reason], ["nobody", "waits for #1, which changes the same files"]);
+  assert.equal(turnOf(snap, 1).reason, "ready; waiting for a free agent slot");
+});
