@@ -3,18 +3,18 @@
 
 import { useState } from "preact/hooks";
 import { usePerson } from "./api.ts";
-import { cleanName, PERSON_MAX, pickerNames, setPerson } from "./person.ts";
+import { cleanName, PERSON_MAX, pickerOptions, setPerson } from "./person.ts";
 
 /** Not a name: a cleaned name never starts with a space. */
 const NEW = " new";
 
-export function PersonPicker({ known }: { known: readonly string[] }) {
+export function PersonPicker({ known, names }: { known: readonly string[]; names?: Readonly<Record<string, string>> }) {
   const person = usePerson();
-  const names = pickerNames(known, person);
+  const options = pickerOptions(known, person, names);
   const [adding, setAdding] = useState(false);
   const [typed, setTyped] = useState("");
 
-  if (adding || names.length === 0) {
+  if (adding || options.length === 0) {
     const name = cleanName(typed);
     return (
       <form
@@ -30,7 +30,7 @@ export function PersonPicker({ known }: { known: readonly string[] }) {
         <label for="person-name">You are</label>
         <input id="person-name" type="text" autocomplete="name" maxLength={PERSON_MAX} placeholder="your name" value={typed} onInput={(event) => setTyped(event.currentTarget.value)} />
         <button type="submit" disabled={!name}>Add</button>
-        {names.length > 0 && (
+        {options.length > 0 && (
           <button type="button" onClick={() => setAdding(false)}>
             Cancel
           </button>
@@ -53,9 +53,9 @@ export function PersonPicker({ known }: { known: readonly string[] }) {
         }}
       >
         {!person && <option value="">pick who you are</option>}
-        {names.map((name) => (
-          <option key={name} value={name}>
-            {name}
+        {options.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
           </option>
         ))}
         <option value={NEW}>Someone new…</option>

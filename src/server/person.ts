@@ -33,17 +33,33 @@ export function readPersonHeader(value: string | string[] | undefined): string |
  * The people Scope Soup knows, for the board's picker: everyone who holds an item, wrote a line in an item's log or answered on
  * one, by the name the item commands use (`who` of `who@machine`). Agents are left out. Sorted, each once.
  */
-export function knownPeople(works: readonly WorkItem[], answers: readonly RecordedAnswer[]): string[] {
+export function knownPeople(works: readonly WorkItem[], answers: readonly RecordedAnswer[], jiraHost?: string): string[] {
   const names = new Set<string>();
   const add = (name: string | undefined): void => {
     const trimmed = name?.trim();
     if (trimmed && trimmed.length <= PERSON_MAX) names.add(trimmed);
   };
   for (const item of works) {
-    if (item.holder && !item.holder.actor.bot) add(actorParts(item.holder.actor).who);
+    // A Jira holder is the account id or user name as a whole (it may have an "@"); the board matches on it.
+    if (item.holder && !item.holder.actor.bot) add(jiraHost !== undefined && item.ref.host === jiraHost ? item.holder.actor.id : actorParts(item.holder.actor).who);
     for (const line of item.log ?? []) if (!line.by.agent) add(line.by.who);
     for (const answer of item.answers ?? []) add(answer.by);
   }
   for (const answer of answers) add(answer.by);
   return [...names].sort((a, b) => a.localeCompare(b));
+}
+
+/**
+ * The display names of the picker's Jira holders, by the account id or user name the picker's value is (`knownPeople`): only where
+ * the name differs from the id. Everyone else is shown as they are named.
+ */
+export function peopleNames(works: readonly WorkItem[], jiraHost: string | undefined): Record<string, string> {
+  const names: Record<string, string> = {};
+  if (jiraHost === undefined) return names;
+  for (const item of works) {
+    const actor = item.holder?.actor;
+    const name = actor?.name.trim();
+    if (actor && !actor.bot && item.ref.host === jiraHost && name && name !== actor.id.trim() && actor.id.trim().length <= PERSON_MAX) names[actor.id.trim()] = name;
+  }
+  return names;
 }

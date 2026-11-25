@@ -16,7 +16,7 @@ import type { BranchProtection } from "./branchProtection.ts";
 import type { Upgrader } from "../upgrade/upgrader.ts";
 import { readResourceState, resourcesView } from "../orchestrator/resources.ts";
 import type { Self } from "../core/holdings.ts";
-import { knownPeople, PERSON_HEADER, readPersonHeader } from "./person.ts";
+import { knownPeople, peopleNames, PERSON_HEADER, readPersonHeader } from "./person.ts";
 import { buildItemList, parseListQuery } from "../core/item-list.ts";
 import { buildItemPage } from "../core/item-page.ts";
 import { toStatusView } from "../core/status.ts";
@@ -1693,7 +1693,7 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
         const snapshot = loadSnapshot(store);
         const without = withoutTriageNow(snapshot);
         const project = projectNow();
-        return sendJson(response, 200, { ...boardNow(), ...(project ? { project: projectView(project) } : {}), canWrite: items?.write.createWork !== undefined, people: knownPeople(snapshot.works, loadAnswers(store)), ...(without > 0 ? { withoutTriage: without } : {}) });
+        return sendJson(response, 200, { ...boardNow(), ...(project ? { project: projectView(project) } : {}), canWrite: items?.write.createWork !== undefined, people: knownPeople(snapshot.works, loadAnswers(store), options.jiraItems?.host), ...(Object.keys(peopleNames(snapshot.works, options.jiraItems?.host)).length > 0 ? { peopleNames: peopleNames(snapshot.works, options.jiraItems?.host) } : {}), ...(without > 0 ? { withoutTriage: without } : {}) });
       }
       if (path === "/api/items") return sendJson(response, 200, (({ snapshot, notTriaged }) => buildItemList(snapshot, parseListQuery(url.searchParams), now(), picked(), notTriaged))(triageView()));
       // The item commands' list: who holds what, as one person sees it (`?as=name`).

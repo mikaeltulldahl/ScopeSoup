@@ -300,6 +300,8 @@ export interface BoardView {
   resources?: ResourcesView;
   /** Set by the server: the people Scope Soup knows (holds, log lines, answers), for the board's person picker. */
   people?: string[];
+  /** Set by the server: a Jira holder's display name by the account id in `people`, for the picker to show (the id stays the value). */
+  peopleNames?: Record<string, string>;
   /**
    * Set by the server with a project configuration at level 0: how many ready Items have no triage (no triage
    * `session` line in their log, no stored triage result). Left out when there are none.
