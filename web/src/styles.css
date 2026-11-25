@@ -160,6 +160,9 @@ a.status-item { text-decoration: underline; text-decoration-color: var(--line); 
 @keyframes beam { from { opacity: 0.55; } to { opacity: 1; } }
 .your-turn h2 { color: var(--yours); }
 .your-turn-list { display: grid; gap: 8px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr)); }
+.tag-draft { color: var(--yours); border-color: var(--yours); flex: none; }
+.draft-text summary { cursor: pointer; color: var(--muted); font-size: 0.82rem; }
+.draft-actions button { font-size: 0.8rem; padding: 2px 10px; }
 
 /* --- Lanes: stacked on a phone, columns when there is room --- */
 .lanes { display: grid; gap: var(--gap); grid-template-columns: minmax(0, 1fr); align-items: start; }

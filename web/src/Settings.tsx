@@ -63,6 +63,8 @@ interface Draft {
   media: { push: boolean; keepDays: string };
   /** Multiplayer (refs/scopesoup/* shared on the remote) or singleplayer (they stay in this clone): this machine's. */
   multiplayer: boolean;
+  /** What a reviewer's `should` findings on an approved change do (decision 95). */
+  shouldFindings: "fix" | "draft";
 }
 
 /** One resource in the form: the units as typed, the environment one `NAME=value` per line. */
@@ -117,7 +119,7 @@ function draftOf(config: ProjectConfig, raw: unknown, mergeQueue: MergeQueueSetu
   // The command as the shared file holds it, with {{ownClone}} unexpanded (the configuration in use has this machine's path in it).
   const command = (raw as { setupCommand?: unknown } | null)?.setupCommand;
   const setup = { command: Array.isArray(command) ? commandText(command as string[]) : config.setupCommand ? commandText(config.setupCommand) : "", watch: (config.setupWatch ?? []).join("\n") };
-  return { level: config.level, settings: { maxParallelSessions: setting("maxParallelSessions"), budgetReserve: setting("budgetReserve"), triageMaxAgeDays: setting("triageMaxAgeDays") }, roles, mergeQueue: asked, setup, resources: resourceDrafts(config), media: { push: config.media?.push ?? false, keepDays: config.media?.keepDaysAfterClose === null || config.media?.keepDaysAfterClose === undefined ? "" : String(config.media.keepDaysAfterClose) }, multiplayer: config.multiplayer };
+  return { level: config.level, settings: { maxParallelSessions: setting("maxParallelSessions"), budgetReserve: setting("budgetReserve"), triageMaxAgeDays: setting("triageMaxAgeDays") }, roles, mergeQueue: asked, setup, resources: resourceDrafts(config), media: { push: config.media?.push ?? false, keepDays: config.media?.keepDaysAfterClose === null || config.media?.keepDaysAfterClose === undefined ? "" : String(config.media.keepDaysAfterClose) }, multiplayer: config.multiplayer, shouldFindings: config.review?.shouldFindings ?? "fix" };
 }
 
 /** The watched files as the file holds them: one per line, blank lines dropped. */
@@ -153,6 +155,7 @@ function changeOf(draft: Draft, base: Draft, asks: readonly AskedField[], showsC
   }
   if (Object.keys(roles).length > 0) change.roles = roles;
   if (draft.multiplayer !== base.multiplayer) change.multiplayer = draft.multiplayer;
+  if (draft.shouldFindings !== base.shouldFindings) change.review = { shouldFindings: draft.shouldFindings };
   // Both media values together, when either differs.
   if (draft.media.push !== base.media.push || draft.media.keepDays.trim() !== base.media.keepDays.trim()) {
     change.media = { push: draft.media.push, keepDaysAfterClose: draft.media.keepDays.trim() === "" ? null : Number(draft.media.keepDays) };
@@ -485,6 +488,18 @@ export function Settings({ project, openHistory = false }: { project?: ProjectVi
             <b>Delete a closed Item's images after</b>
             <input type="number" min={0} max={3650} step={1} value={draft.media.keepDays} placeholder="never: keep them" disabled={busy} onInput={(event) => set({ media: { ...draft.media, keepDays: (event.target as HTMLInputElement).value } })} />
             <span class="muted">days, here and on the remote. Empty: they are kept, so the Item's history keeps its pictures.</span>
+          </label>
+        </div>
+
+        <h4>Review</h4>
+        <div class="settings-grid">
+          <label>
+            <b>A review's "should" findings on a change it approves</b>
+            <select value={draft.shouldFindings} disabled={busy} onChange={(event) => set({ shouldFindings: (event.target as HTMLSelectElement).value as Draft["shouldFindings"] })}>
+              <option value="fix">Fix them before the merge (one more round)</option>
+              <option value="draft">Merge, and make them a draft Item</option>
+            </select>
+            <span class="muted">A project setting. A draft waits in Your turn for Approve or Deny.</span>
           </label>
         </div>
 

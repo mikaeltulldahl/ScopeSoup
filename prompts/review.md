@@ -12,4 +12,4 @@ Verification: {{verification}}
 
 {{allowedCommands}} {{media}} {{decisions}}
 
-Answer: `verdict` (approve, or changes when something must be fixed first) and `findings` (each `must` or `should`, the `file`, and what to change; `ask` true for a decision that should have been a question).
+Answer: `verdict` (approve, or changes when something must be fixed first), `findings` (each `must` or `should`, the `file`, and what to change; `ask` true for a decision that should have been a question), and `drafts` only for separate work you found that no Item covers (a title, description and verification each); a person approves them before they become Items.

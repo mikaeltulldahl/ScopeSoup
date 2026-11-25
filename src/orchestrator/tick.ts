@@ -373,7 +373,7 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
       const main = await watchMain(ctx, job, `after the ${job.step} session for ${item?.ref.id ?? key}`);
       await settle(ctx, job, session, readSessionResult(store, job.sessionId), item, main);
     }
-    // A person settled the triage's draft: triage's other verdicts follow, without a session.
+    // A person settled the triage's rewrite: triage's other verdicts follow, without a session.
     if (!job.sessionId && !job.parked && job.step === "triage" && job.refine?.settled) await afterRefine(ctx, job);
     // Below level 2 nothing is built, so nothing is handed over either: the hand-over waits for the level to come back.
     if (job.owes && merging && config.level >= 2 && !job.parked && !job.sessionId && item && item.state !== "done" && item.state !== "abandoned") {

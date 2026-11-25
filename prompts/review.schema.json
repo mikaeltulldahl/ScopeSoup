@@ -3,6 +3,10 @@
   "additionalProperties": false,
   "required": ["verdict", "findings"],
   "properties": {
+    "drafts": { "type": "array", "items": {
+      "type": "object", "additionalProperties": false, "required": ["title", "description", "verification"],
+      "properties": { "title": { "type": "string" }, "description": { "type": "string" }, "verification": { "type": "string" } }
+    } },
     "verdict": { "enum": ["approve", "changes"] },
     "findings": { "type": "array", "items": {
       "type": "object", "additionalProperties": false, "required": ["severity", "text"],

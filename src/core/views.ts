@@ -120,7 +120,7 @@ export interface CardView extends ItemLink {
   person?: { name: string; mine: boolean };
   /** Why it is where it is and what it waits for, in words. Always set. */
   reason: string;
-  /** In "Your turn": only what waits and how many ("2 questions", "a draft to accept", "escalated"). Absent when the reason is short already. */
+  /** In "Your turn": only what waits and how many ("2 questions", "a rewrite to accept", "escalated"). Absent when the reason is short already. */
   waits?: string;
   /** Who holds the Item, by name. */
   heldBy?: string;
@@ -287,6 +287,20 @@ export interface ResourcesView {
   }[];
 }
 
+/** An Item draft waiting for a person (decision 95), shown in Your turn. Its text came from an agent and was made inert. */
+export interface DraftView {
+  id: string;
+  title: string;
+  description: string;
+  verification: string;
+  role: "triage" | "implementor" | "reviewer";
+  at: string;
+  /** The Item it was found while working on. */
+  from: { key: string; id: string; title?: string };
+  /** Why Approve is not offered here (the source Item's host cannot be written from this board). Absent: it is. */
+  readOnly?: string;
+}
+
 export interface BoardView {
   /** The server's clock when the view was built. The browser animates from it. */
   now: string;
@@ -296,6 +310,8 @@ export interface BoardView {
   status: StatusLine;
   /** Set by the server: items can be created here (the project's host can be written to). */
   canWrite?: boolean;
+  /** Set by the server: the Item drafts waiting for a person, oldest first. In every person's Your turn. */
+  drafts?: DraftView[];
   /** Set by the server when the project declares limited resources. */
   resources?: ResourcesView;
   /** Set by the server: the people Scope Soup knows (holds, log lines, answers), for the board's person picker. */
@@ -493,7 +509,7 @@ export interface ItemPage {
   /** Set by the server when the item is in conflict: `item.md` as it stands and the versions put aside. The text is data. */
   conflict?: ConflictVersions;
   /** Set when the orchestrator has put the item down. `canAnswer` is true when an answer from a person picks it up again. */
-  parked?: { as: ParkedKind; reason: string; at: string; canAnswer: boolean; /** Offers "Start over": drop the work so far and start at triage. */ canStartOver?: boolean; decision?: { question: string; options: DecisionOption[]; recommendation: string; context?: string; multiSelect?: true }; /** Several open questions, each answered on its own (by its index); the item is picked up once all have an answer. */ questions?: ParkedQuestion[]; /** The triage's draft and its questions, settled together (`POST /api/draft`). */ refine?: ParkedDraft };
+  parked?: { as: ParkedKind; reason: string; at: string; canAnswer: boolean; /** Offers "Start over": drop the work so far and start at triage. */ canStartOver?: boolean; decision?: { question: string; options: DecisionOption[]; recommendation: string; context?: string; multiSelect?: true }; /** Several open questions, each answered on its own (by its index); the item is picked up once all have an answer. */ questions?: ParkedQuestion[]; /** The triage's rewrite and its questions, settled together (`POST /api/draft`). */ refine?: ParkedDraft };
   /** The triage's typed links to other Items: the other Item when it is known here, else the id as written. Text from an agent: data. */
   links?: { type: LinkType; item: ItemLink | { label: string }; reason?: string }[];
   /** What a person has answered on this item, oldest first. */

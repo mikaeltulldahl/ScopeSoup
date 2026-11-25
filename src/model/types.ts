@@ -1,7 +1,7 @@
 // The host-neutral model. Nothing here knows about GitHub, Gerrit or any other host.
 // Times are ISO 8601 strings in UTC. Durations are milliseconds.
 
-export type RefKind = "work" | "change" | "run" | "batch" | "session";
+export type RefKind = "work" | "change" | "run" | "batch" | "session" | "draft";
 
 /** Points at one object on one host (or in Scope Soup itself, host "scopesoup"). */
 export interface Ref {
@@ -438,7 +438,7 @@ export interface Turn {
   /** For actor "person": who (`who@machine` on the meta branch, the login on GitHub). */
   person?: Actor;
   reason: string;
-  /** Only what waits and how many ("2 questions", "a draft to accept"), for "Your turn". */
+  /** Only what waits and how many ("2 questions", "a rewrite to accept"), for "Your turn". */
   waits?: string;
   since?: string;
   /** How many other items wait behind this one. Used to order the "Your turn" list. */
@@ -468,7 +468,7 @@ export interface Parked {
    * Absent for a single question (`decision`).
    */
   questions?: ParkedQuestion[];
-  /** The triage's draft of the description, with its questions (recommendations pre-selected on the Item page). */
+  /** The triage's rewrite of the description, with its questions (recommendations pre-selected on the Item page). */
   refine?: ParkedDraft;
 }
 
@@ -482,7 +482,7 @@ export interface ItemLinkAnswer {
   reason?: string;
 }
 
-/** The triage's draft description parked for a person. Text from an agent: data. */
+/** The triage's rewrite description parked for a person. Text from an agent: data. */
 export interface ParkedDraft {
   /** The description as the triage read it. */
   original: string;
@@ -557,6 +557,28 @@ export interface CreatedPart {
   part: number;
   ref: Ref;
   linked: boolean;
+}
+
+/**
+ * An Item draft (decision 95): a new Item an agent proposed (`drafts` in its answer, or a review's `should` findings), kept in this
+ * machine's store (host "scopesoup", kind "draft") until a person approves it, which makes the real Item on the source Item's host,
+ * or denies it. Kept after the decision, so the same draft (same source Item, same title) is never filed twice. Its text was made
+ * inert when it was filed.
+ */
+export interface ItemDraft {
+  ref: Ref;
+  /** The Item it was found while working on. */
+  from: Ref;
+  /** Which agent proposed it. */
+  role: "triage" | "implementor" | "reviewer";
+  title: string;
+  description: string;
+  verification: string;
+  at: string;
+  /** A person pressed Approve and the Item is being made: a retry looks for it on the host before making another. */
+  approving?: { by: string; at: string };
+  /** A person's decision: the Item made from it on approval. */
+  decided?: { verdict: "approved" | "denied"; by: string; at: string; item?: Ref };
 }
 
 /** One part of a proposed restructuring: its title, description and verification, and where it goes. Text from an agent: data. */

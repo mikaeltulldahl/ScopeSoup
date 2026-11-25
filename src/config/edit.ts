@@ -47,6 +47,8 @@ const SAFE: Record<string, true | ((value: unknown, err: (message: string) => vo
   sharedResources: true,
   // Agents' images: pushed to the remote or not, and how long a closed Item's are kept (validation checks the form).
   media: true,
+  // What a reviewer's `should` findings on an approved change do: "fix" or "draft" (decision 95).
+  review: true,
   // Singleplayer (false) or multiplayer (true): this machine's, in its private file (decision 93).
   multiplayer: true,
 };

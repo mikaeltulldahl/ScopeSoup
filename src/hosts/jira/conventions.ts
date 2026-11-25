@@ -3,7 +3,7 @@
 //   property `scopesoup` (`{ v: 1, kind, ...data }`).
 // - an agent's hold: the issue property `scopesoup.claim`; a person's hold is the assignee.
 // - the log: the issue property `scopesoup.log`; Accept and Overturn verdicts: the issue property `scopesoup.overturns`.
-// - needs-decision: the label `scopesoup-needs-decision`; a follow-up: an issue link, and `scopesoup.followUp` to find it again.
+// - needs-decision: the label `scopesoup-needs-decision`.
 // - a person's hand-back (`scopesoup item handback`): a comment whose property (`kind: "handback"`) names the Item's branch and its
 //   tip; the board's, posted by the token's own account for the picked person, also names them (`person`). Scope Soup's `revision` log line that adopts it names the comment (`handback`), which supersedes it and every earlier one.
 //
@@ -29,7 +29,6 @@ export const COMMENT_PROPERTY = "scopesoup";
 export const CLAIM_PROPERTY = "scopesoup.claim";
 export const LOG_PROPERTY = "scopesoup.log";
 export const OVERTURNS_PROPERTY = "scopesoup.overturns";
-export const FOLLOW_UP_PROPERTY = "scopesoup.followUp";
 /** The comment property kind of a person's hand-back. */
 export const HANDBACK_KIND = "handback";
 /** Jira's limit of one property's value, in bytes of JSON [docs: entity properties, 32 KB]. */
@@ -115,7 +114,6 @@ export interface JiraRead {
   log: Record<string, unknown> | null;
   claims: JiraClaim[];
   verdicts: Record<string, unknown[]>;
-  followUp: { item: string; sha: string } | null;
   /** People's hand-backs of this Item's own branch, oldest first, from whom `readJiraThread` lets them count. */
   handbacks: JiraHandback[];
 }
@@ -206,23 +204,13 @@ export function readJiraThread(host: string, subject: Ref, jira: JiraThread, sel
   const thread = readThread(subject, comments, self);
   // The GitHub reader names the host of an overturn's Item "github".
   thread.assumptions = thread.assumptions.map((each): Assumption => (each.settled?.item ? { ...each, settled: { ...each.settled, item: { ...each.settled.item, host } } } : each));
-  const follow = ownProperty(jira.properties[FOLLOW_UP_PROPERTY], self);
-  const followUp = follow && str(follow.item) ? { item: str(follow.item), sha: str(follow.sha) } : null;
-  return { thread, comments: comments.filter((comment) => comment.id > 0), data, log, claims, verdicts, followUp, handbacks };
+  return { thread, comments: comments.filter((comment) => comment.id > 0), data, log, claims, verdicts, handbacks };
 }
-
-/**
- * A new Item's text without any follow-up mark (`<!-- scopesoup:follow-up ... -->`). Jira keeps a follow-up in a link and a
- * property, taken only from `NewWork.followUpOf`; a mark in the text could have come from an agent, so it is dropped, never read.
- */
-export const withoutFollowUpMarks = (body: string): string => body.replace(/\n*<!--\s*scopesoup:follow-up[\s\S]*?-->/g, "").trim();
-
-const followUpMarkOf = (followUp: { item: string; sha: string }): string => `<!-- scopesoup:follow-up ${JSON.stringify({ item: followUp.item, sha: followUp.sha })} -->`;
 
 /**
  * Sets the item's questions, answers, decisions, record and `needsDecision` from its thread, as on GitHub. A live agent claim
  * holds an open (todo or doing) issue, shown as doing; an assignee (a person's hold) stays the holder. A `merged` marker on an
- * issue that is no longer done was reopened. A follow-up gets its mark back in its text, so the orchestrator knows it.
+ * issue that is no longer done was reopened.
  */
 export function applyJiraThread(item: WorkItem, read: JiraRead, bodyKnown: (sha: string) => boolean, now: number): WorkItem {
   const open = item.state === "todo" || item.state === "doing";
@@ -242,7 +230,6 @@ export function applyJiraThread(item: WorkItem, read: JiraRead, bodyKnown: (sha:
   const adopted = Math.max(0, ...(read.thread.log?.lines ?? []).filter((line) => line.kind === "revision").map((line) => Number(str(line.fields.handback)) || 0));
   const handback = read.handbacks.at(-1);
   if (handback && open && Number(handback.id) > adopted) item.handedBack = { id: handback.id, sha: handback.sha, branch: handback.branch, by: handback.by, at: handback.at, ...(handback.note ? { note: handback.note } : {}) };
-  if (read.followUp) item.body = `${item.body ? `${item.body}\n\n` : ""}${followUpMarkOf(read.followUp)}`;
   return item;
 }
 
