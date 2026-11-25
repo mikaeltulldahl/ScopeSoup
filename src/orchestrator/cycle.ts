@@ -61,13 +61,14 @@ export function backoffMs(failures: number, capMs: number): number {
 }
 
 /** Ends the cycle for now. `ask` puts the item on everyone's list (or the person's whose hand-back it is). */
-export async function park(ctx: Context, job: Job, as: ParkedAs, reason: string, ask?: Parameters<Actions["answerTurn"]>[1], retry?: "hand-over", byStep?: true): Promise<void> {
+export async function park(ctx: Context, job: Job, as: ParkedAs, reason: string, ask?: Parameters<Actions["answerTurn"]>[1], retry?: "hand-over", marks: { byStep?: true; verdict?: true } = {}): Promise<void> {
   const key = refKey(job.item);
-  job.parked = { as, reason, at: ctx.at, ...(retry ? { retry } : {}), ...(byStep ? { byStep } : {}) };
+  job.parked = { as, reason, at: ctx.at, ...(retry ? { retry } : {}), ...(marks.byStep ? { byStep: true } : {}), ...(marks.verdict ? { verdict: true } : {}) };
   // A person's ask was for the step that ended here (decision 104).
   delete job.triageAskedBy;
   delete job.reviewAskedBy;
   delete job.queueAskedBy;
+  delete job.implementAskedBy;
   // Answers to an earlier set of questions do not count for this parked Item.
   delete job.answered;
   delete job.sessionId;
@@ -339,7 +340,7 @@ function parkTools(ctx: Context, job: Job, who: string, refused: string): Promis
 
 /** Parks the item for a reason the implement step itself raised: an answer resumes that step (`resumesStep`). */
 function parkByStep(ctx: Context, job: Job, as: ParkedAs, reason: string, ask: Parameters<Actions["answerTurn"]>[1]): Promise<void> {
-  return park(ctx, job, as, reason, ask, undefined, true);
+  return park(ctx, job, as, reason, ask, undefined, { byStep: true });
 }
 
 /**
@@ -933,6 +934,8 @@ async function settleStep(ctx: Context, job: Job, session: Session | null, recor
     // The implementor's own session: findings and merging failures resume it.
     if (session.agentSessionId) job.agentSession = session.agentSessionId;
     if (!answer) return failed(ctx, job, "The implementer's answer does not have the expected shape, or has tool-call markup inside a string.");
+    // A person's Implement anyway (overruling triage) was for this step; what comes next goes as the level says.
+    delete job.implementAskedBy;
     job.implement = answer;
     keepAboutOthers(ctx, job, "implement", answer.aboutOthers);
     keepDrafts(ctx, job, "implementor", answer.drafts);
@@ -1025,6 +1028,7 @@ async function settleStep(ctx: Context, job: Job, session: Session | null, recor
     }
     job.progress = { ...job.progress, must: must.length, findings: must.map(findingKey) };
     job.fixRounds++;
+    job.reviewSendBacks = (job.reviewSendBacks ?? 0) + 1;
     // A recorded decision that should have been a question: the implementor stops and asks it, and undoes nothing for it yet.
     const asks = answer.findings.some((finding) => finding.ask);
     const ask = asks ? `A finding marked "${ASK_PERSON}" is a decision you took that should have been a question: stop and ask it in \`question\`, and change nothing for it yet. ` : "";
@@ -1089,12 +1093,18 @@ async function recordDecisions(ctx: Context, job: Job, decisions: readonly Taken
 
 /** Triage's verdicts once its questions (and its rewrite) are settled: a restructuring, not ready, too large, or implement. */
 async function afterTriage(ctx: Context, job: Job, answer: TriageAnswer, settled = ""): Promise<void> {
-  // A restructuring is proposed whatever `ready` says: the parts are what can be made ready.
+  // A restructuring is proposed whatever `ready` says or the size: the parts are what can be made ready, and a large Item's
+  // split is that restructuring. So the parks below come only from a triage that proposed none.
   if (answer.restructure) return parkRestructure(ctx, job, answer.restructure, answer.ready ? undefined : answer.notReadyReason);
   const blockers = answer.blockers?.length ? ` Blockers: ${answer.blockers.join("; ")}.` : "";
-  if (!answer.ready) return park(ctx, job, "not-ready", `Triage: not ready. ${answer.notReadyReason ?? "No reason given."}${blockers}`, "not-ready");
-  if (answer.size === "large") return park(ctx, job, "not-ready", "Triage: too large for one change. Split it into smaller items first.", "not-ready");
+  if (!answer.ready) return parkVerdict(ctx, job, `Triage: not ready. ${answer.notReadyReason ?? "No reason given."}${blockers}`);
+  if (answer.size === "large") return parkVerdict(ctx, job, "Triage: too large for one change (large means a story), and it proposed no split. Split it into smaller Items first, or answer here to have triage propose the split.");
   return next(ctx, job, "implement", `Triage: ready, ${answer.size}.${blockers}${settled} Next: implement.`);
+}
+
+/** Triage's own not-ready verdict: a person may overrule it with Implement anyway (`verdict`; not on a person's own stop). */
+function parkVerdict(ctx: Context, job: Job, reason: string): Promise<void> {
+  return park(ctx, job, "not-ready", reason, "not-ready", undefined, { verdict: true });
 }
 
 /** The Item a triage's link names (`#12`, `12`, `A-3` or a ref key), on the subject's own host; null when the store has none. */

@@ -19,7 +19,7 @@ import type { ChatSessionView } from "../../src/core/views.ts";
 import { hostDiffers } from "../../src/core/lanes.ts";
 import { itemNoun, words } from "./theme.ts";
 import type { ItemListRow } from "./api.ts";
-import { currentState, effectNote, requestNote, stateOptions, toastText, withBlocker } from "./stateMenu.ts";
+import { currentState, effectNote, implementAnyway, implementToast, requestNote, stateOptions, toastText, withBlocker } from "./stateMenu.ts";
 import type { StateOption } from "./stateMenu.ts";
 import { queueChange, usePendingState } from "./Pending.tsx";
 import { ago, fromWords, laneWord, optionRows, span, stateFacts, unmatchedRecommendation } from "./format.ts";
@@ -561,6 +561,7 @@ function QuestionsPanel({ page, questions, now, reload, primary, note }: { page:
         <p class="question">{parked.reason}</p>
       ) : null)}
       {parked && <p class="muted">{asks(parked) ? "Asked" : "Since"} {ago(parked.at, now)}.</p>}
+      {parked?.as === "not-ready" && <OverruleTriage page={page} />}
       {questions.length > 0 && <QuestionSteps questions={questions} held={held} send="answer" canAnswer={canAnswer} busy={busy} change={change} />}
       {canAnswer && open.length > 0 && (
         <div class="answer">
@@ -584,6 +585,25 @@ function QuestionsPanel({ page, questions, now, reload, primary, note }: { page:
         </div>
       )}
     </section>
+  );
+}
+
+/**
+ * Implement anyway, by triage's not-ready verdict (decision 105): the implementor starts with triage's notes as they are, at any
+ * level, and History records who overruled triage. Waits with the Undo toast like a State pick.
+ */
+function OverruleTriage({ page }: { page: ItemPage }) {
+  const option = implementAnyway(page);
+  const waiting = usePendingState(page.item.key);
+  if (!option) return null;
+  const off = option.why !== undefined || waiting !== undefined;
+  return (
+    <div class="answer overrule">
+      <button type="button" disabled={off} title={option.why} onClick={() => queueChange({ itemKey: page.item.key, state: option.key, seen: page.item.updatedAt, steps: option.steps, text: implementToast(page.item.label) })}>
+        Implement anyway
+      </button>{" "}
+      <span class="muted">{option.why ?? "Overrules triage: the implementor starts now with triage's notes as they are."}</span>
+    </div>
   );
 }
 

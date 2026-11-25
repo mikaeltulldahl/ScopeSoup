@@ -547,7 +547,7 @@ export interface ItemPage {
    * Set by the server where Scope Soup runs: the State menu's moves that act on this machine's job (`src/server/moves.ts`), each with
    * `why` it cannot be made now. Backlog is absent when there is no work under way to drop.
    */
-  moves?: Partial<Record<"triage" | "backlog" | "in-review" | "merge-queue", HoldAction>>;
+  moves?: Partial<Record<"triage" | "backlog" | "in-review" | "merge-queue" | "implement", HoldAction>>;
   /**
    * Set by the server (decision 104): the machine whose agent runs the Item's work when it is another (a pick goes there as a
    * request), and the newest pick requested for the Item, with where it stands.

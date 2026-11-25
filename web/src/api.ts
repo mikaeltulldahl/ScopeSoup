@@ -376,7 +376,7 @@ export function useView<T extends { now: string }>(load: () => Promise<T>, key: 
  */
 export type ConfigView =
   | { present: false }
-  | { present: true; file: string; raw: unknown; config: ProjectConfig | null; errors: string[]; safeFields: string[]; sharedFields?: string[]; sliders: Sliders; defaultModels: Readonly<Record<string, string>>; setupWatchDefault?: readonly string[]; levels: LevelChoice[]; mergeQueue?: MergeQueueSetup | null };
+  | { present: true; file: string; raw: unknown; config: ProjectConfig | null; errors: string[]; safeFields: string[]; sharedFields?: string[]; sliders: Sliders; defaultModels: Readonly<Record<string, string>>; setupWatchDefault?: readonly string[]; levels: LevelChoice[]; mergeQueue?: MergeQueueSetup | null; implementModels?: readonly string[] };
 
 export const fetchConfig = () => getJson<ConfigView>("/api/config");
 

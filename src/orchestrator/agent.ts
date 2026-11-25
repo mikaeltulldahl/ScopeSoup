@@ -141,6 +141,11 @@ export interface AgentProvider {
   program(config: ProjectConfig): string;
   /** What to do when the program cannot be started. */
   readonly advice: ProgramAdvice;
+  /**
+   * The models it knows by name, weakest first: the choices of the implementor's model per size on Settings, and the order the
+   * step-up after review's send-backs follows (decision 105). Absent: none known, so no step-up.
+   */
+  readonly models?: readonly string[];
   /** Environment variables that carry the provider's API key: never passed to a project's setup command (`setup.ts`). */
   readonly keyEnv: readonly string[];
 

@@ -51,11 +51,20 @@ export const EFFORT_LEVELS = ["low", "medium", "high", "xhigh", "max"] as const;
 export const PROVIDER_NAMES = ["claude", "copilot"] as const;
 export type ProviderName = (typeof PROVIDER_NAMES)[number];
 
+/** Triage's size of an Item: the implementor's effort (decision 105). */
+export const TASK_SIZES = ["small", "medium", "large"] as const;
+export type TaskSize = (typeof TASK_SIZES)[number];
+
 export interface RoleConfig {
   /** The agent CLI the role's sessions run on. Absent: "claude". */
   provider?: ProviderName;
   /** The model, in the words of the role's provider. */
   model: string;
+  /**
+   * Implement only: the model per triage size (decision 105). A size left out, or the whole map, takes `model`. With it, the
+   * implementor steps up to the next stronger known model after two send-backs by review.
+   */
+  modelBySize?: Partial<Record<TaskSize, string>>;
   /** Copilot only: the Auto routing profile (`--auto-tier`) when the model is "fusion" or "auto". Absent there: "balance". */
   autoTier?: string;
   /** Claude only: the reasoning effort (`--effort`), one of `EFFORT_LEVELS`. Absent: the CLI's own default. */

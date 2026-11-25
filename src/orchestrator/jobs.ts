@@ -192,6 +192,8 @@ export interface Job {
     retry?: "hand-over" | "post";
     /** With `retry: "post"`, the parked state's own reason, which it shows again once the post is through. */
     posting?: string;
+    /** Parked "not-ready" by triage's verdict (not ready, or too large): a person may overrule it with Implement anyway. */
+    verdict?: true;
     /** The implement step itself was parked here (a question, a refused tool, failed attempts), not the hand-over, merging or a person closing the change. Only such a parked Item is resumed by an answer. */
     byStep?: true;
     /** The question comments on the host (GitHub) this parked state waits on, in the order asked; their answers are read from the host. */
@@ -240,6 +242,15 @@ export interface Job {
   triageAskedBy?: string;
   /** A person picked In review on the board: this review step runs whatever the level (decision 104). Cleared when it is settled. */
   reviewAskedBy?: string;
+  /**
+   * A person overruled triage's not-ready verdict with Implement anyway: this implement step runs whatever the level, with triage's
+   * notes as they are (no triage again first). Cleared when the step settles.
+   */
+  implementAskedBy?: string;
+  /** How many times review sent the change back with `changes` (not merging failures): the step-up of the implementor's model reads it. */
+  reviewSendBacks?: number;
+  /** The model the last implement session started on, so a step-up is said once, when the model changes (decision 105). */
+  implementModel?: string;
   /**
    * A person picked Merge queue on the board (level 4): the hand-over first reads the branch's head again, and gives the change to
    * the queue only at the revision the reviewer approved (decision 104). Cleared by the hand-over.

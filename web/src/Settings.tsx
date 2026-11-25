@@ -14,6 +14,7 @@
 
 import { ThemePicker } from "./ThemePicker.tsx";
 import { useEffect, useRef, useState } from "preact/hooks";
+import type { ComponentChildren } from "preact";
 import { VersionPanel } from "./Version.tsx";
 import { SettingsHistory } from "./SettingsHistory.tsx";
 import type { ConfigView, ProjectConfig, ProjectView } from "./api.ts";
@@ -757,6 +758,7 @@ export function Settings({ project, openHistory = false }: { project?: ProjectVi
                   {" "}<Marked k={`role:${name}:effort`} />
                 </span>
               )}
+              {name === "implement" && <ModelBySize saved={view.config?.roles.implement.modelBySize} models={view.implementModels ?? []} save={(modelBySize) => submit({ key: "role:implement:modelBySize", change: { roles: { implement: { modelBySize } } } })} marked={<Marked k="role:implement:modelBySize" />} />}
               {view.config?.roles[name as "implement"]?.provider === "copilot" && (
                 <span class="notice notice-paused copilot-warning" role="note"><b>Runs on Copilot.</b> {COPILOT_WARNING}</span>
               )}
@@ -811,5 +813,52 @@ export function Settings({ project, openHistory = false }: { project?: ProjectVi
       )}
       <SettingsHistory open={openHistory} />
     </div>
+  );
+}
+
+const SIZES = ["small", "medium", "large"] as const;
+
+/**
+ * The implementor's model per triage size (decision 105): three selects, each "same as above" (the role's model) or one of the
+ * provider's known models. A provider that names none shows what the file sets.
+ */
+function ModelBySize({ saved, models, save, marked }: { saved: Partial<Record<(typeof SIZES)[number], string>> | undefined; models: readonly string[]; save: (bySize: Record<string, string> | null) => void; marked: ComponentChildren }) {
+  const [picked, setPicked] = useState<Partial<Record<string, string>>>(saved ?? {});
+  // The last pick sent, until a response shows it saved: an older response (another save under way) does not undo the picks.
+  const sent = useRef<string | null>(null);
+  const savedText = JSON.stringify(saved ?? {});
+  useEffect(() => {
+    if (sent.current !== null && sent.current !== savedText) return;
+    sent.current = null;
+    setPicked(saved ?? {});
+  }, [savedText]);
+  if (models.length === 0) {
+    const set = SIZES.filter((size) => saved?.[size]).map((size) => `${size}: ${saved![size]}`);
+    return set.length > 0 ? <span class="muted model-sizes"> By size: {set.join(", ")} (roles.implement.modelBySize)</span> : null;
+  }
+  const pick = (size: string, model: string) => {
+    const next = { ...picked, [size]: model };
+    if (!model) delete next[size];
+    setPicked(next);
+    // In the sizes' order, as the server gives the setting back.
+    const kept = Object.fromEntries(SIZES.flatMap((each) => (next[each] ? [[each, next[each]!]] : []))) as Record<string, string>;
+    sent.current = JSON.stringify(kept);
+    save(Object.keys(kept).length > 0 ? kept : null);
+  };
+  return (
+    <>
+      <span class="muted">By size, from triage; two send-backs by review step up one model {marked}</span>
+      <span class="model-sizes">
+        {SIZES.map((size) => (
+          <span key={size} class="model-size">
+            <small class="muted">{size}</small>
+            <select aria-label={`Implementor model for ${size}`} value={picked[size] ?? ""} onChange={(event) => pick(size, (event.target as HTMLSelectElement).value)}>
+              <option value="">same as above</option>
+              {[...models, ...(picked[size] && !models.includes(picked[size]!) ? [picked[size]!] : [])].map((model) => <option key={model} value={model}>{model}</option>)}
+            </select>
+          </span>
+        ))}
+      </span>
+    </>
   );
 }

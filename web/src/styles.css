@@ -763,3 +763,8 @@ button.decision-choice:hover:not(:disabled) { background: var(--accent-soft); fi
 .settings-grid .check-line input[type="checkbox"] { width: auto; min-height: 0; margin: 0; }
 .settings-grid .check-line input[type="number"] { width: 6.5em; }
 .settings-grid .check-line select { width: auto; }
+
+/* The implementor's model per triage size (Settings, decision 105): three small selects in a row. */
+.model-sizes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.model-size { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.model-size select { width: 100%; min-width: 0; }

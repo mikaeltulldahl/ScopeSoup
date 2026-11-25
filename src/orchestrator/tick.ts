@@ -261,6 +261,36 @@ export function implementorMessage(job: Job, decided: string): { resume?: string
   return { message: `Earlier work on this Item is on the branch already.\n${job.resumeWith}` };
 }
 
+/** The implement step's model: by the triage's size (`roles.implement.modelBySize`), stepped up after review's send-backs. */
+export interface ImplementModel {
+  model: string;
+  steppedUp?: { from: string; sendBacks: number };
+}
+
+/** Review send-backs on one Item after which the implementor's model steps up once (decision 105). */
+export const STEP_UP_AFTER = 2;
+
+/**
+ * The implement step's model (decision 105). Without `modelBySize` it is the role's model, as before. With it, the model the
+ * triage's size names (no size counts as medium; a size left out takes the role's model); after `STEP_UP_AFTER` send-backs by
+ * review on the Item, the next stronger model of the provider's known names, when that model is known and a stronger one exists.
+ */
+export function implementModel(config: ProjectConfig, job: Pick<Job, "triage" | "reviewSendBacks" | "review" | "merge" | "shouldRound">): ImplementModel {
+  const role = config.roles.implement;
+  const bySize = role.modelBySize;
+  if (!bySize) return { model: role.model };
+  const model = bySize[job.triage?.size ?? "medium"] ?? role.model;
+  const sendBacks = job.reviewSendBacks ?? 0;
+  // Only the fix rounds that answer a review's "changes" (and their retries): not the merge turn after an approval, nor a round
+  // for an approval's `should` findings.
+  const fixing = job.review?.verdict === "changes" && job.merge !== true && job.shouldRound !== true;
+  if (sendBacks < STEP_UP_AFTER || !fixing) return { model };
+  const known = providerFor(config, "implement").models ?? [];
+  const at = known.indexOf(model);
+  const stronger = at >= 0 ? known[at + 1] : undefined;
+  return stronger ? { model: stronger, steppedUp: { from: model, sendBacks } } : { model };
+}
+
 /**
  * How the implementor ends. Level 2, or level 3 once the reviewer approved: it merges on its own judgement, the way the
  * project's CLAUDE.md says (or opens a pull request when it says so). Level 3 before the approval, and level 4: it commits and
@@ -523,9 +553,10 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
   // A paused role's running sessions finish their step and are settled above; nothing new of that role starts, the others
   // go on. A stopped role (the stop switch, not resumed since) has its running sessions ended too.
   const level = config.level;
-  // A triage or review step a person picked (decision 104) runs whatever the level, held only by the switches a person can see.
+  // A triage, review or implement step a person picked (decisions 104, 105) runs whatever the level, held only by the switches a
+  // person can see.
   const personAsked = (job: Job | null | undefined, step: SessionRole): boolean =>
-    ((step === "review" && job?.reviewAskedBy !== undefined) || (step === "triage" && job?.triageAskedBy !== undefined)) && switchOnFor(store, step, level);
+    ((step === "review" && job?.reviewAskedBy !== undefined) || (step === "triage" && job?.triageAskedBy !== undefined) || (step === "implement" && job?.implementAskedBy !== undefined)) && switchOnFor(store, step, level);
   const personWork = Object.values(jobs).some((job) => !job.parked && !job.sessionId && !job.owes && personAsked(job, job.step));
   const control = Object.fromEntries(ROLES.map((role) => [role, switchState(store, role)])) as Record<SessionRole, SwitchState>;
   const stoppedRoles = ROLES.filter((role) => control[role] === "stopped");
@@ -567,6 +598,12 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
     // A person took the item (docs/PEOPLE.md): Scope Soup leaves it alone until it is handed back or released.
     if (item.holder && !item.holder.actor.bot && (item.holder.until === undefined || Date.parse(item.holder.until) > Date.parse(at))) {
       reasons.push(`${item.ref.id} is held by ${item.holder.actor.name}`);
+      // Implement anyway meant "now": a person who took the Item since has it, and after their release the level decides again.
+      const asker = job.implementAskedBy;
+      if (asker !== undefined) {
+        delete job.implementAskedBy;
+        ctx.commit("orchestrator.step", `${asker}'s Implement anyway on ${item.ref.id} lapses: ${item.holder.actor.name} holds it now. After it is released, its implement step goes as the level says.`, key);
+      }
       continue;
     }
     // Level 0 starts only what a person picked.
@@ -652,7 +689,8 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
     // The front of the line. A waiting Item whose implement step is next, with its triage out of date (the paths it named
     // changed on main, its text was edited, a blocker finished, or it is older than triageMaxAgeDays), has its triage again.
     let again: string | undefined;
-    if (entry.job && step === "implement" && awaitsImplement(entry.job)) {
+    // Implement anyway (decision 105) goes with triage's notes as they are: no triage again first.
+    if (entry.job && step === "implement" && awaitsImplement(entry.job) && entry.job.implementAskedBy === undefined) {
       const recheck = await staleTriage(ctx, entry.job, entry.item, items);
       // Its triage is taken again first, and triage is paused: it waits for triage.
       if (recheck && control.triage !== "started") {
@@ -699,6 +737,7 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
     ctx.forget("orchestrator.resource_wait", key);
     let session!: Session;
     let started = false;
+    let chosen: ImplementModel | undefined;
     try {
       // A pool of clones may have none free: the item waits, and the next one may still hold a clone.
       // Past implement, the item's work is at its newest revision: a rebuilt store finds the clone by it.
@@ -772,9 +811,11 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
           reasons.push(`${entry.item.ref.id} waits: a person changed it while its ${step} step was prepared`);
           continue;
         }
+        chosen = step === "implement" ? implementModel(config, job) : undefined;
         session = await runner.start({
           role: step, subject: job.item, attempt: job.failures + 1, workspace: job.workspace, branch: job.branch,
           vars: promptVars(config, entry.item, job, decided, repoLabels), ...implementorMessage(job, decided),
+          ...(chosen && chosen.model !== config.roles.implement.model ? { model: chosen.model } : {}),
           ...(Object.keys(units.env).length > 0 ? { env: units.env } : {}),
         });
         started = true;
@@ -811,7 +852,10 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
     delete target.answerArrived;
     running++;
     report.started.push({ item: key, role: step, sessionId: session.ref.id });
-    ctx.commit("orchestrator.started", `Started ${label} because ${why}. ${decision.reason}`, key, { role: step, session: session.ref.id, model: session.model });
+    // Said once, when the model changes to the stepped-up one.
+    const stepped = chosen?.steppedUp && job.implementModel !== chosen.model ? ` Stepped up to ${chosen.model} after ${chosen.steppedUp.sendBacks} send-backs by review (from ${chosen.steppedUp.from}).` : "";
+    if (chosen) target.implementModel = chosen.model;
+    ctx.commit("orchestrator.started", `Started ${label} because ${why}. ${decision.reason}${stepped}`, key, { role: step, session: session.ref.id, model: session.model });
   }
 
   if (running > 0 && report.started.length === 0) reasons.unshift(`${running} session(s) are running`);

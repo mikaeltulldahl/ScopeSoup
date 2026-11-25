@@ -40,7 +40,7 @@ export const REQUEST_MAX_AGE_MS = 60 * 60_000;
 export const REQUEST_AHEAD_MS = 2 * 60_000;
 
 /** A pick's steps as the board's `POST /api/item/pick` takes them. */
-export type RequestStep = { kind: "release" | "claim" | "block" } | { kind: "state"; state: "todo" | "done" | "abandoned" } | { kind: "move"; to: "triage" | "backlog" | "in-review" | "merge-queue" };
+export type RequestStep = { kind: "release" | "claim" | "block" } | { kind: "state"; state: "todo" | "done" | "abandoned" } | { kind: "move"; to: "triage" | "backlog" | "in-review" | "merge-queue" | "implement" };
 
 export interface PickRequest {
   id: string;
@@ -58,14 +58,14 @@ export interface PickRequest {
   answer?: { at: string; done?: string[]; why?: string };
 }
 
-const MOVES = new Set(["triage", "backlog", "in-review", "merge-queue"]);
+const MOVES = new Set(["triage", "backlog", "in-review", "merge-queue", "implement"]);
 
 /** The one step a request may carry: what a board sends for another machine's work (a move, or Abandoned). */
 function asStep(value: unknown): RequestStep | null {
   if (typeof value !== "object" || value === null) return null;
   const each = value as Record<string, unknown>;
   if (each.kind === "state" && each.state === "abandoned") return { kind: "state", state: "abandoned" };
-  if (each.kind === "move" && typeof each.to === "string" && MOVES.has(each.to)) return { kind: "move", to: each.to as "triage" | "backlog" | "in-review" | "merge-queue" };
+  if (each.kind === "move" && typeof each.to === "string" && MOVES.has(each.to)) return { kind: "move", to: each.to as "triage" | "backlog" | "in-review" | "merge-queue" | "implement" };
   return null;
 }
 

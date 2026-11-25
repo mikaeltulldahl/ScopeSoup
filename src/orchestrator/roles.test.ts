@@ -183,3 +183,8 @@ test("the triage may run the item commands that read, with Scope Soup's folder f
   // A folder with a space is quoted, so the command stays one argument.
   assert.equal(scopesoupFolder("C:\\Program Files\\Scope Soup\\"), '"C:/Program Files/Scope Soup"');
 });
+
+test("the triage prompt says what size means: the implementor's effort, and large is a story to split as a restructure (decision 105)", () => {
+  const template = loadRole(config.promptsDir, "triage").template;
+  assert.match(template, /`size` \(small, medium, large: the implementor's effort, lines changed and difficulty together, so a short change in tricky code is not small; large is a story to split into tasks first, which you propose as a `restructure`\)/);
+});
