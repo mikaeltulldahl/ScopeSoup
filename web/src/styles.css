@@ -683,3 +683,7 @@ button.decision-choice:hover:not(:disabled) { background: var(--accent-soft); fi
 .diff-text mark { color: inherit; border-radius: 2px; }
 .diff-line-del mark { background: color-mix(in srgb, #d04545 38%, transparent); }
 .diff-line-add mark { background: color-mix(in srgb, #2e9d5b 38%, transparent); }
+.list-filters .act-nosessions { display: flex; align-items: center; gap: 6px; min-height: 34px; margin-top: auto; }
+.list-filters .act-nosessions input { width: auto; min-height: 0; }
+.act-fold { margin-left: 6px; padding: 0 8px; font-size: 0.78rem; }
+.act-folded { margin-top: 4px; }

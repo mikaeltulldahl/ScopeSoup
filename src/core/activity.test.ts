@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { LogRecord, ScopeSoupEvent } from "../model/types.ts";
-import { ACTIVITY_EVENTS, buildActivity, duration, type ActivityInput } from "./activity.ts";
+import { ACTIVITY_EVENTS, buildActivity, duration, foldSessions, type ActivityInput } from "./activity.ts";
 import { at, batch, change, member, ref, session, T0, work } from "./testing.ts";
 
 const SOUP = { who: "scopesoup", machine: "laptop-a", agent: true };
@@ -166,4 +166,31 @@ test("the view is bounded to the newest rows, and durations read as words", () =
   assert.equal(view.more, true);
   assert.equal(view.rows[0]!.at, at(0));
   assert.deepEqual([duration(20_000), duration(35 * 60_000), duration(60 * 60_000), duration(80 * 60_000)], ["under a minute", "35 min", "1 h", "1 h 20 min"]);
+});
+
+test("consecutive sessions on one Item fold into one row with the total time and cost, the sessions inside", () => {
+  const s = (minutes: number, role: string, ms: number, usd: number) => line(minutes, SOUP, "session", { role, outcome: "succeeded", durationMs: ms, costUsd: usd });
+  const item = work(63, {
+    title: "Fold",
+    log: [s(-100, "triage", 600_000, 0.1), s(-90, "implement", 3_000_000, 1), s(-80, "implement", 600_000, 0.2), s(-70, "review", 600_000, 0.1), line(-60, MIRA, "claimed", { until: at(600) }), s(-50, "review", 60_000, 0.05)],
+  });
+  const other = work(64, { title: "Other", log: [s(-65, "implement", 60_000, 0.5)] });
+  const rows = buildActivity(input({ works: [item, other] }), T0).rows;
+  const folded = foldSessions(rows);
+  // newest first: #63 review alone, the claim, #64's session, then #63's four
+  assert.deepEqual(folded.map((row) => [row.kind, row.folded?.length]), [["session", undefined], ["item", undefined], ["session", undefined], ["session", 4]]);
+  const group = folded[3]!;
+  assert.equal(group.text, "4 sessions on #63: triage, implement ×2, review · 1 h 20 min · $1.40");
+  assert.equal(group.at, rows.find((row) => row.id === group.folded![0]!.id)!.at);
+  assert.deepEqual(group.folded!.map((row) => row.session!.role), ["review", "implement", "implement", "triage"]);
+  assert.deepEqual(foldSessions([]), []);
+});
+
+test("a lone session is not folded, and a bad one makes the fold bad", () => {
+  const item = work(5, { log: [line(-30, SOUP, "session", { role: "implement", outcome: "failed", durationMs: 60_000 }), line(-20, SOUP, "session", { role: "review", outcome: "succeeded" })] });
+  const rows = buildActivity(input({ works: [item] }), T0).rows;
+  assert.equal(foldSessions(rows.slice(0, 1))[0]!.folded, undefined);
+  const group = foldSessions(rows)[0]!;
+  assert.equal(group.tone, "bad");
+  assert.equal(group.text, "2 sessions on #5: implement, review · 1 min");
 });

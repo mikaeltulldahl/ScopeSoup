@@ -8,7 +8,7 @@
 import type { Batch, Change, LogRecord, ScopeSoupEvent, Session, WorkItem } from "../model/types.ts";
 import { asOptions, optionText, refKey } from "../model/types.ts";
 import { type SettingChangeLike, settingsWords } from "./settingsWords.ts";
-import type { ActivityItem, ActivityKind, ActivityRow, ActivityView } from "./views.ts";
+import type { ActivityItem, ActivityKind, ActivityRow, ActivityView, FoldedActivityRow } from "./views.ts";
 
 /** One save of the shared settings, as their log has it. */
 export interface SettingsSave {
@@ -175,6 +175,7 @@ export function buildActivity(input: ActivityInput, now: string, limit = MAX_ACT
             ...base, id, kind: "session", who: ROLE_WHO[role] ?? (role || "agent"), agent: true,
             text: sessionText({ model: str(f.model) || undefined, outcome, ms: num(f.durationMs), usd: num(f.costUsd) }),
             ...(summary ? { detail: clip(summary) } : {}), ...(bad ? { tone: "bad" as const } : {}),
+            session: { role: role || "agent", ...(num(f.durationMs) !== undefined ? { ms: num(f.durationMs)! } : {}), ...(num(f.costUsd) !== undefined ? { usd: num(f.costUsd)! } : {}) },
           });
           break;
         }
@@ -236,6 +237,7 @@ export function buildActivity(input: ActivityInput, now: string, limit = MAX_ACT
       who: ROLE_WHO[session.role] ?? session.role, agent: true, items: link(key),
       text: sessionText({ model: session.model, outcome, ...(running ? {} : { ms }), usd: session.costUsd, chat: session.chat === true, running }),
       ...(summary ? { detail: clip(summary) } : {}), ...(bad ? { tone: "bad" as const } : {}),
+      session: { role: session.role, ...(!running && ms !== undefined && ms > 0 ? { ms } : {}), ...(session.costUsd !== undefined ? { usd: session.costUsd } : {}) },
     });
   }
 
@@ -378,6 +380,53 @@ export function buildActivity(input: ActivityInput, now: string, limit = MAX_ACT
   const order = rows.map((row, index) => ({ row, index, time: Date.parse(row.at) || 0 }));
   order.sort((a, b) => b.time - a.time || b.index - a.index);
   return { now, rows: order.slice(0, limit).map((each) => each.row), more: order.length > limit };
+}
+
+/**
+ * Folds consecutive session rows on one Item (newest first, as `buildActivity` gives them) into one row: "3 sessions on
+ * #63: triage, implement, review · 1 h 20 min · $1.40". The folded row holds its sessions, newest first. A lone session
+ * stays as it is.
+ */
+export function foldSessions(rows: ActivityRow[]): FoldedActivityRow[] {
+  const out: FoldedActivityRow[] = [];
+  let run: ActivityRow[] = [];
+  const flush = () => {
+    if (run.length < 2) out.push(...run);
+    else out.push(foldRun(run));
+    run = [];
+  };
+  for (const row of rows) {
+    const item = row.items[0]?.key;
+    if (row.kind === "session" && row.session && item !== undefined && run.length > 0 && run[0]!.items[0]?.key === item) run.push(row);
+    else {
+      flush();
+      if (row.kind === "session" && row.session && item !== undefined) run = [row];
+      else out.push(row);
+    }
+  }
+  flush();
+  return out;
+}
+
+function foldRun(run: ActivityRow[]): FoldedActivityRow {
+  const oldestFirst = [...run].reverse();
+  const roles: string[] = [];
+  for (const row of oldestFirst) {
+    const role = row.session!.role;
+    const last = roles.at(-1);
+    const n = last === undefined ? 0 : Number(/ ×(\d+)$/.exec(last)?.[1] ?? 1);
+    if (last !== undefined && last.replace(/ ×\d+$/, "") === role) roles[roles.length - 1] = `${role} ×${n + 1}`;
+    else roles.push(role);
+  }
+  const ms = run.reduce((sum, row) => sum + (row.session!.ms ?? 0), 0);
+  const usd = run.some((row) => row.session!.usd !== undefined) ? run.reduce((sum, row) => sum + (row.session!.usd ?? 0), 0) : undefined;
+  const first = run[0]!;
+  const item = first.items[0]!;
+  const text = [`${run.length} sessions on #${item.id}: ${roles.join(", ")}`, ms > 0 ? duration(ms) : "", usd !== undefined ? cost(usd) : ""].filter(Boolean).join(" · ");
+  return {
+    id: `fold:${first.id}`, at: first.at, kind: "session", who: "agents", agent: true, items: first.items, text,
+    ...(run.some((row) => row.tone === "bad") ? { tone: "bad" as const } : {}), folded: run,
+  };
 }
 
 /** "a", "a and b", "a, b and c". */

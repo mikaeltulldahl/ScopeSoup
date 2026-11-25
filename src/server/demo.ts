@@ -290,6 +290,8 @@ export function seedDemo(store: Store, now: Date, dir?: string): void {
     changeFor(58, "Moon phase next to each day", { draft: true });
     step("t-58", 58, "triage", "opus", 120, 3);
     put(session("s-58a", ref("work", 58), { status: "failed", model: "sonnet", startedAt: at(-95), finishedAt: at(-80), endReason: "turn limit reached", attempt: 1 }));
+    put(session("s-58b", ref("work", 58), { status: "succeeded", model: "sonnet", startedAt: at(-24), finishedAt: at(-14.7), endReason: "succeeded", attempt: 2, costUsd: 0.64 }));
+    put(session("s-58c", ref("work", 58), { role: "review", status: "succeeded", model: "opus", startedAt: at(-17), finishedAt: at(-14.5), endReason: "succeeded", costUsd: 0.31 }));
     put(session("s-58", ref("work", 58), { model: "opus", agentSessionId: "agent-s-58", startedAt: at(-14), lastEventAt: at(0), lastAction: "writing tests for the phase calculation", costUsd: 1.84 }));
     job(58, { step: "implement", sessionId: "s-58", agentSession: "agent-s-58", startedAt: at(-120) });
     // Two people's holds. Whoever is picked at the top of the board sees their own in Your turn; another's names them.
