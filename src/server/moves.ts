@@ -185,6 +185,8 @@ export function applyMove(jobs: Jobs, key: string, move: Move, input: MoveInput,
     delete job.reviewAskedBy;
     delete job.queueAskedBy;
     job.failures = 0;
+    // A fresh start of the work: no review send-backs yet, so no step-up of the implementor's model (decision 105).
+    delete job.reviewSendBacks;
     job.step = "implement";
     job.implementAskedBy = by;
     return { ok: true, reason: `${by} overruled triage's verdict on ${id} (Implement anyway): its implement step starts next, with triage's notes as they are.` };

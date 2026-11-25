@@ -275,13 +275,16 @@ export const STEP_UP_AFTER = 2;
  * triage's size names (no size counts as medium; a size left out takes the role's model); after `STEP_UP_AFTER` send-backs by
  * review on the Item, the next stronger model of the provider's known names, when that model is known and a stronger one exists.
  */
-export function implementModel(config: ProjectConfig, job: Pick<Job, "triage" | "reviewSendBacks">): ImplementModel {
+export function implementModel(config: ProjectConfig, job: Pick<Job, "triage" | "reviewSendBacks" | "review" | "merge" | "shouldRound">): ImplementModel {
   const role = config.roles.implement;
   const bySize = role.modelBySize;
   if (!bySize) return { model: role.model };
   const model = bySize[job.triage?.size ?? "medium"] ?? role.model;
   const sendBacks = job.reviewSendBacks ?? 0;
-  if (sendBacks < STEP_UP_AFTER) return { model };
+  // Only the fix rounds that answer a review's "changes" (and their retries): not the merge turn after an approval, nor a round
+  // for an approval's `should` findings.
+  const fixing = job.review?.verdict === "changes" && job.merge !== true && job.shouldRound !== true;
+  if (sendBacks < STEP_UP_AFTER || !fixing) return { model };
   const known = providerFor(config, "implement").models ?? [];
   const at = known.indexOf(model);
   const stronger = at >= 0 ? known[at + 1] : undefined;
@@ -595,6 +598,12 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
     // A person took the item (docs/PEOPLE.md): Scope Soup leaves it alone until it is handed back or released.
     if (item.holder && !item.holder.actor.bot && (item.holder.until === undefined || Date.parse(item.holder.until) > Date.parse(at))) {
       reasons.push(`${item.ref.id} is held by ${item.holder.actor.name}`);
+      // Implement anyway meant "now": a person who took the Item since has it, and after their release the level decides again.
+      const asker = job.implementAskedBy;
+      if (asker !== undefined) {
+        delete job.implementAskedBy;
+        ctx.commit("orchestrator.step", `${asker}'s Implement anyway on ${item.ref.id} lapses: ${item.holder.actor.name} holds it now. After it is released, its implement step goes as the level says.`, key);
+      }
       continue;
     }
     // Level 0 starts only what a person picked.
@@ -843,7 +852,9 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
     delete target.answerArrived;
     running++;
     report.started.push({ item: key, role: step, sessionId: session.ref.id });
-    const stepped = chosen?.steppedUp ? ` Stepped up to ${chosen.model} after ${chosen.steppedUp.sendBacks} send-backs by review (from ${chosen.steppedUp.from}).` : "";
+    // Said once, when the model changes to the stepped-up one.
+    const stepped = chosen?.steppedUp && job.implementModel !== chosen.model ? ` Stepped up to ${chosen.model} after ${chosen.steppedUp.sendBacks} send-backs by review (from ${chosen.steppedUp.from}).` : "";
+    if (chosen) target.implementModel = chosen.model;
     ctx.commit("orchestrator.started", `Started ${label} because ${why}. ${decision.reason}${stepped}`, key, { role: step, session: session.ref.id, model: session.model });
   }
 

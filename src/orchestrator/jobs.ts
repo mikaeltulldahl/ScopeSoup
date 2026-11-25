@@ -249,6 +249,8 @@ export interface Job {
   implementAskedBy?: string;
   /** How many times review sent the change back with `changes` (not merging failures): the step-up of the implementor's model reads it. */
   reviewSendBacks?: number;
+  /** The model the last implement session started on, so a step-up is said once, when the model changes (decision 105). */
+  implementModel?: string;
   /**
    * A person picked Merge queue on the board (level 4): the hand-over first reads the branch's head again, and gives the change to
    * the queue only at the revision the reviewer approved (decision 104). Cleared by the hand-over.

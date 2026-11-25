@@ -197,6 +197,20 @@ describe("chat", { concurrency: 4 }, () => {
     assert.equal(existsSync(join(cwd, ".git")), true);
   });
 
+  test("an implementor's session on its size's model (decision 105) keeps that model for a chat turn", async () => {
+    const w = world();
+    step(w.store, "s8", "implement", "agent-up", "2026-11-18T09:30:00.000Z", { model: "opus" });
+    writeFileSync(w.hold, "");
+    const sent = await w.chat.send(KEY, "agent-up", "Why?");
+    assert.ok(sent.ok, JSON.stringify(sent));
+    await w.chat.idle();
+    const run = chatSessions(w.store).find((each) => each.agentSessionId === "agent-up")!;
+    const { args } = fakeArgs(w.store, run);
+    assert.notEqual(w.config.roles.implement.model, "opus");
+    assert.equal(args[args.indexOf("--model") + 1], "opus");
+    assert.equal(run.model, "opus");
+  });
+
   test("a triage's session keeps its read-only tools and model, without its schema", async () => {
     const w = world();
     writeFileSync(w.hold, "");

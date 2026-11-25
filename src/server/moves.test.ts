@@ -164,10 +164,11 @@ describe("the rules", () => {
     const held = { ...item, holder: { actor: { id: "bo", name: "Bo" } } };
     assert.equal(moveWhys(input({ item: held, job: verdict() })).implement!.why, "held by Bo");
 
-    const jobs = { [key]: verdict({ reviewAskedBy: "Cy", notBefore: T0 }) };
+    const jobs = { [key]: verdict({ reviewAskedBy: "Cy", notBefore: T0, reviewSendBacks: 3 }) };
     const done = applyMove(jobs, key, "implement", input({ job: jobs[key], level: 1 }), "Ada", T0);
     assert.ok(done.ok && /Ada overruled triage's verdict on 7 \(Implement anyway\)/.test(done.reason));
     assert.deepEqual([jobs[key]!.step, jobs[key]!.parked, jobs[key]!.implementAskedBy, jobs[key]!.reviewAskedBy, jobs[key]!.notBefore, jobs[key]!.triage], ["implement", undefined, "Ada", undefined, undefined, triage]);
+    assert.equal(jobs[key]!.reviewSendBacks, undefined, "a fresh start: no step-up carried over");
     // Once it is under way, there is nothing to overrule.
     assert.deepEqual(applyMove(jobs, key, "implement", input({ job: jobs[key] }), "Ada", T0), { ok: false, why: "only triage's not-ready verdict can be overruled" });
     // Another pick replaces the ask.

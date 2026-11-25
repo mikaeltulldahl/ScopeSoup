@@ -342,6 +342,8 @@ export function createChat(deps: ChatDeps): Chat {
         const starting = runner.start({
           role: known.role, subject: job.item, attempt: 1, workspace: job.workspace, branch: job.branch, vars: {},
           resume: agentSession, message: text, chat: true, ...(units && Object.keys(units.env).length > 0 ? { env: units.env } : {}),
+          // An implementor's session may run on its size's model or a step-up (decision 105): the turn keeps the session's model.
+          ...(known.role === "implement" && known.model && known.model !== current.roles.implement.model ? { model: known.model } : {}),
         });
         started = true;
         const run = await starting;

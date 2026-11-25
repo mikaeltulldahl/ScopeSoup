@@ -824,7 +824,14 @@ const SIZES = ["small", "medium", "large"] as const;
  */
 function ModelBySize({ saved, models, save, marked }: { saved: Partial<Record<(typeof SIZES)[number], string>> | undefined; models: readonly string[]; save: (bySize: Record<string, string> | null) => void; marked: ComponentChildren }) {
   const [picked, setPicked] = useState<Partial<Record<string, string>>>(saved ?? {});
-  useEffect(() => setPicked(saved ?? {}), [JSON.stringify(saved ?? {})]);
+  // The last pick sent, until a response shows it saved: an older response (another save under way) does not undo the picks.
+  const sent = useRef<string | null>(null);
+  const savedText = JSON.stringify(saved ?? {});
+  useEffect(() => {
+    if (sent.current !== null && sent.current !== savedText) return;
+    sent.current = null;
+    setPicked(saved ?? {});
+  }, [savedText]);
   if (models.length === 0) {
     const set = SIZES.filter((size) => saved?.[size]).map((size) => `${size}: ${saved![size]}`);
     return set.length > 0 ? <span class="muted model-sizes"> By size: {set.join(", ")} (roles.implement.modelBySize)</span> : null;
@@ -833,7 +840,9 @@ function ModelBySize({ saved, models, save, marked }: { saved: Partial<Record<(t
     const next = { ...picked, [size]: model };
     if (!model) delete next[size];
     setPicked(next);
-    const kept = Object.fromEntries(Object.entries(next).filter(([, value]) => value)) as Record<string, string>;
+    // In the sizes' order, as the server gives the setting back.
+    const kept = Object.fromEntries(SIZES.flatMap((each) => (next[each] ? [[each, next[each]!]] : []))) as Record<string, string>;
+    sent.current = JSON.stringify(kept);
     save(Object.keys(kept).length > 0 ? kept : null);
   };
   return (

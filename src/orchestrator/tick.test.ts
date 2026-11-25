@@ -4263,19 +4263,48 @@ test("the implementor's model by triage's size, and one step stronger after two 
   assert.equal((await started({ triage: { ...TRIAGE_OK, size: "medium", hidesDecision: false } })).model, undefined, "a size left out takes the role's model");
   assert.equal((await started({ triage: undefined })).model, undefined, "no size counts as medium");
   assert.equal((await started({ triage: { ...TRIAGE_OK, size: "large", hidesDecision: false } })).model, "opus");
-  // One send-back: no step-up yet. Two: haiku steps up to sonnet, once, and the start line says so.
-  assert.equal((await started({ reviewSendBacks: 1, fixRounds: 1 })).model, "haiku");
-  const up = await started({ reviewSendBacks: 2, fixRounds: 2 });
+  // One send-back: no step-up yet. Two: haiku steps up to sonnet for the round that answers the review, and the start line says so.
+  const changes = { review: { verdict: "changes" as const, findings: [] }, resumeWith: "Fix it." };
+  assert.equal((await started({ ...changes, reviewSendBacks: 1, fixRounds: 1 })).model, "haiku");
+  const up = await started({ ...changes, reviewSendBacks: 2, fixRounds: 2 });
   assert.equal(up.model, undefined, "sonnet is the role's own model, so nothing in its place");
   assert.match(up.line, / Stepped up to sonnet after 2 send-backs by review \(from haiku\)\.$/);
-  assert.match((await started({ reviewSendBacks: 3, fixRounds: 3 })).line, /Stepped up to sonnet after 3 send-backs/);
+  assert.match((await started({ ...changes, reviewSendBacks: 3, fixRounds: 3 })).line, /Stepped up to sonnet after 3 send-backs/);
+  // Said once: a later round on the same stepped-up model says nothing more.
+  const again = await started({ ...changes, reviewSendBacks: 3, fixRounds: 3, implementModel: "sonnet" });
+  assert.deepEqual([again.model, /Stepped up/.test(again.line)], [undefined, false]);
+  // Not the merge turn after an approval, nor a round for an approval's `should` findings: those run on the size's model.
+  assert.deepEqual([(await started({ ...changes, reviewSendBacks: 2, merge: true })).model, (await started({ review: { verdict: "approve", findings: [] }, resumeWith: "Merge.", reviewSendBacks: 2, merge: true })).model], ["haiku", "haiku"]);
+  assert.equal((await started({ ...changes, reviewSendBacks: 2, shouldRound: true })).model, "haiku");
   // The strongest has nothing above it, and an unknown name has no order: no step-up.
-  assert.doesNotMatch((await started({ reviewSendBacks: 2, triage: { ...TRIAGE_OK, size: "large", hidesDecision: false } })).line, /Stepped up/);
-  const odd = await started({ reviewSendBacks: 2 }, { roles: { implement: { model: "sonnet", modelBySize: { small: "house-model" } } } });
+  assert.doesNotMatch((await started({ ...changes, reviewSendBacks: 2, triage: { ...TRIAGE_OK, size: "large", hidesDecision: false } })).line, /Stepped up/);
+  const odd = await started({ ...changes, reviewSendBacks: 2 }, { roles: { implement: { model: "sonnet", modelBySize: { small: "house-model" } } } });
   assert.deepEqual([odd.model, /Stepped up/.test(odd.line)], ["house-model", false]);
   // Without modelBySize every size runs on the role's model, as before, and nothing steps up.
-  const plain = await started({ reviewSendBacks: 4 }, {});
+  const plain = await started({ ...changes, reviewSendBacks: 4 }, {});
   assert.deepEqual([plain.model, /Stepped up/.test(plain.line)], [undefined, false]);
+});
+
+test("an Item that skips triage by its size label runs on that size's model", async () => {
+  const w = world(config({ level: 2, roles: { implement: { model: "sonnet", modelBySize: { small: "haiku" } } } }), [item("1", STATED_EARLY)]);
+  w.store.addUsageSample(usage(0.1, 0.1));
+  await w.run();
+  assert.deepEqual(w.runner.requests.map((request) => [request.role, request.model]), [["implement", "haiku"]]);
+  assert.equal(w.job("1")?.implementModel, "haiku");
+});
+
+test("Implement anyway lapses when a person takes the Item: after their release the level decides again", async () => {
+  const w = world(config({ level: 1 }), [item("1", { holder: { actor: { id: "bo", name: "Bo" } } })]);
+  w.store.addUsageSample(usage(0.1, 0.1));
+  saveJobs(w.store, { [refKey(ref("1"))]: overruled("1") });
+  await w.run();
+  assert.deepEqual(roles(w), []);
+  assert.equal(w.job("1")?.implementAskedBy, undefined);
+  assert.match(w.reasons("orchestrator.step").at(-1) ?? "", /Ada's Implement anyway on 1 lapses: Bo holds it now/);
+  w.store.put(item("1"), "sync", new Date(w.clock.ms).toISOString());
+  w.clock.ms += 60_000;
+  await w.run();
+  assert.deepEqual(roles(w), [], "released at level 1: the implement step waits for the level");
 });
 
 test("a send-back by review is counted for the step-up; a merging failure is not", async () => {
