@@ -8,7 +8,8 @@ import { COMMENT_PROPERTY, CLAIM_PROPERTY, LOG_PROPERTY, OVERTURNS_PROPERTY } fr
 import { NEEDS_DECISION_LABEL } from "./map.ts";
 import type { JiraUser } from "./rest.ts";
 import type { Writable } from "./testHost.ts";
-import { writable } from "./testHost.ts";
+import { DC_SCOPESOUP, writable } from "./testHost.ts";
+import { CLOUD_SCOPESOUP } from "./fixtures.ts";
 
 /** A comment a person (or another account) writes on Jira itself, with properties if given. */
 function personSays(w: Writable, key: string, text: string, author: JiraUser, properties?: Record<string, unknown>): string {
@@ -271,3 +272,32 @@ test("Jira Cloud answering expand=properties with an empty list: Scope Soup's ow
   assert.equal(item?.openQuestions?.length, 1);
   assert.ok(fake.calls.some((call) => /\/comment\/\d+\/properties$/.test(call.path)));
 });
+
+for (const deployment of ["cloud", "datacenter"] as const) {
+  test(`Jira ${deployment}: a hand-back's person counts only on Scope Soup's own comment, with an id and a name; no branch, no hand-back`, async () => {
+    const cloud = deployment === "cloud";
+    const SHA = "b".repeat(40);
+    const app: JiraUser = cloud ? { accountId: "000000:app-0010", displayName: "Some App", accountType: "app" } : { name: "someapp", displayName: "Some App", accountType: "app" };
+    const self: JiraUser = cloud ? CLOUD_SCOPESOUP : DC_SCOPESOUP;
+    const probe = writable(deployment);
+    const robinId = cloud ? probe.person.accountId! : probe.person.name!;
+    const w = writable(deployment, { answerers: [robinId, cloud ? app.accountId! : app.name!] });
+    const handback = (fields: Record<string, unknown>) => ({ [COMMENT_PROPERTY]: { v: 1, kind: "handback", sha: SHA, ...fields } });
+    const handed = async () => (await w.host.work.getWork(w.ref("DEMO-5")))!.handedBack;
+    personSays(w, "DEMO-5", "Handed back", self, handback({}));
+    personSays(w, "DEMO-5", "Handed back", self, handback({ branch: "" }));
+    assert.equal(await handed(), undefined);
+    // An answerer's own hand-back counts, but the person it names is not taken: it is hers.
+    const robins = personSays(w, "DEMO-5", "Handed back", w.person, handback({ branch: "scopesoup/DEMO-5", person: { id: "kim", name: "Kim" } }));
+    assert.deepEqual([(await handed())?.id, (await handed())?.by.name], [robins, "Robin Example"]);
+    // An app's never counts, whoever it names.
+    personSays(w, "DEMO-5", "Handed back", app, handback({ branch: "scopesoup/DEMO-5", person: { id: "kim", name: "Kim" } }));
+    assert.equal((await handed())?.id, robins);
+    // Scope Soup's own, naming a person without a name: it reads as Scope Soup's account.
+    personSays(w, "DEMO-5", "Handed back", self, handback({ branch: "scopesoup/DEMO-5", person: { id: "kim" } }));
+    assert.equal((await handed())?.by.name, "Scope Soup Bot");
+    // With both, it is the person's.
+    personSays(w, "DEMO-5", "Handed back", self, handback({ branch: "scopesoup/DEMO-5", person: { id: "kim", name: "Kim" } }));
+    assert.deepEqual((await handed())?.by, { id: "kim", name: "Kim" });
+  });
+}

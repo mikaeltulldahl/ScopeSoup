@@ -44,7 +44,6 @@ import type { Backend } from "../items/service.ts";
 import type { RemoteBranches } from "../items/remoteBranch.ts";
 import { branchCommands, farUntil, handBackItem, holdsIt, itemDetails, itemRef as itemRefOn, listItems, Refused, releaseItem, claimItem, whyNotHandBack, whyNotRelease, whyNotClaim } from "../items/service.ts";
 import type { JiraBoard } from "../items/jiraBackend.ts";
-import { heldByPicked } from "../items/jiraBackend.ts";
 import { editConfig, readConfigView, type SharedSaved } from "../config/edit.ts";
 import type { SettingsLogEntry, SharedSettings } from "../config/shared.ts";
 import { activityView } from "./activity.ts";
@@ -1111,15 +1110,16 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
    * line on the meta ref; the server adds what only it knows: a session running on the item.
    */
   async function person(request: IncomingMessage, response: ServerResponse, verb: "claim" | "handback" | "release"): Promise<void> {
-    if (options.jiraItems) return jiraHold(request, response, verb, options.jiraItems);
     const write = items?.write;
-    if (!items || !write || !items.work) return sendError(response, 403, "READ_ONLY", "Items cannot be written here: the project's host is read-only.");
+    if ((!items || !write || !items.work) && !options.jiraItems) return sendError(response, 403, "READ_ONLY", "Items cannot be written here: the project's host is read-only.");
     let body: Record<string, unknown>;
     try {
       body = await readJson(request);
     } catch (error) {
       return sendError(response, 400, "BAD_BODY", error instanceof Error ? error.message : "The body is not JSON.");
     }
+    if (typeof body.id === "string" && holdHost(body.id) === "jira") return jiraHold(response, verb, options.jiraItems!, body);
+    if (!items || !write || !items.work) return sendError(response, 403, "READ_ONLY", "Items cannot be written here: the project's host is read-only.");
     // The item commands say who with `as`; the board's buttons with its picked person.
     const who = (typeof body.as === "string" ? body.as.trim() : "") || picked() || "";
     const text = (value: unknown): string | undefined => (typeof value === "string" && value.trim() !== "" ? value : undefined);
@@ -1157,13 +1157,7 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
    * commands on Jira. The person is the Jira account the picked name is (`JiraBoard.person`). Jira says only that the server's
    * account wrote, so the hand-back's comment and property and a release's comment name the person, and so does an event here.
    */
-  async function jiraHold(request: IncomingMessage, response: ServerResponse, verb: "claim" | "handback" | "release", board: JiraBoard): Promise<void> {
-    let body: Record<string, unknown>;
-    try {
-      body = await readJson(request);
-    } catch (error) {
-      return sendError(response, 400, "BAD_BODY", error instanceof Error ? error.message : "The body is not JSON.");
-    }
+  async function jiraHold(response: ServerResponse, verb: "claim" | "handback" | "release", board: JiraBoard, body: Record<string, unknown>): Promise<void> {
     const who = (typeof body.as === "string" ? body.as.trim() : "") || picked() || "";
     if (who === "" || who.length > 100 || typeof body.id !== "string") return sendError(response, 400, "BAD_FIELD", 'Give { "id": "DEMO-1" } and pick who you are at the top of the board.');
     const note = typeof body.note === "string" && body.note.trim() !== "" ? body.note : undefined;
@@ -1173,17 +1167,35 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
         const running = sessionRunning(ref);
         if (running) throw new Refused(running);
       }
-      const person = await board.person(who, (await board.work.getWork(ref)) ?? undefined, verb === "claim");
+      // To claim the name must be a Jira account. A name Jira does not know may release another's hold, and is refused a hand-back
+      // by the rules (it holds nothing); unless it is the holder's display name, which then cannot be told apart.
+      const item = (await board.work.getWork(ref)) ?? undefined;
+      const resolved = await board.resolve(who, item);
+      const holderName = item?.holder && item.holder.actor.name.trim().toLowerCase() === who.toLowerCase();
+      if ("why" in resolved && (resolved.hard || verb === "claim" || (verb === "handback" && holderName))) throw new Refused(resolved.why);
+      const known = "person" in resolved ? resolved.person : undefined;
+      const person = known ?? { id: who, name: who };
       const { mainBranch } = remoteNames();
       const backend: Backend = { ...board.backend(person), mainBranch, ...(options.branches ? { branches: options.branches } : {}) };
       const done = verb === "claim" ? await claimItem(backend, ref.id) : verb === "handback" ? await handBackItem(backend, ref.id, note ? { note } : {}) : await releaseItem(backend, ref.id, note);
       const kind = verb === "claim" ? "person.claimed" : verb === "handback" ? "person.handed_back" : "person.released";
-      store.appendEvent({ kind, subject: refKey(ref), actor: who, data: { reason: done.message, via: "board", account: person.id, ...(note ? { note } : {}) } }, now().toISOString());
+      store.appendEvent({ kind, subject: refKey(ref), actor: who, data: { reason: done.message, via: "board", ...(known ? { account: known.id } : {}), ...(note ? { note } : {}) } }, now().toISOString());
       return written(response, { work: done.ref, shared: done.shared, conflict: false }, done.message);
     } catch (error) {
       if (error instanceof Refused) return sendError(response, 409, "REFUSED", error.message);
       return sendError(response, 400, "WRITE_REFUSED", error instanceof Error ? error.message : String(error));
     }
+  }
+
+  /**
+   * Which host an item the hold calls name is on: by its ref key (`jira:work:DEMO-1`, `metaBranch:work:A-1`); a bare id is on the
+   * items host when there is one, else on Jira.
+   */
+  function holdHost(id: string): "jira" | "items" | undefined {
+    const jira = options.jiraItems;
+    if (jira && id.startsWith(`${jira.host}:work:`)) return "jira";
+    if (items && id.startsWith(`${items.host}:work:`)) return "items";
+    return items ? "items" : jira ? "jira" : undefined;
   }
 
   /** The project's remote and main branch, for the words and commands; the usual names when the configuration cannot be read. */
@@ -1205,20 +1217,22 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
    * The hold buttons on an Item page, for the board's person, with the same rules as the item commands (`src/items`). None on
    * an Item that is over, or where items cannot be written.
    */
-  function holdButtons(work: WorkItem | undefined): ItemPage["hold"] {
-    const jira = options.jiraItems;
-    const writable = jira ? true : !!items?.work && !!items.write.appendLog;
-    if (!writable || !work || work.ref.host !== (jira?.host ?? items?.host) || work.state === "done" || work.state === "abandoned") return undefined;
+  async function holdButtons(work: WorkItem | undefined): Promise<ItemPage["hold"]> {
+    if (!work || work.state === "done" || work.state === "abandoned") return undefined;
+    const jira = options.jiraItems && work.ref.host === options.jiraItems.host ? options.jiraItems : undefined;
+    if (!jira && (!items?.work || !items.write.appendLog || work.ref.host !== items.host)) return undefined;
     const at = now();
     const who = picked();
     const pick = "Pick who you are at the top of the board first.";
     const action = (why: string | undefined) => (why === undefined ? {} : { why });
-    // Jira: the picked name is the holder when it names their account or display name (`heldByPicked`).
-    const holder = jira && who ? heldByPicked(who, work) : undefined;
-    const me = jira ? { kind: "jira" as const, who: holder?.id ?? who ?? "", name: holder?.name ?? who ?? "" } : { kind: "metaBranch" as const, who: who ?? "" };
+    // Jira: who the picked name is there (`JiraBoard.resolve`); a name that may not act at all gets only a Claim that says why.
+    const resolved = jira && who ? await jira.resolve(who, work) : undefined;
+    if (resolved && "why" in resolved && resolved.hard) return { claim: { why: resolved.why } };
+    const person = resolved && "person" in resolved ? resolved.person : undefined;
+    const me = jira ? { kind: "jira" as const, who: person?.id ?? who ?? "", name: person?.name ?? who ?? "" } : { kind: "metaBranch" as const, who: who ?? "" };
     const mine = who !== undefined && holdsIt(me, work, at);
     const hold: NonNullable<ItemPage["hold"]> = {};
-    if (!mine) hold.claim = action(!who ? pick : sessionRunning(work.ref) ?? whyNotClaim(me, work, at, true));
+    if (!mine) hold.claim = action(!who ? pick : sessionRunning(work.ref) ?? whyNotClaim(me, work, at, true) ?? (resolved && "why" in resolved ? resolved.why : undefined));
     else {
       hold.handBack = action(whyNotHandBack(me, work, at, true) ?? (options.branches ? undefined : "Scope Soup cannot read the project's remote here (it runs without a project), so it cannot read the branch to hand it back."));
       const name = workBranch(work.ref);
@@ -1697,7 +1711,7 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
         if ((!items && !options.jiraItems) || !id) return sendError(response, 400, "BAD_FIELD", "Give ?id=<the item>; the items need a host that can be written here.");
         let branch: string;
         try {
-          branch = workBranch(options.jiraItems ? itemRefOn({ kind: "jira", host: options.jiraItems.host }, id) : itemRef(id));
+          branch = workBranch(holdHost(id) === "jira" ? itemRefOn({ kind: "jira", host: options.jiraItems!.host }, id) : itemRef(id));
         } catch (error) {
           return sendError(response, 400, "BAD_FIELD", error instanceof Error ? error.message : String(error));
         }
@@ -1818,7 +1832,7 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
         if (page.proposal?.parts) page.proposal.canCreate = splitHost(page.item.ref) !== undefined;
         const onHost = options.hostEdit !== undefined && page.item.ref.host === options.hostEdit.host;
         if (assumptionHost(page.item.ref)) page.canSettle = true;
-        const hold = ours || page.item.ref.host === options.jiraItems?.host ? holdButtons(snapshot.works.find((each) => refKey(each.ref) === refKey(page.item.ref))) : undefined;
+        const hold = ours || page.item.ref.host === options.jiraItems?.host ? await holdButtons(snapshot.works.find((each) => refKey(each.ref) === refKey(page.item.ref))) : undefined;
         // The Item's images, and whether everyone with the repository sees them (the page reminds the viewer).
         const images = options.media ? await options.media.list(page.item.ref).catch(() => []) : [];
         if (images.length > 0) page.media = { names: images, shared: options.media!.pushing() };

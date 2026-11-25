@@ -7,8 +7,10 @@ import { describe, test } from "node:test";
 import type { ItemPage } from "../core/views.ts";
 import { personOf } from "../core/turns.ts";
 import { CLAIM_PROPERTY, COMMENT_PROPERTY } from "../hosts/jira/conventions.ts";
+import type { JiraUser } from "../hosts/jira/rest.ts";
 import type { Writable } from "../hosts/jira/testHost.ts";
-import { writable } from "../hosts/jira/testHost.ts";
+import { DC_SCOPESOUP, writable } from "../hosts/jira/testHost.ts";
+import { CLOUD_SCOPESOUP } from "../hosts/jira/fixtures.ts";
 import { jiraBoard } from "../items/jiraBackend.ts";
 import { fixedBranches } from "../items/remoteBranch.ts";
 import { findHandbacks } from "../orchestrator/handback.ts";
@@ -47,14 +49,18 @@ interface Board {
   last(id: string): { author: string; text: string; property: Record<string, unknown> | undefined };
 }
 
-async function board(deployment: "cloud" | "datacenter", sleep?: (ms: number) => Promise<void>): Promise<Board> {
-  const w = writable(deployment);
+async function board(deployment: "cloud" | "datacenter", sleep?: (ms: number) => Promise<void>, more: { people?: JiraUser[]; demo?: boolean; noPeople?: boolean } = {}): Promise<Board> {
+  const w = writable(deployment, more.people ? { people: more.people } : {});
+  // With `noPeople`, Jira never answers who may be assigned.
+  if (more.noPeople) w.fake.fail(/user\/assignable\/search/, 500, 1000);
   const store = openStore(":memory:");
+  // With `demo`, the demo's writable Items host as well: a project with both.
+  if (more.demo) seedDemo(store, new Date(w.clock.ms));
   const sync = createSync({ store, hosts: [w.host], intervalMs: 60_000, now: () => new Date(w.clock.ms), setTimer: () => () => {} });
   await sync.refreshNow();
   const now = () => new Date(w.clock.ms);
   const server = createServer({
-    store, port: 0, now, jiraItems: jiraBoard(w.host, { now, sleep: sleep ?? (async () => {}) }),
+    store, port: 0, now, ...(more.demo ? { machine: "demo", items: demoItemsHost(store, now) } : {}), jiraItems: jiraBoard(w.host, { now, sleep: sleep ?? (async () => {}) }),
     branches: fixedBranches(() => ({ state: "ready", sha: SHA, ahead: 1 })), syncNow: () => sync.refreshNow(),
   });
   const base = (await server.start()).url;
@@ -134,7 +140,9 @@ for (const deployment of ["cloud", "datacenter"] as const) {
         assert.match(String(other.body.message), /^Kim released Robin Example's hold on DEMO-5/);
         assert.match(b.last("DEMO-5").text, /Released by Kim, held by Robin Example: Robin is away\./);
         assert.equal(b.w.fake.issues.get("DEMO-5")!.fields.assignee, null);
-        assert.deepEqual(b.store.eventsOfKinds(["person.released"], 10).map((event) => event.actor).sort(), ["Kim", "Robin Example"]);
+        // Kim is no one Jira knows: her release names her, and the event names no account for her.
+        const robin = deployment === "cloud" ? b.w.person.accountId! : b.w.person.name!;
+        assert.deepEqual(b.store.eventsOfKinds(["person.released"], 10).map((event) => [event.actor, (event.data as { account?: string }).account]).sort(), [["Kim", undefined], ["Robin Example", robin]]);
       } finally {
         await done(b);
       }
@@ -167,6 +175,89 @@ for (const deployment of ["cloud", "datacenter"] as const) {
       try {
         assert.match(refusal(await b.post("claim", "Robin Example", { id: "DEMO-5" }))[1], /was taken by scopesoup on desk first, an agent that is working on it\. It is not yours\./);
         assert.equal(b.w.fake.issues.get("DEMO-5")!.fields.assignee, null);
+      } finally {
+        await done(b);
+      }
+    });
+
+    test("a display name two people share names nobody: no claim, and the holder must use their id", async () => {
+      const twin: JiraUser = deployment === "cloud" ? { accountId: "000000:robin-0002", displayName: "Robin Example", accountType: "atlassian" } : { name: "robin2", key: "JIRAUSER10002", displayName: "Robin Example" };
+      const b = await board(deployment, undefined, { people: [twin] });
+      const robin = deployment === "cloud" ? b.w.person.accountId! : b.w.person.name!;
+      try {
+        assert.match(refusal(await b.post("claim", "Robin Example", { id: "DEMO-5" }))[1], /Several people on Jira are called "Robin Example"/);
+        assert.equal(b.w.fake.issues.get("DEMO-5")!.fields.assignee, null);
+        assert.equal((await b.post("claim", robin, { id: "DEMO-5" })).status, 200);
+        assert.match((await b.hold("DEMO-5", "Robin Example"))?.claim?.why ?? "", /Several people on Jira/);
+        assert.match(refusal(await b.post("handback", "Robin Example", { id: "DEMO-5" }))[1], /Several people on Jira/);
+        assert.match(refusal(await b.post("release", "Robin Example", { id: "DEMO-5" }))[1], /Several people on Jira/);
+        assert.equal(b.w.fake.issues.get("DEMO-5")!.fields.assignee?.displayName, "Robin Example");
+        assert.deepEqual(Object.keys((await b.hold("DEMO-5", robin)) ?? {}).sort(), ["branch", "handBack", "release"]);
+      } finally {
+        await done(b);
+      }
+    });
+
+    test("Scope Soup's own account as the assignee: nobody hands back or releases as it", async () => {
+      const b = await board(deployment);
+      const self = deployment === "cloud" ? CLOUD_SCOPESOUP : DC_SCOPESOUP;
+      try {
+        b.w.fake.issues.get("DEMO-5")!.fields.assignee = self;
+        for (const name of ["Scope Soup Bot", deployment === "cloud" ? self.accountId! : self.name!]) {
+          assert.deepEqual(await b.hold("DEMO-5", name), { claim: { why: `"${name}" is Scope Soup's own account or an app on Jira, not a person: pick yourself at the top of the board.` } });
+          assert.match(refusal(await b.post("handback", name, { id: "DEMO-5" }))[1], /Scope Soup's own account or an app/);
+          assert.match(refusal(await b.post("release", name, { id: "DEMO-5" }))[1], /Scope Soup's own account or an app/);
+        }
+        assert.equal(b.w.fake.issues.get("DEMO-5")!.fields.assignee?.displayName, "Scope Soup Bot");
+        assert.deepEqual(b.store.eventsOfKinds(PERSON_KINDS, 10), []);
+      } finally {
+        await done(b);
+      }
+    });
+
+    test("when Jira cannot say who may be assigned, claim is refused with why; nothing is written", async () => {
+      const b = await board(deployment, undefined, { noPeople: true });
+      try {
+        assert.match(refusal(await b.post("claim", "Robin Example", { id: "DEMO-5" }))[1], /Jira could not say who may be assigned/);
+        assert.equal(b.w.fake.issues.get("DEMO-5")!.fields.assignee, null);
+        assert.match((await b.hold("DEMO-5", "Robin Example"))?.claim?.why ?? "", /Jira could not say who may be assigned/);
+      } finally {
+        await done(b);
+      }
+    });
+
+    test("the calls need a picked person and the board's own origin", async () => {
+      const b = await board(deployment);
+      try {
+        assert.equal(refusal(await b.post("claim", undefined, { id: "DEMO-5" }))[0], 400);
+        const response = await fetch(`${b.base}/api/item/claim`, { method: "POST", headers: { "Content-Type": "application/json", Origin: "https://elsewhere.example.test", ...as("Robin Example") }, body: JSON.stringify({ id: "DEMO-5" }) });
+        assert.equal(response.status, 403);
+        assert.equal(b.w.fake.issues.get("DEMO-5")!.fields.assignee, null);
+        assert.deepEqual(b.store.eventsOfKinds(PERSON_KINDS, 10), []);
+      } finally {
+        await done(b);
+      }
+    });
+
+    test("with a writable meta branch host too, each Item's buttons act on its own host", async () => {
+      const b = await board(deployment, undefined, { demo: true });
+      try {
+        const meta = ((await call(b.base, "/api/item?ref=demo:work:81", "ines")).body as unknown as ItemPage).hold;
+        assert.deepEqual(meta, { claim: {} });
+        assert.equal((await b.post("claim", "ines", { id: "demo:work:81" })).status, 200);
+        assert.equal(((await call(b.base, "/api/item?ref=demo:work:81", "ines")).body as unknown as ItemPage).item.holder?.actor.name, "ines on demo");
+        assert.equal((await call(b.base, "/api/item/branch?id=demo:work:81", "ines")).body.branch, "scopesoup/81");
+        // A bare id is the items host's, as the item commands send it.
+        assert.equal((await b.post("release", "ines", { id: "81" })).status, 200);
+        assert.deepEqual(b.store.eventsOfKinds(PERSON_KINDS, 10), []);
+
+        assert.deepEqual(await b.hold("DEMO-5", "Robin Example"), { claim: {} });
+        assert.equal((await b.post("claim", "Robin Example", { id: "jira:work:DEMO-5" })).status, 200);
+        assert.equal(b.w.fake.issues.get("DEMO-5")!.fields.assignee?.displayName, "Robin Example");
+        assert.equal((await call(b.base, "/api/item/branch?id=jira:work:DEMO-5", "Robin Example")).body.branch, "scopesoup/DEMO-5");
+        assert.equal((await b.post("handback", "Robin Example", { id: "jira:work:DEMO-5" })).status, 200);
+        assert.equal(b.w.fake.issues.get("DEMO-5")!.fields.assignee, null);
+        assert.deepEqual(b.store.eventsOfKinds(PERSON_KINDS, 10).map((event) => event.kind).sort(), ["person.claimed", "person.handed_back"]);
       } finally {
         await done(b);
       }

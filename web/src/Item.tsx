@@ -945,6 +945,8 @@ function Command({ text }: { text: string }) {
  */
 function Hold({ page, reload, claimPrimary }: { page: ItemPage; reload: () => void; claimPrimary: boolean }) {
   const { item } = page;
+  // The server routes the calls by the Item's host: the ref key names it.
+  const key = `${item.ref.host}:work:${item.ref.id}`;
   const hold = page.hold ?? {};
   const branch = hold.branch;
   const person = usePerson();
@@ -959,14 +961,14 @@ function Hold({ page, reload, claimPrimary }: { page: ItemPage; reload: () => vo
     if (!branch) return;
     let live = true;
     setOnRemote(undefined);
-    fetchItemBranch(item.ref.id).then(
+    fetchItemBranch(key).then(
       (state) => live && setOnRemote(state.onRemote ?? null),
       () => live && setOnRemote(null),
     );
     return () => {
       live = false;
     };
-  }, [item.ref.id, branch?.name, asked]);
+  }, [key, branch?.name, asked]);
   const run = (doing: Promise<{ message?: string }>, after?: () => void) => {
     setBusy(true);
     doing
@@ -988,7 +990,7 @@ function Hold({ page, reload, claimPrimary }: { page: ItemPage; reload: () => vo
     setSaid(null);
     setHanding(true);
     const text = note.trim();
-    run(postHandBack(item.ref.id, text ? { note: text } : {}), () => setNote(""));
+    run(postHandBack(key, text ? { note: text } : {}), () => setNote(""));
   };
   const button = (words: string, action: { why?: string } | undefined, title: string, onClick: () => void, primary = false) =>
     action && (
@@ -1024,9 +1026,9 @@ function Hold({ page, reload, claimPrimary }: { page: ItemPage; reload: () => vo
         </label>
       )}
       <div class="hold-buttons">
-        {button("Claim", hold.claim, `Claim the ${itemNoun(false, true)} as ${person}: Scope Soup leaves it alone until you hand it back or release it.`, () => run(postClaim(item.ref.id)), claimPrimary)}
+        {button("Claim", hold.claim, `Claim the ${itemNoun(false, true)} as ${person}: Scope Soup leaves it alone until you hand it back or release it.`, () => run(postClaim(key)), claimPrimary)}
         {button(handing ? "Reading the branch…" : "Hand back", hold.handBack, branch ? `Scope Soup fetches ${branch.name} from ${branch.remote} and hands back its newest commit; it reviews it next, then checks and merges it.` : "Hand the work back on its branch.", handBack)}
-        {button("Release", hold.release, `Release the hold as ${person}: Scope Soup may then start the ${itemNoun(false, true)}. The log says who released whose.`, () => run(postRelease(item.ref.id)))}
+        {button("Release", hold.release, `Release the hold as ${person}: Scope Soup may then start the ${itemNoun(false, true)}. The log says who released whose.`, () => run(postRelease(key)))}
       </div>
       {why.map((text) => (
         <p class="muted" key={text}>
