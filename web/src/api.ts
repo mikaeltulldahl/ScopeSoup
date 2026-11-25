@@ -125,6 +125,15 @@ export async function postOpenFolder(folder: FolderName): Promise<void> {
   }
 }
 
+/** Opens an item's change, or one of its files, in the person's own diff tool on the server's machine. The page sends the item and a file of the diff, never a command. */
+export async function postOpenDiff(ref: string, file?: string): Promise<void> {
+  const response = await call("/api/open-diff", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ref, ...(file === undefined ? {} : { file }) }) });
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as { error?: { message?: string } } | null;
+    throw new Error(body?.error?.message ?? `The server answered ${response.status}.`);
+  }
+}
+
 /** Asks the next tick to let a queue that the engine paused go on. */
 export async function postQueueResume(): Promise<void> {
   const response = await call("/api/queue/resume", { method: "POST" });

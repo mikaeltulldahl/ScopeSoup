@@ -280,7 +280,7 @@ Some projects need something only so many of exist to build, run or test: a lice
 
 ### Images agents attach
 
-An agent may attach a picture to what it answers: a screenshot, a before and after of a UI change, a diagram (decision 88). Every prompt tells it how (`{{media}}`, like `{{allowedCommands}}`): save the image in `.scopesoup/media/` of its clone, which Scope Soup makes before the session with a `.gitignore` of `*` so nothing there is committed, and write `![what it shows](media/<name>)` in its summary, a question, an option or a decision.
+An agent may attach a picture to what it answers: a screenshot, a before and after of a UI change, a diagram (decision 91). Every prompt tells it how (`{{media}}`, like `{{allowedCommands}}`): save the image in `.scopesoup/media/` of its clone, which Scope Soup makes before the session with a `.gitignore` of `*` so nothing there is committed, and write `![what it shows](media/<name>)` in its summary, a question, an option or a decision.
 
 - **After the session** Scope Soup takes the images into this machine's data folder, `<data>/media/<key>/` (the Item's whole key made safe, with a hash, so Item 7 on two hosts has two folders), and empties the clone's folder; it empties it before each session too, so what a killed session left reaches no other Item. A link is never followed: a linked entry is refused (the link goes, what it points at stays), and when `.scopesoup` or the media folder is itself a link or junction nothing is taken. It keeps PNG, JPEG, GIF, WebP and SVG, checked by the name's extension and the file's first bytes together; at most 5 MB each and 20 per Item; a name used again replaces the image. What is refused is deleted and named in the `media.collected` event.
 - **On the board** the Item page shows each image where the agent referred to it: in a round's summary, a question and its options, a decision. Images next to each other sit side by side, so a before and after reads as a pair. Each has a Delete button: it removes the image here and, when it was pushed, from the media ref (on the remote too), and History records who deleted it. A note next to them says who sees them, "Only this machine sees these images" or "Everyone with the repository sees these images", with a link to Settings.
@@ -300,6 +300,19 @@ A media ref Scope Soup pushes goes on the manifest; offboarding deletes every `r
 With Scope Soup running for several projects at once, each board says which one it is. The header shows the project's name (`project` in the shared settings) and its repository: `owner/name` from the GitHub host, else from the URL of `remote` (`remoteUrl`, or `git remote get-url` in `repoPath`), else the remote's name. When the host or the remote is on GitHub, the repository links to its page there. The browser tab is titled `Scope Soup · <project>`, and the dot beside the name and the tab icon have a colour made from the name, the same on every machine. Without a configuration (board only) a GitHub host's repository names the board.
 
 The folder button in the header opens your own checkout in the file manager (Explorer, Finder or `xdg-open`): `ownClone`, else the first of `realPaths`. The Settings page also opens Scope Soup's clone (`repoPath`) and the folder of `scopesoup.config.json`. The server opens them, on its own machine, through `POST /api/open-folder` with `{ "folder": "checkout" | "clone" | "config" }`: the path is always the configuration's, a body with anything else (a path) is refused, and a folder that is not there is not offered. The file manager is started without a shell, with the path as one argument.
+
+### Reading a change: word marks and your diff tool
+
+The Item page's "Files changed" marks the changed words inside a changed line: in each hunk the i-th removed line and the i-th added line are partners (the same rule as the triage draft's diff), and the words that differ are shaded. Lines with no word in common are not marked.
+
+"Open in my diff tool" (on the change and on each file) opens the change in the diff tool of your own git config, on the machine Scope Soup runs on: it runs `git difftool --no-prompt <base> <tip> [-- <file>]` in the Item's clone, without a shell, and does not wait for the tool. The page sends only the Item and, for one file, a file of the diff it shows; the request is refused unless it comes from this machine (the connection and the Host header are both loopback, also when `allowLan` is on) and from the board's own origin. Each use is a `person.opened_diff` event. Only your **global** git config picks the tool: `diff.tool` and, for a tool git does not know, `difftool.<name>.cmd` / `.path` (or the `mergetool` ones). A tool that only the repository's `.git/config` names is never used (it would be code from the repository); with no global `diff.tool` the button says what to set. For VS Code:
+
+```
+git config --global diff.tool vscode
+git config --global difftool.vscode.cmd "code --wait --diff \"$LOCAL\" \"$REMOTE\""
+```
+
+(Recent git knows `vscode` by itself; the second line is for older git or another path to `code`.) The diff tool starts and git ends when you close it; a tool that fails to start after git started is not reported on the page.
 
 ### The Settings page and the sliders
 

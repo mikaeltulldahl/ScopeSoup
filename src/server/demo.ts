@@ -645,10 +645,10 @@ export function demoDiff(store: Store, item: Ref, now: Date): DiffView {
   const held = store.get<WorkItem>(item)?.holder;
   const changed = store.list<Change>("change").some((each) => each.works.some((one) => refKey(one) === refKey(item)));
   if (!changed && !(held && !held.actor.bot)) return { now: now.toISOString(), available: false, reason: `There is no branch ${branch} yet.` };
-  const diff = "@@ -1,3 +1,4 @@\n export const tideRows = 4;\n+export const showMoon = true;\n export const units = \"m\";\n export const days = 7;\n";
+  const diff = "@@ -1,4 +1,5 @@\n export const tideRows = 4;\n-export const showSun = false;\n+export const showSun = true;\n+export const showMoon = true;\n export const units = \"m\";\n export const days = 7;\n";
   return {
     now: now.toISOString(), available: true, branch, base: createHash("sha1").update("tidepool main").digest("hex"), tip: demoTip(item.id),
-    files: [{ path: "src/day/settings.ts", added: 1, removed: 0, binary: false, diff }], omitted: 0, totalAdded: 1, totalRemoved: 0,
+    files: [{ path: "src/day/settings.ts", added: 2, removed: 1, binary: false, diff }], omitted: 0, totalAdded: 2, totalRemoved: 1,
   };
 }
 

@@ -66,6 +66,7 @@ import type { KeepAwake } from "./orchestrator/keepAwake.ts";
 import { dryActions } from "./orchestrator/ports.ts";
 import type { LabelChange, Ref, WorkItem } from "./model/types.ts";
 import { itemDiff } from "./orchestrator/diff.ts";
+import { openInDiffTool } from "./orchestrator/diffTool.ts";
 import { commitView, projectHistory } from "./orchestrator/history.ts";
 import { loadSnapshot } from "./server/snapshot.ts";
 import { desktopNotify, answerWaitTickHook } from "./orchestrator/answerWait.ts";
@@ -415,6 +416,21 @@ async function main(): Promise<void> {
                 now: () => new Date(),
               },
               ref,
+            ),
+          openDiff: (ref: Ref, file?: string) =>
+            openInDiffTool(
+              {
+                store,
+                config: () => {
+                  const state = config.load();
+                  if (!state.config) throw new Error("no project configuration");
+                  return state.config;
+                },
+                git: realGit,
+                now: () => new Date(),
+              },
+              ref,
+              file,
             ),
         }
       : {}),

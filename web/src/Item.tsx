@@ -5,7 +5,7 @@ import type { BoardView, DiffFile, DiffView, ItemPage, RoundRow, SessionDetailsV
 import { Fragment } from "preact";
 import type { ComponentChildren } from "preact";
 import { useEffect, useId, useState } from "preact/hooks";
-import { fetchChat, fetchDiff, fetchItem, fetchItemBranch, fetchSession, postAnswers, postChat, postDraft, postEdit, postHandBack, postProposal, postRelease, postResolve, postStartOver, postClaim, postMediaDelete, useNow, usePerson, useView } from "./api.ts";
+import { fetchChat, fetchDiff, fetchItem, fetchItemBranch, fetchSession, postAnswers, postChat, postDraft, postEdit, postHandBack, postOpenDiff, postProposal, postRelease, postResolve, postStartOver, postClaim, postMediaDelete, useNow, usePerson, useView } from "./api.ts";
 import { actorClass, actorWords, Mention, VoteButtons } from "./Card.tsx";
 import { placeText, statusText } from "./cardText.ts";
 import { ItemForm } from "./ItemForm.tsx";
@@ -19,7 +19,7 @@ import { hostDiffers } from "../../src/core/lanes.ts";
 import { itemNoun } from "./theme.ts";
 import { ago, fromWords, laneWord, optionRows, span, stateFacts, unmatchedRecommendation } from "./format.ts";
 import { ProgressBar } from "./Progress.tsx";
-import { collapse, diffLines, hasChanges } from "./textDiff.ts";
+import { collapse, diffLines, hasChanges, hunkParts } from "./textDiff.ts";
 import type { DiffRow } from "./textDiff.ts";
 import { rememberViewed } from "./ItemList.tsx";
 import { itemHref } from "./route.ts";
@@ -177,28 +177,69 @@ function Rounds({ rows, now, onTalk }: { rows: RoundRow[]; now: number; onTalk: 
   );
 }
 
-/** The changed files, each opening its diff. Text only: nothing from a diff is ever set as HTML. */
-export function DiffFiles({ files }: { files: DiffFile[] }) {
+/** Opens the change, or one file of it, in the person's own diff tool (their global git config's). Failures go to `onProblem`. */
+function DiffToolButton({ itemKey, file, onProblem }: { itemKey: string; file?: string; onProblem: (problem: string | null) => void }) {
+  const [busy, setBusy] = useState(false);
+  const open = (event: Event) => {
+    event.preventDefault(); // inside a <summary>: a click must not fold the file
+    event.stopPropagation();
+    setBusy(true);
+    onProblem(null);
+    postOpenDiff(itemKey, file).then(
+      () => setBusy(false),
+      (problem: unknown) => {
+        onProblem(problem instanceof Error ? problem.message : String(problem));
+        setBusy(false);
+      },
+    );
+  };
+  return (
+    <button type="button" class="diff-tool" disabled={busy} title="Opens it in the diff tool your git config names (git config --global diff.tool)" onClick={open}>
+      Open in my diff tool
+    </button>
+  );
+}
+
+/** The changed files, each opening its diff; with `itemKey`, each has "Open in my diff tool". Text only: nothing from a diff is ever set as HTML. */
+export function DiffFiles({ files, itemKey }: { files: DiffFile[]; itemKey?: string }) {
+  const [problem, setProblem] = useState<string | null>(null);
   return (
     <>
-      {files.map((file) => (
-        <details class="diff-file" key={file.path}>
-          <summary>
-            <span class="diff-path">{file.path}</span>
-            <span class="num muted">{file.binary ? "binary" : `+${file.added} −${file.removed}`}</span>
-          </summary>
-          {file.note && <p class="muted">{file.note}</p>}
-          {file.diff !== undefined && (
-            <pre class="diff-text">
-              {file.diff.split("\n").map((line, index) => (
-                <div key={index} class={line.startsWith("@@") ? "diff-line-hunk" : line.startsWith("+") ? "diff-line-add" : line.startsWith("-") ? "diff-line-del" : undefined}>
-                  {line || " "}
-                </div>
-              ))}
-            </pre>
-          )}
-        </details>
-      ))}
+      {itemKey !== undefined && <p><DiffToolButton itemKey={itemKey} onProblem={setProblem} /></p>}
+      {problem && <p class="error" role="alert">{problem}</p>}
+      {files.map((file) => {
+        const lines = file.diff?.split("\n");
+        const parts = lines ? hunkParts(lines) : [];
+        return (
+          <details class="diff-file" key={file.path}>
+            <summary>
+              <span class="diff-path">{file.path}</span>
+              <span class="num muted">{file.binary ? "binary" : `+${file.added} −${file.removed}`}</span>
+              {itemKey !== undefined && <DiffToolButton itemKey={itemKey} file={file.path} onProblem={setProblem} />}
+            </summary>
+            {file.note && <p class="muted">{file.note}</p>}
+            {lines && (
+              <pre class="diff-text">
+                {lines.map((line, index) => {
+                  const words = parts[index];
+                  return (
+                    <div key={index} class={line.startsWith("@@") ? "diff-line-hunk" : line.startsWith("+") ? "diff-line-add" : line.startsWith("-") ? "diff-line-del" : undefined}>
+                      {words ? (
+                        <>
+                          {line[0]}
+                          {words.map((part, at) => (part.changed ? <mark key={at}>{part.text}</mark> : part.text))}
+                        </>
+                      ) : (
+                        line || " "
+                      )}
+                    </div>
+                  );
+                })}
+              </pre>
+            )}
+          </details>
+        );
+      })}
     </>
   );
 }
@@ -223,7 +264,7 @@ function Diff({ itemKey, version }: { itemKey: string; version: string }) {
       <p class="muted num">
         {view.files.length + view.omitted} file{view.files.length + view.omitted === 1 ? "" : "s"} · +{view.totalAdded} −{view.totalRemoved} · {view.branch} from {view.base.slice(0, 9)}
       </p>
-      <DiffFiles files={view.files} />
+      <DiffFiles files={view.files} itemKey={itemKey} />
       {view.omitted > 0 && <p class="muted">{view.omitted} more files are not listed.</p>}
     </section>
   );

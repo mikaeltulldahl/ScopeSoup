@@ -679,3 +679,7 @@ button.decision-choice:hover:not(:disabled) { background: var(--accent-soft); fi
 .usage-thumb.busy { opacity: 0.6; cursor: progress; }
 .usage-thumb.fixed { cursor: default; pointer-events: none; }
 .usage-used-out.warn { color: var(--blocked); }
+.diff-tool { font-size: 0.8rem; padding: 1px 8px; }
+.diff-text mark { color: inherit; border-radius: 2px; }
+.diff-line-del mark { background: color-mix(in srgb, #d04545 38%, transparent); }
+.diff-line-add mark { background: color-mix(in srgb, #2e9d5b 38%, transparent); }
