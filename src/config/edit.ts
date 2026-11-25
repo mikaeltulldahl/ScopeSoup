@@ -34,7 +34,7 @@ const SAFE: Record<string, true | ((value: unknown, err: (message: string) => vo
   // Numbers; validation holds them within their bounds. No reason is asked for.
   settings: (value, err) => nested(value, "settings", SETTING_NAMES, ["value"], err),
   // The model per role (null or "" removes it, so the role runs on its default model). allowedTools, permissionMode and maxTurns govern what a session may do.
-  roles: (value, err) => nested(value, "roles", ROLE_NAMES, ["model"], err),
+  roles: (value, err) => nested(value, "roles", ROLE_NAMES, ["model", "effort"], err),
   // What level 4 needs, saved together with `level: 4` (refused below it); validation checks their form.
   checkCommand: true,
   remoteUrl: true,
@@ -94,14 +94,14 @@ function merge(target: unknown, change: unknown): unknown {
   return out;
 }
 
-/** A null or empty `roles.<role>.model` removes the model from the file, so the role runs on its default model. */
+/** A null or empty `roles.<role>.model` or `effort` removes it from the file, so the role runs on its default. */
 function dropClearedModels(next: Obj, change: Obj): void {
   if (!isObj(change.roles) || !isObj(next.roles)) return;
   for (const [name, entry] of Object.entries(change.roles)) {
-    if (FORBIDDEN.includes(name) || !isObj(entry) || (entry.model !== null && entry.model !== "")) continue;
+    if (FORBIDDEN.includes(name) || !isObj(entry)) continue;
     const role = next.roles[name];
     if (!isObj(role)) continue;
-    delete role.model;
+    for (const key of ["model", "effort"]) if (entry[key] === null || entry[key] === "") delete role[key];
     if (Object.keys(role).length === 0) delete next.roles[name];
   }
   if (Object.keys(next.roles).length === 0) delete next.roles;
