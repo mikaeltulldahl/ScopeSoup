@@ -128,6 +128,10 @@ export function settingsWords(changes: readonly SettingChangeLike[]): string[] {
       out.push(change.to === "draft" ? "A review's should findings: merged, then a draft" : "A review's should findings: fixed before the merge");
       continue;
     }
+    if (top === "labels" && second === "aiGenerated" && parts.length === 2) {
+      out.push(typeof change.to === "string" ? `Items an AI made or rewrote get the label "${change.to}"` : "Items an AI made or rewrote get no label");
+      continue;
+    }
     if (top === "host") {
       out.push(fromTo(second ? `Host ${spaced(parts.slice(1).join(" "))}` : "Host", change));
       continue;

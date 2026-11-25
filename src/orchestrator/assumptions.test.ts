@@ -56,7 +56,7 @@ test("on GitHub two decisions are one comment with the scopesoup:assumption labe
   const fake = fakeIssues("harbour/tides", [1]);
   const host = createGitHubHost({ token: "t", repo: "harbour/tides", apiUrl: ISSUES_API, fetchImpl: fake.fetch, allowWrites: true, conventions: true, login: "scopesoup-bot" });
   const store = openStore(":memory:");
-  const actions = createHostActions({ host, git: async () => ({ code: 0, stdout: "", stderr: "" }), config: () => config, store });
+  const actions = createHostActions({ host, git: async () => ({ code: 0, stdout: "", stderr: "" }), config: () => ({ ...config, labels: { aiGenerated: "ai-generated" } }), store });
   const item: Ref = { host: "github", kind: "work", id: "1" };
 
   await actions.appendLog(item, "assumption", { decisions: DECISIONS, assumption: "words for an old reader" });
@@ -83,6 +83,8 @@ test("on GitHub two decisions are one comment with the scopesoup:assumption labe
   assert.equal((made as Ref | null)?.id, "2");
   const issue = fake.issues.get("2")!;
   assert.match(issue.title, /^Overturned in #1: Sort harbours by\?/);
+  // The project keeps an AI label: the new Item has it, made in the repository first.
+  assert.deepEqual(labelsOf(fake, "2"), ["ai-generated"]);
   assert.match(issue.body ?? "", /\*\*Decided by a person:\*\* By distance from the user's harbour/);
   assert.match(issue.body ?? "", /#1's change has not merged yet; this Item waits for it/);
   // The rework waits for #1 (an issue dependency), and the decision's comment names #2.

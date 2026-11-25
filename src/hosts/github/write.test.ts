@@ -57,6 +57,7 @@ test("a refused create is an error that says why", async () => {
 test("comment and setLabels use the issues endpoints; removing a label that is not there is fine", async () => {
   const f = fake({
     "POST /repos/harbour/tides/issues/7/comments": [201, { id: 1 }],
+    "POST /repos/harbour/tides/labels": [201, { name: "ready" }],
     "POST /repos/harbour/tides/issues/7/labels": [200, []],
     "DELETE /repos/harbour/tides/issues/7/labels/needs%20owner": [404, { message: "Label does not exist" }],
     "GET /repos/harbour/tides/issues/7": [200, { number: 7, labels: [{ name: "ready" }] }],
@@ -65,7 +66,9 @@ test("comment and setLabels use the issues endpoints; removing a label that is n
   const subject = { host: "github", kind: "work" as const, id: "7" };
   await host.write!.comment!(subject, "Hello.");
   await host.write!.setLabels!(subject, ["ready"], ["needs owner"]);
-  assert.deepEqual(f.calls.map((call) => [call.method, call.body]), [["POST", { body: "Hello." }], ["POST", { labels: ["ready"] }], ["DELETE", undefined], ["GET", undefined]]);
+  // A label the repository may lack is made first (a plain one for a name that is not Scope Soup's own).
+  assert.deepEqual(f.calls.filter((call) => call.path !== "/repos/harbour/tides/labels").map((call) => [call.method, call.body]), [["POST", { body: "Hello." }], ["POST", { labels: ["ready"] }], ["DELETE", undefined], ["GET", undefined]]);
+  assert.equal(f.calls.filter((call) => call.path === "/repos/harbour/tides/labels").length, 1);
 });
 
 test("closeWork comments, then closes the issue as completed; the re-read must show it closed", async () => {
@@ -190,4 +193,15 @@ test("setLabels does not hide an error other than a missing label", async () => 
   const f = fake({ "DELETE /repos/harbour/tides/issues/7/labels/ready": [500, { message: "boom" }] });
   const host = createGitHubHost({ ...config, fetchImpl: f.fetchImpl, allowWrites: true });
   await assert.rejects(host.write!.setLabels!({ host: "github", kind: "work", id: "7" }, [], ["ready"]), /500/);
+});
+
+test("createWork with labels makes the label first when the repository lacks it, then the issue carries it", async () => {
+  const f = fake({
+    "POST /repos/harbour/tides/labels": [201, { name: "ai-generated" }],
+    "POST /repos/harbour/tides/issues": [201, { number: 13, id: 9002, html_url: "https://github.test/harbour/tides/issues/13" }],
+  });
+  const host = createGitHubHost({ ...config, fetchImpl: f.fetchImpl, allowWrites: true });
+  await host.write!.createWork!({ title: "Made by an agent", labels: ["ai-generated"] });
+  assert.deepEqual(f.calls.map((call) => [call.method, call.path]), [["POST", "/repos/harbour/tides/labels"], ["POST", "/repos/harbour/tides/issues"]]);
+  assert.deepEqual(f.calls[1]!.body, { title: "Made by an agent", labels: ["ai-generated"] });
 });

@@ -5,8 +5,8 @@ import { isAbsolute, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { SessionRole } from "../model/types.ts";
 import { COPILOT_DEFAULT_AUTO_TIER, COPILOT_DEFAULT_MODEL, defaultClaude, defaultCopilot, defaultRoles, defaultSettings, expandScopesoup, MACHINE_NAME } from "./defaults.ts";
-import type { Level, McpServer, ProjectConfig, ProviderName, RoleConfig, SettingName, Settings } from "./types.ts";
-import { EFFORT_LEVELS, LEVELS, mcpToolEntry, PROVIDER_NAMES, ROLES } from "./types.ts";
+import type { LabelsConfig, Level, McpServer, ProjectConfig, ProviderName, RoleConfig, SettingName, Settings } from "./types.ts";
+import { AI_LABEL_DEFAULT, EFFORT_LEVELS, LEVELS, mcpToolEntry, PROVIDER_NAMES, ROLES } from "./types.ts";
 import { CHECK_ROLES, withCheckRules } from "./checkRule.ts";
 import { proposeCheckCommand } from "./mergeQueue.ts";
 import { migrateConfig } from "./migrate.ts";
@@ -56,7 +56,7 @@ const LEGACY_SETTINGS = ["reserveFiveHour", "reserveSevenDay"];
 const TOP_KEYS = [
   "workspaces", "remoteUrl", "checkCommand", "rerunFilesCommand", "setupCommand", "setupWatch",
   "version", "project", "repoPath", "ownClone", "mainBranch", "remote", "realPaths", "level", "keepAwake", "multiplayer", "machineName", "workspacesDir",
-  "streamsDir", "promptsDir", "bugLabels", "claude", "copilot", "settings", "roles", "host", "mergeQueue", "resources", "sharedResources", "media", "review",
+  "streamsDir", "promptsDir", "bugLabels", "claude", "copilot", "settings", "roles", "host", "mergeQueue", "resources", "sharedResources", "media", "review", "labels",
 ];
 
 function isObj(value: unknown): value is Obj {
@@ -173,6 +173,20 @@ export function validateConfig(given: unknown, baseDir: string): ConfigResult {
       for (const key of Object.keys(given)) if (key !== "shouldFindings") err(`review: unknown key "${key}". Known keys: shouldFindings.`);
       if (!SHOULD_FINDINGS.includes(given.shouldFindings as ReviewConfig["shouldFindings"])) err(`review.shouldFindings must be one of ${SHOULD_FINDINGS.map((each) => `"${each}"`).join(", ")}.`);
       else review = { shouldFindings: given.shouldFindings as ReviewConfig["shouldFindings"] };
+    }
+  }
+  let labels: LabelsConfig | undefined;
+  if (raw.labels !== undefined) {
+    const given = isObj(raw.labels) ? raw.labels : null;
+    if (!given) err('labels must be an object: "aiGenerated".');
+    else {
+      for (const key of Object.keys(given)) if (key !== "aiGenerated") err(`labels: unknown key "${key}". Known keys: aiGenerated.`);
+      const value = given.aiGenerated;
+      const name = value === true ? AI_LABEL_DEFAULT : typeof value === "string" ? value.trim() : value;
+      if (name === false) labels = { aiGenerated: false };
+      else if (typeof name !== "string" || name === "" || name.length > 50 || /[\s,]/.test(name) || /^(scopesoup|priority):/i.test(name)) {
+        err('labels.aiGenerated must be false (no label), true (the label "ai-generated") or a label name of up to 50 characters with no spaces or commas, not starting with "scopesoup:" or "priority:".');
+      } else labels = { aiGenerated: name };
     }
   }
   let checkCommand: string[] | undefined;
@@ -374,6 +388,7 @@ export function validateConfig(given: unknown, baseDir: string): ConfigResult {
       ...(mergeQueue === undefined ? {} : { mergeQueue }),
       ...(media === undefined ? {} : { media }),
       ...(review === undefined ? {} : { review }),
+      ...(labels === undefined ? {} : { labels }),
       ...(resources.length > 0 ? { resources } : {}),
       claude, copilot, settings, roles,
     },

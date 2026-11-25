@@ -205,7 +205,7 @@ function carriedSection(parent: Ref, carried: string | undefined): string {
  * decisions recorded on the Item are carried into its text. A host without a verification field (GitHub) gets it as a section of
  * the text. The text, made inert, ends with the part's marker line.
  */
-export function partWork(part: ProposedPart, index: number, options: { parent: Ref; id: string; carried?: string; verificationInBody?: boolean; issueNumbers?: boolean; by: LogLineInput["by"] }): NewWork {
+export function partWork(part: ProposedPart, index: number, options: { parent: Ref; id: string; carried?: string; verificationInBody?: boolean; issueNumbers?: boolean; label?: string; by: LogLineInput["by"] }): NewWork {
   const verification = inertPart(part.verification.trim());
   const inBody = options.verificationInBody && verification ? `\n\n## Verification\n\n${verification}` : "";
   const marker = partMarker(options.parent, options.id, index, options.issueNumbers === true && part.goes !== "unlinked");
@@ -214,7 +214,7 @@ export function partWork(part: ProposedPart, index: number, options: { parent: R
     title: inertPart(part.title),
     body,
     ...(part.goes === "child" ? { parent: options.parent } : {}),
-    labels: [],
+    labels: options.label ? [options.label] : [],
     ...(!options.verificationInBody && verification ? { verification } : {}),
     log: [{ kind: "created", by: options.by, fields: { via: `restructuring of ${options.parent.id}` } }],
   };

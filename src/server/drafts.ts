@@ -71,7 +71,7 @@ export function draftRequest(body: Record<string, unknown>): DraftRequest | stri
  * finish, the store is brought up to date from the host first (`refresh`), so an Item made then is found. Refused for a draft that is
  * gone or decided, and Approve for a host that cannot be written.
  */
-export async function decide(store: Store, hosts: readonly DraftHost[], request: DraftRequest, by: string, at: () => string, refresh?: () => Promise<void>): Promise<DraftDecision> {
+export async function decide(store: Store, hosts: readonly DraftHost[], request: DraftRequest, by: string, at: () => string, refresh?: () => Promise<void>, aiLabel?: string): Promise<DraftDecision> {
   const draft = store.get<ItemDraft>(draftRef(request.id));
   if (!draft) return { ok: false, status: 404, code: "NO_DRAFT", message: `There is no draft ${request.id}.` };
   if (draft.decided) return { ok: false, status: 409, code: "DECIDED", message: `${by === draft.decided.by ? "You" : draft.decided.by} ${draft.decided.verdict} this draft already.` };
@@ -96,7 +96,7 @@ export async function decide(store: Store, hosts: readonly DraftHost[], request:
   if (!item) {
     if (!draft.approving) store.put({ ...draft, approving: { by, at: at() } }, by, at());
     const given = { title: request.title ?? draft.title, description: request.description ?? draft.description, verification: request.verification ?? draft.verification };
-    outcome = await host.write.createWork!(draftWork(draft, given, { verificationInBody: host.verificationInBody === true, issueNumbers: host.issueNumbers === true, by: { who: by, agent: false } }));
+    outcome = await host.write.createWork!(draftWork(draft, given, { verificationInBody: host.verificationInBody === true, issueNumbers: host.issueNumbers === true, ...(aiLabel ? { label: aiLabel } : {}), by: { who: by, agent: false } }));
     item = outcome.work;
   }
   decideDraft(store, draft.ref.id, "approved", by, at(), item);

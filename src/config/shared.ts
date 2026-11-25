@@ -28,7 +28,7 @@ export const PRIVATE_KEYS: readonly string[] = [
 /** Top-level keys of the shared settings. */
 export const SHARED_KEYS: readonly string[] = [
   "project", "host", "mainBranch", "level", "checkCommand", "rerunFilesCommand", "setupCommand", "setupWatch", "mergeQueue", "bugLabels",
-  "roles", "settings", "sharedResources", "media", "review",
+  "roles", "settings", "sharedResources", "media", "review", "labels",
 ];
 /** What this machine may spend, and how often it looks: in the private file's `settings`. */
 export const PRIVATE_SETTINGS: readonly string[] = ["maxParallelSessions", "budgetReserve", "reserveFiveHour", "reserveSevenDay", "tickSeconds"];
