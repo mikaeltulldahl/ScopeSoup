@@ -33,6 +33,8 @@ export interface FakeJiraSetup {
   pageSize?: number;
   /** The project writes go to. Default "DEMO". */
   project?: string;
+  /** The components the project has: a new issue naming another is refused with 400. Default: any name. */
+  components?: string[];
   /** People who may be assignees, besides `user`. */
   people?: JiraUser[];
   /** The comment length limit. Default 32,767. */
@@ -73,7 +75,49 @@ export interface FakeJira {
 
 const KEY_NUMBER = (key: string): number => Number(/-(\d+)$/.exec(key)?.[1] ?? 0);
 
-const JQL = /^project = "([A-Z][A-Z0-9_]*)"(?: AND updated >= "(\d{4}-\d{2}-\d{2} \d{2}:\d{2})")?( AND statusCategory != Done)? ORDER BY updated ASC, key ASC$/;
+const JQL_REST = /^(?: AND updated >= "(\d{4}-\d{2}-\d{2} \d{2}:\d{2})")?( AND statusCategory != Done)?(?: AND key = "([A-Z][A-Z0-9_]*-\d+)")? ORDER BY updated ASC, key ASC$/;
+
+/** The JQL the fake knows: `project = "X"`, then ` AND (filter)`, then the rest. The filter's text is parsed by `matchesFilter`. */
+function parseJql(jql: string): { project: string; filter: string | null; from?: string; open: boolean; key?: string } | null {
+  const head = /^project = "([A-Z][A-Z0-9_]*)"/.exec(jql);
+  if (!head) return null;
+  let rest = jql.slice(head[0].length);
+  let filter: string | null = null;
+  if (rest.startsWith(" AND (")) {
+    let depth = 1;
+    let quote: string | null = null;
+    let at = 6;
+    for (; at < rest.length && depth > 0; at += 1) {
+      const char = rest[at]!;
+      if (quote) {
+        if (char === "\\") at += 1;
+        else if (char === quote) quote = null;
+      } else if (char === '"') quote = char;
+      else if (char === "(") depth += 1;
+      else if (char === ")") depth -= 1;
+    }
+    if (depth > 0) return null;
+    filter = rest.slice(6, at - 1);
+    rest = rest.slice(at);
+  }
+  const match = JQL_REST.exec(rest);
+  if (!match) return null;
+  return { project: head[1]!, filter, ...(match[1] ? { from: match[1] } : {}), open: Boolean(match[2]), ...(match[3] ? { key: match[3] } : {}) };
+}
+
+/**
+ * A small subset of JQL for a filter: clauses joined by AND, each `component = "Board"` or `labels = scopesoup` (a name bare or
+ * in double quotes). Null when a clause is outside the subset, which the fake answers with 400 as Jira does for JQL it cannot parse.
+ */
+export function matchesFilter(issue: JiraIssue, filter: string): boolean | null {
+  const clauses = filter.split(/\s+AND\s+/i).map((clause) => /^(component|labels)\s*=\s*(?:"((?:[^"\\]|\\.)*)"|([^\s"()]+))$/i.exec(clause.trim()));
+  if (clauses.some((match) => !match)) return null;
+  return clauses.every((match) => {
+    const wanted = (match![2] ?? match![3] ?? "").replace(/\\(.)/g, "$1").toLowerCase();
+    const names = match![1]!.toLowerCase() === "labels" ? (issue.fields.labels ?? []) : (issue.fields.components ?? []).map((each) => each.name);
+    return names.some((name) => name.toLowerCase() === wanted);
+  });
+}
 
 export function fakeJira(setup: FakeJiraSetup): FakeJira {
   const site = (setup.site ?? (setup.deployment === "cloud" ? FAKE_SITE : FAKE_DC_SITE)).replace(/\/+$/, "");
@@ -87,7 +131,7 @@ export function fakeJira(setup: FakeJiraSetup): FakeJira {
   const commentProperties = (setup.commentProperties ??= {});
   let tick = Date.parse("2026-11-21T08:00:00.000Z");
   const writes: FakeWriteState = {
-    deployment: setup.deployment, site, user: setup.user, project: setup.project ?? "DEMO", issues, comments, issueProperties, commentProperties,
+    deployment: setup.deployment, site, user: setup.user, project: setup.project ?? "DEMO", components: setup.components, issues, comments, issueProperties, commentProperties,
     people: [setup.user, ...(setup.people ?? [])], assignable: setup.assignable, commentLimit: setup.commentLimit ?? 32_767,
     now: setup.now ?? (() => (tick += 1000)),
     ids: { comment: 40_000, link: 50_000, issue: 60_000 },
@@ -118,11 +162,14 @@ export function fakeJira(setup: FakeJiraSetup): FakeJira {
   };
 
   function search(jql: string): JiraIssue[] | FetchResponse {
-    const match = JQL.exec(jql);
-    if (!match) return refuse(400, `The fake does not know this JQL: ${jql}`);
-    const [, project, from, open] = match;
+    const parsed = parseJql(jql);
+    if (!parsed) return refuse(400, `The fake does not know this JQL: ${jql}`);
+    const { project, filter, from, open, key } = parsed;
+    if (filter !== null && matchesFilter({ id: "", key: "", fields: {} }, filter) === null) return refuse(400, `The fake does not know this JQL filter: ${filter}`);
     return [...issues.values()]
       .filter((issue) => issue.key.startsWith(`${project}-`))
+      .filter((issue) => key === undefined || issue.key === key)
+      .filter((issue) => filter === null || matchesFilter(issue, filter))
       .filter((issue) => !from || jqlTime(isoTime(issue.fields.updated), timeZone) >= from)
       .filter((issue) => !open || issue.fields.status?.statusCategory?.key !== "done")
       .sort((a, b) => isoTime(a.fields.updated).localeCompare(isoTime(b.fields.updated)) || KEY_NUMBER(a.key) - KEY_NUMBER(b.key));

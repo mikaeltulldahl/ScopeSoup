@@ -81,7 +81,7 @@ export function hostSettings(config: ProjectConfig | null, env: Env, resolvePath
 }
 
 /** Creates the hosts. The GitHub host reads its token from SCOPESOUP_GITHUB_TOKEN, the Jira host from SCOPESOUP_JIRA_TOKEN. */
-export function createHosts(settings: HostSettings, env: Env, log: (line: string) => void = console.log, onLabelCreated?: (repo: string, name: string) => void): Host[] {
+export function createHosts(settings: HostSettings, env: Env, log: (line: string) => void = console.log, onLabelCreated?: (repo: string, name: string) => void, onOutsideFilter?: (key: string, reason: string) => void): Host[] {
   const configured: Host[] = [];
   const meta = settings.meta;
   if (meta) {
@@ -117,6 +117,9 @@ export function createHosts(settings: HostSettings, env: Env, log: (line: string
       site: jira.site, project: jira.project, deployment: jira.deployment, token, conventions: true, allowWrites: jira.write,
       ...(settings.machine ? { machine: settings.machine } : {}),
       ...(settings.personCommands ? { claimsOfAnyone: true } : {}),
+      ...(jira.filter ? { filter: jira.filter } : {}),
+      ...(jira.components ? { components: jira.components } : {}),
+      ...(onOutsideFilter ? { onOutsideFilter } : { log }),
       ...(jira.issueType ? { issueType: jira.issueType } : {}),
       ...(jira.childIssueType ? { childIssueType: jira.childIssueType } : {}),
       ...(jira.transitions ? { transitions: jira.transitions } : {}),

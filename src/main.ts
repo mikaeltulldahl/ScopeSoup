@@ -162,7 +162,11 @@ async function main(): Promise<void> {
   if (ignored.length > 0) console.log(`The configuration file has a host, so these are not read: ${ignored.join(", ")}.`);
   if (env.SCOPESOUP_MACHINE !== undefined) console.log("SCOPESOUP_MACHINE is no longer read: the configuration file's machineName names this machine.");
   // What Scope Soup makes outside its config folder goes on the manifest, for offboarding.
-  const configured = createHosts(hostSet, env, console.log, existsSync(configFile) ? (repo, name) => void recordInManifest(configFile, [{ kind: "label", repo, name }], "scopesoup") : undefined);
+  const configured = createHosts(hostSet, env, console.log, existsSync(configFile) ? (repo, name) => void recordInManifest(configFile, [{ kind: "label", repo, name }], "scopesoup") : undefined,
+    (key, reason) => {
+      console.log(`Jira: ${key} ${reason}`);
+      store.appendEvent({ kind: "jira.created_outside_filter", subject: `jira:work:${key}`, actor: "scopesoup", data: { reason: `${key} ${reason}` } }, iso());
+    });
   if (first?.config) {
     recordInManifest(configFile, [
       { kind: "folder", path: first.config.repoPath, what: "Scope Soup's clone of the project" },

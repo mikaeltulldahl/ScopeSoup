@@ -30,6 +30,8 @@ export interface JiraScope {
   site: string;
   /** The project key, `DEMO`. */
   project: string;
+  /** A JQL condition ANDed with the project: which issues are Items. Undefined: all of them. */
+  filter?: string;
   deployment: Deployment;
   priorities: Readonly<Record<string, Priority>>;
   abandonedResolutions: readonly string[];
@@ -134,6 +136,9 @@ export function jqlTime(iso: string, timeZone: string): string {
 
 /** A JQL string literal. */
 export const jqlString = (text: string): string => `"${text.replace(/["\\]/g, (char) => `\\${char}`)}"`;
+
+/** The JQL of which issues are Items: the project, and the filter in parentheses when there is one. */
+export const itemsJql = (scope: Pick<JiraScope, "project" | "filter">): string => `project = ${jqlString(scope.project)}${scope.filter ? ` AND (${scope.filter})` : ""}`;
 
 // The approved mapping of Scope Soup's markers on Jira (issue #6). Read here; written in a later slice.
 /** `needs-decision`: a label (Jira labels hold no spaces). */

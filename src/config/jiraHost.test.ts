@@ -119,3 +119,13 @@ test("the Jira host is created from the file with SCOPESOUP_JIRA_TOKEN, and refu
   assert.equal(jira?.info.claimMachine, "laptop-a");
   assert.equal(jira?.write?.openChange, undefined);
 });
+
+test("a Jira host's filter and components are validated", () => {
+  const host = good({ ...base, host: { ...dc, filter: ' component = "Board" AND labels = scopesoup ', components: ["Board", " Board ", "Api"] } }).host;
+  assert.deepEqual(host, { kind: "jira", site: "https://jira.example.test/jira", project: "DEMO", deployment: "datacenter", write: false, filter: 'component = "Board" AND labels = scopesoup', components: ["Board", "Api"] });
+  assert.match(bad({ ...base, host: { ...dc, filter: "labels = a ORDER BY created" } }), /host.filter .* must not have an ORDER BY/);
+  assert.match(bad({ ...base, host: { ...dc, filter: "(labels = a" } }), /parenthesis that is never closed/);
+  assert.match(bad({ ...base, host: { ...dc, filter: 'labels = "a' } }), /quote that is never closed/);
+  assert.match(bad({ ...base, host: { ...dc, components: [] } }), /host.components must be a list of component names/);
+  assert.match(bad({ ...base, host: { ...dc, components: "Board" } }), /host.components must be a list/);
+});

@@ -5,7 +5,7 @@ import type { Ref } from "../../model/types.ts";
 import type { JiraConfig, JiraHost } from "./adapter.ts";
 import { createJiraHost } from "./adapter.ts";
 import type { Deployment } from "./client.ts";
-import type { FakeJira } from "./fakeJira.ts";
+import type { FakeJira, FakeJiraSetup } from "./fakeJira.ts";
 import { FAKE_DC_SITE, FAKE_SITE, fakeJira } from "./fakeJira.ts";
 import { CLOUD_EMAIL, CLOUD_ROBIN, CLOUD_SCOPESOUP, cloudIssues, DC_ROBIN, dcIssues, TOKEN } from "./fixtures.ts";
 import type { JiraUser } from "./rest.ts";
@@ -29,13 +29,14 @@ export interface Writable {
   robin(extra?: Partial<JiraConfig>): JiraHost;
 }
 
-export function writable(deployment: Deployment, more: { commentLimit?: number; conventions?: boolean; clock?: { ms: number }; transitions?: JiraConfig["transitions"]; answerers?: string[]; people?: JiraUser[]; emptyExpand?: boolean } = {}): Writable {
+export function writable(deployment: Deployment, more: { commentLimit?: number; conventions?: boolean; clock?: { ms: number }; transitions?: JiraConfig["transitions"]; answerers?: string[]; people?: JiraUser[]; emptyExpand?: boolean; fake?: Partial<FakeJiraSetup> } = {}): Writable {
   const cloud = deployment === "cloud";
   const clock = more.clock ?? { ms: Date.parse("2026-11-21T09:00:00Z") };
   const fake = fakeJira({
     deployment, token: TOKEN, ...(cloud ? { email: CLOUD_EMAIL } : {}), user: cloud ? CLOUD_SCOPESOUP : DC_SCOPESOUP, people: [cloud ? CLOUD_ROBIN : DC_ROBIN, ...(more.people ?? [])],
     others: [{ token: ROBIN_TOKEN, ...(cloud ? { email: ROBIN_EMAIL } : {}), user: cloud ? CLOUD_ROBIN : DC_ROBIN }], ...(more.emptyExpand ? { emptyExpand: true } : {}),
     issues: cloud ? cloudIssues() : dcIssues(), now: () => (clock.ms += 1000), ...(more.commentLimit ? { commentLimit: more.commentLimit } : {}),
+    ...more.fake,
   });
   const make = (machine: string, extra: Partial<JiraConfig> = {}): JiraHost => createJiraHost({
     site: cloud ? FAKE_SITE : FAKE_DC_SITE, project: "DEMO", deployment, token: TOKEN, ...(cloud ? { email: CLOUD_EMAIL } : {}),
