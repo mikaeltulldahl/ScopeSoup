@@ -431,3 +431,15 @@ test("resources declared in the file load; one added on the Settings page is wri
   assert.ok(removed.ok);
   assert.equal("resources" in both(file) || "sharedResources" in both(file), false);
 });
+
+test("a role's effort is saved from the board, and null removes it", async () => {
+  const file = setup({ roles: { implement: { model: "opus", allowedTools: ["Read"] } } });
+  const saved = await edit(file, { roles: { implement: { effort: "high" } } });
+  assert.equal(saved.ok, true);
+  assert.equal((both(file) as Record<string, any>).roles.implement.effort, "high");
+  const bad = await edit(file, { roles: { implement: { effort: "extreme" } } });
+  assert.equal(bad.ok, false);
+  const cleared = await edit(file, { roles: { implement: { effort: null } } });
+  assert.equal(cleared.ok, true);
+  assert.deepEqual((both(file) as Record<string, any>).roles.implement, { model: "opus", allowedTools: ["Read"] });
+});
