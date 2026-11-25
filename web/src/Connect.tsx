@@ -121,7 +121,7 @@ export function ConnectDialog({ kind, join = false, host, onClose, onConnected }
         ) : kind === "github" ? (
           <>
             <p class="muted">The project's Items become the repository's issues. The token is read from <code>{variable}</code> in the environment Scope Soup runs in; it is not asked for here.</p>
-            {input("repo", "Repository", "owner/name")}
+            {input("repo", "Repository", "account/repository")}
           </>
         ) : (
           <>
