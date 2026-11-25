@@ -388,3 +388,39 @@ export function usageParts(window: Pick<UsageAttribution, "total" | "resets" | "
   }
   return { several, windows: Math.max(1, Math.round(window.total)), percents };
 }
+
+/** How long each usage window lasts, in ms. */
+export const WINDOW_MS: Record<UsageWindowKind, number> = { five_hour: 5 * HOUR, seven_day: 7 * DAY };
+
+/**
+ * The resets to mark in a plot: the ones in the plotted span and the coming one, those after `from` and up to `to`, oldest
+ * first, with resets less than a minute apart counted as one.
+ */
+export function resetMarks(resets: readonly (string | number)[], from: number, to: number): number[] {
+  const times = resets.map((reset) => (typeof reset === "number" ? reset : Date.parse(reset))).filter((ms) => !Number.isNaN(ms) && ms > from && ms <= to);
+  times.sort((a, b) => a - b);
+  return times.filter((ms, index) => index === 0 || ms - times[index - 1]! >= 60_000);
+}
+
+export interface PaceSegment {
+  /** The window's start and its reset, in ms. */
+  from: number;
+  to: number;
+  /** The level at the reset (0 to 1): the share Scope Soup may fill, 1 minus the reserve. */
+  level: number;
+}
+
+/**
+ * The pace of each window that has a reset in `resets`: a straight line from 0 at the window's start (its reset minus its
+ * length) to `level` at its reset. Above the line a window is ahead of pace, below it there is room left.
+ */
+export function paceLines(resets: readonly number[], windowMs: number, level: number): PaceSegment[] {
+  const clamped = Math.min(1, Math.max(0, level));
+  return resets.map((reset) => ({ from: reset - windowMs, to: reset, level: clamped }));
+}
+
+/** A pace line's level at a time, or undefined outside its window. */
+export function paceAt(segment: PaceSegment, at: number): number | undefined {
+  if (at < segment.from || at > segment.to) return undefined;
+  return (segment.level * (at - segment.from)) / Math.max(1, segment.to - segment.from);
+}

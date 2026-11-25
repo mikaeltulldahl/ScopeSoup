@@ -10,6 +10,7 @@ import type { Situation } from "./lanes.ts";
 import { currentVerdicts, isApproved, isLive, openBlockers, situate } from "./lanes.ts";
 import type { Index } from "./snapshot.ts";
 import { durationWords, ms, refLabel } from "./snapshot.ts";
+import { sameFilesWords } from "./sameFiles.ts";
 import { clearWithoutTriage } from "./statedSize.ts";
 
 /** How a card is coloured: is it moving, waiting its turn, stuck, or a person's? */
@@ -183,6 +184,9 @@ function backlogTurn(situation: Situation, ctx: TurnContext): Draft {
   if (item.state === "waiting") return { actor: "nobody", tone: "blocked", reason: `waiting on the host (status "${item.hostState}")` };
   // A held item is not waiting for a free slot here: a person works on it, or another machine's agent does.
   if (item.holder && holdStands(item.holder, ctx.now.getTime())) return heldTurn(item, ctx);
+  // Triaged, and its paths overlap those of an Item in progress or in review: it waits for that one, not for a slot.
+  const sameFiles = ctx.index.snapshot.sameFiles?.find((each) => refKey(each.subject) === refKey(item.ref));
+  if (sameFiles) return { actor: "nobody", tone: "waiting", reason: sameFilesWords(sameFiles.waitsFor) };
   if (ctx.index.snapshot.paused) return { actor: "nobody", tone: "blocked", reason: "ready, but agents are paused (Resume on the lanes)" };
   if (ctx.index.snapshot.usage?.status === "rejected") return { actor: "nobody", tone: "blocked", reason: `ready, but the usage limit is reached${resetWords(ctx)}` };
   // Its next step is the triage and triage is paused: it waits for that switch, not for a slot. (A stated size skips the triage from level 2.)

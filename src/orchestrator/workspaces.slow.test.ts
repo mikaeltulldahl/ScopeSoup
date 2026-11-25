@@ -172,7 +172,8 @@ test("two items get different clones, a third waits for one, and each item keeps
   // A usage reading with room to spare, so the budget lets more than one session start.
   const resetsAt = new Date(T0 + 3600_000).toISOString();
   store.addUsageSample({ at: now(), status: "allowed", windows: [{ kind: "five_hour", utilization: 0.1, resetsAt }, { kind: "seven_day", utilization: 0.1, resetsAt }] });
-  const runner = makeRunner(store, config, clock);
+  // The triage names no paths, so items 1 and 2 do not wait for each other over the same file (core/sameFiles.ts).
+  const runner = makeRunner(store, config, clock, { FAKE_CLAUDE_OUTPUT: JSON.stringify({ ...ANSWER, paths: [] }) });
   const outerBefore = { a: snapshot(r, r.clones.a), b: snapshot(r, r.clones.b) };
   const run = () => tick({ store, runner, config: fixedConfig(config), actions: dryActions, now });
   const finish = async (report: Awaited<ReturnType<typeof run>>) => {

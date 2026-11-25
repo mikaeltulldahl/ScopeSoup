@@ -70,6 +70,8 @@ export interface Snapshot {
   /** The triage's typed links per Item (from Scope Soup's store). */
   links?: { subject: Ref; links: ItemLinkAnswer[] }[];
   answers?: RecordedAnswer[];
+  /** Triaged Items whose first implement step waits for Items in progress or in review that change the same files (core/sameFiles.ts). Absent when none waits. */
+  sameFiles?: { subject: Ref; waitsFor: Ref[] }[];
   /** The merge queue's health. Absent when no queue has run. */
   queue?: QueueHealth;
 }

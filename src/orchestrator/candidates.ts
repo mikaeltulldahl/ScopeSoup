@@ -1,9 +1,12 @@
 // Which work items are ready to start, and in what order. Pure.
 
-import type { Change, WorkItem } from "../model/types.ts";
+import type { Change, Ref, WorkItem } from "../model/types.ts";
 import { holdStands } from "../model/people.ts";
 import { refKey } from "../model/types.ts";
-import type { Jobs } from "./jobs.ts";
+import type { Job, Jobs } from "./jobs.ts";
+import type { NamedFiles } from "../core/sameFiles.ts";
+import { sameFilesAs } from "../core/sameFiles.ts";
+import { awaitsImplement } from "./recheck.ts";
 
 export interface Readiness {
   ready: WorkItem[];
@@ -75,4 +78,33 @@ export function planOrder(items: WorkItem[], changes: Change[], jobs: Jobs, now:
   const listed = new Set([...readiness.ready, ...held]);
   const rest = items.filter((item) => !listed.has(item));
   return [...readiness.ready.sort(compare), ...held.sort(compare), ...rest.sort(compare)];
+}
+
+/** The paths a job's triage named, when it named any. */
+function named(job: Job): NamedFiles | null {
+  const paths = (job.triage?.paths ?? []).filter((path) => path.trim());
+  return paths.length > 0 ? { item: job.item, paths } : null;
+}
+
+/**
+ * The Items in progress or in review, with the paths their triage named: a running or started implement step, or a
+ * review. Parked jobs wait for a person and hold nothing back; a merged one is over.
+ */
+export function busyFiles(jobs: Jobs): NamedFiles[] {
+  return Object.values(jobs).flatMap((job) => {
+    if (job.parked || job.merged !== undefined) return [];
+    const busy = job.step === "review" || (job.step === "implement" && (job.sessionId !== undefined || !awaitsImplement(job)));
+    const files = busy ? named(job) : null;
+    return files ? [files] : [];
+  });
+}
+
+/**
+ * The busy Items a job waits for before its first implement step: those whose named paths overlap its own. None for a job
+ * that is not about to start implementing, or whose triage named no paths.
+ */
+export function waitsForSameFiles(job: Job, busy: readonly NamedFiles[]): Ref[] {
+  if (job.sessionId !== undefined || !awaitsImplement(job)) return [];
+  const files = named(job);
+  return files ? sameFilesAs(files, busy) : [];
 }

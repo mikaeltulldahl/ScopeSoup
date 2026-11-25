@@ -26,6 +26,7 @@ import { sessionResultKey } from "./runner.ts";
 import { tick } from "./tick.ts";
 import { changeStat, commitsTouching } from "./worktree.ts";
 import { withoutTriageKeys } from "../server/triage.ts";
+import { loadSnapshot } from "../server/snapshot.ts";
 
 const T0 = Date.parse("2026-11-18T10:00:00.000Z");
 const DAY = 24 * 3600_000;
@@ -380,5 +381,57 @@ describe("pacing of triages with a big backlog", { concurrency: 4 }, () => {
     const works = w.store.list<WorkItem>("work");
     // 2 had its triage; 4's is running, so it is not triaged yet.
     assert.deepEqual([...withoutTriageKeys(works, loadJobs(w.store))].map((key) => key.split(":").pop()).sort(), ["1", "3", "4", "5"]);
+  });
+});
+
+describe("Items that change the same files", { concurrency: 4 }, () => {
+  /** A triaged Item about to start its implement step, its triage naming `paths`. */
+  function waitingJob(id: string, paths: string[]): Job {
+    return {
+      item: ref(id), workspace: `w${id}`, branch: `scopesoup/${id}`, step: "implement", failures: 0, fixRounds: 0, startedAt: new Date(T0).toISOString(),
+      triage: { ready: true, size: "small", paths, hidesDecision: false, draft: `Do ${id}.` },
+      triaged: { at: new Date(T0).toISOString(), ...triagedText(item(id)), blockers: [] },
+    };
+  }
+
+  test("two Items with overlapping paths do not run at once; one without overlap, or without paths, starts instead", async () => {
+    const w = world(config({ level: 3, settings: { maxParallelSessions: { value: 4 } } }), [item("1"), item("2"), item("3"), item("4")]);
+    const jobs = loadJobs(w.store);
+    jobs[refKey(ref("1"))] = waitingJob("1", ["src/core"]);
+    jobs[refKey(ref("2"))] = waitingJob("2", ["./src/core/a.ts"]);
+    jobs[refKey(ref("3"))] = waitingJob("3", ["src/web/b.ts"]);
+    jobs[refKey(ref("4"))] = waitingJob("4", []);
+    w.store.tx(() => saveJobs(w.store, jobs));
+    // A usage reading, so more than one session may start at once.
+    w.store.addUsageSample({
+      at: new Date(T0).toISOString(), status: "allowed",
+      windows: [{ kind: "five_hour", utilization: 0.1, resetsAt: new Date(T0 + 2 * 3600_000).toISOString() }, { kind: "seven_day", utilization: 0.1, resetsAt: new Date(T0 + 3 * DAY).toISOString() }],
+    });
+    await w.run();
+    const started = w.requests.map((request) => `${request.role} ${request.subject.id}`).sort();
+    assert.equal(started.filter((each) => each === "implement 1" || each === "implement 2").length, 1, "only one of the overlapping Items starts");
+    assert.ok(started.includes("implement 3") && started.includes("implement 4"), started.join(", "));
+    const first = started.includes("implement 1") ? "1" : "2";
+    const other = first === "1" ? "2" : "1";
+    // The board says why the other waits.
+    assert.deepEqual(loadSnapshot(w.store).sameFiles, [{ subject: ref(other), waitsFor: [ref(first)] }]);
+    // Once the first is in review, the other still waits for it.
+    w.end(first, "succeeded", { done: true, summary: "Done." });
+    await w.run();
+    w.clock.ms += 1000;
+    await w.run();
+    assert.equal(w.job(first)?.step, "review");
+    assert.equal(w.requests.filter((request) => request.subject.id === other).length, 0);
+  });
+
+  test("an Item in review holds back one whose paths overlap", async () => {
+    const w = world(config({ level: 3 }), [item("1"), item("2")]);
+    const jobs = loadJobs(w.store);
+    jobs[refKey(ref("1"))] = { ...waitingJob("1", ["src/a.ts"]), step: "review", head: "3".repeat(40) };
+    jobs[refKey(ref("2"))] = waitingJob("2", ["src/a.ts", "docs/RUNNING.md"]);
+    w.store.tx(() => saveJobs(w.store, jobs));
+    await w.run();
+    assert.equal(w.requests.filter((request) => request.subject.id === "2").length, 0);
+    assert.deepEqual(loadSnapshot(w.store).sameFiles, [{ subject: ref("2"), waitsFor: [ref("1")] }]);
   });
 });
