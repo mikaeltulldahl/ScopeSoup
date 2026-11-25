@@ -436,6 +436,8 @@ async function runImport(
     if (!token) throw new Refused("Set SCOPESOUP_GITHUB_TOKEN to a token that can read the repository's issues. The token is only read from the environment.");
     host = (deps.makeHosts ?? ((settings, env) => createHosts(settings, env, () => undefined)))({ from: setup.settings.from, meta, machine: setup.settings.machine, ...(setup.settings.shares ? { shares: setup.settings.shares } : {}) }, deps.env)[0] as MetaBranchHost | undefined;
     const writer = host && "writer" in host ? host.writer : null;
+    // Writes on, but this machine has no author yet (decision 99): say what to set, not that writes are off.
+    if (!writer && meta.write && (!meta.authorName || !meta.authorEmail)) throw new Refused("This machine is not set up for the meta branch: set meta.authorName and meta.authorEmail (and meta.prefix) in its scopesoup.config.json, or use \"Set up this machine\" on the board. Meta commits are made as that person.");
     if (!writer) throw new Refused("Writes to the meta branch are off here (host.write in the configuration, or SCOPESOUP_META_WRITE=1), so nothing can be imported, not even as a dry run.");
     const person = await personName(deps, setup, values.as);
     const client = createClient({ token, repo, ...(deps.githubFetch ? { fetchImpl: deps.githubFetch } : {}), ...(deps.githubApi ? { apiUrl: deps.githubApi } : {}) });

@@ -1749,14 +1749,20 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
       // Not connected while a ticked Item is not moved: running it again finishes the move, making nothing twice.
       if (moved.failed) return sendJson(response, 500, { error: { code: "MOVE_FAILED", message: moveLines(moved).join(" ") }, problems: moveLines(moved), lines, ...listed });
     }
-    return connected(response, connection, editOptions, { kind, join, person, lines, ...(moved ? { moved: moveLines(moved) } : {}) });
+    await connected(response, connection, editOptions, { kind, join, person, lines, ...(moved ? { moved: moveLines(moved) } : {}) });
   }
 
-  /** The last step of a connect, a move back or a set-up: the host and this machine's part written, once everything moved. */
-  async function connected(response: ServerResponse, connection: HostConnection, editOptions: EditOptions & { join: boolean }, done: { kind: HostKind; join: boolean; person: string | undefined; lines: string[]; moved?: string[] }): Promise<void> {
+  /**
+   * The last step of a connect, a move back or a set-up: the host and this machine's part written, once everything moved. Answers the
+   * request; true when it was written.
+   */
+  async function connected(response: ServerResponse, connection: HostConnection, editOptions: EditOptions & { join: boolean }, done: { kind: HostKind; join: boolean; person: string | undefined; lines: string[]; moved?: string[] }): Promise<boolean> {
     const { kind, join, person, lines, moved } = done;
     const result = await connectHost(options.configFile!, connection, editOptions);
-    if (!result.ok) return sendJson(response, result.status, { error: { code: "CONNECT_REFUSED", message: result.errors.join(" ") }, problems: result.errors, lines, ...(moved ? { moved } : {}) });
+    if (!result.ok) {
+      sendJson(response, result.status, { error: { code: "CONNECT_REFUSED", message: result.errors.join(" ") }, problems: result.errors, lines, ...(moved ? { moved } : {}) });
+      return false;
+    }
     let saved: string | undefined;
     if (result.changed) {
       const by = person ?? "board";
@@ -1765,7 +1771,8 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
       if (result.shared) saved = sharedSavedText(result.shared, by);
       options.onConfigChanged?.();
     }
-    return sendJson(response, 200, { done: true, problems: [], lines, ...(moved ? { moved } : {}), ...(saved ? { shared: saved } : {}), ...readConfigView(options.configFile!, configOptions) });
+    sendJson(response, 200, { done: true, problems: [], lines, ...(moved ? { moved } : {}), ...(saved ? { shared: saved } : {}), ...readConfigView(options.configFile!, configOptions) });
+    return true;
   }
 
   /**
@@ -1780,12 +1787,13 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
     const prefix = meta?.prefix || "?";
     const part = `this machine's meta part (commits as ${meta?.authorName || "?"} <${meta?.authorEmail || "?"}>, Item ids ${prefix}-1, ${prefix}-2, ...)`;
     const checked = await connectHost(options.configFile!, connection, { ...editOptions, dryRun: true });
-    const problems = [...metaPartProblems(meta), ...(checked.ok ? [] : checked.errors)];
+    const problems = [...metaPartProblems(meta, !join && current?.kind === "jira" ? current.project : undefined), ...(checked.ok ? [] : checked.errors)];
     if (join) {
       const lines = [`Writes ${part} to this machine's scopesoup.config.json; the project's shared settings stay as they are.`, "Start Scope Soup again on this machine: it reads the meta branch, and starts agents, only then."];
       if (body.confirm !== true) return sendJson(response, 200, { problems, lines });
       if (problems.length > 0) return sendJson(response, 400, { error: { code: "CONNECT_REFUSED", message: problems.join(" ") }, problems, lines });
-      return connected(response, connection, editOptions, { kind: "metaBranch", join, person, lines });
+      await connected(response, connection, editOptions, { kind: "metaBranch", join, person, lines });
+      return;
     }
     const from = current?.kind === "github" || current?.kind === "jira" ? current : undefined;
     if (!from) problems.push(current?.kind === "metaBranch" ? "The project's Items are on the meta branch already." : "The project's host is set by the environment: there is nothing to move back from.");
@@ -1830,21 +1838,23 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
         : []),
       ...(source && !unread ? [stay > 0 ? `The other ${stay} open issue(s) stay on ${where}, readable there; the board shows the meta branch only.` : moving.length > 0 ? "No open issue stays behind." : "There are no open issues to move."] : []),
       `Each other machine keeps its own settings: its board asks "Set up this machine for the meta branch" until it has its own meta part (name, email, id prefix), and starts no agent until then.`,
-      "The new host is read when Scope Soup starts again: restart it after moving back.",
+      `This machine's agents are paused from the start and stay paused after a move back that succeeded, so none works on ${from ? where : "the old host"}, which this machine still reads until Scope Soup starts again: restart it, then press Start. If the move stops, they start again as they were.`,
     );
     const listed = source ? { items: open } : {};
     if (body.confirm !== true) return sendJson(response, 200, { problems, lines, ...listed });
     if (problems.length > 0) return sendJson(response, 400, { error: { code: "CONNECT_REFUSED", message: problems.join(" ") }, problems, lines, ...listed });
     let moved: MoveBackReport | undefined;
+    const actor = person ?? "board";
+    // No new session starts on this machine from here. The old host is read until Scope Soup starts again, so after a move back that
+    // succeeded the switches stay paused (a person presses Start after the restart); they are put back only when it stops.
+    const paused = pauseRemembering(store, now().toISOString(), "connect", actor);
+    const resume = () => startAgain(store, paused, now().toISOString(), "connect", actor);
     if (moving.length > 0 && source && from && meta && options.metaBranch) {
       const target = options.metaBranch(meta);
-      const actor = person ?? "board";
-      // No new session starts on this machine while the Items move; the switches are put back as they were after.
-      const paused = pauseRemembering(store, now().toISOString(), "connect", actor);
       try {
         const items = await source.read(moving.map((issue) => issue.id));
         moved = await moveBack({
-          kind: from.kind, items, to: target, from: source.old, close, by: actor,
+          kind: from.kind, source: source.source, items, to: target, from: source.old, close, by: actor,
           beforeClose: () => {
             const fresh = loadSnapshot(store);
             const still = busyMachines(fresh.works, fresh.sessions, options.machine, now());
@@ -1852,17 +1862,20 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
           },
         });
       } catch (error) {
+        resume();
         const message = error instanceof Error ? error.message : String(error);
         return sendJson(response, 400, { error: { code: "MOVE_REFUSED", message }, problems: [message], lines, ...listed });
       } finally {
-        startAgain(store, paused, now().toISOString(), "connect", actor);
         await target.stop?.().catch(() => undefined);
       }
       store.appendEvent({ kind: "items.moved", actor, data: { from: from.kind, to: "metaBranch", rows: moved.rows, ...(moved.failed ? { failed: moved.failed } : {}) } }, now().toISOString());
       // Not switched while a ticked issue is not moved: running it again finishes the move, making nothing twice.
-      if (moved.failed) return sendJson(response, 500, { error: { code: "MOVE_FAILED", message: moveBackLines(moved).join(" ") }, problems: moveBackLines(moved), lines, ...listed });
+      if (moved.failed) {
+        resume();
+        return sendJson(response, 500, { error: { code: "MOVE_FAILED", message: moveBackLines(moved).join(" ") }, problems: moveBackLines(moved), lines, ...listed });
+      }
     }
-    return connected(response, connection, editOptions, { kind: "metaBranch", join, person, lines, ...(moved ? { moved: moveBackLines(moved) } : {}) });
+    if (!(await connected(response, connection, editOptions, { kind: "metaBranch", join, person, lines, ...(moved ? { moved: moveBackLines(moved) } : {}) }))) resume();
   }
 
   /** What this machine lacks for the project's host (decision 98), for the board's "Set up this machine" note; null when nothing. */

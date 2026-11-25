@@ -15,7 +15,8 @@ import { CLOUD_EMAIL, CLOUD_ROBIN, cloudIssues, TOKEN } from "../hosts/jira/fixt
 import type { LogLineInput, WorkPatch, WritePort } from "../ports/host.ts";
 import type { Ref, WorkItem } from "../model/types.ts";
 import { openStore, type Store } from "../store/store.ts";
-import type { ConnectDeps } from "./connect.ts";
+import { type ConnectDeps, metaPartProblems } from "./connect.ts";
+import { applyControl, readControl } from "../store/control.ts";
 import { createServer } from "./server.ts";
 import { fakeIssues, ISSUES_API } from "../hosts/github/fakeIssues.ts";
 import { readMarker } from "../hosts/github/conventions.ts";
@@ -378,6 +379,7 @@ describe("POST /api/connect back to the meta branch (#134)", { concurrency: 4 },
       assert.equal(github.issues.get("3")!.state, "open");
       assert.equal((github.comments.get("2") ?? []).filter((comment) => readMarker(comment.body)?.kind === "moved").length, 1);
       assert.equal(s.store.eventsOfKinds(["items.moved"], 10).length, 1);
+      assert.equal(readControl(s.store).implement, "paused", "this machine's agents stay paused: the old host is read until the restart");
     } finally {
       await s.stop();
     }
@@ -389,8 +391,10 @@ describe("POST /api/connect back to the meta branch (#134)", { concurrency: 4 },
     github.fail((call) => call === "POST /repos/harbour/tides/issues/2/comments", 502);
     const s = await setUp(deps(github), { own: BARE, shared: GITHUB, meta });
     try {
+      applyControl(s.store, "implement.start", T0, "test", "test");
       const first = await s.post(back({ move: ["#1", "#2"], confirm: true }));
       assert.equal(first.status, 500, JSON.stringify(first.body));
+      assert.equal(readControl(s.store).implement, "started", "a move that stops starts the agents again");
       assert.match(first.body.problems.join(" "), /Stopped at #2/);
       assert.deepEqual(s.settings.current(), GITHUB);
       assert.deepEqual(s.own(), BARE);
@@ -431,6 +435,11 @@ describe("POST /api/connect back to the meta branch (#134)", { concurrency: 4 },
     } finally {
       await noToken.stop();
     }
+  });
+
+  test("an id prefix that is the Jira project's key is refused", () => {
+    assert.match(metaPartProblems({ ...PART, prefix: "harb" }, "HARB").join(" "), /is the Jira project's key/);
+    assert.deepEqual(metaPartProblems(PART, "HARB"), []);
   });
 
   test("join mode on the meta branch writes this machine's meta part only", async () => {

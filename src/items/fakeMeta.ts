@@ -16,6 +16,11 @@ export interface FakeMeta extends MetaTarget {
   failNext?: string;
   /** What the batches' sharing round says (`pending`: not on the remote yet). */
   sharing: "local" | "shared" | "pending";
+  /**
+   * Why an Item is refused, as the real writer refuses a header or text it cannot store; default: a control character (other than
+   * tab and line end) or a lone surrogate anywhere in its title, description or verification.
+   */
+  refuse: (input: ItemInput) => string | undefined;
 }
 
 export function fakeMeta(prefix: string, at = "2026-11-25T09:00:00.000Z"): FakeMeta {
@@ -24,22 +29,31 @@ export function fakeMeta(prefix: string, at = "2026-11-25T09:00:00.000Z"): FakeM
     items: new Map(),
     commits: 0,
     sharing: "local",
-    async createItems(batch: readonly BatchItem[]): Promise<BatchResult> {
+    refuse: (input) => (/[\u0000-\u0008\u000b-\u001f\u007f]|[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(`${input.title}${input.body ?? ""}${input.verification ?? ""}`) ? "it holds a control character or a lone surrogate" : undefined),
+    async createItems(batch: readonly BatchItem[], options: { dryRun?: boolean } = {}): Promise<BatchResult> {
       if (fake.failNext) {
         const message = fake.failNext;
         delete fake.failNext;
         throw new Error(message);
       }
       const ids = new Map<string, { id: string; created: boolean }>();
+      let counter = next;
       for (const item of batch) {
         const there = [...fake.items].find(([, each]) => item.unique && each.unique?.toLowerCase() === item.unique[1].toLowerCase());
-        ids.set(item.key, there ? { id: there[0], created: false } : { id: `${prefix}-${next++}`, created: true });
+        ids.set(item.key, there ? { id: there[0], created: false } : { id: `${prefix}-${counter++}`, created: true });
       }
+      // The whole batch is checked first: a refused Item writes nothing, as the one commit would not be made.
+      const made = new Map(batch.filter((item) => ids.get(item.key)!.created).map((item) => [item.key, item.make((key) => ids.get(key)?.id)] as const));
+      for (const [key, each] of made) {
+        const why = fake.refuse(each.input);
+        if (why) throw new Error(`The item ${ids.get(key)!.id} cannot be written: ${why}.`);
+      }
+      if (options.dryRun) return { items: ids, commit: null, changed: false, sharing: null };
+      next = counter;
       for (const item of batch) {
-        const { id, created } = ids.get(item.key)!;
-        if (!created) continue;
-        const made = item.make((key) => ids.get(key)?.id);
-        fake.items.set(id, { input: made.input, ...(item.unique ? { unique: item.unique[1] } : {}), lines: (made.lines ?? []).map((line) => ({ kind: line.kind, fields: line.fields ?? {} })) });
+        const each = made.get(item.key);
+        if (!each) continue;
+        fake.items.set(ids.get(item.key)!.id, { input: each.input, ...(item.unique ? { unique: item.unique[1] } : {}), lines: (each.lines ?? []).map((line) => ({ kind: line.kind, fields: line.fields ?? {} })) });
       }
       const changed = [...ids.values()].some((each) => each.created);
       if (changed) fake.commits++;

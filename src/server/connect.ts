@@ -79,12 +79,16 @@ export function joinConnection(host: HostConfig, body: Record<string, unknown>):
 /** This machine's meta branch part as the dialog sent it. */
 const metaPartIn = (body: Record<string, unknown>): MetaPart => ({ authorName: text(body.authorName), authorEmail: text(body.authorEmail), prefix: text(body.prefix) });
 
-/** What is wrong with this machine's meta branch part, in words; empty when nothing. */
-export function metaPartProblems(meta: MetaPart | undefined): string[] {
+/**
+ * What is wrong with this machine's meta branch part, in words; empty when nothing. `jiraProject`: moving back from that Jira
+ * project, whose keys (`KEY-7`) an id with the same prefix would be mistaken for.
+ */
+export function metaPartProblems(meta: MetaPart | undefined, jiraProject?: string): string[] {
   const problems: string[] = [];
   if (!meta?.authorName) problems.push("Give your name: this machine's meta commits are made as you.");
   if (!meta?.authorEmail || !/^[^\s@]+@[^\s@]+$/.test(meta.authorEmail)) problems.push("Give your email, as git writes it in a commit.");
   if (!meta?.prefix || !isIdPrefix(meta.prefix)) problems.push("Give this machine's id prefix: a letter, then up to 15 letters or digits (A gives A-12). Each machine has its own.");
+  else if (jiraProject && meta.prefix.toUpperCase() === jiraProject.toUpperCase()) problems.push(`The id prefix ${meta.prefix} is the Jira project's key: its Items would have the issues' names (${jiraProject}-7). Pick another prefix.`);
   return problems;
 }
 
@@ -174,6 +178,8 @@ export function hostWhere(host: { kind: string; repo?: string; project?: string 
 
 /** The host the Items move back from (#134): its open issues to tick, the ticked ones read in full, and the step on it after. */
 export interface MoveSource {
+  /** Where the issues come from, as their `moved` lines name it (`SourceItem.source`). */
+  source: string;
   list(): Promise<{ id: string; title: string }[]>;
   read(names: readonly string[]): Promise<SourceItem[]>;
   old: OldHost;
@@ -188,6 +194,7 @@ export function sourceOf(host: Extract<HostConfig, { kind: "github" | "jira" }>,
   if (host.kind === "github") {
     const client = createClient({ token, repo: host.repo, ...fetchImpl, ...(deps.githubApi ? { apiUrl: deps.githubApi } : {}) });
     return {
+      source: `github:${host.repo.toLowerCase()}`,
       list: async () => (await readIssues(client, "none", 0)).filter((issue) => issue.open).map((issue) => ({ id: `#${issue.number}`, title: issue.title })),
       read: async (names) => fromGitHub((await readIssues(client, "none", ALL_COMMENTS)).filter((issue) => issue.open && names.includes(`#${issue.number}`)), host.repo),
       old: githubOldHost(client),
@@ -197,6 +204,7 @@ export function sourceOf(host: Extract<HostConfig, { kind: "github" | "jira" }>,
   if (!joined.ok) throw new Error(joined.error);
   const jira = hostFor("jira", joined.connection, token, deps, machine) as JiraHost;
   return {
+    source: `jira:${siteHost(host.site)}/${host.project}`,
     list: async () => (await jira.work.listWork()).items.filter((work) => work.state !== "done" && work.state !== "abandoned").map((work) => ({ id: work.ref.id, title: work.title })),
     async read(names) {
       const works: WorkItem[] = [];
@@ -213,6 +221,14 @@ export function sourceOf(host: Extract<HostConfig, { kind: "github" | "jira" }>,
     old: jiraOldHost(jira),
   };
 }
+
+const siteHost = (site: string): string => {
+  try {
+    return new URL(site).host.toLowerCase();
+  } catch {
+    return site.toLowerCase();
+  }
+};
 
 /** Every comment of people on an issue comes along as its history. */
 const ALL_COMMENTS = 1000;

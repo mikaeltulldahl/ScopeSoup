@@ -161,8 +161,8 @@ export async function tokenLogin(client: Client): Promise<string | undefined> {
 
 // Lone surrogates cannot be stored as UTF-8; control characters other than tab and line ends are refused in a description.
 const LONE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g;
-const oneLine = (text: string): string => text.replace(LONE, "\uFFFD").replace(/[\u0000-\u001f\u007f\u2028\u2029]/g, " ").replace(/\s+/g, " ").trim();
-const cleanBody = (text: string): string => text.replace(LONE, "\uFFFD").replace(/\r\n?/g, "\n").replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, "");
+export const oneLine = (text: string): string => text.replace(LONE, "\uFFFD").replace(/[\u0000-\u001f\u007f\u2028\u2029]/g, " ").replace(/\s+/g, " ").trim();
+export const cleanBody = (text: string): string => text.replace(LONE, "\uFFFD").replace(/\r\n?/g, "\n").replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, "");
 
 /** A label as the header can hold it: one line, no comma or bracket (the list syntax). */
 export const cleanLabel = (label: string): string => oneLine(label.replace(/[,[\]]/g, " "));

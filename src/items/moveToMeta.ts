@@ -12,14 +12,14 @@
 // its host.
 
 import type { Client } from "../hosts/github/client.ts";
-import { cleanLabel, githubOnly, importKey, IMPORTED_FROM, type SourceIssue, tokenLogin } from "./githubImport.ts";
+import { cleanBody, cleanLabel, githubOnly, importKey, IMPORTED_FROM, oneLine, type SourceIssue, tokenLogin } from "./githubImport.ts";
 import { moveIssues } from "./githubMove.ts";
 import { splitBody } from "../hosts/github/map.ts";
 import type { JiraThreadComment } from "../hosts/jira/adapter.ts";
 import type { BatchItem, BatchResult } from "../hosts/metaBranch/writer.ts";
 import type { LineWrite } from "../hosts/metaBranch/writer.ts";
 import { priorityFromLabels } from "../model/priority.ts";
-import type { Priority, Ref, WorkItem } from "../model/types.ts";
+import type { Actor, Priority, Ref, WorkItem } from "../model/types.ts";
 import type { WorkPatch, WritePort } from "../ports/host.ts";
 import { inertMoved, rewriteIds } from "./moveToHost.ts";
 
@@ -33,6 +33,8 @@ export interface SourceItem {
   aliases: string[];
   /** The `importedFrom` value: the marker a retry finds the Item by. */
   unique: string;
+  /** Where it came from: the repository (`github:owner/name`) or the Jira site and project (`jira:<site>/<KEY>`). */
+  source: string;
   ref: Ref;
   title: string;
   body: string;
@@ -49,27 +51,29 @@ export interface SourceItem {
   hostLabels?: string[];
 }
 
-const oneLine = (text: string): string => text.replace(/[\u0000-\u001f\u007f\u2028\u2029]/g, " ").replace(/\s+/g, " ").trim();
 const when = (at: string): string => (Number.isNaN(Date.parse(at)) ? oneLine(at) : new Date(at).toISOString().slice(0, 16).replace("T", " "));
 
 /** GitHub's issues as the import reads them (`readIssues`), as items to move. */
 export function fromGitHub(issues: readonly SourceIssue[], repo: string): SourceItem[] {
   return issues.map((issue) => {
-    const split = splitBody(issue.body.replace(/\r\n?/g, "\n"));
+    // Host text cleaned as the import cleans it (control characters, lone surrogates), so one issue cannot refuse the whole batch.
+    const split = splitBody(cleanBody(issue.body));
     const oneLineVerification = split.verification !== undefined && !split.verification.includes("\n") ? oneLine(split.verification) : undefined;
     const link = (number: number | undefined): string | undefined => (number === undefined ? undefined : `#${number}`);
     return {
       name: `#${issue.number}`,
       aliases: [`${repo}#${issue.number}`],
       unique: importKey(repo, issue.number),
+      source: `github:${repo.toLowerCase()}`,
       ref: { host: "github", kind: "work", id: String(issue.number) },
       title: oneLine(issue.title) || `Issue ${issue.number}`,
-      body: oneLineVerification ? split.description : issue.body,
+      body: oneLineVerification ? split.description : cleanBody(issue.body),
       ...(oneLineVerification ? { verification: oneLineVerification } : {}),
       labels: [...new Set(issue.labels.filter((label) => !githubOnly(label)).map(cleanLabel).filter((label) => label !== ""))],
       ...(priorityFromLabels(issue.labels) ? { priority: priorityFromLabels(issue.labels)! } : {}),
       ...(link(issue.parent?.number) ? { parent: link(issue.parent?.number)! } : {}),
-      blockedBy: issue.blockedBy.map((each) => link(each.number)).filter((each): each is string => each !== undefined),
+      // Only open blockers, as the import keeps them.
+      blockedBy: issue.blockedBy.filter((each) => each.open).map((each) => link(each.number)).filter((each): each is string => each !== undefined),
       url: issue.url,
       history: (issue.comments ?? []).map((comment) => `${when(comment.at)} @${oneLine(comment.login)}: ${oneLine(comment.body)}`),
       hostLabels: issue.labels,
@@ -80,15 +84,17 @@ export function fromGitHub(issues: readonly SourceIssue[], repo: string): Source
 /** Jira's issues as its host reads them, with their comments (`thread`), as items to move. Scope Soup's own comments stay out. */
 export function fromJira(works: readonly WorkItem[], comments: ReadonlyMap<string, readonly JiraThreadComment[]>, site: string): SourceItem[] {
   return works.map((work) => {
-    const verification = (work.verification ?? "").trim();
+    const verification = cleanBody(work.verification ?? "").trim();
     const multi = verification.includes("\n");
+    const body = cleanBody(work.body ?? "");
     return {
       name: work.ref.id,
       aliases: [],
       unique: `jira:${hostOf(site)}/${work.ref.id}`,
+      source: `jira:${hostOf(site)}/${work.ref.id.replace(/-\d+$/, "")}`,
       ref: work.ref,
       title: oneLine(work.title) || work.ref.id,
-      body: multi ? `${(work.body ?? "").trim()}\n\n## Verification\n\n${verification}` : (work.body ?? ""),
+      body: multi ? `${body.trim()}\n\n## Verification\n\n${verification}` : body,
       ...(verification && !multi ? { verification: oneLine(verification) } : {}),
       labels: [...new Set(work.labels.map(cleanLabel).filter((label) => label !== ""))],
       ...(work.priority ? { priority: work.priority } : {}),
@@ -120,19 +126,20 @@ export function historyText(item: SourceItem, hostName: string): string {
 
 /** The meta branch, as a move back writes it: the batch, its Items (for those moved before) and an edit of one's text. */
 export interface MetaTarget {
-  createItems(batch: readonly BatchItem[], options?: { message?: string }): Promise<BatchResult>;
+  /** With `dryRun` nothing is written: only checked, as a write would be. */
+  createItems(batch: readonly BatchItem[], options?: { message?: string; dryRun?: boolean }): Promise<BatchResult>;
   /** The meta branch's Items, with their logs. */
   listWork(): Promise<WorkItem[]>;
   editWork(ref: Ref, patch: WorkPatch): Promise<unknown>;
 }
 
-/** Where an Item on the meta branch came from, by its `moved` line from this host: the issue's name there. */
-export function movedFrom(item: WorkItem, kind: SourceKind): string | undefined {
-  return movedLine(item, kind)?.from;
+/** Where an Item on the meta branch came from, by its `moved` line from this source (repository, or Jira site and project): the issue's name there. */
+export function movedFrom(item: WorkItem, source: string): string | undefined {
+  return movedLine(item, source)?.from;
 }
 
-const movedLine = (item: WorkItem, kind: SourceKind): { from: string; aliases: string[] } | undefined => {
-  const line = [...(item.log ?? [])].reverse().find((each) => each.kind === "moved" && each.fields.host === kind && typeof each.fields.from === "string");
+const movedLine = (item: WorkItem, source: string): { from: string; aliases: string[] } | undefined => {
+  const line = [...(item.log ?? [])].reverse().find((each) => each.kind === "moved" && each.fields.source === source && typeof each.fields.from === "string");
   if (!line) return undefined;
   const aliases = Array.isArray(line.fields.aliases) ? line.fields.aliases.filter((each): each is string => typeof each === "string") : [];
   return { from: String(line.fields.from), aliases };
@@ -168,7 +175,7 @@ export function moveBatch(kind: SourceKind, items: readonly SourceItem[], earlie
       const verification = item.verification ? rewriteIds(inertMoved(item.verification), names) : undefined;
       const lines: LineWrite[] = [
         { kind: "created", by: line },
-        { kind: "moved", by: line, fields: { from: item.name, ...(item.aliases.length > 0 ? { aliases: item.aliases } : {}), host: kind, url: item.url, history: historyText(item, hostName) } },
+        { kind: "moved", by: line, fields: { from: item.name, ...(item.aliases.length > 0 ? { aliases: item.aliases } : {}), host: kind, source: item.source, url: item.url, history: historyText(item, hostName) } },
       ];
       return {
         input: {
@@ -211,9 +218,11 @@ export function githubOldHost(client: Client): OldHost {
   return {
     kind: "github",
     async mark(targets, close) {
+      // Only the token's own earlier comment counts as already there: without its login, any user's marker would.
       const login = await tokenLogin(client);
+      if (!login) return { did: new Map(), failed: { name: targets[0]?.item.name ?? "", message: "GitHub did not say whose token this is (/user), so Scope Soup cannot tell its own earlier comment from someone else's; nothing was written on GitHub. Try again" } };
       const report = await moveIssues({
-        client, choice: close ? "close" : "label", where: "the project's meta branch (refs/scopesoup/meta)", ...(login ? { login } : {}),
+        client, choice: close ? "close" : "label", where: "the project's meta branch (refs/scopesoup/meta)", login,
         targets: targets.map(({ item, id }) => ({ number: Number(item.ref.id), id, open: true, labels: item.hostLabels ?? [] })),
       });
       const did = new Map(report.rows.map((row) => [`#${row.number}`, row.did as string[]]));
@@ -223,19 +232,26 @@ export function githubOldHost(client: Client): OldHost {
 }
 
 /** Jira: a comment naming the Item (once: found again by its marker line), then closed (abandoned) if chosen. */
-export function jiraOldHost(host: { thread(ref: Ref): Promise<{ comments: readonly JiraThreadComment[] }>; work: { getWork(ref: Ref): Promise<WorkItem | null> }; write?: WritePort }): OldHost {
+export function jiraOldHost(host: { info: { whoami(): Promise<Actor> }; thread(ref: Ref): Promise<{ comments: readonly JiraThreadComment[] }>; work: { getWork(ref: Ref): Promise<WorkItem | null> }; write?: WritePort }): OldHost {
   return {
     kind: "jira",
     async mark(targets, close) {
       const did = new Map<string, string[]>();
       const write = host.write;
       if (!write?.comment || !write.editWork) return { did, failed: { name: targets[0]?.item.name ?? "", message: "Jira cannot be written to here" } };
+      // Only a comment by the token's own account counts as the one an earlier run posted.
+      let self: string;
+      try {
+        self = (await host.info.whoami()).id.toLowerCase();
+      } catch (error) {
+        return { did, failed: { name: targets[0]?.item.name ?? "", message: `Jira did not say whose token this is (${messageOf(error)}), so Scope Soup cannot tell its own earlier comment from someone else's; nothing was written on Jira. Try again` } };
+      }
       for (const { item, id } of targets) {
         const steps: string[] = [];
         did.set(item.name, steps);
         try {
           const thread = await host.thread(item.ref);
-          if (!thread.comments.some((comment) => comment.markdown.includes(backMarker(id)))) {
+          if (!thread.comments.some((comment) => comment.author.id.toLowerCase() === self && comment.markdown.includes(backMarker(id)))) {
             await write.comment(item.ref, backComment(id, close));
             steps.push("commented");
           }
@@ -257,6 +273,8 @@ export function jiraOldHost(host: { thread(ref: Ref): Promise<{ comments: readon
 
 export interface MoveBackOptions {
   kind: SourceKind;
+  /** Where the issues come from (`SourceItem.source`): Items moved before from it are found by their `moved` line. */
+  source: string;
   /** The ticked issues, as read from the old host. */
   items: readonly SourceItem[];
   to: MetaTarget;
@@ -285,7 +303,7 @@ export interface MoveBackReport {
 
 /** Moves the ticked issues to the meta branch, then marks them on the old host. Stops at the first failure; safe to run again. */
 export async function moveBack(options: MoveBackOptions): Promise<MoveBackReport> {
-  const { kind, to } = options;
+  const { kind, to, source } = options;
   const items = [...options.items].sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
   const report: MoveBackReport = { rows: items.map((item) => ({ name: item.name, title: item.title, did: [] })) };
   const rowOf = (name: string): MoveBackRow | undefined => report.rows.find((row) => row.name === name);
@@ -295,21 +313,30 @@ export async function moveBack(options: MoveBackOptions): Promise<MoveBackReport
   // The Items moved before from this host, by their `moved` line.
   let onMeta: WorkItem[];
   try {
-    onMeta = (await to.listWork()).filter((work) => movedFrom(work, kind) !== undefined);
+    onMeta = (await to.listWork()).filter((work) => movedFrom(work, source) !== undefined);
   } catch (error) {
     return fail(first, `the meta branch could not be read: ${messageOf(error)}`);
   }
   const earlier = new Map<string, string>();
   for (const work of onMeta) {
-    const { from, aliases } = movedLine(work, kind)!;
+    const { from, aliases } = movedLine(work, source)!;
     for (const name of [from, ...aliases]) earlier.set(name, work.ref.id);
   }
 
   // 1. Every Item in one meta commit; one an earlier run made is found by its marker.
   let made: BatchResult;
+  const batch = moveBatch(kind, items, earlier, options.by);
   try {
-    made = await to.createItems(moveBatch(kind, items, earlier, options.by), { message: `Move ${items.length} issue${items.length === 1 ? "" : "s"} back from ${kind === "github" ? "GitHub" : "Jira"}` });
+    made = await to.createItems(batch, { message: `Move ${items.length} issue${items.length === 1 ? "" : "s"} back from ${kind === "github" ? "GitHub" : "Jira"}` });
   } catch (error) {
+    // The batch is one commit: name the issue the meta branch refuses, checked one by one without writing.
+    for (const each of batch) {
+      try {
+        await to.createItems([each], { dryRun: true });
+      } catch (refused) {
+        return fail(each.key, `the meta branch refuses it: ${messageOf(refused)}. Nothing was written`);
+      }
+    }
     return fail(first, messageOf(error));
   }
   const names = new Map(earlier);
@@ -323,20 +350,27 @@ export async function moveBack(options: MoveBackOptions): Promise<MoveBackReport
     for (const alias of item.aliases) names.set(alias, got.id);
   }
 
-  // 2. References to issues moved now, in Items moved before (or found again now).
-  const fresh = new Set(items.filter((item) => made.items.get(item.name)?.created).map((item) => made.items.get(item.name)!.id));
+  // 2. References to issues made in this run, in Items moved before (or found again now). Only this run's names: an id written
+  // by an earlier run is never rewritten again.
+  const freshNames = new Map<string, string>();
+  for (const item of items) {
+    const got = made.items.get(item.name);
+    if (!got?.created) continue;
+    for (const name of [item.name, ...item.aliases]) freshNames.set(name, got.id);
+  }
+  const fresh = new Set(freshNames.values());
   for (const work of onMeta) {
-    if (fresh.has(work.ref.id)) continue;
+    if (fresh.has(work.ref.id) || freshNames.size === 0) continue;
     const body = work.body ?? "";
     const verification = work.verification ?? "";
-    const next = { body: rewriteIds(body, names), verification: rewriteIds(verification, names) };
+    const next = { body: rewriteIds(body, freshNames), verification: rewriteIds(verification, freshNames) };
     if (next.body === body && next.verification === verification) continue;
     try {
       await to.editWork(work.ref, { ...(next.body !== body ? { body: next.body } : {}), ...(next.verification !== verification ? { verification: next.verification } : {}) });
-      const row = rowOf(movedFrom(work, kind)!);
+      const row = rowOf(movedFrom(work, source)!);
       if (row) row.did.push("linked");
     } catch (error) {
-      return fail(movedFrom(work, kind)!, messageOf(error));
+      return fail(movedFrom(work, source)!, messageOf(error));
     }
   }
 
