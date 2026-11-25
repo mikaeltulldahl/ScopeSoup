@@ -22,7 +22,7 @@ export const SHARED_WHERE = `the project's shared settings (${SETTINGS_FILE} on 
 
 /** Top-level keys of the private file. `settings` is split by name below; `meta` is this machine's part of a meta branch host. */
 export const PRIVATE_KEYS: readonly string[] = [
-  "version", "machineName", "repoPath", "remote", "remoteUrl", "realPaths", "ownClone", "keepAwake", "workspacesDir", "workspaces",
+  "version", "machineName", "repoPath", "remote", "remoteUrl", "realPaths", "ownClone", "keepAwake", "multiplayer", "workspacesDir", "workspaces",
   "streamsDir", "promptsDir", "claude", "copilot", "meta", "jira", "settings", "resources",
 ];
 /** Top-level keys of the shared settings. */
@@ -113,13 +113,19 @@ export function validateFiles(privateGiven: unknown, sharedGiven: unknown, baseD
   return { ...result, notices: migrated.changes, from: migrated.from, raw: privateRaw, combined };
 }
 
-/** Where the private file says the repository is: repoPath (relative to the file's folder) and the remote. */
-export function repositoryOf(privateRaw: unknown, baseDir: string): { repoPath: string; remote: string; machine: string | null } {
+/**
+ * Where the private file says the repository is: repoPath (relative to the file's folder) and the remote. `metaRemote` is the
+ * remote the meta ref is shared with: the remote in multiplayer, null in singleplayer (`multiplayer: false`), where it stays here.
+ */
+export function repositoryOf(privateRaw: unknown, baseDir: string): { repoPath: string; remote: string; multiplayer: boolean; metaRemote: string | null; machine: string | null } {
   const raw = isObj(privateRaw) ? privateRaw : {};
   const given = typeof raw.repoPath === "string" && raw.repoPath.trim() !== "" ? raw.repoPath : ".";
+  const remote = typeof raw.remote === "string" && raw.remote.trim() !== "" ? raw.remote : "origin";
   return {
     repoPath: isAbsolute(given) ? resolve(given) : resolve(baseDir, given),
-    remote: typeof raw.remote === "string" && raw.remote.trim() !== "" ? raw.remote : "origin",
+    remote,
+    multiplayer: raw.multiplayer !== false,
+    metaRemote: raw.multiplayer === false ? null : remote,
     machine: typeof raw.machineName === "string" && raw.machineName.trim() !== "" ? raw.machineName.trim() : null,
   };
 }
@@ -131,6 +137,8 @@ export type SharedRead = { ok: true; text: string; commit: string } | { ok: fals
 export interface SaveRequest {
   repoPath: string;
   remote: string;
+  /** False (singleplayer): the save stays here, nothing is pushed. Default true. */
+  multiplayer?: boolean;
   machine: string;
   /** The person at the board: the line's writer and the commit's author. */
   by: string;

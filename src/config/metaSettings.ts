@@ -20,7 +20,7 @@ export interface MetaSettings extends SharedSettings {
   save(request: SaveRequest): Promise<SaveResult>;
   log(repoPath: string): SettingsLogEntry[];
   /** Fetches the meta ref and pushes what waits: the other machines' saves arrive this way. Never throws for a sharing problem. */
-  fetch(repoPath: string, remote: string, machine: string): Promise<SharingReport>;
+  fetch(repoPath: string, remote: string, machine: string, multiplayer?: boolean): Promise<SharingReport>;
   /** Ends every git still running (a push in flight). */
   stop(): Promise<void>;
 }
@@ -36,11 +36,15 @@ function gitText(args: string[], cwd: string): string {
 export function metaSettings(options: { now?: () => string; git?: (args: string[], cwd: string) => string } = {}): MetaSettings {
   const now = options.now ?? (() => new Date().toISOString());
   const git = options.git ?? gitText;
-  const writers = new Map<string, { writer: Writer; runners: StoppableGit[] }>();
-  const writerFor = (repoPath: string, remote: string, machine: string): Writer => {
-    const key = JSON.stringify([repoPath, remote, machine]);
+  // One writer per clone and machine, so its lock covers every save; singleplayer or multiplayer is asked at each round (`shares`).
+  const writers = new Map<string, { writer: Writer; runners: StoppableGit[]; remote: string; multiplayer: boolean }>();
+  const writerFor = (repoPath: string, remote: string, machine: string, multiplayer = true): Writer => {
+    const key = JSON.stringify([repoPath, machine]);
     const known = writers.get(key);
-    if (known) return known.writer;
+    if (known && known.remote === remote) {
+      known.multiplayer = multiplayer;
+      return known.writer;
+    }
     const local = gitIn(repoPath);
     const network = gitIn(repoPath, { timeoutMs: 5 * 60_000 });
     let checked: Promise<void> | undefined;
@@ -49,6 +53,7 @@ export function metaSettings(options: { now?: () => string; git?: (args: string[
       network,
       ref: META_REF,
       remote,
+      shares: () => entry.multiplayer,
       person: COMMITTER,
       machine,
       now,
@@ -61,7 +66,8 @@ export function metaSettings(options: { now?: () => string; git?: (args: string[
         });
       },
     });
-    writers.set(key, { writer, runners: [local, network] });
+    const entry = { writer, runners: [local, network], remote, multiplayer };
+    writers.set(key, entry);
     return writer;
   };
 
@@ -91,7 +97,7 @@ export function metaSettings(options: { now?: () => string; git?: (args: string[
     },
 
     async save(request) {
-      const writer = writerFor(request.repoPath, request.remote, request.machine);
+      const writer = writerFor(request.repoPath, request.remote, request.machine, request.multiplayer);
       try {
         const done = await writer.writeSettings((text) => {
           let current: unknown = {};
@@ -132,8 +138,8 @@ export function metaSettings(options: { now?: () => string; git?: (args: string[
       return entries.reverse().sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
     },
 
-    fetch(repoPath, remote, machine) {
-      return writerFor(repoPath, remote, machine).share();
+    fetch(repoPath, remote, machine, multiplayer) {
+      return writerFor(repoPath, remote, machine, multiplayer).share();
     },
 
     async stop() {

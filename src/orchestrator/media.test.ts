@@ -32,7 +32,7 @@ function setUp(media: MediaConfig) {
   mkdirSync(session);
   git(session, "init", "-q");
   const store = openStore(":memory:");
-  const config = { repoPath: clone, remote: "origin", media };
+  const config = { repoPath: clone, remote: "origin", media, multiplayer: true };
   const configFile = join(root, "scopesoup.config.json");
   writeFileSync(configFile, "{}");
   const handle = createMedia({ dataDir: join(root, "data"), store, config: () => config, configFile, now: () => "2026-11-25T10:00:00.000Z" });
@@ -220,6 +220,37 @@ describe("media on disk and in git", { concurrency: 2 }, () => {
       await t.media.remove(item.ref, "a.png", "mira");
       assert.equal(git(t.remote, "ls-tree", "--name-only", REF), "b.png");
       assert.deepEqual(await t.media.list(item.ref), ["b.png", "c.png"]);
+    } finally {
+      t.done();
+    }
+  });
+
+  it("singleplayer touches no remote: images wait on the local ref, a delete leaves the remote alone, multiplayer pushes what there is", async () => {
+    const t = setUp({ push: true, keepDaysAfterClose: null });
+    try {
+      t.media.prepare(t.session);
+      t.save("a.png");
+      t.save("b.png");
+      t.media.collect(item.ref, t.session);
+      await t.media.idle();
+      assert.equal(git(t.remote, "ls-tree", "--name-only", REF), "a.png\nb.png");
+      // Switched to singleplayer: what is on the remote stays, and nothing new goes there.
+      t.config.multiplayer = false;
+      assert.equal(t.media.pushing(), false);
+      const removed = await t.media.remove(item.ref, "a.png", "mira");
+      assert.equal(removed.ref, "none");
+      t.media.prepare(t.session);
+      t.save("c.png");
+      t.media.collect(item.ref, t.session);
+      await t.media.idle();
+      await t.media.retry();
+      assert.equal(git(t.remote, "ls-tree", "--name-only", REF), "a.png\nb.png");
+      assert.equal(git(t.clone, "ls-tree", "--name-only", REF), "b.png\nc.png");
+      assert.equal(t.store.eventsOfKinds(["media.push_failed"], 1).length, 0);
+      // Back to multiplayer: the next retry pushes what there is.
+      t.config.multiplayer = true;
+      await t.media.retry();
+      assert.equal(git(t.remote, "ls-tree", "--name-only", REF), "b.png\nc.png");
     } finally {
       t.done();
     }

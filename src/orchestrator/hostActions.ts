@@ -131,7 +131,10 @@ export function createHostActions(deps: HostActionsDeps): Actions {
     // A host that keeps a log per item gets the lines. On GitHub a claim is a comment and the `scopesoup:claimed` label.
     ...(claimMachine ? { claimant: `${SCOPESOUP.who}@${claimMachine}` } : {}),
     // Claims are written by themselves where other machines can see them: a shared meta branch, or claim comments on GitHub.
-    ...(host.info.claimMachine || (host.info.machine && host.info.shared) ? { claims: true as const } : {}),
+    // Read each time: a meta branch is shared only in multiplayer, which can be switched while Scope Soup runs.
+    get claims(): true | undefined {
+      return host.info.claimMachine || (host.info.machine && host.info.shared) ? true : undefined;
+    },
     async claim(item, until, at) {
       if (!mine(item)) return { won: true };
       if (write?.claim) {

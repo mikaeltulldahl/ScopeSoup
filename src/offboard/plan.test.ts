@@ -42,6 +42,7 @@ const byKey = (entries: PlanEntry[]) => new Map(entries.map((entry) => [entry.ke
 describe("offboarding plan", () => {
   test("lists the leftover batch branch and pull request, Scope Soup's labels, the meta and merge queue refs and the .v* copies", () => {
     const plan = offboardPlan(found());
+    assert.equal(plan.notes.some((note) => note.startsWith("Singleplayer")), false);
     assert.deepEqual(plan.groups.map((group) => group.group), ["work", "items", "github", "project", "machine"]);
     const all = byKey(plan.groups.flatMap((group) => group.entries));
     // The batch's pull request and its branch, left after a failure: listed, kept by default (not merged).
@@ -99,6 +100,16 @@ describe("offboarding plan", () => {
     const none = offboardPlan(found({ github: null }));
     assert.equal(none.groups.find((group) => group.group === "github")?.entries.length, 0);
     assert.ok(none.notes.some((note) => note.includes("not on GitHub")));
+  });
+
+  test("singleplayer exports the Items from the clone's meta ref and deletes nothing on the remote, with a note that it is left alone", () => {
+    const plan = offboardPlan(found({ remoteRefs: [], singleplayer: { localMeta: true } }));
+    const items = plan.groups.find((group) => group.group === "items")?.entries ?? [];
+    assert.deepEqual(items.map((entry) => entry.key), ["export"]);
+    assert.match(items[0]?.what ?? "", /in Scope Soup's clone/);
+    assert.ok(plan.notes.some((note) => /^Singleplayer: refs\/scopesoup\/\* on the remote.*left alone/.test(note)));
+    const empty = offboardPlan(found({ remoteRefs: [], singleplayer: { localMeta: false } }));
+    assert.equal(empty.groups.find((group) => group.group === "items")?.entries.length, 0);
   });
 });
 
