@@ -69,6 +69,8 @@ export interface WriterConfig {
   ref: string;
   /** The remote to share with; null for none. A name the repository does not have means none too. */
   remote: string | null;
+  /** Asked before each sharing round: false keeps the ref here for now (singleplayer), and the next round that may share pushes what there is. Default always. */
+  shares?: () => boolean;
   /** The author and committer of every commit. */
   person: Person;
   /** This machine's name, put in `by` on every line. */
@@ -600,7 +602,7 @@ export function createWriter(config: WriterConfig): Writer {
   const newReport = (): SharingReport => ({ at: now(), state: "local", pushes: 0, refusedPushes: 0, replayed: 0, conflicts: [], renamed: [], locks: [] });
 
   async function sharing(): Promise<boolean> {
-    if (remote === null) return false;
+    if (remote === null || config.shares?.() === false) return false;
     return (remoteThere ??= hasRemote(git, remote));
   }
 

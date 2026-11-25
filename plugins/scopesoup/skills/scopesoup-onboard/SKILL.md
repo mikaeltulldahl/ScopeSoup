@@ -9,7 +9,7 @@ argument-hint: "[path to the project's clone]"
 
 Scope Soup runs on this computer and shows a project's work on a board in the browser. At level 0, where every project starts, it only shows the work: it starts no agent and writes nothing on its own. The person raises the level later on the board's Settings page, which also says what each level needs (a check command, the remote's URL and so on are asked there, not here).
 
-You ask **three things**: where the project's clone is, the backlog (in two parts: where it is today, and where to keep it from now on; plus what to do with the issues on GitHub when they are imported), and this machine's prefix (only for Scope Soup's own Items). Everything else you read or propose, the setup of a fresh clone included (step 4c: proposed and confirmed in the summary, never a fourth question). Then you show one summary, get one yes, write the files, check the configuration and, on a new project, write the shared settings.
+You ask **three things**: where the project's clone is, the backlog (in two parts: where it is today, and where to keep it from now on; plus what to do with the issues on GitHub when they are imported; on a new project also singleplayer or multiplayer, step 3c), and this machine's prefix (only for Scope Soup's own Items). Everything else you read or propose, the setup of a fresh clone included (step 4c: proposed and confirmed in the summary, never a fourth question). Then you show one summary, get one yes, write the files, check the configuration and, on a new project, write the shared settings.
 
 Ground rules:
 
@@ -26,7 +26,7 @@ Three folders, always named like this:
 
 Two places, each key in exactly one (`SCOPESOUP/docs/RUNNING.md`, "The project's configuration"): the project's **shared** settings on its meta ref, `settings/settings.json` on `refs/scopesoup/meta` (`project`, `host`, `mainBranch`, `level`, `setupCommand`, `setupWatch`, roles and rules), and this machine's **private** `scopesoup.config.json` (`machineName`, `repoPath`, `remote`, `realPaths`, `ownClone`, `meta`, local paths, spending). Scope Soup refuses a key in the wrong place and says where it belongs.
 
-**First, is the project run by Scope Soup already?** Run `git ls-remote <remote URL> refs/scopesoup/meta` in the project clone. If it prints a line, a teammate has onboarded the project: the person is **joining** (`SCOPESOUP/docs/RUNNING.md`, "Joining a project Scope Soup already runs"). Then write only this machine's private file: skip question 2 and the setup (step 4c; the host and the setup are the team's, in the shared settings), still ask question 3 for Items (read the host after the yes with `pnpm config:check`, step 6), and never write or commit shared settings or a script. Say so in the summary: "This project already runs Scope Soup: I will write only this machine's settings."
+**First, is the project run by Scope Soup already?** Run `git ls-remote <remote URL> refs/scopesoup/meta` in the project clone. If it prints a line, a teammate has onboarded the project: the person is **joining** (`SCOPESOUP/docs/RUNNING.md`, "Joining a project Scope Soup already runs"). Then write only this machine's private file: skip question 2 and the setup (step 4c; the host and the setup are the team's, in the shared settings), still ask question 3 for Items (read the host after the yes with `pnpm config:check`, step 6), and never write or commit shared settings or a script. Say so in the summary: "This project already runs Scope Soup: I will write only this machine's settings." This `ls-remote` only reads, to tell a project already run from a new one; it pushes nothing, in singleplayer too.
 
 ## 1. Find the Scope Soup install
 
@@ -85,9 +85,18 @@ Then ask the last part of the backlog question: "What should happen to the issue
 
 The answer becomes `--on-github leave|label|close`. Pull requests and closed issues are never touched. The import needs `SCOPESOUP_GITHUB_TOKEN` (reading the issues, and for Label and Close a token that may write them); check only whether it is set in this session, never print it.
 
+### 3c. New project only: singleplayer or multiplayer
+
+Ask with question 2, in one sentence: "Will you play alone on this project (singleplayer), or will others run Scope Soup on it too (multiplayer)?" What it means, in plain words:
+
+- **Singleplayer**: Scope Soup's own refs stay in this clone; nothing under `refs/scopesoup/` is pushed (the Items and shared settings, the merge queue lease, images). Work branches and merges still go to the remote. Write `"multiplayer": false` in the private file.
+- **Multiplayer** (today's way): those refs are shared on the remote, so teammates see the same Items and settings. Leave `multiplayer` out.
+
+A person joining is multiplayer: do not ask. It can be switched later on the Settings page ("Players"); switching to multiplayer pushes what the clone has.
+
 ## 4. Question 3 (Items only): this machine's prefix
 
-Every machine that writes Items needs its own prefix: `A` gives ids `A-1`, `A-2`. Read the ids that exist with `git ls-remote <remote URL> refs/scopesoup/meta`; if it prints nothing, nothing is taken. Otherwise confirm after the yes, in `repoPath`: `git fetch <remote> refs/scopesoup/meta`, then `git ls-tree --name-only FETCH_HEAD items/`; the letters before `-` in each name are taken. Propose the first free letter of `A`, `B`, `C`, ... and ask. A prefix is a letter followed by up to 15 letters or digits.
+Every machine that writes Items needs its own prefix: `A` gives ids `A-1`, `A-2`. Singleplayer (step 3c) has one machine and nothing to read on the remote: propose `A` and skip the rest of this step. Otherwise read the ids that exist with `git ls-remote <remote URL> refs/scopesoup/meta`; if it prints nothing, nothing is taken. Otherwise confirm after the yes, in `repoPath`: `git fetch <remote> refs/scopesoup/meta`, then `git ls-tree --name-only FETCH_HEAD items/`; the letters before `-` in each name are taken. Propose the first free letter of `A`, `B`, `C`, ... and ask. A prefix is a letter followed by up to 15 letters or digits.
 
 ## 4b. The machine's name (proposed, not asked)
 
@@ -141,7 +150,7 @@ Show, in plain words:
 }
 ```
 
-  and, on a new project only, the project's shared settings, written to its meta ref as one commit named after the person and pushed (Scope Soup reads them from there at once; the setup script goes on the branch `scopesoup/onboard` for the person to merge):
+  (with `"multiplayer": false` for singleplayer) and, on a new project only, the project's shared settings, written to its meta ref as one commit named after the person and pushed in multiplayer (Scope Soup reads them from there at once; the setup script goes on the branch `scopesoup/onboard` for the person to merge):
 
 ```json
 {

@@ -32,6 +32,8 @@ export interface OffboardSetup {
   configFolder: string;
   repoPath: string;
   remote: string;
+  /** Singleplayer (`multiplayer: false`): `refs/scopesoup/*` stay in Scope Soup's clone; the remote's are not read, listed or deleted. */
+  singleplayer: boolean;
   mainBranch: string;
   /** The GitHub repository when the host is GitHub, or when the manifest says Scope Soup created labels there. */
   githubRepo: string | null;
@@ -69,7 +71,8 @@ export async function readSetup(configFile: string, git: Git): Promise<OffboardS
   let sharedRaw: unknown = {};
   if (existsSync(where.repoPath)) {
     // The remote's meta commit, fetched without writing FETCH_HEAD or a ref: Scope Soup may be running and fetching in this clone.
-    const remoteMeta = (await ok(git, ["ls-remote", where.remote, META_REF], where.repoPath))?.trim().split(/\s+/)[0];
+    // Singleplayer: the local meta ref only (a remote's would be stale, left from an earlier multiplayer run).
+    const remoteMeta = where.metaRemote === null ? undefined : (await ok(git, ["ls-remote", where.remote, META_REF], where.repoPath))?.trim().split(/\s+/)[0];
     const fetched = remoteMeta ? await git(["fetch", "-q", "--no-tags", "--no-write-fetch-head", where.remote, META_REF], where.repoPath) : null;
     const from = remoteMeta && fetched?.code === 0 ? remoteMeta : META_REF;
     const text = await ok(git, ["show", `${from}:${SETTINGS_FILE}`], where.repoPath);
@@ -92,7 +95,7 @@ export async function readSetup(configFile: string, git: Git): Promise<OffboardS
     const config = checked.config;
     const pool = config.workspaces.kind === "pool" ? config.workspaces.paths.map((clone) => ({ clone, repo: join(clone, (config.workspaces as { projectSubdir: string }).projectSubdir) })) : [];
     return {
-      configFile: file, configFolder, repoPath: config.repoPath, remote: config.remote, mainBranch: config.mainBranch,
+      configFile: file, configFolder, repoPath: config.repoPath, remote: config.remote, singleplayer: !config.multiplayer, mainBranch: config.mainBranch,
       githubRepo: config.host?.kind === "github" ? config.host.repo : labelRepo?.kind === "label" ? labelRepo.repo : null,
       workspacesDir: config.workspacesDir, streamsDir: config.streamsDir, pool,
       protectedPaths: [...config.realPaths, ...(config.ownClone ? [config.ownClone] : []), ...localRemote],
@@ -103,7 +106,7 @@ export async function readSetup(configFile: string, git: Git): Promise<OffboardS
   const abs = (value: unknown): string | null => (typeof value === "string" && value.trim() !== "" ? resolve(configFolder, value) : null);
   const host = isObj(shared.host) ? shared.host : {};
   return {
-    configFile: file, configFolder, repoPath: where.repoPath, remote: where.remote,
+    configFile: file, configFolder, repoPath: where.repoPath, remote: where.remote, singleplayer: where.metaRemote === null,
     mainBranch: typeof shared.mainBranch === "string" ? shared.mainBranch : "main",
     githubRepo: host.kind === "github" && typeof host.repo === "string" ? host.repo : labelRepo?.kind === "label" ? labelRepo.repo : null,
     workspacesDir: abs(raw.workspacesDir), streamsDir: abs(raw.streamsDir), pool: [],
@@ -173,7 +176,10 @@ export async function scan(setup: OffboardSetup, options: ScanOptions): Promise<
   for (const line of (listed ?? "").split("\n")) {
     const [sha, ref] = line.trim().split(/\s+/);
     if (!sha || !ref) continue;
-    if (ref.startsWith("refs/scopesoup/")) remoteRefs.push(ref);
+    // Singleplayer leaves the remote's refs/scopesoup/* alone: not listed, not deleted.
+    if (ref.startsWith("refs/scopesoup/")) {
+      if (!setup.singleplayer) remoteRefs.push(ref);
+    }
     else if (ref.startsWith("refs/heads/scopesoup/")) heads.set(ref.slice("refs/heads/".length), sha);
     else if (ref === `refs/heads/${setup.mainBranch}`) mainSha = sha;
   }
@@ -259,6 +265,7 @@ export async function scan(setup: OffboardSetup, options: ScanOptions): Promise<
     remote: setup.remote,
     mainBranch: setup.mainBranch,
     remoteRefs,
+    ...(setup.singleplayer ? { singleplayer: { localMeta: haveRepo && (await ok(git, ["rev-parse", "--verify", "--quiet", META_REF], repo)) !== null } } : {}),
     remoteBranches,
     localBranches,
     github,

@@ -10,6 +10,8 @@ The Claude Code skill `/scopesoup:scopesoup-onboard` (`plugins/scopesoup/skills/
 2. The backlog, in two parts asked together: where it is today (GitHub Issues, another tracker, a text file, or nowhere yet), and where to keep it from now on (Scope Soup's own Items on the project's meta branch, or GitHub Issues when the remote is on GitHub).
 3. For Items only: this machine's prefix for new ids (it proposes the first free one).
 
+On a new project the backlog question also asks singleplayer (nothing under `refs/scopesoup/*` is pushed) or multiplayer (shared through the remote), decision 93. A person joining is multiplayer. The Settings page switches it ("Players").
+
 The two parts of the backlog question decide what happens (decided):
 
 - **Today GitHub Issues, from now on GitHub Issues**: Scope Soup reads the issues live. Nothing moves.
@@ -21,7 +23,7 @@ Everything else it reads from the clone or proposes: the remote and main branch,
 
 It also proposes the setup of a fresh clone (decision 65), without a fourth question: Scope Soup's worktrees and clones lack what the person's checkout has (installed dependencies, generated files, submodules, a `.env` with test settings). From what it finds (lockfiles, `requirements*.txt`, `Makefile` targets, CI setup steps, the README, and the ignored personal files in the person's clone, with `pnpm config:setup`) it proposes the steps, the personal files to copy and the files to watch, and the person confirms or corrects them in the summary. Nothing is copied blindly, and secrets never go into the repository, a prompt or a log: the script copies only the files listed, from the person's clone (`--from-clone`), only to where git ignores them, and prints names only.
 
-It shows one summary with the whole file and does nothing before one yes. Then it writes this machine's `scopesoup.config.json` in the config folder (its name, where the clones are, a few lines), and checks it with the shared settings it proposes (`pnpm config:check --shared`) until both are clean. As the first person on the project it writes those shared settings (`level: 0`, the host, `setupCommand`, `setupWatch`) to the meta ref, one commit named after the person, pushed (`pnpm settings:init`): Scope Soup reads them from there at once. The setup script `.scopesoup/scopesoup-setup.mjs` is code that runs, so it goes into the repository: committed in Scope Soup's own clone on a branch `scopesoup/onboard` and pushed, for the person to merge the way the project's changes merge. The Settings page shows the setup afterwards and lets the person edit it.
+It shows one summary with the whole file and does nothing before one yes. Then it writes this machine's `scopesoup.config.json` in the config folder (its name, where the clones are, a few lines), and checks it with the shared settings it proposes (`pnpm config:check --shared`) until both are clean. As the first person on the project it writes those shared settings (`level: 0`, the host, `setupCommand`, `setupWatch`) to the meta ref, one commit named after the person, pushed in multiplayer (`pnpm settings:init`): Scope Soup reads them from there at once. The setup script `.scopesoup/scopesoup-setup.mjs` is code that runs, so it goes into the repository: committed in Scope Soup's own clone on a branch `scopesoup/onboard` and pushed, for the person to merge the way the project's changes merge. The Settings page shows the setup afterwards and lets the person edit it.
 
 ## Joining a project Scope Soup already runs
 

@@ -236,7 +236,7 @@ async function open(deps: CliDeps, setup: Setup, values: { as?: string; server?:
         deps.err(`The Scope Soup server at ${base} serves ${theirs}, not ${setup.identity.name} (${setup.identity.repository ?? "no repository"}): not used; going to the meta ref.`);
       }
     }
-    const host = (deps.makeHosts ?? ((settings, env) => createHosts(settings, env, () => undefined)))({ from: setup.settings.from, meta, machine: setup.settings.machine }, deps.env)[0];
+    const host = (deps.makeHosts ?? ((settings, env) => createHosts(settings, env, () => undefined)))({ from: setup.settings.from, meta, machine: setup.settings.machine, ...(setup.settings.shares ? { shares: setup.settings.shares } : {}) }, deps.env)[0];
     if (!host?.work) throw new Refused("The meta host cannot be read.");
     const backend: Backend = { kind: "metaBranch", host: host.info.id, ...(host.info.machine ? { machine: host.info.machine } : {}), who, work: host.work, write: host.write ?? {}, now, mainBranch: setup.mainBranch, branches: branchesOf(deps, setup) };
     return { doer: hostDoer(backend, host), via: "the meta ref (no server for this project)", kind: "metaBranch" };
@@ -434,7 +434,7 @@ async function runImport(
     if (!meta) throw new Refused("The import writes Items to a meta branch, and this project's items are on GitHub or Jira: there is nothing to import into.");
     const token = deps.env.SCOPESOUP_GITHUB_TOKEN;
     if (!token) throw new Refused("Set SCOPESOUP_GITHUB_TOKEN to a token that can read the repository's issues. The token is only read from the environment.");
-    host = (deps.makeHosts ?? ((settings, env) => createHosts(settings, env, () => undefined)))({ from: setup.settings.from, meta, machine: setup.settings.machine }, deps.env)[0] as MetaBranchHost | undefined;
+    host = (deps.makeHosts ?? ((settings, env) => createHosts(settings, env, () => undefined)))({ from: setup.settings.from, meta, machine: setup.settings.machine, ...(setup.settings.shares ? { shares: setup.settings.shares } : {}) }, deps.env)[0] as MetaBranchHost | undefined;
     const writer = host && "writer" in host ? host.writer : null;
     if (!writer) throw new Refused("Writes to the meta branch are off here (host.write in the configuration, or SCOPESOUP_META_WRITE=1), so nothing can be imported, not even as a dry run.");
     const person = await personName(deps, setup, values.as);

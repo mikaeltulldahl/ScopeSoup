@@ -1,6 +1,7 @@
 // Changes the configuration file from the board. Only the safe fields may change: the level,
 // parallel sessions, the usage reserve, the age of a triage and the three models; the setup of a fresh clone; and, saved with level 4 only,
-// the check command and the remote's URL that level needs; the limited resources. Everything else is file-only, with its defaults.
+// the check command and the remote's URL that level needs; the limited resources; singleplayer or multiplayer. Everything else is
+// file-only, with its defaults.
 // A change is merged into the file as it is on disk, validated as a whole, and written atomically. A file of an older
 // format is migrated first, so a save always writes the current format, with `version`.
 // A project setting (the level, the check, the setup, the models, the age of a triage) is in the shared
@@ -46,6 +47,8 @@ const SAFE: Record<string, true | ((value: unknown, err: (message: string) => vo
   sharedResources: true,
   // Agents' images: pushed to the remote or not, and how long a closed Item's are kept (validation checks the form).
   media: true,
+  // Singleplayer (false) or multiplayer (true): this machine's, in its private file (decision 93).
+  multiplayer: true,
 };
 
 /** Fields a null in the change removes from the file. */
@@ -167,7 +170,7 @@ export function splitChange(change: Obj): { shared: Obj; own: Obj } {
   return { shared, own };
 }
 
-type Files = { path: string; text: string; raw: Obj; shared: { raw: Obj; text: string; commit: string }; repoPath: string; remote: string; machine: string | null };
+type Files = { path: string; text: string; raw: Obj; shared: { raw: Obj; text: string; commit: string }; repoPath: string; remote: string; metaRemote: string | null; machine: string | null };
 
 /** Reads the private file and the shared settings of the repository it names. */
 function readFiles(file: string, options: EditOptions): { ok: true; files: Files } | { ok: false; errors: string[] } {
@@ -259,6 +262,8 @@ export async function editConfig(file: string, change: unknown, options: EditOpt
     const done = await store.save({
       repoPath: files.repoPath,
       remote: files.remote,
+      // Pushed in multiplayer only, as the private file stands after this save.
+      multiplayer: result.config.multiplayer,
       machine: files.machine,
       by: options.by,
       // Made on the settings as they stand at the save: another save may have come in since they were read.

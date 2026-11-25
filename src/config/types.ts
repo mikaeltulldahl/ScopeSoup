@@ -234,6 +234,11 @@ export function mediaSettings(config: Pick<ProjectConfig, "media">): MediaConfig
   return config.media ?? { push: false, keepDaysAfterClose: null };
 }
 
+/** Whether this machine pushes agents' images: `media.push`, in multiplayer only. */
+export function mediaShared(config: Pick<ProjectConfig, "media" | "multiplayer">): boolean {
+  return mediaSettings(config).push && config.multiplayer;
+}
+
 /** What needs a resource: a session of a role, or the merge queue's check. */
 export type ResourceUser = SessionRole | "check";
 export const RESOURCE_USERS: readonly ResourceUser[] = [...ROLES, "check"];
@@ -285,6 +290,12 @@ export interface ProjectConfig {
   level: Level;
   /** Windows: keep the machine from sleeping while sessions run or work waits. No effect elsewhere. */
   keepAwake: boolean;
+  /**
+   * Multiplayer (true, the default): the meta ref, the merge queue lease, shared resources' leases and (with `media.push`) the
+   * images are shared on `remote` under `refs/scopesoup/*`. Singleplayer (false): nothing under `refs/scopesoup/*` is fetched or
+   * pushed; they stay in this clone, and no lease is needed with one machine. Work branches and the main branch are pushed as ever.
+   */
+  multiplayer: boolean;
   /**
    * This machine's name where hosts show it: claim comments, log lines, the merge queue lease, session commits. Required, and
    * the only way to name the machine. Never the computer's host name, which a public repository would show to everyone.

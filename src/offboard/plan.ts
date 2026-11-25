@@ -97,8 +97,10 @@ export interface Found {
   manifest: ManifestEntry[];
   remote: string | null;
   mainBranch: string;
-  /** `refs/scopesoup/*` on the remote. */
+  /** `refs/scopesoup/*` on the remote (none listed in singleplayer). */
   remoteRefs: string[];
+  /** Singleplayer: the Items are on the meta ref in Scope Soup's clone (`localMeta`), and the remote's refs are left alone. */
+  singleplayer?: { localMeta: boolean };
   /** `scopesoup/*` branches on the remote. */
   remoteBranches: FoundBranch[];
   /** `scopesoup/*` branches in Scope Soup's clone and the pool clones that the remote does not have at the same commit. */
@@ -168,11 +170,11 @@ function workGroup(found: Found): PlanEntry[] {
 function itemsGroup(found: Found): PlanEntry[] {
   const refs = [...found.remoteRefs].sort();
   const entries: PlanEntry[] = [];
-  const meta = refs.includes("refs/scopesoup/meta");
+  const meta = found.singleplayer ? found.singleplayer.localMeta : refs.includes("refs/scopesoup/meta");
   if (meta) {
     entries.push({
       group: "items", key: "export",
-      what: "Export the Items and the shared settings from refs/scopesoup/meta",
+      what: `Export the Items and the shared settings from refs/scopesoup/meta${found.singleplayer ? " in Scope Soup's clone" : ""}`,
       onRemove: "written as Markdown files (one per Item, with its log) to the export folder, before any ref is deleted",
       default: "remove", action: { do: "export-items" },
     });
@@ -276,6 +278,7 @@ export function offboardPlan(found: Found): OffboardPlan {
     "Stop Scope Soup (Stop on the board, then end the program) before anything is removed.",
     "The project's history is never rewritten: merged commits, closed issues and pull requests, and comments stay.",
   ];
+  if (found.singleplayer) notes.push("Singleplayer: refs/scopesoup/* on the remote, if an earlier multiplayer run left any, are left alone.");
   if (found.github === null) notes.push("The project is not on GitHub (or Scope Soup made nothing there): there is nothing to remove on GitHub.");
   return { groups: GROUPS.map((group) => ({ group, title: GROUP_TITLES[group], intro: INTROS[group], entries: lists[group] })), notes };
 }
