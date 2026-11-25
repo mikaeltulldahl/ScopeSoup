@@ -37,3 +37,21 @@ test("a file name loses its backticks and its mentions", () => {
   assert.equal(inertFile("src/`x`.ts"), "src/x.ts");
   assert.equal(inertFile("@scope/pkg"), `@${Z}scope/pkg`);
 });
+
+test("no image reaches a host: an attached one is named, any other becomes its alt text and address in words", () => {
+  const out = inertText([
+    "Attached: ![the header, before](media/head-before.png) ![](media/x.svg)",
+    "Inline: ![a cat](https://example.com/cat.png) and ![titled](<https://example.com/t.png> \"Title\")",
+    "Reference: ![logo][brand] and ![collapsed][] and a shortcut ![brand]",
+    "HTML: <img src=\"https://tracker.example/pixel.gif\" alt=\"pixel\"> <IMG SRC=x>",
+    "",
+    "[brand]: https://example.com/logo.png",
+  ].join("\n"));
+  assert.match(out, /\(the header, before: image on the board\) \(image on the board\)/);
+  assert.match(out, /a cat \(image: https:\/\/example\.com\/cat\.png\)/);
+  assert.match(out, /titled \(image: https:\/\/example\.com\/t\.png\)/);
+  assert.match(out, /logo \(image: brand\) and collapsed \(image: collapsed\)/);
+  assert.match(out, /pixel \(image: https:\/\/tracker\.example\/pixel\.gif\) \(image: x\)/);
+  // Nothing a host would draw as a picture is left.
+  assert.doesNotMatch(out, /!\[|<img|media\//i);
+});

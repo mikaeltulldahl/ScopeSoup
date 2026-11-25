@@ -562,3 +562,17 @@ test("the implement and review roles may always run the check command", () => {
   assert.ok(result.config.roles.review.allowedTools.includes("Bash(npm run check*)"));
   assert.ok(!result.config.roles.triage.allowedTools.includes("Bash(npm run check*)"));
 });
+
+test("media: images stay on this machine and are kept unless the project says otherwise; a wrong value is refused", () => {
+  const base = { project: "p", machineName: "laptop-a", repoPath: "/srv/clone" };
+  assert.equal(good(base).media, undefined);
+  assert.deepEqual(good({ ...base, media: { push: true, keepDaysAfterClose: 30 } }).media, { push: true, keepDaysAfterClose: 30 });
+  assert.deepEqual(good({ ...base, media: { keepDaysAfterClose: null } }).media, { push: false, keepDaysAfterClose: null });
+  assert.match(bad({ ...base, media: { push: "yes" } }), /media\.push must be true or false/);
+  assert.match(bad({ ...base, media: { keepDaysAfterClose: 1.5 } }), /keepDaysAfterClose must be a whole number/);
+  assert.match(bad({ ...base, media: { upload: true } }), /media: unknown key "upload"/);
+  // A project setting: in this machine's private file it is refused with where it belongs.
+  const files = validateFiles({ ...base, media: { push: true } }, {}, BASE);
+  assert.equal(files.ok, false);
+  if (!files.ok) assert.match(files.errors.join(" "), /media is a project setting/);
+});

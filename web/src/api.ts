@@ -212,6 +212,9 @@ async function postJson(path: string, body: unknown): Promise<{ ref: string; mes
   return { ref: answer?.ref ?? "", ...(answer?.message ? { message: answer.message } : {}) };
 }
 
+/** Deletes one of an Item's images: here and, when it was pushed, from its media ref (the server records who). */
+export const postMediaDelete = (ref: string, name: string) => postJson("/api/item/media/delete", { ref, name });
+
 /** Creates an item. Resolves with its ref key. */
 export const postItem = (fields: ItemFields) => postJson("/api/items", fields);
 /** Changes an item's fields. */

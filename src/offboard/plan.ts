@@ -178,7 +178,7 @@ function itemsGroup(found: Found): PlanEntry[] {
     });
   }
   for (const ref of refs) {
-    const what = ref === "refs/scopesoup/meta" ? "the Items and the shared settings" : ref === "refs/scopesoup/merge-queue" ? "the merge queue lease" : ref.startsWith("refs/scopesoup/resources/") ? "a shared resource's lease" : "Scope Soup's";
+    const what = ref === "refs/scopesoup/meta" ? "the Items and the shared settings" : ref === "refs/scopesoup/merge-queue" ? "the merge queue lease" : ref.startsWith("refs/scopesoup/resources/") ? "a shared resource's lease" : ref.startsWith("refs/scopesoup/media/") ? "an Item's images" : "Scope Soup's";
     entries.push({
       group: "items", key: `ref ${ref}`,
       what: `${ref} on the remote: ${what}`,

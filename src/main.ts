@@ -42,6 +42,7 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { startDataDir } from "./dataDir.ts";
+import { createMedia } from "./orchestrator/media.ts";
 import { createConfigLoader } from "./config/loader.ts";
 import { findConfig } from "./config/locate.ts";
 import { metaSettings } from "./config/metaSettings.ts";
@@ -63,7 +64,7 @@ import type { Loop } from "./orchestrator/loop.ts";
 import { createKeepAwake, shouldStayAwake } from "./orchestrator/keepAwake.ts";
 import type { KeepAwake } from "./orchestrator/keepAwake.ts";
 import { dryActions } from "./orchestrator/ports.ts";
-import type { LabelChange, Ref } from "./model/types.ts";
+import type { LabelChange, Ref, WorkItem } from "./model/types.ts";
 import { itemDiff } from "./orchestrator/diff.ts";
 import { openInDiffTool } from "./orchestrator/diffTool.ts";
 import { commitView, projectHistory } from "./orchestrator/history.ts";
@@ -163,6 +164,11 @@ async function main(): Promise<void> {
       { kind: "folder", path: dataDir, what: "the data folder (Scope Soup's database)" },
     ], "scopesoup");
   }
+  // Agents' images: kept in the data folder, pushed to refs/scopesoup/media/<id> only when the project says so (`media.push`).
+  const media = createMedia({ dataDir, store, config: () => config?.load().config ?? null, ...(existsSync(configFile) ? { configFile } : {}), now: iso, env });
+  // A closed Item's images go `media.keepDaysAfterClose` days after it closed; looked at every hour.
+  const mediaTimer = setInterval(() => void media.expire(store.list<WorkItem>("work")).catch(() => undefined), 60 * 60_000);
+  mediaTimer.unref();
   const sync = createSync({
     store,
     hosts: configured,
@@ -209,7 +215,7 @@ async function main(): Promise<void> {
     resources = units;
     await units.recover();
     // A session's item commands (the triage's search) read this project's configuration, wherever the session runs.
-    runner = createRunner({ store, config: current, env: { ...env, SCOPESOUP_CONFIG: configFile }, onFinished: () => loop?.refresh(), stopped: (role) => roleStopped(store, role), resources: units });
+    runner = createRunner({ store, config: current, env: { ...env, SCOPESOUP_CONFIG: configFile }, onFinished: () => loop?.refresh(), stopped: (role) => roleStopped(store, role), resources: units, media });
     // Without a host that may be written to, finished work stays on its local branch.
     // A host that can push branches and open changes; writing items (meta branch) is not that.
     // A host that keeps items' logs itself (meta branch) gets the check and merging lines.
@@ -359,6 +365,7 @@ async function main(): Promise<void> {
 
   const server = createServer({
     upgrade: upgrader,
+    media,
     ...(branchProtection ? { branchProtection } : {}),
     store,
     project,
@@ -505,6 +512,7 @@ async function main(): Promise<void> {
     upgrader.stop();
     stopMigration();
     clearInterval(sharedTimer);
+    clearInterval(mediaTimer);
     await shared.stop();
     await Promise.all(configured.map((host) => host.stop?.()));
     await loop?.stop();

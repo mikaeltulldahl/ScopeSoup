@@ -61,3 +61,11 @@ test("{{allowedCommands}} names the servers whose tools the role may use", () =>
   for (const text of [allowedCommandsText(tools), copilotCommandsText(tools)]) assert.match(text, /You may also use every tool of the MCP server `demo`\./);
   assert.doesNotMatch(allowedCommandsText(["Read"]), /MCP/);
 });
+
+test("a role's effort reaches the command as --effort; none, none; a bad level is refused", () => {
+  const c = config({ implement: { effort: "high" } });
+  const args = buildCommand(c, { role: "implement" }, "p").args;
+  assert.equal(args[args.indexOf("--effort") + 1], "high");
+  assert.ok(!buildCommand(c, { role: "review" }, "p").args.includes("--effort"));
+  assert.match(refused({ implement: { effort: "extreme" } }), /effort must be one of low, medium, high, xhigh, max/);
+});
