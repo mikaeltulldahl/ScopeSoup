@@ -294,6 +294,7 @@ Owner decisions of 2026-11-21 from epic GF-283, written down here with the docs 
 | # | Topic | Decision |
 |---|---|---|
 | 96 | Claude Code's own shipping tools: mentioned, not integrated | Claude Code's `/ship`, `/steward` and the Claude Ship products (Code Review, PR Steward) are mentioned in the README, not integrated. They finish one PR in a person's session or on GitHub; Scope Soup keeps its own sessions and merge queue and does not call them. They can be used side by side. See [`research/ship-command.md`](research/ship-command.md). |
+| 97 | An optional label on Items an AI made or rewrote (#129) | A shared project setting, `labels.aiGenerated`: `false` (the default: no label), `true` (the label `ai-generated`) or a label name. When it is on, Scope Soup puts the label on an Item it creates from an agent's output (the parts of an accepted restructuring, an approved draft, the Item an overturned decision makes) and on an Item whose description a person accepted a triage rewrite of (Accept, or Edit of the proposal). A person's own Items are not labelled, and neither is an Item a person moves between hosts. GitHub and Jira get a real label (on GitHub it is made in the repository if missing, with a plain look); the meta branch keeps it in the Item's labels. Scope Soup never removes it, and a person's later edit may. Turning the setting off or renaming it leaves the labels already put. Settings shows one text field; empty is off. |
 
 ## Facts established by research (not decisions)
 

@@ -74,3 +74,11 @@ More text.`, marker), false);
   assert.match(meta.body ?? "", /Found while working on 7 \(draft /);
   assert.deepEqual(meta.log?.[0], { kind: "created", by: { who: "mira", agent: false }, fields: { via: "draft from the reviewer of 7" } });
 });
+
+test("an approved draft's Item carries the AI label only when the project keeps one", () => {
+  const store = openStore(":memory:");
+  const draft = fileDrafts(store, source, "reviewer", [{ title: "Tidy the parser", description: "Why.", verification: "Done." }], "orchestrator", AT).filed[0]!;
+  const by = { who: "mira", agent: false };
+  assert.deepEqual(draftWork(draft, draft, { by }).labels, []);
+  assert.deepEqual(draftWork(draft, draft, { label: "ai-generated", by }).labels, ["ai-generated"]);
+});

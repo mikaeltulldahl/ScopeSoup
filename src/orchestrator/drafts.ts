@@ -127,14 +127,14 @@ export interface DraftText {
  * The new Item an approved draft makes on the source Item's host. A host without a verification field (GitHub) gets it as a section
  * of the text. The text, made inert again (a person's edit keeps the same rules), ends with the draft's marker line.
  */
-export function draftWork(draft: ItemDraft, given: DraftText, options: { verificationInBody?: boolean; issueNumbers?: boolean; by: LogLineInput["by"] }): NewWork {
+export function draftWork(draft: ItemDraft, given: DraftText, options: { verificationInBody?: boolean; issueNumbers?: boolean; label?: string; by: LogLineInput["by"] }): NewWork {
   const verification = inertDraft(given.verification);
   const inBody = options.verificationInBody && verification ? `\n\n## Verification\n\n${verification}` : "";
   const body = `${inertDraft(given.description)}${inBody}\n\n${draftMarker(draft.from, draft.ref.id, options.issueNumbers === true)}`.trim();
   return {
     title: inertDraft(given.title).replace(/\s+/g, " ").slice(0, 200),
     body,
-    labels: [],
+    labels: options.label ? [options.label] : [],
     ...(!options.verificationInBody && verification ? { verification } : {}),
     log: [{ kind: "created", by: options.by, fields: { via: `draft from ${draft.role === "triage" ? "the triage" : `the ${draft.role}`} of ${draft.from.id}` } }],
   };

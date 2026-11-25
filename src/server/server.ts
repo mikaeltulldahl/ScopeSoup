@@ -106,6 +106,8 @@ export interface ServerOptions {
    * (src/config/edit.ts). Absent in board-only mode.
    */
   configFile?: string;
+  /** The label for Items an AI made or rewrote (`labels.aiGenerated`), or undefined when the project keeps none. Read at each use. */
+  aiLabel?: () => string | undefined;
   /** The orchestrator's labels, which order the backlog column. Defaults to bug label "bug". */
   planning?: () => { bugLabels: string[]; plannedSessions?: number; level?: number; resources?: ResourceConfig[]; reserve?: Record<UsageWindowKind, number>; allowances?: AllowancePlan[] };
   /** Reads the diff of an item's branch for `GET /api/diff`. Absent in board-only mode. */
@@ -746,7 +748,12 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
     const keeps = keepsRecommendations(refine, answers);
     const newText = keeps && action === "accept" ? refine.draft : keeps && action === "edit" ? (text as string).trim() : undefined;
     // The label changes go with the description: Accept takes the proposal, Edit a person's (or the proposal), Reject none.
-    const labelChange: LabelChange | undefined = !keeps || action === "reject" ? undefined : action === "edit" && body.labels !== undefined ? asLabelChange(body.labels) : refine.labels;
+    const proposedLabels: LabelChange | undefined = !keeps || action === "reject" ? undefined : action === "edit" && body.labels !== undefined ? asLabelChange(body.labels) : refine.labels;
+    // An accepted rewrite makes the Item AI-written: it gets the project's AI label (if any), never removed again.
+    const aiLabel = newText !== undefined ? options.aiLabel?.() : undefined;
+    const labelChange: LabelChange | undefined = aiLabel && !(item.labels ?? []).some((name) => name.toLowerCase() === aiLabel.toLowerCase())
+      ? { add: [...new Set([...(proposedLabels?.add ?? []), aiLabel])], remove: (proposedLabels?.remove ?? []).filter((name) => name.toLowerCase() !== aiLabel.toLowerCase()) }
+      : proposedLabels;
     // A draft posted on GitHub is answered there.
     const posted = options.questions && subject.host === options.questions.host ? job!.parked!.draft : undefined;
     if (posted) return draftOnHost(response, item, refine, posted, answers, action, newText, parkedAt, labelChange);
@@ -1161,7 +1168,7 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
         }
         let done: WriteOutcome;
         try {
-          done = await writer.write.createWork!(partWork(part, at, { ...marks, ...(plan.carried ? { carried: plan.carried } : {}), ...(writer.verificationInBody ? { verificationInBody: true } : {}), by: by() }));
+          done = await writer.write.createWork!(partWork(part, at, { ...marks, ...(plan.carried ? { carried: plan.carried } : {}), ...(writer.verificationInBody ? { verificationInBody: true } : {}), ...(options.aiLabel?.() ? { label: options.aiLabel() } : {}), by: by() }));
         } catch (error) {
           return incomplete(at, error instanceof Error ? error.message : String(error));
         }
@@ -1756,7 +1763,7 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
     if (approving.has(given.id)) return sendError(response, 409, "APPROVING", "This draft is being approved now.");
     approving.add(given.id);
     try {
-      const done = await decideItemDraft(store, options.restructure ?? [], given, by().who, () => now().toISOString(), options.syncNow);
+      const done = await decideItemDraft(store, options.restructure ?? [], given, by().who, () => now().toISOString(), options.syncNow, options.aiLabel?.());
       if (!done.ok) return sendError(response, done.status, done.code, done.message);
       if (done.outcome) return written(response, done.outcome, done.message);
       return sendJson(response, 200, { message: done.message, ...(done.item ? { ref: refKey(done.item) } : {}) });

@@ -4,6 +4,7 @@
 
 import { createHash } from "node:crypto";
 import type { ProjectConfig } from "../config/types.ts";
+import { aiLabelOf } from "../config/types.ts";
 import type { Assumption, AssumptionSettled, DecisionOption, LabelChange, Ref, WorkItem } from "../model/types.ts";
 import type { AssumptionOutcome, AssumptionPick } from "./assumptions.ts";
 import { overturnedBy, overturnItem, splitAssumptionId } from "./assumptions.ts";
@@ -321,6 +322,16 @@ export function createHostActions(deps: HostActionsDeps): Actions {
           if (!mine(item)) return null;
           // Scope Soup's own labels are its code's to set, never a draft's.
           const done = await write.changeLabels!(item, change.add.filter((name) => !isOwnLabel(name)), change.remove.filter((name) => !isOwnLabel(name)));
+          // The AI label is the project's own choice, not one of the repository's labels a triage may pick: put on if the host kept it out.
+          const ai = aiLabelOf(deps.config());
+          const wantsAi = ai !== undefined && change.add.some((name) => name.toLowerCase() === ai.toLowerCase());
+          if (wantsAi && write.setLabels && !done.added.some((name) => name.toLowerCase() === ai.toLowerCase())) {
+            const have = ((await host.work?.getWork(item)) ?? deps.store.get<WorkItem>(item))?.labels ?? [];
+            if (!have.some((name) => name.toLowerCase() === ai.toLowerCase())) {
+              await write.setLabels(item, [ai], []);
+              done.added.push(ai);
+            }
+          }
           if (done.added.length > 0 || done.removed.length > 0) {
             const round = loadJobs(deps.store)[refKey(item)]?.refine?.round;
             await logOnHost(item, "edited", { changed: ["labels"], via: round ? `triage, round ${round}` : "triage", ...(done.added.length > 0 ? { added: done.added } : {}), ...(done.removed.length > 0 ? { removed: done.removed } : {}) });
@@ -359,8 +370,10 @@ export function createHostActions(deps: HostActionsDeps): Actions {
         const fileOverturn = async (current: WorkItem, decision: Assumption, answer: string, by: string): Promise<Ref> => {
           const item = current.ref;
           const made = overturnItem(current, decision, answer);
+          const aiLabel = aiLabelOf(deps.config());
           const created = await write.createWork!({
             title: inertText(made.title), body: inertText(made.body), verification: inertText(made.verification),
+            ...(aiLabel ? { labels: [aiLabel] } : {}),
             // The rework waits for the change it reworks (metaBranch: a blocker in the item; GitHub: the issue dependency below).
             ...(onLog && !made.merged ? { blockedBy: [item] } : {}),
             ...(onLog ? { log: [{ kind: "created", by: { who: by, agent: false } }] } : {}),
