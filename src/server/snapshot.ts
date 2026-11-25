@@ -4,6 +4,7 @@ import type { Snapshot, RunnerState, SyncState } from "../core/snapshot.ts";
 import type { Batch, Change, CreatedPart, ProposedPart, Ref, Parked, ParkedQuestion, Run, Session, WorkItem } from "../model/types.ts";
 import { refKey } from "../model/types.ts";
 import { loadJobs, jobQuestions, resumesStep } from "../orchestrator/jobs.ts";
+import { busyFiles, waitsForSameFiles } from "../orchestrator/candidates.ts";
 import { markedParts } from "../orchestrator/split.ts";
 import { readQueueHealth } from "../orchestrator/queueHealth.ts";
 import { knownAnswers } from "../store/answers.ts";
@@ -66,6 +67,16 @@ export function loadSnapshot(store: Store): Snapshot {
     // The triage's typed links, for the Item page.
     links: Object.values(loadJobs(store)).flatMap((job) => (job.triage?.links?.length ? [{ subject: job.item, links: job.triage.links }] : [])),
     merged: Object.values(loadJobs(store)).filter((job) => job.merged !== undefined).map((job) => job.item),
+    // The triaged Items that wait for an Item in progress or in review that changes the same files.
+    ...(() => {
+      const jobs = loadJobs(store);
+      const busy = busyFiles(jobs);
+      const sameFiles = Object.values(jobs).flatMap((job) => {
+        const waitsFor = waitsForSameFiles(job, busy);
+        return waitsFor.length > 0 ? [{ subject: job.item, waitsFor }] : [];
+      });
+      return sameFiles.length > 0 ? { sameFiles } : {};
+    })(),
     answers: knownAnswers(store),
     sync: parse<SyncState>(store.getValue(KEYS.sync), {}, (value) => typeof value === "object" && value !== null && !Array.isArray(value)),
   };

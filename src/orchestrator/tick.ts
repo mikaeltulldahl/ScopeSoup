@@ -16,7 +16,8 @@ import { labelsPromptText } from "../model/labels.ts";
 import { refKey } from "../model/types.ts";
 import { providerFor } from "./providers/index.ts";
 import { loadVotes, withVotes } from "../store/votes.ts";
-import { compareItems, foreignChanges, readyItems } from "./candidates.ts";
+import { busyFiles, compareItems, foreignChanges, readyItems, waitsForSameFiles } from "./candidates.ts";
+import { sameFilesWords } from "../core/sameFiles.ts";
 import type { Context, TickDeps } from "./context.ts";
 import type { ClaimResult } from "./ports.ts";
 import { createLog, errorText } from "./context.ts";
@@ -544,6 +545,8 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
   queuedCount = queue.length;
   // The waits for resources are said again by this dispatch, for the Items that still wait.
   deps.resources?.clearSessionWaits();
+  // Items in progress or in review, with the paths their triage named: an Item whose named paths overlap waits (core/sameFiles.ts).
+  let busy = busyFiles(jobs);
   for (const entry of queue) {
     const key = refKey(entry.item.ref);
     // An item that states its own size (a `size:small` or `size:medium` label), with nothing waiting on an answer, skips the first
@@ -586,6 +589,15 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
         startRecheck(ctx, entry.job, recheck);
         step = "triage";
         again = recheck.reasons.join("; ");
+      }
+    }
+
+    // Its first implement step waits while an Item in progress or in review changes the same files; the next Item may start.
+    if (entry.job && step === "implement") {
+      const sameFiles = waitsForSameFiles(entry.job, busy);
+      if (sameFiles.length > 0) {
+        reasons.push(`${entry.item.ref.id} ${sameFilesWords(sameFiles)}`);
+        continue;
       }
     }
 
@@ -698,6 +710,7 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
     }
     jobs[key] = job;
     job.sessionId = session.ref.id;
+    if (step === "implement") busy = busyFiles(jobs);
     delete job.notBefore;
     delete job.resume;
     delete job.answerArrived;

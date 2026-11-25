@@ -3139,7 +3139,8 @@ test("a draft that keeps the description and asks nothing goes on at once; an an
   w.store.addUsageSample(usage(0.1, 0.1));
   await w.run();
   w.runner.end("1", "succeeded", { ...TRIAGE_OK, draft: "Clear already.", links: [] });
-  w.runner.end("2", "succeeded", TRIAGE_OK);
+  // Another file, so the two do not wait for each other (core/sameFiles.ts).
+  w.runner.end("2", "succeeded", { ...TRIAGE_OK, paths: ["src/b.ts"] });
   await w.run();
   w.clock.ms += 1000;
   await w.run();
