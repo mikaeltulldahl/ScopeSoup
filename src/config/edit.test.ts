@@ -456,3 +456,26 @@ test("a role's effort is saved from the board, and null removes it", async () =>
   assert.equal(cleared.ok, true);
   assert.deepEqual((both(file) as Record<string, any>).roles.implement, { model: "opus", allowedTools: ["Read"] });
 });
+
+test("a null check command or remote URL removes it below level 4 (#157); at level 4 it is refused with the reason; the setup fields are removed the same way", async () => {
+  const file = setup({ checkCommand: ["node", "--test"], remoteUrl: "git@example.invalid:demo.git", setupCommand: ["node", "setup.mjs"], level: 2 });
+  const removed = await edit(file, { checkCommand: null, remoteUrl: null, setupCommand: null }, found);
+  assert.equal(removed.ok, true);
+  const raw = both(file);
+  assert.deepEqual(["checkCommand", "remoteUrl", "setupCommand"].map((key) => Object.hasOwn(raw, key)), [false, false, false]);
+
+  const four = setup({ checkCommand: ["node", "--test"], remoteUrl: "git@example.invalid:demo.git", level: 4 });
+  const before = texts(four);
+  const refusedCheck = await edit(four, { checkCommand: null }, found);
+  assert.equal(refusedCheck.ok, false);
+  if (!refusedCheck.ok) assert.deepEqual(refusedCheck.errors, ["Level 4 needs a check command: pick a lower level first to remove it."]);
+  const refusedRemote = await edit(four, { remoteUrl: null }, found);
+  assert.equal(refusedRemote.ok, false);
+  if (!refusedRemote.ok) assert.match(refusedRemote.errors[0] ?? "", /needs remoteUrl/);
+  assert.equal(texts(four), before);
+
+  // Lowering the level and removing the command in one save works.
+  const lowered = await edit(four, { level: 2, checkCommand: null }, found);
+  assert.equal(lowered.ok, true);
+  assert.equal(Object.hasOwn(both(four), "checkCommand"), false);
+});

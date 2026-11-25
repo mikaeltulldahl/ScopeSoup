@@ -207,3 +207,17 @@ test("POST /api/config from another origin is refused", async () => {
   assert.equal(response.status, 403);
   assert.equal(state(), before);
 });
+
+test("a switch of Players answers with a line of what it did (#157)", async () => {
+  const toSingle = (await (await post({ multiplayer: false })).json()) as { playersNote?: string };
+  assert.match(toSingle.playersNote ?? "", /^Singleplayer: Items and settings stay on this machine from now on\. What is already on the remote stays there\./);
+  // The settings' log names another machine's save: it is warned about.
+  const other = await settings.save({ repoPath: repo, remote: "origin", machine: "laptop-b", by: "Bo", multiplayer: false, update: (current) => ({ ...current, bugLabels: ["bug"] }) });
+  assert.ok(other.ok);
+  const again = (await (await post({ multiplayer: true })).json()) as { playersNote?: string };
+  assert.match(again.playersNote ?? "", /^Shared: \d+ new commits? pushed\.$/);
+  const none = (await (await post({ multiplayer: false })).json()) as { playersNote?: string };
+  assert.match(none.playersNote ?? "", /Other machines \(laptop-b\) still use the remote's copy\./);
+  const second = (await (await post({ multiplayer: true })).json()) as { playersNote?: string };
+  assert.equal(second.playersNote, "Nothing new to share: the remote is up to date.");
+});

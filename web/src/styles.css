@@ -752,3 +752,13 @@ button.decision-choice:hover:not(:disabled) { background: var(--accent-soft); fi
 .toast { display: flex; align-items: center; gap: 12px; padding: 8px 12px; border-radius: 8px; background: var(--bar); color: var(--bar-text); box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25); font-size: 0.9rem; }
 .toast button { background: none; border: 1px solid var(--bar-line); color: var(--brand); font-weight: 600; }
 .toast-bad { background: var(--blocked); color: #fff; }
+/* A save's answer beside its control (#157): "Saved" fades, a refusal's reason stays. */
+.saved-mark { font-size: 0.85rem; color: var(--muted); animation: saved-fade 2.5s ease-in forwards; }
+.saved-mark.saved-bad { color: var(--blocked); animation: none; white-space: pre-wrap; }
+.saved-note { margin: 0; font-size: 0.87rem; color: var(--muted); }
+@keyframes saved-fade { 0%, 70% { opacity: 1; } 100% { opacity: 0; } }
+.level-needs { font-size: 0.87rem; color: var(--muted); }
+.settings-grid .check-line { display: flex; flex-wrap: wrap; gap: 6px 8px; align-items: center; color: var(--text); }
+.settings-grid .check-line input[type="checkbox"] { width: auto; min-height: 0; margin: 0; }
+.settings-grid .check-line input[type="number"] { width: 6.5em; }
+.settings-grid .check-line select { width: auto; }

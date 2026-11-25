@@ -384,13 +384,13 @@ export const fetchConfig = () => getJson<ConfigView>("/api/config");
  * Changes the safe fields given. Rejects with every reason the server gave when refused. `shared`: that a project setting was
  * saved for every machine, by whom, as which meta commit.
  */
-export async function postConfig(change: Record<string, unknown>): Promise<ConfigView & { shared?: string }> {
+export async function postConfig(change: Record<string, unknown>): Promise<ConfigView & { shared?: string; playersNote?: string }> {
   const response = await call("/api/config", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(change) });
   const body = (await response.json().catch(() => null)) as (ConfigView & { errors?: string[]; error?: { message?: string }; players?: PlayersDiffer["players"]; filter?: FilterWidens["filter"] }) | null;
   if (response.status === 409 && body?.players) throw new PlayersDiffer(body.errors?.join("\n") ?? "", body.players);
   if (response.status === 409 && body?.filter) throw new FilterWidens(body.errors?.join("\n") ?? "", body.filter);
   if (!response.ok) throw new Error(body?.errors?.join("\n") ?? body?.error?.message ?? `The server answered ${response.status}.`);
-  return body as ConfigView & { shared?: string };
+  return body as ConfigView & { shared?: string; playersNote?: string };
 }
 
 /** One open Item of the meta branch that the connect dialog may move. */

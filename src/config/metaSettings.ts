@@ -24,6 +24,7 @@ export interface MetaSettings extends SharedSettings {
   log(repoPath: string): SettingsLogEntry[];
   /** Fetches the meta ref and pushes what waits: the other machines' saves arrive this way. Never throws for a sharing problem. */
   fetch(repoPath: string, remote: string, machine: string, multiplayer?: boolean): Promise<SharingReport>;
+  share(repoPath: string, remote: string, machine: string): Promise<{ commits: number; state: "local" | "shared" | "pending"; problem?: string }>;
   /** Ends every git still running (a push in flight). */
   stop(): Promise<void>;
 }
@@ -208,6 +209,20 @@ export function metaSettings(options: { now?: () => string; git?: (args: string[
 
     fetch(repoPath, remote, machine, multiplayer) {
       return writerFor(repoPath, remote, machine, multiplayer).share();
+    },
+
+    async share(repoPath, remote, machine) {
+      // The commits the remote is not known to have: those after the last one known to be there (all of them when none is).
+      const known = `refs/scopesoup-local/shared/${remote}/${META_REF.slice("refs/".length)}`;
+      let commits = 0;
+      try {
+        const has = git(["for-each-ref", "--format=%(objectname)", known], repoPath).trim() !== "";
+        commits = Number(git(["rev-list", "--count", has ? `${known}..${META_REF}` : META_REF], repoPath).trim()) || 0;
+      } catch {
+        commits = 0;
+      }
+      const report = await writerFor(repoPath, remote, machine, true).share();
+      return { commits, state: report.state, ...(report.problem ? { problem: report.problem } : {}) };
     },
 
     async stop() {
