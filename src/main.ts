@@ -50,6 +50,8 @@ import { repositoryOf } from "./config/shared.ts";
 import { recommendations } from "./config/recommend.ts";
 import { createHosts, describeHosts, hostSettings, ignoredVariables } from "./hostSetup.ts";
 import { remoteBranches } from "./items/remoteBranch.ts";
+import { jiraBoard } from "./items/jiraBackend.ts";
+import type { JiraHost } from "./hosts/jira/index.ts";
 import type { HostSettings } from "./hostSetup.ts";
 import type { GitHubHost } from "./hosts/github/index.ts";
 import { createMergeQueue } from "./orchestrator/mergeQueue.ts";
@@ -287,6 +289,8 @@ async function main(): Promise<void> {
   // The host items are created and edited on from the board, with a log of their own (meta branch with SCOPESOUP_META_WRITE=1).
   // GitHub Items are edited through `hostEdit` instead.
   const itemHost = configured.find((host) => host.write?.createWork && host.write.editWork && host.write.appendLog);
+  // Jira Items with writes on: the Item page's Claim, Hand back and Release act there for the board's person, through this token.
+  const jiraHost = configured.find((host): host is JiraHost => "people" in host && !!host.write?.recordHandback && !!host.write.setAssignees);
   // A person's chat with an Item's sessions, through the runner (so the tick sees it as the Item's session).
   const chat = runner && config ? createChat({ store, runner, config: () => {
     const state = config.load();
@@ -377,6 +381,7 @@ async function main(): Promise<void> {
     allowLan: env.SCOPESOUP_ALLOW_LAN === "1",
     ...(itemHost?.write ? { items: { host: itemHost.info.id, write: itemHost.write, ...(itemHost.work ? { work: itemHost.work } : {}) } } : {}),
     ...(itemHost?.info.machine ? { machine: itemHost.info.machine } : {}),
+    ...(jiraHost ? { jiraItems: jiraBoard(jiraHost, { now: () => new Date() }) } : {}),
     ...(description ? { description } : {}),
     ...(hostEdit ? { hostEdit } : {}),
     ...(questions ? { questions } : {}),

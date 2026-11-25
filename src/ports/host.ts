@@ -412,9 +412,10 @@ export interface WritePort {
   setAssignees?(work: Ref, add: string[], remove: string[]): Promise<void>;
   /**
    * A person's hand-back on a host with no pull requests (Jira): a comment that names the Item's branch and its tip, read back as
-   * `WorkItem.handedBack`. The note is inert already.
+   * `WorkItem.handedBack`. The note is inert already. `person`: who handed it back when the write goes through another account's
+   * token (the board's, through the server's), its name inert already; read back as `handedBack.by` from the host's own account only.
    */
-  recordHandback?(work: Ref, handback: { sha: string; branch: string; note?: string }): Promise<void>;
+  recordHandback?(work: Ref, handback: { sha: string; branch: string; note?: string; person?: { id: string; name: string } }): Promise<void>;
   setWorkState?(work: Ref, state: WorkState): Promise<void>;
   vote?(change: Ref, revision: string, dimension: string, value: VerdictValue, score?: number): Promise<void>;
   /** `expectSha` makes sure no revision other than the tested one can merge. */
