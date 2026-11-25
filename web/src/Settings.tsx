@@ -443,8 +443,6 @@ export function Settings({ project, openHistory = false }: { project?: ProjectVi
               <dd>{view.config.host.project}</dd>
               <dt>Filter</dt>
               <dd>{view.config.host.filter ? <code>{view.config.host.filter}</code> : "none: every issue of the project is an Item"}</dd>
-              <dt>New Items go in</dt>
-              <dd>{view.config.host.createProject ?? view.config.host.project}</dd>
               <dt>Components of new Items</dt>
               <dd>{view.config.host.components?.join(", ") ?? "none"}</dd>
             </dl>

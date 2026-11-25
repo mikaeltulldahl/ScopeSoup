@@ -454,7 +454,7 @@ function resourcesOf(value: unknown, shared: boolean, err: (message: string) => 
 }
 
 const GITHUB_KEYS = ["kind", "repo", "write"];
-const JIRA_KEYS = ["kind", "site", "project", "deployment", "filter", "createProject", "components", "write", "email", "priorities", "abandonedResolutions", "blocksLink", "issueType", "childIssueType", "transitions", "resolutions", "relatesLink", "duplicateLink", "commentLimit", "answerers"];
+const JIRA_KEYS = ["kind", "site", "project", "deployment", "filter", "components", "write", "email", "priorities", "abandonedResolutions", "blocksLink", "issueType", "childIssueType", "transitions", "resolutions", "relatesLink", "duplicateLink", "commentLimit", "answerers"];
 const TRANSITION_TARGETS = ["todo", "doing", "done", "abandoned"] as const;
 const RESOLUTION_TARGETS = ["done", "abandoned", "duplicate"] as const;
 const PRIORITY_NAMES = ["blocker", "critical", "major", "minor"] as const;
@@ -535,8 +535,6 @@ function jiraHostOf(value: Obj, write: boolean, text: (key: string) => string | 
     const problem = jqlFragmentProblem(filter);
     if (problem) err(`host.filter (${filter}) ${problem} Write it as a condition on the project's issues, as 'component = "Board" AND labels = scopesoup'.`);
   }
-  const createProject = text("createProject");
-  if (createProject !== undefined && !/^[A-Z][A-Z0-9_]+$/.test(createProject)) err(`host.createProject (${createProject}) must be a Jira project key: capital letters, digits and "_", starting with a letter, as "DEMO".`);
   let components: string[] | undefined;
   if (value.components !== undefined) {
     const given = value.components;
@@ -551,7 +549,6 @@ function jiraHostOf(value: Obj, write: boolean, text: (key: string) => string | 
   const config: JiraHostConfig = { kind: "jira", site: site ?? "", project: project ?? "", deployment: deployment === "datacenter" ? "datacenter" : "cloud", write };
   if (email !== undefined) config.email = email;
   if (filter !== undefined) config.filter = filter;
-  if (createProject !== undefined) config.createProject = createProject;
   if (components) config.components = components;
   if (value.priorities !== undefined) {
     if (!isObj(value.priorities) || Object.keys(value.priorities).length === 0) err(`host.priorities must be an object from Jira priority names to ${PRIORITY_NAMES.join(", ")}, as { "Highest": "blocker" }.`);

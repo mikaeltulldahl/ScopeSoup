@@ -114,7 +114,6 @@ export function createHosts(settings: HostSettings, env: Env, log: (line: string
       ...(settings.machine ? { machine: settings.machine } : {}),
       ...(settings.personCommands ? { claimsOfAnyone: true } : {}),
       ...(jira.filter ? { filter: jira.filter } : {}),
-      ...(jira.createProject ? { createProject: jira.createProject } : {}),
       ...(jira.components ? { components: jira.components } : {}),
       ...(onOutsideFilter ? { onOutsideFilter } : { log }),
       ...(jira.issueType ? { issueType: jira.issueType } : {}),

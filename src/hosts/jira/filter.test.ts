@@ -1,4 +1,4 @@
-// The Jira host's filter, createProject and components against the fake Jira: which issues are Items, where new ones go.
+// The Jira host's filter and components against the fake Jira: which issues are Items, where new ones go.
 
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
@@ -42,7 +42,7 @@ for (const deployment of ["cloud", "datacenter"] as const) {
       const host = another("laptop-a", { filter: 'component = "Board"', components: ["Other"], onOutsideFilter: (key, reason) => reported.push(`${key} ${reason}`) });
       const made = await host.write!.createWork!({ title: "Outside" });
       assert.equal(reported.length, 1);
-      assert.match(reported[0]!, new RegExp(`${made.work.id} was created in DEMO with component Other, but it is not an Item`));
+      assert.match(reported[0]!, new RegExp(`${made.work.id} was created with component Other, but it is not an Item`));
       assert.equal((await host.work.listWork()).items.some((item) => item.ref.id === made.work.id), false);
       await assert.rejects(host.write!.setLabels!(made.work, ["x"], []), /outside host\.filter/);
       assert.deepEqual(fake.issues.get(made.work.id)!.fields.labels, []);
@@ -51,16 +51,6 @@ for (const deployment of ["cloud", "datacenter"] as const) {
     test("a component the project lacks is refused by Jira", async () => {
       const { another } = writable(deployment, { fake: { components: ["Board"] } });
       await assert.rejects(another("laptop-a", { components: ["Nope"] }).write!.createWork!({ title: "x" }), /Component name 'Nope' is not valid/);
-    });
-
-    test("createProject makes the issue in that project, and it is reported as not read back", async () => {
-      const reported: string[] = [];
-      const { fake, another } = writable(deployment, { fake: { otherProjects: ["OTHER"] } });
-      const host = another("laptop-a", { createProject: "OTHER", onOutsideFilter: (key, reason) => reported.push(`${key} ${reason}`) });
-      const made = await host.write!.createWork!({ title: "Elsewhere" });
-      assert.equal(made.work.id, "OTHER-1");
-      assert.ok(fake.issues.has("OTHER-1"));
-      assert.match(reported[0] ?? "", /^OTHER-1 was created in OTHER/);
     });
   });
 }

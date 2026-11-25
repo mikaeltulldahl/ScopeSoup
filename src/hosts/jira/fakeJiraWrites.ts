@@ -111,8 +111,6 @@ export interface FakeWriteState {
   site: string;
   user: JiraUser;
   project: string;
-  /** The projects an issue may be created in; the first is `project`. */
-  projects: string[];
   /** The components the project has; a name not among them is refused. Undefined: any name is taken. */
   components?: string[] | undefined;
   issues: Map<string, JiraIssue>;
@@ -165,7 +163,7 @@ export function routeWrite(state: FakeWriteState, method: string, rest: string, 
   if (method === "POST" && rest === "/issue") {
     const fields = (isObject(body) && isObject(body.fields) ? body.fields : {}) as Record<string, unknown>;
     const project = isObject(fields.project) ? fields.project.key : undefined;
-    if (typeof project !== "string" || !state.projects.includes(project)) return refuse(400, "project: valid project is required");
+    if (project !== state.project) return refuse(400, "project: valid project is required");
     const typeName = isObject(fields.issuetype) ? String(fields.issuetype.name) : "";
     const type = ISSUE_TYPES[typeName];
     if (!type) return refuse(400, "issuetype: valid issue type is required");
@@ -188,8 +186,8 @@ export function routeWrite(state: FakeWriteState, method: string, rest: string, 
       if (parentType.level !== type.level + 1) return refuse(400, `parent: an issue of type ${typeName} cannot be a child of a ${parent.fields.issuetype?.name ?? "Task"}.`);
     }
     state.ids.issue += 1;
-    const number = Math.max(0, ...[...state.issues.keys()].filter((each) => each.startsWith(`${project}-`)).map((each) => Number(/-(\d+)$/.exec(each)?.[1] ?? 0))) + 1;
-    const key = `${project}-${number}`;
+    const number = Math.max(0, ...[...state.issues.keys()].map((each) => Number(/-(\d+)$/.exec(each)?.[1] ?? 0))) + 1;
+    const key = `${state.project}-${number}`;
     const issue: JiraIssue = {
       id: String(state.ids.issue), key, self: `${state.site}/rest/api/x/issue/${state.ids.issue}`,
       fields: {

@@ -33,8 +33,6 @@ export interface FakeJiraSetup {
   pageSize?: number;
   /** The project writes go to. Default "DEMO". */
   project?: string;
-  /** Other projects an issue may be created in (a new issue gets that project's next number). */
-  otherProjects?: string[];
   /** The components the project has: a new issue naming another is refused with 400. Default: any name. */
   components?: string[];
   /** People who may be assignees, besides `user`. */
@@ -133,7 +131,7 @@ export function fakeJira(setup: FakeJiraSetup): FakeJira {
   const commentProperties = (setup.commentProperties ??= {});
   let tick = Date.parse("2026-11-21T08:00:00.000Z");
   const writes: FakeWriteState = {
-    deployment: setup.deployment, site, user: setup.user, project: setup.project ?? "DEMO", projects: [setup.project ?? "DEMO", ...(setup.otherProjects ?? [])], components: setup.components, issues, comments, issueProperties, commentProperties,
+    deployment: setup.deployment, site, user: setup.user, project: setup.project ?? "DEMO", components: setup.components, issues, comments, issueProperties, commentProperties,
     people: [setup.user, ...(setup.people ?? [])], assignable: setup.assignable, commentLimit: setup.commentLimit ?? 32_767,
     now: setup.now ?? (() => (tick += 1000)),
     ids: { comment: 40_000, link: 50_000, issue: 60_000 },

@@ -172,8 +172,6 @@ export interface JiraHostConfig {
    * Issues outside it are not read, shown or touched, and a write to one is refused. Default: every issue of the project.
    */
   filter?: string;
-  /** The project key new Items are created in. Default: `project`. A new Item outside `project` is not read back (it is reported). */
-  createProject?: string;
   /** The component names new Items get. Default none. After creating an Item Scope Soup re-reads it and reports one that falls outside `filter`. */
   components?: string[];
   /** Write issues, comments, labels and properties (a level above Watch needs it). */

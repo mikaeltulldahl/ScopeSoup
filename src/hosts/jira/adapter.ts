@@ -21,8 +21,6 @@ export interface JiraConfig {
   project: string;
   /** A JQL condition ANDed with the project: which issues are Items. Issues outside it are not read, shown or touched. */
   filter?: string;
-  /** The project new Items are created in. Default `project`. */
-  createProject?: string;
   /** The component names new Items get. */
   components?: string[];
   /** Called when an Item just created does not match the filter (or the project read): its key and why. Default: `log`. */
@@ -386,7 +384,6 @@ export function createJiraHost(config: JiraConfig): JiraHost {
         relatesLink: config.relatesLink ?? DEFAULT_RELATES_LINK,
         duplicateLink: config.duplicateLink ?? DEFAULT_DUPLICATE_LINK,
         commentLimit,
-        createProject: config.createProject ?? config.project,
         components: config.components ?? [],
       },
       onOutsideFilter: config.onOutsideFilter ?? ((key, reason) => log(`Jira: ${key} ${reason}`)),

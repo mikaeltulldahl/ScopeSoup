@@ -50,8 +50,6 @@ export interface JiraWriteSettings {
   relatesLink: string;
   duplicateLink: string;
   commentLimit: number;
-  /** The project new Items are created in. */
-  createProject: string;
   /** The component names new Items get. */
   components: string[];
 }
@@ -293,10 +291,10 @@ export function createJiraWrite(deps: JiraWriteDeps): WritePort {
 
   /** A new Item that Scope Soup would not read back (outside the filter, or in another project) is reported, not thrown. */
   async function checkInFilter(key: string): Promise<void> {
-    if (!scope.filter && settings.createProject === scope.project) return;
+    if (!scope.filter) return;
     try {
       if (await issueInFilter(client, scope, key)) return;
-      deps.onOutsideFilter?.(key, `was created in ${settings.createProject}${settings.components.length > 0 ? ` with ${settings.components.length === 1 ? "component" : "components"} ${settings.components.join(", ")}` : ""}, but it is not an Item (host.project is ${scope.project}${scope.filter ? `, host.filter is ${scope.filter}` : ""}): Scope Soup will not read, show or touch it.`);
+      deps.onOutsideFilter?.(key, `was created${settings.components.length > 0 ? ` with ${settings.components.length === 1 ? "component" : "components"} ${settings.components.join(", ")}` : ""}, but it is not an Item (host.filter is ${scope.filter}): Scope Soup will not read, show or touch it.`);
     } catch (error) {
       deps.onOutsideFilter?.(key, `was created, but whether it is an Item could not be checked: ${error instanceof Error ? error.message : String(error)}`);
     }
@@ -312,7 +310,7 @@ export function createJiraWrite(deps: JiraWriteDeps): WritePort {
       checkLabels(labels);
       const priority = input.priority ? priorityName(scope, input.priority) : undefined;
       const fields = (parent: Ref | undefined): Record<string, unknown> => ({
-        project: { key: settings.createProject },
+        project: { key: scope.project },
         issuetype: { name: parent ? settings.childIssueType : settings.issueType },
         summary: input.title,
         ...(markdown ? { description: toJiraText(deployment, markdown) } : {}),
