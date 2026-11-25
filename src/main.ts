@@ -85,6 +85,9 @@ import { usageReserve } from "./orchestrator/tick.ts";
 import type { Runner } from "./orchestrator/runner.ts";
 import type { AnswerWrite, Host, WorkPatch } from "./ports/host.ts";
 import { createServer } from "./server/server.ts";
+import type { PickRequestPort, ScopeSoupServer } from "./server/server.ts";
+import { pickNeeds } from "./config/levels.ts";
+import { programFound } from "./config/program.ts";
 import { recordInManifest } from "./config/manifest.ts";
 import { planFor } from "./offboard/cli.ts";
 import { defaultOutFolder } from "./offboard/scan.ts";
@@ -93,7 +96,7 @@ import type { ProjectInfo } from "./server/project.ts";
 import { gitRemoteUrl } from "./config/mergeQueue.ts";
 import type { AssumptionHost } from "./server/server.ts";
 import { createChat } from "./orchestrator/chat.ts";
-import { mergeQueueOn, mergeQueueStopped, pauseRemembering, roleStopped, startAgain } from "./store/control.ts";
+import { mergeQueueStopped, pauseRemembering, roleStopped, startAgain, switchOnFor } from "./store/control.ts";
 import { KEYS } from "./store/keys.ts";
 import { createBranchProtection } from "./server/branchProtection.ts";
 import { NEWER_STORE, STORE_VERSION } from "./store/schema.ts";
@@ -149,7 +152,11 @@ async function main(): Promise<void> {
     if (!repository?.machine) return;
     const report = await shared.fetch(repository.repoPath, repository.remote, repository.machine, repository.multiplayer);
     if (report.problem) console.log(`Fetching the shared settings (refs/scopesoup/meta): ${report.problem}`);
+    // The picks other boards requested of this machine came with the fetch (decision 104).
+    await server?.carryOutRequests().catch((error: unknown) => console.log(`Carrying out the picks requested of this machine: ${error instanceof Error ? error.message : String(error)}`));
   };
+  /** Set below; the fetch carries out the picks requested of this machine once it is there. */
+  let server: ScopeSoupServer | undefined;
   await fetchShared();
   const sharedTimer = setInterval(() => void fetchShared(), 60_000);
   sharedTimer.unref();
@@ -289,7 +296,7 @@ async function main(): Promise<void> {
       store, runner, config, actions, now: iso, resources: units, ...(mergeQueue ? { mergeQueue } : {}),
       // Merging through the merge queue (level 4): its own clone, the check command, Start/Pause merge queue.
       // With mergeQueue.ci "github" the project's CI on the writable GitHub host (remote checked above) checks each batch.
-      queue: queue = createQueueDriver({ store, config: current, git: realGit, runCheck: createCheckRunner(realProcesses), runSetup: createSetupRunner(realProcesses, process.env, () => config.load().config ?? undefined), now: iso, paused: () => !mergeQueueOn(store), stopped: () => mergeQueueStopped(store), resources: units, ...(writable?.queueCi && !ciRefused ? { ci: writable.queueCi } : {}), ...(ciRefused ? { ciRefused } : {}) }),
+      queue: queue = createQueueDriver({ store, config: current, git: realGit, runCheck: createCheckRunner(realProcesses), runSetup: createSetupRunner(realProcesses, process.env, () => config.load().config ?? undefined), now: iso, paused: () => !switchOnFor(store, "mergeQueue", config.load().config?.level ?? 0), stopped: () => mergeQueueStopped(store), resources: units, ...(writable?.queueCi && !ciRefused ? { ci: writable.queueCi } : {}), ...(ciRefused ? { ciRefused } : {}) }),
       onTick: (report) => {
         const state = config.load().config;
         awake.set(shouldStayAwake({ enabled: state?.keepAwake ?? false, level: state?.level ?? 0, paused: report.paused === true, running: report.running, queued: report.queued, waitingForTime: report.wakeAt !== undefined }));
@@ -389,7 +396,7 @@ async function main(): Promise<void> {
     })
     : undefined;
 
-  const server = createServer({
+  server = createServer({
     // This machine lacks what the project's host needs: the board asks for it ("Set up this machine").
     ...(setup ? { machineSetup: setup } : {}),
     upgrade: upgrader,
@@ -404,6 +411,7 @@ async function main(): Promise<void> {
     allowLan: env.SCOPESOUP_ALLOW_LAN === "1",
     ...(itemHost?.write ? { items: { host: itemHost.info.id, write: itemHost.write, ...(itemHost.work ? { work: itemHost.work } : {}) } } : {}),
     ...(itemHost?.info.machine ? { machine: itemHost.info.machine } : {}),
+    ...(first?.config ? { requests: pickRequests(shared, configFile, first.config.machineName) } : {}),
     ...(jiraHost ? { jiraItems: jiraBoard(jiraHost, { now: () => new Date() }) } : {}),
     ...(description ? { description } : {}),
     ...(hostEdit ? { hostEdit } : {}),
@@ -424,6 +432,7 @@ async function main(): Promise<void> {
                   reserve: usageReserve(loaded),
                   allowances: allowancePlans(loaded, usageReserve(loaded).seven_day),
                   level: loaded.level,
+                  pickNeeds: pickNeeds(loaded, programFound),
                   ...(loaded.resources ? { resources: loaded.resources } : {}),
                 }
               : { bugLabels: ["bug"] };
@@ -569,6 +578,26 @@ async function main(): Promise<void> {
   restartAfterStop = () => void stop("upgrade").then(() => process.exit(RESTART_EXIT_CODE));
   process.on("SIGINT", () => void stop("SIGINT"));
   process.on("SIGTERM", () => void stop("SIGTERM"));
+}
+
+/**
+ * The picks' requests on the meta ref (decision 104), where this machine's private file says the repository is; the shared
+ * settings' writer writes and pushes them (singleplayer: kept here, where the only machine reads them).
+ */
+function pickRequests(shared: ReturnType<typeof metaSettings>, configFile: string, machine: string): PickRequestPort {
+  return {
+    machine,
+    list: () => {
+      const repository = privateWhere(configFile);
+      return repository ? shared.requests(repository.repoPath) : [];
+    },
+    write: async (line) => {
+      const repository = privateWhere(configFile);
+      if (!repository?.machine) return { ok: false, error: "this machine's private configuration names no repository or machine" };
+      const done = await shared.writeRequest({ repoPath: repository.repoPath, remote: repository.remote, machine: repository.machine, multiplayer: repository.multiplayer }, line);
+      return done.ok ? { ok: true } : done;
+    },
+  };
 }
 
 /** Where this machine's private file says the repository is; null when the file cannot be read (the loader says why). */

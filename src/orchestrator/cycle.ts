@@ -20,7 +20,7 @@ import { providerFor } from "./providers/index.ts";
 import type { Actions, SessionResultRecord } from "./ports.ts";
 import type { QuestionWrite } from "../ports/host.ts";
 import { COMMENT_LIMIT, TooLarge, WriteLater } from "../ports/host.ts";
-import { mergeQueueOn } from "../store/control.ts";
+import { switchOnFor } from "../store/control.ts";
 import { handOverToQueue } from "./queueMerge.ts";
 import { closeMerged } from "./mergedClose.ts";
 import { itemRepository } from "./workspaces.ts";
@@ -577,7 +577,8 @@ const APPROVED = "Approved. Merge now as CLAUDE.md says.";
 async function handOver(ctx: Context, job: Job, item: WorkItem | null, askedBy?: string): Promise<void> {
   // This is the hand-over that was owed, if one was: whatever happens now, it is not owed any more unless said again below.
   delete job.owes;
-  if (ctx.config.level < 4) return sessionMerged(ctx, job, item, askedBy);
+  // Below level 4 Scope Soup merges nothing on its own; a change a person handed to the merge queue goes there (decision 104).
+  if (ctx.config.level < 4 && job.queueAskedBy === undefined) return sessionMerged(ctx, job, item, askedBy);
   const { runner } = ctx.deps;
   const empty = await emptyBranch(ctx, job);
   if (empty) return backToImplement(ctx, job, empty);
@@ -599,7 +600,7 @@ async function handOver(ctx: Context, job: Job, item: WorkItem | null, askedBy?:
     next(ctx, job, "implement", `${job.branch} is still at ${head.slice(0, 7)}, the revision the merge queue sent back; it is not handed to the queue again. Next: the implementor fixes it.`);
     return;
   }
-  if (!mergeQueueOn(ctx.deps.store)) {
+  if (!switchOnFor(ctx.deps.store, "mergeQueue", ctx.config.level)) {
     job.owes = "hand-over";
     // The session is over: the tick hands it over by itself once the merge queue is resumed, and settles nothing again meanwhile.
     delete job.sessionId;
@@ -742,8 +743,10 @@ export async function sendBack(ctx: Context, job: Job, finding: string, what: st
     return;
   }
   if (failure) job.progress = { ...job.progress, mergeQueue: failure };
-  // The change goes back to its implementor: no hand-over is owed until a new revision is reviewed.
+  // The change goes back to its implementor: no hand-over is owed until a new revision is reviewed. A person's pick of the merge
+  // queue was for the revision it sent back; what comes next goes as the level says.
   delete job.owes;
+  delete job.queueAskedBy;
   job.fixRounds++;
   job.review = { verdict: "changes", findings: [{ severity: "must", text: finding }] };
   backToImplementor(ctx, job, `Merging failed: ${finding}\nFix it and commit.`, `${what}; nothing was pushed. Next: the implementor fixes it, round ${job.fixRounds} of ${max}.`);
@@ -957,6 +960,8 @@ async function settleStep(ctx: Context, job: Job, session: Session | null, recor
 
   if (job.step === "review") {
     delete job.shouldRound;
+    // A person's In review pick (decision 104) was for this step; what comes next goes as the level says.
+    delete job.reviewAskedBy;
     const answer = asReview(record.output);
     if (!answer) return failed(ctx, job, "The reviewer's answer does not have the expected shape, or has tool-call markup inside a string.");
     job.review = answer;

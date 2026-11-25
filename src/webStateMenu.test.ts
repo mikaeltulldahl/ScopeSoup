@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { THEMES } from "../web/src/theme.ts";
 import type { MenuPage, Pending, StateKey } from "../web/src/stateMenu.ts";
-import { addPending, cancelPending, currentState, duePending, effectNote, stateOptions, STATE_KEYS, toastText, UNDO_MS, withBlocker } from "../web/src/stateMenu.ts";
+import { addPending, cancelPending, currentState, duePending, effectNote, requestNote, stateOptions, STATE_KEYS, toastText, UNDO_MS, withBlocker } from "../web/src/stateMenu.ts";
 
 const theme = THEMES.default.words;
 const page = (fields: Partial<MenuPage> = {}, item: Partial<MenuPage["item"]> = {}): MenuPage => ({
@@ -81,14 +81,29 @@ test("the toast: the theme's words, and what the pick does to work under way", (
   assert.equal(toastText("A-2", "backlog", "", theme), "A-2 → Backlog");
   assert.equal(toastText("A-2", "abandoned", "", THEMES.graveyard.words), "Murdered A-2");
   const running = page({ sessions: { live: [{ role: "implement" }] } });
-  assert.equal(effectNote("abandoned", running, theme), "stops after the implementor");
-  assert.equal(effectNote("abandoned", running, THEMES.graveyard.words), "stops after the detective");
+  // A pick that replaces the step that runs ends its session at once (decision 104); Done lets it finish.
+  for (const key of ["abandoned", "backlog", "triage", "in-review", "merge-queue"] as const) assert.equal(effectNote(key, running, theme), "interrupts the implementor", key);
+  assert.equal(effectNote("abandoned", running, THEMES.graveyard.words), "interrupts the detective");
+  assert.equal(effectNote("done", running, theme), "stops after the implementor");
   assert.equal(effectNote("blocked", running, theme), "the implementor goes on");
-  const elsewhere = page({}, { holder: { actor: { id: "scopesoup@laptop-b", name: "laptop-b", bot: true } } });
-  assert.equal(effectNote("done", elsewhere, theme), "stops after the agent on laptop-b");
+  // The work runs on another machine: the pick goes there, at its next fetch.
+  const elsewhere = page({ remote: { machine: "laptop-b" } }, { holder: { actor: { id: "scopesoup@laptop-b", name: "scopesoup on laptop-b", bot: true } } });
+  assert.equal(effectNote("backlog", elsewhere, theme), "interrupts the implementor on laptop-b, within a minute");
+  assert.equal(effectNote("done", elsewhere, theme), "stops after the implementor on laptop-b");
+  assert.equal(effectNote("abandoned", page({ lane: "in-review", remote: { machine: "laptop-b" } }), theme), "interrupts the reviewer on laptop-b, within a minute");
   assert.equal(effectNote("abandoned", page({ lane: "queued" }), theme), "leaves the merge queue");
   assert.equal(toastText("A-2", "done", effectNote("done", page({ lane: "checking" }), theme), theme), "A-2 → Done · stops after the merge queue's check");
   assert.equal(effectNote("done", page(), theme), "");
+});
+
+test("a pick requested of another machine: waiting, refused, or lapsed, for an hour; done says nothing", () => {
+  const at = Date.parse("2026-11-25T10:00:00Z");
+  const asked = (state: "pending" | "done" | "refused" | "lapsed", why?: string) => page({ remote: { machine: "laptop-b", request: { who: "mira", at: "2026-11-25T10:00:00Z", for: "laptop-b", steps: [{ kind: "move", to: "backlog" }], state, ...(why ? { why } : {}) } } });
+  assert.equal(requestNote(asked("pending"), theme, at), "mira's Backlog waits for laptop-b (at its next fetch, within a minute)");
+  assert.equal(requestNote(asked("refused", "A-2 changed meanwhile: look again and pick again."), theme, at), "laptop-b refused mira's Backlog: A-2 changed meanwhile: look again and pick again.");
+  assert.equal(requestNote(asked("lapsed"), theme, at + 20 * 60_000), "laptop-b did not answer mira's Backlog within 15 minutes; it is not carried out");
+  assert.equal(requestNote(asked("done"), theme, at), "");
+  assert.equal(requestNote(asked("refused", "x"), theme, at + 2 * 60 * 60_000), "");
 });
 
 test("a new blocker is added to the ones there, as ids", () => {

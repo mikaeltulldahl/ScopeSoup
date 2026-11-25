@@ -4150,3 +4150,102 @@ test("a job a person put back in the backlog on the board is dropped once its se
   assert.ok(w.calls.includes("release 1"), w.calls.join("\n"));
   assert.ok(w.runner.released.includes(workspaceKey(ref("1"))));
 });
+
+// --- A person's picks on the board (decision 104): at any level, ending the running session at once ---
+
+/** A job at the review step with a revision, as a person's In review leaves it (src/server/moves.ts). */
+const pickedReview = (id: string, over: Record<string, unknown> = {}) => ({
+  item: ref(id), workspace: workspaceKey(ref(id)), branch: `scopesoup/${id}`, step: "review" as const, failures: 0, fixRounds: 0,
+  startedAt: new Date(T0).toISOString(), head: HEAD, reviewAskedBy: "Ada", ...over,
+});
+
+test("a review step a person picked runs below level 3, even at level 0 with its hidden switch paused; only Stop holds it", async () => {
+  for (const level of [0, 1, 2]) {
+    const w = world(config({ level }), [item("1"), item("2")]);
+    w.store.addUsageSample(usage(0.1, 0.1));
+    // After a start-up every switch is paused; at these levels the board shows no Review switch.
+    applyControl(w.store, "pause", new Date(T0).toISOString(), "test");
+    saveJobs(w.store, { [refKey(ref("1"))]: pickedReview("1"), [refKey(ref("2"))]: pickedReview("2", { reviewAskedBy: undefined }) });
+    await w.run();
+    assert.deepEqual(w.runner.requests.map((request) => `${request.role} ${request.subject.id}`), ["review 1"], `level ${level}: only the review a person asked for`);
+    // Its settling clears the ask: what comes next goes as the level says.
+    w.runner.end("1", "succeeded", REVIEW_OK);
+    await w.run();
+    assert.equal(w.job("1")?.reviewAskedBy, undefined);
+    assert.equal(w.job("1")?.reviewedHead, HEAD);
+  }
+  const stopped = world(config({ level: 2 }), [item("1")]);
+  stopped.store.addUsageSample(usage(0.1, 0.1));
+  applyControl(stopped.store, "stop", new Date(T0).toISOString(), "test");
+  saveJobs(stopped.store, { [refKey(ref("1"))]: pickedReview("1") });
+  await stopped.run();
+  assert.deepEqual(roles(stopped), [], "Stop in force holds it");
+});
+
+test("a change a person handed to the merge queue below level 4 goes to the queue, with the hidden switch paused", async () => {
+  const queue = fakeQueue();
+  const w = world(config({ level: 2, ...MERGES }), [item("1")]);
+  w.queue = queue;
+  applyControl(w.store, "merge-queue.pause" as ControlAction, new Date(T0).toISOString(), "test");
+  saveJobs(w.store, { [refKey(ref("1"))]: pickedReview("1", { reviewAskedBy: undefined, reviewedHead: HEAD, review: { verdict: "approve", findings: [] }, owes: "hand-over", owesAskedBy: "Ada", queueAskedBy: "Ada" }) });
+  await w.run();
+  assert.deepEqual(queue.enqueued, ["1 scopesoup/1"]);
+  assert.equal(w.job("1")?.parked?.as, "queued");
+  // Without the person's ask, the same job at level 2 is the implementor's to merge: nothing goes to the queue.
+  const own = fakeQueue();
+  const v = world(config({ level: 2, ...MERGES }), [item("1")]);
+  v.queue = own;
+  saveJobs(v.store, { [refKey(ref("1"))]: pickedReview("1", { reviewAskedBy: undefined, reviewedHead: HEAD, review: { verdict: "approve", findings: [] }, owes: "hand-over" }) });
+  await v.run();
+  assert.deepEqual(own.enqueued, []);
+});
+
+test("a pick that replaces the running step ends its session at once, as Stop does, and its result is not settled", async () => {
+  const w = world(config({ level: 2 }), [item("1")]);
+  w.store.addUsageSample(usage(0.1, 0.1));
+  await w.run();
+  w.runner.end("1", "succeeded", TRIAGE_OK);
+  await w.run();
+  w.clock.ms += 5_000;
+  await w.run();
+  assert.deepEqual(roles(w), ["triage", "implement"]);
+  // The person's In review (src/server/moves.ts) over the running implementor.
+  const jobs = loadJobs(w.store);
+  const key = refKey(ref("1"));
+  Object.assign(jobs[key]!, { step: "review", head: HEAD, reviewAskedBy: "Ada", interrupt: { by: "Ada", at: new Date(T0).toISOString(), to: "in-review" } });
+  saveJobs(w.store, jobs);
+  await w.run();
+  assert.match(w.runner.stops[0] ?? "", /^Stopped: Ada picked In review for 1 on the board: the implement session s2 is ended now/);
+  const event = w.events("orchestrator.stopped").at(-1);
+  assert.deepEqual([event?.subject, (event?.data as Record<string, unknown>).by, (event?.data as Record<string, unknown>).session], [key, "Ada", "s2"]);
+  await w.run();
+  // The ended implementor is not settled (no failure counted, no build); the review the person asked for starts.
+  assert.deepEqual(roles(w), ["triage", "implement", "review"]);
+  assert.equal(w.job("1")?.failures, 0);
+  assert.equal(w.job("1")?.interrupt, undefined);
+});
+
+test("a pick made while the tick prepares a session's start wins: nothing starts, and the pick is carried out", async () => {
+  const w = world(config({ level: 2 }), [item("1")]);
+  w.store.addUsageSample(usage(0.1, 0.1));
+  await w.run();
+  w.runner.end("1", "succeeded", TRIAGE_OK);
+  await w.run();
+  w.clock.ms += 5_000;
+  const key = refKey(ref("1"));
+  const take = w.runner.takeWorkspace;
+  // The person's Backlog arrives while the implement step's workspace is prepared.
+  w.runner.takeWorkspace = async (...args) => {
+    const jobs = loadJobs(w.store);
+    if (jobs[key]) jobs[key]!.dropAskedBy = "Ada";
+    saveJobs(w.store, jobs);
+    return take(...args);
+  };
+  await w.run();
+  assert.deepEqual(roles(w), ["triage"]);
+  w.runner.takeWorkspace = take;
+  await w.run();
+  // Dropped, and started again from triage, as Backlog says.
+  assert.deepEqual(roles(w), ["triage", "triage"]);
+  assert.match(w.reasons("orchestrator.job_dropped")[0] ?? "", /Ada put 1 back in the backlog/);
+});

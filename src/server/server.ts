@@ -35,7 +35,11 @@ import { setVote, voteInStore } from "../store/votes.ts";
 import { isSha } from "../orchestrator/history.ts";
 import { readMergeQueueNote } from "../orchestrator/mergeQueueLease.ts";
 import { answerQuestion, answerRefusal, rewriteRefusal, keepsRecommendations, loadJobs, questionsSettled, releaseJob, parkedRewrite, resumesStep, saveJobs, settleRewrite } from "../orchestrator/jobs.ts";
-import { applyMove, isMove, MOVES, moveWhys } from "./moves.ts";
+import { applyMove, isMove, MOVES, moveWhys, ROLE_WORDS, runningRole } from "./moves.ts";
+import { holdStands } from "../model/people.ts";
+import type { PickRequest, RequestStep } from "../hosts/metaBranch/requests.ts";
+import { requestState } from "../hosts/metaBranch/requests.ts";
+import { randomUUID } from "node:crypto";
 import type { MoveInput } from "./moves.ts";
 import type { AnswerRefusal, RewriteRefusal, Rewrite } from "../orchestrator/jobs.ts";
 import { workBranch } from "../orchestrator/paths.ts";
@@ -60,7 +64,7 @@ import { activityView } from "./activity.ts";
 import { decide as decideItemDraft, draftRequest, draftViews } from "./drafts.ts";
 import type { MergeQueueOptions } from "../config/mergeQueue.ts";
 import { addAnswer, loadAnswers } from "../store/answers.ts";
-import { applyControl, mergeQueueOn, pauseRemembering, startAgain } from "../store/control.ts";
+import { applyControl, pauseRemembering, startAgain, switchOnFor } from "../store/control.ts";
 import { countWithoutTriage, withoutTriageKeys } from "./triage.ts";
 import type { ControlAction } from "../store/control.ts";
 import { itemTextHash, optionTexts } from "../core/answerReuse.ts";
@@ -111,6 +115,12 @@ export interface ServerOptions {
   /** Brings the store up to date after a write, so the answer and the board show it. */
   syncNow?: () => Promise<void>;
   /**
+   * The picks' requests on the meta ref (decision 104, src/hosts/metaBranch/requests.ts): a pick for an Item whose work runs on
+   * another machine is written here, and the requests for this machine are carried out by `carryOutRequests`. `machine` is this
+   * machine's name, as its agents' claims name it. Absent without a configuration: such a pick is refused.
+   */
+  requests?: PickRequestPort;
+  /**
    * The project's configuration file. The Settings page reads it and changes its safe fields
    * (src/config/edit.ts). Absent in board-only mode.
    */
@@ -118,7 +128,7 @@ export interface ServerOptions {
   /** The label for Items an AI made or rewrote (`labels.aiGenerated`), or undefined when the project keeps none. Read at each use. */
   aiLabel?: () => string | undefined;
   /** The orchestrator's labels, which order the backlog column. Defaults to bug label "bug". */
-  planning?: () => { bugLabels: string[]; plannedSessions?: number; level?: number; resources?: ResourceConfig[]; reserve?: Record<UsageWindowKind, number>; allowances?: AllowancePlan[] };
+  planning?: () => { bugLabels: string[]; plannedSessions?: number; level?: number; resources?: ResourceConfig[]; reserve?: Record<UsageWindowKind, number>; allowances?: AllowancePlan[]; pickNeeds?: { review?: string; queue?: string } };
   /** Reads the diff of an item's branch for `GET /api/diff`. Absent in board-only mode. */
   diff?: (ref: Ref) => Promise<DiffView>;
   /** Opens an Item's change, or one of its files, in the person's own diff tool for `POST /api/open-diff` (`src/orchestrator/diffTool.ts`). Absent in board-only mode. */
@@ -272,9 +282,23 @@ export function sharedSavedText(saved: SharedSaved, by: string): string {
   return at;
 }
 
+/** Where the picks' requests are read and written (decision 104). */
+export interface PickRequestPort {
+  machine: string;
+  /** Every request on the meta ref as this machine has it, oldest first. */
+  list(): PickRequest[];
+  /** Writes one line (a request, or this machine's answer) and pushes it. */
+  write(line: { kind: string; by: { who: string; agent: boolean }; fields: Record<string, unknown> }): Promise<{ ok: true } | { ok: false; error: string }>;
+}
+
 export interface ScopeSoupServer {
   /** Starts listening. Resolves with where. */
   start(): Promise<{ host: string; port: number; url: string }>;
+  /**
+   * Carries out the picks requested for this machine (decision 104), each through the same code as a pick on this board, and
+   * writes what it did or why it refused. Called after each fetch of the meta ref. Returns how many it answered.
+   */
+  carryOutRequests(): Promise<number>;
   /** Ends the event streams and stops listening. */
   stop(): Promise<void>;
 }
@@ -670,10 +694,53 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
   }
 
   /** What a move is decided from, for an Item as the store has it now. */
+  /** The requests this process carried out (or is carrying out), so a slow write of the answer does not run one twice. */
+  const handled = new Set<string>();
+
   function moveInput(work: WorkItem, lane: ItemPage["lane"]): MoveInput {
     const key = refKey(work.ref);
     const live = store.list<Session>("session").find((session) => refKey(session.subject) === key && !session.chat && isLive(session));
-    return { item: work, job: loadJobs(store)[key], lane, level: options.planning?.().level ?? 0, mergeQueueOn: mergeQueueOn(store), at: now().getTime(), ...(live ? { liveRole: live.role } : {}) };
+    const plan = options.planning?.();
+    const level = plan?.level ?? 0;
+    const job = loadJobs(store)[key];
+    const elsewhere = job ? undefined : workElsewhere(work);
+    return {
+      item: work, job, lane, level, mergeQueueOn: switchOnFor(store, "mergeQueue", level), at: now().getTime(),
+      ...(live ? { liveRole: live.role } : {}), ...(plan?.pickNeeds ? { needs: plan.pickNeeds } : {}), ...(elsewhere ? { elsewhere } : {}),
+    };
+  }
+
+  /**
+   * The machine whose agent holds the Item's work, when it is not this one and a request can reach it (decision 104). Agents'
+   * claims name `scopesoup@<machine>` on every host.
+   */
+  function workElsewhere(work: WorkItem): string | undefined {
+    const holder = work.holder;
+    if (!options.requests || !holder?.actor.bot || !holdStands(holder, now().getTime())) return undefined;
+    const machine = /^scopesoup@(.+)$/.exec(holder.actor.id)?.[1];
+    return machine && machine !== options.requests.machine ? machine : undefined;
+  }
+
+  /** The newest pick requested for an Item from any board, with where it stands (`requestState`). */
+  function lastRequest(key: string): (PickRequest & { state: ReturnType<typeof requestState> }) | undefined {
+    const found = options.requests?.list().filter((request) => request.item === key).at(-1);
+    return found ? { ...found, state: requestState(found, now().getTime()) } : undefined;
+  }
+
+  /** Marks the job of an Item a person made abandoned whose session runs here: the tick ends that session at once (decision 104). */
+  function interruptForAbandon(ref: string, who: string): void {
+    store.tx(() => {
+      const jobs = loadJobs(store);
+      const job = jobs[ref];
+      if (!job) return;
+      const live = store.list<Session>("session").find((session) => refKey(session.subject) === ref && !session.chat && isLive(session));
+      const role = runningRole({ job, ...(live ? { liveRole: live.role } : {}) });
+      if (!role) return;
+      const at = now().toISOString();
+      job.interrupt = { by: who, at, to: "abandoned" };
+      saveJobs(store, jobs);
+      store.appendEvent({ kind: "person.moved", subject: ref, actor: who, data: { to: "abandoned", reason: `${who} abandoned ${job.item.id}: ${ROLE_WORDS[role] ?? "the agent"}'s session is ended now; its result is not taken.`, via: "board" } }, at);
+    });
   }
 
   /**
@@ -769,7 +836,7 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
     }
     const { ref, seen, steps } = body;
     const blockedBy = body.blockedBy === undefined ? undefined : list(body.blockedBy);
-    type PickStep = { kind: "release" | "claim" | "block" } | { kind: "state"; state: string } | { kind: "move"; to: string };
+    type PickStep = RequestStep;
     const valid = (step: unknown): step is PickStep => {
       if (typeof step !== "object" || step === null) return false;
       const each = step as Record<string, unknown>;
@@ -784,9 +851,29 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
     if (!work) return sendError(response, 404, "ITEM_NOT_FOUND", `No item ${ref}.`);
     const changed = changedSince(work, seen);
     if (changed) return sendError(response, 409, "CHANGED", changed);
+    // The Item's work runs on another machine: a pick that acts on that work (a move, or Abandoned, which ends its session) is
+    // written on the meta ref for that machine, which carries it out at its next fetch with these same steps (decision 104).
+    const elsewhere = loadJobs(store)[ref] ? undefined : workElsewhere(work);
+    const typed = steps as PickStep[];
+    if (elsewhere && typed.some((step) => step.kind === "move" || (step.kind === "state" && step.state === "abandoned"))) {
+      const id = randomUUID();
+      const written = await options.requests!.write({ kind: "pick", by: { who: by().who, agent: false }, fields: { id, item: ref, for: elsewhere, seen, steps: typed, ...(blockedBy ? { blockedBy } : {}) } });
+      if (!written.ok) return sendError(response, 502, "NOT_WRITTEN", `The pick could not be written for ${elsewhere}: ${written.error}`);
+      store.appendEvent({ kind: "person.moved", subject: ref, actor: by().who, data: { to: typed.map((step) => (step.kind === "move" ? step.to : step.kind === "state" ? step.state : step.kind)).join(", "), reason: `${by().who} asked ${elsewhere}, where ${work.ref.id}'s work runs, to carry out their pick at its next fetch.`, via: "board", request: id, for: elsewhere } }, now().toISOString());
+      options.onRefresh?.();
+      return sendJson(response, 202, { ref, requested: { id, for: elsewhere } });
+    }
+    const result = await runPick(ref, typed, blockedBy);
+    if (!result.ok) return sendError(response, result.status, "STEP_REFUSED", result.message);
+    options.onRefresh?.();
+    return sendJson(response, 200, { ref, done: result.done });
+  }
+
+  /** A pick's steps, in order, each through its own endpoint's code, as the picked person (the caller checked `seen`). */
+  async function runPick(ref: string, steps: readonly RequestStep[], blockedBy: string[] | undefined): Promise<{ ok: true; done: string[] } | { ok: false; status: number; message: string }> {
     const done: string[] = [];
     const words: Record<string, string> = { release: "released", claim: "claimed", state: "state changed", block: "blocker added", move: "moved" };
-    for (const step of steps as PickStep[]) {
+    for (const step of steps) {
       const kind = step.kind;
       const answer = kind === "release" || kind === "claim" ? await inProcess((req, res) => person(req, res, kind), { id: ref })
         : step.kind === "state" ? await inProcess(editItem, { ref, state: step.state })
@@ -794,12 +881,37 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
         : await inProcess(editItem, { ref, blockedBy: blockedBy ?? [] });
       if (answer.status >= 400) {
         const message = `${done.length > 0 ? `${done.join(", ").replace(/^./, (first) => first.toUpperCase())}; then refused: ` : ""}${answer.message ?? `the server answered ${answer.status}`}`;
-        return sendError(response, answer.status, "STEP_REFUSED", message);
+        return { ok: false, status: answer.status, message };
       }
+      // Abandoned replaces the step that runs: its session is ended now (decision 104).
+      if (step.kind === "state" && step.state === "abandoned") interruptForAbandon(ref, by().who);
       done.push(words[step.kind]!);
     }
-    options.onRefresh?.();
-    return sendJson(response, 200, { ref, done });
+    return { ok: true, done };
+  }
+
+  /** The requests for this machine still waiting, carried out in order (decision 104); see `ScopeSoupServer.carryOutRequests`. */
+  async function carryOutRequests(): Promise<number> {
+    const port = options.requests;
+    if (!port) return 0;
+    let answered = 0;
+    for (const request of port.list()) {
+      if (request.for !== port.machine || requestState(request, now().getTime()) !== "pending" || handled.has(request.id)) continue;
+      handled.add(request.id);
+      const work = workByKey(request.item);
+      const result = !work ? { ok: false as const, message: `no Item ${request.item} here` }
+        : changedSince(work, request.seen) ? { ok: false as const, message: changedSince(work, request.seen)! }
+        : await requestPerson.run(request.who, () => runPick(request.item, request.steps, request.blockedBy));
+      const fields = result.ok ? { request: request.id, done: result.done } : { request: request.id, why: result.message };
+      const written = await port.write({ kind: result.ok ? "pick-done" : "pick-refused", by: { who: "scopesoup", agent: true }, fields });
+      store.appendEvent({
+        kind: "orchestrator.pick_request", subject: request.item, actor: "orchestrator",
+        data: { request: request.id, by: request.who, from: request.from, done: result.ok, reason: result.ok ? `Carried out ${request.who}'s pick from ${request.from ?? "another machine"}.` : `Refused ${request.who}'s pick from ${request.from ?? "another machine"}: ${result.message}`, ...(written.ok ? {} : { notWritten: written.error }) },
+      }, now().toISOString());
+      answered++;
+    }
+    if (answered > 0) options.onRefresh?.();
+    return answered;
   }
 
   async function startOver(request: IncomingMessage, response: ServerResponse): Promise<void> {
@@ -2447,7 +2559,13 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
         if (images.length > 0) page.media = { names: images, shared: options.media!.pushing() };
         const work = snapshot.works.find((each) => refKey(each.ref) === refKey(page.item.ref));
         const moves = work ? moveWhys(moveInput(work, page.lane)) : undefined;
-        return sendJson(response, 200, { ...page, canEdit: (ours && items.write.editWork !== undefined) || onHost, ...(hold ? { hold } : {}), states: onHost ? HOST_STATES : STATES, ...(moves && options.configFile !== undefined ? { moves } : {}) });
+        // The machine that runs the Item's work, and the newest pick requested of it (decision 104).
+        const elsewhere = work && !loadJobs(store)[refKey(work.ref)] ? workElsewhere(work) : undefined;
+        const request = work ? lastRequest(refKey(work.ref)) : undefined;
+        const remote = elsewhere || request
+          ? { remote: { ...(elsewhere ? { machine: elsewhere } : {}), ...(request ? { request: { who: request.who, at: request.at, for: request.for, steps: request.steps, state: request.state, ...(request.answer?.why ? { why: request.answer.why } : {}) } } : {}) } }
+          : {};
+        return sendJson(response, 200, { ...page, canEdit: (ours && items.write.editWork !== undefined) || onHost, ...(hold ? { hold } : {}), states: onHost ? HOST_STATES : STATES, ...(moves && options.configFile !== undefined ? { moves } : {}), ...remote });
       }
       return sendError(response, 404, "NOT_FOUND", `No such endpoint: GET ${path}`);
     }
@@ -2463,6 +2581,7 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
   }
 
   return {
+    carryOutRequests,
     start() {
       return new Promise((resolve, reject) => {
         const created = createHttpServer((request, response) => {

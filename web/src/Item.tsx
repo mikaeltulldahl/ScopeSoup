@@ -19,7 +19,7 @@ import type { ChatSessionView } from "../../src/core/views.ts";
 import { hostDiffers } from "../../src/core/lanes.ts";
 import { itemNoun, words } from "./theme.ts";
 import type { ItemListRow } from "./api.ts";
-import { currentState, effectNote, stateOptions, toastText, withBlocker } from "./stateMenu.ts";
+import { currentState, effectNote, requestNote, stateOptions, toastText, withBlocker } from "./stateMenu.ts";
 import type { StateOption } from "./stateMenu.ts";
 import { queueChange, usePendingState } from "./Pending.tsx";
 import { ago, fromWords, laneWord, optionRows, span, stateFacts, unmatchedRecommendation } from "./format.ts";
@@ -1364,11 +1364,9 @@ function Body({ page, reload, resources }: { page: ItemPage; reload: () => void;
         )}
         {page.links && page.links.length > 0 && <Links links={page.links} />}
         {page.why && <Place page={page} />}
+        {/* The State menu stands alone, with no label (decision 104): the dropdown says the state. */}
+        <StateMenu page={page} />
         <dl class="facts">
-          <dt>State</dt>
-          <dd>
-            <StateMenu page={page} />
-          </dd>
           {facts.host !== null && (
             <>
               <dt>On the host</dt>
@@ -1610,11 +1608,14 @@ function StateMenu({ page }: { page: ItemPage }) {
     queuePick(page, option);
   };
   const label = options.find((option) => option.key === shown)?.label ?? shown;
+  // A pick requested of the machine that runs the work (decision 104): waiting for it, or what it said.
+  const asked = requestNote(page, theme, Date.now());
   return (
     <div class="state-menu">
-      <button type="button" class="state-button" aria-haspopup="listbox" aria-expanded={open} aria-controls={listId} onClick={() => setOpen(!open)}>
+      <button type="button" class="state-button" aria-label={`State: ${label}`} aria-haspopup="listbox" aria-expanded={open} aria-controls={listId} onClick={() => setOpen(!open)}>
         {label} <span aria-hidden="true">▾</span>
       </button>
+      {asked && <p class="muted state-request" role="status">{asked}</p>}
       {open && (
         <ul class="state-list" role="listbox" id={listId} aria-label="State">
           {options.map((option) => {

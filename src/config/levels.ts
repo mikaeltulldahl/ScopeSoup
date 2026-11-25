@@ -68,6 +68,20 @@ function ownNeeds(level: Level, config: ProjectConfig, found: (command: string) 
   }
 }
 
+/**
+ * What a person's In review and Merge queue picks lack, whatever the level (decision 104): the reviewer's program, and what the
+ * merge queue needs to run (level 4's own needs). Absent when nothing is missing.
+ */
+export function pickNeeds(config: ProjectConfig, found: (command: string) => boolean): { review?: string; queue?: string } {
+  const provider = providerFor(config, "review");
+  const program = provider.program(config);
+  const queue = ownNeeds(4, config, found).map((need) => need.text);
+  return {
+    ...(found(program) ? {} : { review: `needs ${provider.label} (the program "${program}" was not found)` }),
+    ...(queue.length > 0 ? { queue: `the merge queue needs ${andList(queue)}` } : {}),
+  };
+}
+
 function andList(parts: string[]): string {
   return parts.length <= 1 ? (parts[0] ?? "") : `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}`;
 }

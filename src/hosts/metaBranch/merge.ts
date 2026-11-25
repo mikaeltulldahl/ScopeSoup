@@ -4,6 +4,7 @@
 
 import { isItemId } from "./ids.ts";
 import { mergeSettings, SETTINGS_FILE, SETTINGS_LOG } from "./settings.ts";
+import { REQUESTS_LOG } from "./requests.ts";
 
 /** One entry of a tree, as `git ls-tree` gives it. */
 export interface TreeEntry {
@@ -37,8 +38,8 @@ export function itemPath(path: string): { id: string; file: "item.md" | "log.jso
   return CONFLICT_FILE.test(name) ? { id, file: "conflict" } : null;
 }
 
-/** An append-only log: an item's `log.jsonl` or the settings' log. */
-export const isLogFile = (path: string): boolean => path === SETTINGS_LOG || itemPath(path)?.file === "log.jsonl";
+/** An append-only log: an item's `log.jsonl`, the settings' log, or the picks' requests (`requests.ts`). */
+export const isLogFile = (path: string): boolean => path === SETTINGS_LOG || path === REQUESTS_LOG || itemPath(path)?.file === "log.jsonl";
 
 // --- logs ---
 

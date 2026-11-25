@@ -13,6 +13,7 @@ import { openStore } from "../store/store.ts";
 import { createSync } from "../sync/index.ts";
 import type { ScopeSoupServer } from "./server.ts";
 import { createServer } from "./server.ts";
+import { loadJobs, saveJobs } from "../orchestrator/jobs.ts";
 
 let repo: TestRepo;
 let host: MetaBranchHost;
@@ -139,4 +140,15 @@ test("priority: set on creation, edited, cleared, logged and shown on the card; 
 
   assert.equal((await post("/api/items", { title: "X", priority: "urgent" })).status, 400);
   assert.equal((await post("/api/item/edit", { ref, priority: "urgent" })).status, 400);
+});
+
+test("Abandoned picked over a running session marks its job for the tick to end that session now (decision 104)", async () => {
+  const made = await post("/api/items", { title: "Oil the hinges", body: "", verification: "", labels: "", blockedBy: [] });
+  const ref = made.body.ref as string;
+  const page = await getJson<ItemPage>(`/api/item?ref=${ref}`);
+  saveJobs(store, { [ref]: { item: page.item.ref, workspace: "w", branch: "scopesoup/x", step: "implement", failures: 0, fixRounds: 0, startedAt: "2026-11-18T09:00:00Z", sessionId: "s9" } });
+  const picked = await post("/api/item/pick", { ref, seen: page.item.updatedAt, steps: [{ kind: "state", state: "abandoned" }] });
+  assert.equal(picked.status, 200, JSON.stringify(picked.body));
+  assert.deepEqual([loadJobs(store)[ref]?.interrupt?.by, loadJobs(store)[ref]?.interrupt?.to], ["Ada", "abandoned"]);
+  assert.match(String((store.eventsOfKinds(["person.moved"], 5)[0]?.data as { reason?: string }).reason), /the implementor's session is ended now/);
 });

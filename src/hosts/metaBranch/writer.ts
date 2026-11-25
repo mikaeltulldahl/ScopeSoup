@@ -15,6 +15,7 @@ import type { Files, PathChange, TreeEntry } from "./merge.ts";
 import { addedLines, appendLines, appendOnlyProblem, isLogFile, itemPath, logLines, lostLines, mergeTrees, moveItemPaths, renameInHeader } from "./merge.ts";
 import type { SettingChange } from "./settings.ts";
 import { isSettingsPath, SETTINGS_FILE, SETTINGS_LOG } from "./settings.ts";
+import { REQUESTS_LOG } from "./requests.ts";
 import type { CommitInfo, Person } from "./plumbing.ts";
 import {
   changesSince,
@@ -226,6 +227,8 @@ export interface Writer {
    * and the commit's author. Then the ref is shared, as after any write.
    */
   writeSettings(update: SettingsUpdate, by: { who: string; email?: string }): Promise<SettingsWriteResult>;
+  /** One line in the picks' requests log (`requests/log.jsonl`, src/hosts/metaBranch/requests.ts), in one commit; then the ref is shared. */
+  appendRequest(line: LineWrite): Promise<{ commit: string | null; sharing: SharingReport }>;
   /** `lines` are written to the new item's log in the same commit. */
   createItem(input: ItemInput, lines?: LineWrite[]): Promise<WriteResult>;
   /**
@@ -292,6 +295,8 @@ interface Plan {
   changes: Map<string, PathChange>;
   /** A save of the settings: every changed path must be the settings' file or log. */
   settings?: true;
+  /** A line of the picks' requests: the only changed path is their log. */
+  requests?: true;
   /** The commit's author, when it is not the writer's person (the committer stays the writer's). */
   author?: Person;
 }
@@ -510,6 +515,10 @@ export function createWriter(config: WriterConfig): Writer {
       for (const path of planned.changes.keys()) {
         if (planned.settings) {
           if (!isSettingsPath(path)) throw new Error(`A save of the settings tried to change ${path}; nothing was written.`);
+          continue;
+        }
+        if (planned.requests) {
+          if (path !== REQUESTS_LOG) throw new Error(`A request tried to change ${path}; nothing was written.`);
           continue;
         }
         const owner = itemPath(path)?.id;
@@ -1062,6 +1071,19 @@ export function createWriter(config: WriterConfig): Writer {
         });
         const sharing = await shareNow(false);
         return { commit: done.commit, changed: done.changed, changes: done.changed ? made : [], sharing };
+      });
+    },
+
+    appendRequest(input) {
+      return serial(async () => {
+        const at = now();
+        const done = await commitWrite(async (state) => {
+          const line = serializeLogLine({ at, by: { ...input.by, machine }, kind: input.kind, fields: input.fields ?? {} });
+          const log = appendLines((await state.text(REQUESTS_LOG)) ?? "", [line]);
+          if (Buffer.byteLength(log, "utf8") > Math.min(maxAppend, MAX_FILE_BYTES)) throw new RefusedWrite(`The requests' log would be over ${Math.min(maxAppend, MAX_FILE_BYTES)} bytes; nothing more is written.`);
+          return { id: "requests", requests: true, message: `Requests: ${input.kind} by ${input.by.who} on ${machine}`, changes: new Map<string, PathChange>([[REQUESTS_LOG, { text: log }]]) };
+        });
+        return { commit: done.commit, sharing: await shareNow(false) };
       });
     },
 
