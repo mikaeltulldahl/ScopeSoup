@@ -89,15 +89,26 @@ test("another project on the remote: the switch asks; Join theirs backs mine up 
 });
 
 test("Make mine the project's switches without replacing anything; the same project needs no question", async () => {
-  const s = await solo("laptop-c", "tidepool");
-  const mine = git(s.repo, "rev-parse", "refs/scopesoup/meta");
-  const done = await s.post({ multiplayer: true, players: "mine" });
-  assert.equal(done.status, 200, JSON.stringify(done.body));
-  assert.equal(git(s.repo, "rev-parse", "refs/scopesoup/meta"), mine);
-  assert.equal(git(s.repo, "for-each-ref", "refs/scopesoup-backup/"), "");
-
+  // First the same project (nothing to ask), while the remote still holds its own: "Make mine" below pushes this clone's on top.
   const same = await solo("laptop-d", "harbour");
   assert.equal((await same.post({ multiplayer: true })).status, 200);
+
+  const s = await solo("laptop-c", "tidepool");
+  const mine = git(s.repo, "rev-parse", "refs/scopesoup/meta");
+  const theirs = git(origin, "rev-parse", "refs/scopesoup/meta");
+  const mineCount = Number(git(s.repo, "rev-list", "--count", mine));
+  const theirsCount = Number(git(origin, "rev-list", "--count", theirs));
+  const done = await s.post({ multiplayer: true, players: "mine" });
+  assert.equal(done.status, 200, JSON.stringify(done.body));
+  // The switch shares at once: this clone's commits are put on top of the remote's, and the remote has the result.
+  const tip = git(s.repo, "rev-parse", "refs/scopesoup/meta");
+  assert.notEqual(tip, mine, "this clone's commits were replayed on top of the remote's");
+  assert.equal(tip, git(origin, "rev-parse", "refs/scopesoup/meta"), "pushed");
+  git(s.repo, "merge-base", "--is-ancestor", theirs, tip);
+  // The two histories are unrelated: all of the remote's commits and all of this clone's (replayed) are in the result.
+  assert.equal(Number(git(s.repo, "rev-list", "--count", tip)), theirsCount + mineCount, "nothing of either side is lost");
+  assert.equal(JSON.parse(git(s.repo, "show", `${tip}:settings/settings.json`)).project, "tidepool", "this clone's settings are on top");
+  assert.equal(git(s.repo, "for-each-ref", "refs/scopesoup-backup/"), "");
 });
 
 test("Join theirs waits while an agent session runs, naming the machine", async () => {
