@@ -1,12 +1,12 @@
 // The item page: the item with everything attached. The item is the one thing a person follows.
 
-import type { ConflictVersions, DecisionOption, OriginalFate, PartGoes, ProposedPart, ParkedDraft } from "../../src/model/types.ts";
+import type { ConflictVersions, DecisionOption, OriginalFate, PartGoes, ProposedPart, ParkedRewrite } from "../../src/model/types.ts";
 import { ORIGINAL_FATES, PART_GOES, restructuringProblem } from "../../src/model/types.ts";
 import type { BoardView, DiffFile, DiffView, ItemPage, RoundRow, SessionDetailsView } from "./api.ts";
 import { Fragment } from "preact";
 import type { ComponentChildren } from "preact";
 import { useEffect, useId, useState } from "preact/hooks";
-import { fetchChat, fetchDiff, fetchItem, fetchItemBranch, fetchSession, postAnswers, postChat, postDraft, postEdit, postHandBack, postOpenDiff, postProposal, postRelease, postResolve, postStartOver, postClaim, postMediaDelete, useNow, usePerson, useView } from "./api.ts";
+import { fetchChat, fetchDiff, fetchItem, fetchItemBranch, fetchSession, postAnswers, postChat, postRewrite, postEdit, postHandBack, postOpenDiff, postProposal, postRelease, postResolve, postStartOver, postClaim, postMediaDelete, useNow, usePerson, useView } from "./api.ts";
 import { actorClass, actorWords, Mention, VoteButtons } from "./Card.tsx";
 import { placeText, statusText } from "./cardText.ts";
 import { ItemForm } from "./ItemForm.tsx";
@@ -489,7 +489,7 @@ function QuestionCard({ question, held, canAnswer, busy, onChange }: { question:
   );
 }
 
-/** The options of a question as `answerText` sends them: the label alone (a draft's), or the label with its description. */
+/** The options of a question as `answerText` sends them: the label alone (a rewrite's), or the label with its description. */
 const sendOf = (question: Pick<PanelQuestion, "options" | "recommendation">, send: "answer" | "label") =>
   optionRows(question.options, question.recommendation).map((row) => ({ label: row.label, send: send === "label" ? row.label : row.answer }));
 
@@ -530,7 +530,7 @@ function useHeld(itemKey: string, ids: readonly string[], start: () => Record<st
  * stay open. With a parked Item, the panel shows its title, why it is parked, and Start over.
  */
 function QuestionsPanel({ page, questions, now, reload, primary, note }: { page: ItemPage; questions: PanelQuestion[]; now: number; reload: () => void; primary: boolean; note?: ComponentChildren }) {
-  const parked = page.parked && !page.parked.refine && !page.proposal ? page.parked : undefined;
+  const parked = page.parked && !page.parked.rewrite && !page.proposal ? page.parked : undefined;
   const canAnswer = parked ? parked.canAnswer : true;
   const ids = questions.map((question) => question.id);
   const [held, change, sent] = useHeld(page.item.key, ids);
@@ -591,7 +591,7 @@ const asks = (parked: NonNullable<ItemPage["parked"]>): boolean => parked.canAns
  * when a person may answer), then the questions in the item's log that are not the parked state's own.
  */
 function panelQuestions(page: ItemPage, now: number): PanelQuestion[] {
-  const parked = page.parked && !page.parked.refine && !page.proposal ? page.parked : undefined;
+  const parked = page.parked && !page.parked.rewrite && !page.proposal ? page.parked : undefined;
   const out: PanelQuestion[] = [];
   const own = (text: string) => page.questions.find((question) => !question.proposal && question.question === text);
   if (parked?.questions && parked.questions.length > 0) {
@@ -614,7 +614,7 @@ function panelQuestions(page: ItemPage, now: number): PanelQuestion[] {
   }
   for (const question of page.questions) {
     if (question.proposal || question.question === page.parked?.decision?.question || question.question === page.parked?.reason) continue;
-    if ((page.parked?.refine?.questions ?? []).some((each) => each.question === question.question)) continue;
+    if ((page.parked?.rewrite?.questions ?? []).some((each) => each.question === question.question)) continue;
     if ((page.parked?.questions ?? []).some((each) => each.question === question.question)) continue;
     out.push({
       id: `q:${question.id ?? question.at}`, question: question.question, options: question.options,
@@ -846,7 +846,7 @@ function parseLabelChange(text: string): { add: string[]; remove: string[] } {
   return { add: change.add.filter(Boolean), remove: change.remove.filter(Boolean) };
 }
 
-/** One line of the draft's diff: "+" or "−" in the margin, the changed words marked when the line has a partner. */
+/** One line of the rewrite's diff: "+" or "−" in the margin, the changed words marked when the line has a partner. */
 function DiffLine({ row }: { row: DiffRow }) {
   const mark = row.kind === "add" ? "+" : row.kind === "del" ? "−" : " ";
   return (
@@ -859,8 +859,8 @@ function DiffLine({ row }: { row: DiffRow }) {
   );
 }
 
-/** The description turned into the draft, as one unified diff; long unchanged runs fold into a line that opens on a click. */
-function DraftDiff({ before, after }: { before: string; after: string }) {
+/** The description turned into the rewrite, as one unified diff; long unchanged runs fold into a line that opens on a click. */
+function RewriteDiff({ before, after }: { before: string; after: string }) {
   const [opened, setOpened] = useState<Record<number, boolean>>({});
   const rows = diffLines(before, after);
   if (!hasChanges(rows)) return <p class="muted">The rewrite keeps the description as it is.</p>;
@@ -877,16 +877,16 @@ function DraftDiff({ before, after }: { before: string; after: string }) {
 
 /**
  * The triage's rewrite of the description, next to the description as it stands, with its questions (each
- * recommendation picked to begin with). Keeping every recommendation, one press accepts the draft (or Edit, Reject); any
+ * recommendation picked to begin with). Keeping every recommendation, one press accepts the rewrite (or Edit, Reject); any
  * other answer sends the answers and the triage runs again with them, with no limit on the rounds. The questions
  * are answered as in the questions panel, the picks are kept in this browser until a button sends them, and each button
  * sends everything in one write (on GitHub one comment: the answers and, keeping the recommendations, the decision).
  */
-function DraftPanel({ page, draft, reload, primary }: { page: ItemPage; draft: ParkedDraft; reload: () => void; primary: boolean }) {
+function RewritePanel({ page, rewrite, reload, primary }: { page: ItemPage; rewrite: ParkedRewrite; reload: () => void; primary: boolean }) {
   const main = primary ? "primary" : undefined;
   const parked = page.parked!;
-  const questions: PanelQuestion[] = draft.questions.map((question, index) => ({
-    id: `draft:${parked.at}:${index}`, question: question.question, options: question.options, recommendation: question.recommendation,
+  const questions: PanelQuestion[] = rewrite.questions.map((question, index) => ({
+    id: `rewrite:${parked.at}:${index}`, question: question.question, options: question.options, recommendation: question.recommendation,
     ...(question.context ? { context: question.context } : {}), ...(question.multiSelect ? { multiSelect: true } : {}), entry: {},
   }));
   // The recommendation picked to begin with: its option, or (matching none) its words as Other.
@@ -898,27 +898,27 @@ function DraftPanel({ page, draft, reload, primary }: { page: ItemPage; draft: P
   const recommended = questions.map((question) => answerText(start()[question.id], sendOf(question, "label")));
   const answers = questions.map((question) => answerText(held[question.id], sendOf(question, "label")));
   const [editing, setEditing] = useState(false);
-  const [text, setText] = useState(draft.draft);
-  const [labelText, setLabelText] = useState(labelChangeText(draft.labels));
+  const [text, setText] = useState(rewrite.text);
+  const [labelText, setLabelText] = useState(labelChangeText(rewrite.labels));
   const { busy, error, send } = useSend();
   const keeps = answers.every((answer, index) => answer.trim() === recommended[index]!.trim());
   const filled = answers.every((answer) => answer.trim() !== "");
-  // Someone edited the description since the draft was written; Accept is refused; Edit or Reject decides with it in view.
-  const changed = (page.item.body ?? "").trim() !== draft.original.trim();
+  // Someone edited the description since the rewrite was written; Accept is refused; Edit or Reject decides with it in view.
+  const changed = (page.item.body ?? "").trim() !== rewrite.original.trim();
   const decide = (action: "accept" | "edit" | "reject") =>
-    send(() => postDraft(page.item.key, parked.at, answers, action, action === "edit" ? text : undefined, action === "edit" ? parseLabelChange(labelText) : undefined).then(() => {
+    send(() => postRewrite(page.item.key, parked.at, answers, action, action === "edit" ? text : undefined, action === "edit" ? parseLabelChange(labelText) : undefined).then(() => {
       sent(questions.map((question) => question.id));
       reload();
     }));
   return (
     <section class="panel panel-yours">
-      <h3>Triage: rewrite of the description{draft.round > 1 ? ` (round ${draft.round})` : ""}</h3>
-      {draft.questions.length > 0 && <p class="question">The rewrite is written as if you take every recommendation. Pick another answer and the triage runs again with it.</p>}
+      <h3>Triage: rewrite of the description{rewrite.round > 1 ? ` (round ${rewrite.round})` : ""}</h3>
+      {rewrite.questions.length > 0 && <p class="question">The rewrite is written as if you take every recommendation. Pick another answer and the triage runs again with it.</p>}
       {questions.length > 0 && <QuestionSteps questions={questions} held={held} send="label" canAnswer={true} busy={busy} change={change} />}
-      <div class="draft-compare">
+      <div class="rewrite-compare">
         <div class="version">
           <p class="muted num">Change to the description (before, then the rewrite)</p>
-          <DraftDiff before={draft.original} after={draft.draft} />
+          <RewriteDiff before={rewrite.original} after={rewrite.text} />
         </div>
         {changed && (
           <div class="version">
@@ -927,14 +927,14 @@ function DraftPanel({ page, draft, reload, primary }: { page: ItemPage; draft: P
           </div>
         )}
       </div>
-      {draft.labels && <p class="draft-labels">Labels: <span class="num">{labelChangeText(draft.labels)}</span></p>}
-      {draft.droppedLabels && draft.droppedLabels.length > 0 && <p class="muted">Dropped, because the repository has no such label: {draft.droppedLabels.join(", ")}.</p>}
+      {rewrite.labels && <p class="rewrite-labels">Labels: <span class="num">{labelChangeText(rewrite.labels)}</span></p>}
+      {rewrite.droppedLabels && rewrite.droppedLabels.length > 0 && <p class="muted">Dropped, because the repository has no such label: {rewrite.droppedLabels.join(", ")}.</p>}
       {editing && keeps && (
         <div class="answer">
-          <label for="draft-text">Your version of the description</label>
-          <textarea id="draft-text" rows={10} value={text} onInput={(event) => setText((event.target as HTMLTextAreaElement).value)} disabled={busy} />
-          <label for="draft-labels">Label changes (for example +bug, −question; empty for none)</label>
-          <input id="draft-labels" type="text" value={labelText} onInput={(event) => setLabelText((event.target as HTMLInputElement).value)} disabled={busy} />
+          <label for="rewrite-text">Your version of the description</label>
+          <textarea id="rewrite-text" rows={10} value={text} onInput={(event) => setText((event.target as HTMLTextAreaElement).value)} disabled={busy} />
+          <label for="rewrite-labels">Label changes (for example +bug, −question; empty for none)</label>
+          <input id="rewrite-labels" type="text" value={labelText} onInput={(event) => setLabelText((event.target as HTMLInputElement).value)} disabled={busy} />
           <button type="button" class={main} onClick={() => decide("edit")} disabled={busy || text.trim() === ""}>
             {busy ? "Saving…" : "Accept my version"}
           </button>{" "}
@@ -955,7 +955,7 @@ function DraftPanel({ page, draft, reload, primary }: { page: ItemPage; draft: P
       )}
       <p class="muted">
         {keeps
-          ? `${page.canEdit ? "Accept writes the rewrite as the item's description; the old text stays in the item's history." : "This host's items are edited on the host: accepting gives the rewrite to the agents in place of the host's text."}${draft.labels ? " The label changes go with it; a label someone changed since stays as they set it." : ""} Reject keeps the description${draft.labels ? " and the labels" : ""} as they are. Either way the work can then start.`
+          ? `${page.canEdit ? "Accept writes the rewrite as the item's description; the old text stays in the item's history." : "This host's items are edited on the host: accepting gives the rewrite to the agents in place of the host's text."}${rewrite.labels ? " The label changes go with it; a label someone changed since stays as they set it." : ""} Reject keeps the description${rewrite.labels ? " and the labels" : ""} as they are. Either way the work can then start.`
           : "Your answers go to a new triage, which writes a new rewrite. Nothing starts until you accept or reject a rewrite."}
       </p>
       {error && <p class="error">{error}</p>}
@@ -1226,11 +1226,11 @@ function Body({ page, reload, resources }: { page: ItemPage; reload: () => void;
 
   // What waits for the person, in page order; the first panel that has a button for it holds the page's one primary button.
   const questions = panelQuestions(page, now);
-  const showQuestions = (page.parked && !page.proposal && !page.parked.refine) || questions.length > 0;
+  const showQuestions = (page.parked && !page.proposal && !page.parked.rewrite) || questions.length > 0;
   const questionsAsk = showQuestions && (page.parked ? page.parked.canAnswer : true) && questions.some((question) => question.answered === undefined);
   const openDecisions = page.assumptions.some((decision) => !decision.settled) && page.canSettle === true;
   const asking = [
-    page.parked?.refine ? "draft" : "",
+    page.parked?.rewrite ? "rewrite" : "",
     questionsAsk ? "questions" : "",
     openDecisions ? "decisions" : "",
     page.proposal ? "restructure" : "",
@@ -1387,7 +1387,7 @@ function Body({ page, reload, resources }: { page: ItemPage; reload: () => void;
       </section>
 
       {/* What waits for you, each with the orange border while it is open. */}
-      {page.parked?.refine && <DraftPanel key={page.parked.at} page={page} draft={page.parked.refine} reload={reload} primary={primary === "draft"} />}
+      {page.parked?.rewrite && <RewritePanel key={page.parked.at} page={page} rewrite={page.parked.rewrite} reload={reload} primary={primary === "rewrite"} />}
 
       {showQuestions && <QuestionsPanel note={page.media && imagesInQuestions ? <MediaNote media={page.media} error={mediaError} /> : null} key={`${page.parked?.at ?? ""}:${questions.map((question) => question.id).join(",")}`} page={page} questions={questions} now={now} reload={reload} primary={primary === "questions"} />}
 

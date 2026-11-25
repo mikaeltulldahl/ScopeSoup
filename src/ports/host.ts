@@ -217,21 +217,21 @@ export interface QuestionWrite {
   /** How the item parked (`needs-decision`) and the step that asked. */
   parked: string;
   step: string;
-  /** The draft comment of the triage round this question belongs to. */
-  draft?: string;
+  /** The rewrite comment of the triage round this question belongs to. */
+  rewrite?: string;
   /** A proposed restructuring: the question is a person's decision on it (`POST /api/proposal`). */
   proposal?: { id: string; reason: string; original: OriginalFate; parts: ProposedPart[]; carried?: string };
 }
 
-/** One triage round's draft of the description, posted on the item's host (GitHub: a draft comment). Its text is already inert. */
-export interface DraftWrite {
+/** One triage round's rewrite of the description, posted on the item's host (GitHub: a rewrite comment). Its text is already inert. */
+export interface RewriteWrite {
   round: number;
-  draft: string;
-  /** The label changes proposed with the draft; its marker carries them. */
+  text: string;
+  /** The label changes proposed with the rewrite; its marker carries them. */
   labels?: LabelChange;
 }
 
-/** About the most a comment Scope Soup posts on GitHub may hold (GitHub allows 65,536); a draft or split over a host's limit stays on Scope Soup's board. Other hosts give their own (`HostInfo.commentLimit`). */
+/** About the most a comment Scope Soup posts on GitHub may hold (GitHub allows 65,536); a rewrite or split over a host's limit stays on Scope Soup's board. Other hosts give their own (`HostInfo.commentLimit`). */
 export const COMMENT_LIMIT = 60_000;
 
 /** The answer Scope Soup posts on an item's host (GitHub: an answer comment). Its text is already inert. */
@@ -243,7 +243,7 @@ export interface AnswerWrite {
   options?: string[];
   /** `itemTextHash` of the item when the answer was given, for answer reuse. */
   textHash?: string;
-  /** A person's decision on a triage draft or a proposed restructuring. */
+  /** A person's decision on a triage rewrite or a proposed restructuring. */
   proposal?: "accepted" | "edited" | "rejected";
   /** Who answered: the board's picked person. Without it the host names the account that writes. */
   by?: string;
@@ -257,7 +257,7 @@ export class AlreadyAnswered extends Error {
   }
 }
 
-/** The issue's body changed since the triage draft was written; accepting it would overwrite a person's edit. */
+/** The issue's body changed since the triage rewrite was written; accepting it would overwrite a person's edit. */
 export class BodyChanged extends Error {
   constructor(message: string) {
     super(message);
@@ -334,7 +334,7 @@ export interface WritePort {
    * Posts each question as a comment of its own, numbered on from the item's earlier questions, and marks the item as
    * waiting for an answer (GitHub: the `scopesoup:needs-decision` label). Returns the question ids in order and the host's time of
    * the last one. Throws when the host refuses or did not apply it; `WriteLater` when that can change by itself. A
-   * question still open on the item with the same text (and draft) is not posted again: its comment is returned, so a retry
+   * question still open on the item with the same text (and rewrite) is not posted again: its comment is returned, so a retry
    * after a post that was taken before the failure posts no second one. `numbers` are the questions' numbers (`Qn`), in order.
    */
   askQuestions?(work: Ref, questions: QuestionWrite[]): Promise<{ ids: string[]; at: string; numbers?: number[] }>;
@@ -353,22 +353,22 @@ export interface WritePort {
   /** Several answers sent together, in one write (GitHub: one comment with `A1:` and `A2:` lines). Refused whole as `answerQuestion`. */
   answerQuestions?(work: Ref, answers: { to: string | null; answer: AnswerWrite }[]): Promise<{ open: number }>;
   /**
-   * Posts a triage round's draft as a comment, with the hash of the body it read. Throws `TooLarge` (nothing posted)
-   * over `COMMENT_LIMIT`. Returns the comment's id and the host's time. `WriteLater` as `askQuestions`; an unanswered draft
+   * Posts a triage round's rewrite as a comment, with the hash of the body it read. Throws `TooLarge` (nothing posted)
+   * over `COMMENT_LIMIT`. Returns the comment's id and the host's time. `WriteLater` as `askQuestions`; an unanswered rewrite
    * of the same round with the same text and body hash is returned instead of posting a second one.
    */
-  postDraft?(work: Ref, draft: DraftWrite): Promise<{ id: string; at: string }>;
+  postRewrite?(work: Ref, rewrite: RewriteWrite): Promise<{ id: string; at: string }>;
   /**
-   * Before a draft is accepted: throws `BodyChanged` when the body is no longer the one the draft read, `AlreadyAnswered`
-   * when the draft has an answer, and an error when the draft comment is gone.
+   * Before a rewrite is accepted: throws `BodyChanged` when the body is no longer the one the rewrite read, `AlreadyAnswered`
+   * when the rewrite has an answer, and an error when the rewrite comment is gone.
    */
-  checkDraft?(work: Ref, draft: string): Promise<void>;
+  checkRewrite?(work: Ref, rewrite: string): Promise<void>;
   /**
    * Adds a line to Scope Soup's one log comment on the item (GitHub), made with the first line and then edited in place. Its
    * text is already inert. Throws when the host refuses or does not show it.
    */
   logLine?(work: Ref, line: { kind: string; fields: Record<string, unknown> }): Promise<void>;
-  /** The item stops waiting for an answer (the label goes) when no question is open on it any more, and no triage draft waits. */
+  /** The item stops waiting for an answer (the label goes) when no question is open on it any more, and no triage rewrite waits. */
   settleQuestions?(work: Ref): Promise<void>;
   /**
    * The decisions an implementor took itself, as one comment on the item with the `scopesoup:assumption` label (GitHub), which
@@ -395,7 +395,7 @@ export interface WritePort {
   openChange?(input: { branch: string; target: string; title: string; body: string; draft?: boolean }): Promise<Ref>;
   setLabels?(subject: Ref, add: string[], remove: string[]): Promise<void>;
   /**
-   * A triage draft's label changes, at Accept: reads the item's labels, then one call per label to add (only one the
+   * A triage rewrite's label changes, at Accept: reads the item's labels, then one call per label to add (only one the
    * repository has and the item lacks) or remove (only one the item has), never a full replace; then a re-read that must show
    * them. Returns what was sent. Throws when the host refuses or did not apply it.
    */

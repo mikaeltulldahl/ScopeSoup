@@ -1,4 +1,4 @@
-// On a GitHub Item each triage round's draft is a comment, and a proposed restructuring is a question comment. A person's
+// On a GitHub Item each triage round's rewrite is a comment, and a proposed restructuring is a question comment. A person's
 // Accept, Edit and Reject are answer comments, written through by the real adapter on a fake GitHub that keeps its issues,
 // comments, labels and sub-issues. Nothing reaches the network. All names are synthetic.
 
@@ -28,7 +28,7 @@ const host = createGitHubHost({ token: "t", repo: "harbour/tides", apiUrl: ISSUE
 const ref = (id: string): Ref => ({ host: "github", kind: "work", id });
 const key = (id: string): string => `github:work:${id}`;
 const QUESTION = { question: "Metric or imperial?", options: [{ label: "Metric", description: "Metres." }, { label: "Imperial", description: "Feet." }], recommendation: "Metric" };
-const DRAFT = "Show the tide table in metres.";
+const REWRITE = "Show the tide table in metres.";
 const PARTS = [
   { title: "Tide heights", description: "Read the heights.", verification: "Heights show.", goes: "child" as const },
   { title: "Tide times", description: "Read the times.", verification: "Times show.", goes: "child" as const },
@@ -54,7 +54,7 @@ async function syncInto(into: Store): Promise<void> {
 function serverOn(into: Store, acts: ReturnType<typeof createHostActions>): ScopeSoupServer {
   return createServer({
     store: into, port: 0,
-    questions: { host: "github", answer: acts.answerQuestion!, checkDraft: acts.checkDraft! },
+    questions: { host: "github", answer: acts.answerQuestion!, checkRewrite: acts.checkRewrite! },
     description: { host: "github", replace: acts.replaceDescription! },
     restructure: [{ host: "github", write: host.write!, verificationInBody: true, issueNumbers: true }],
     syncNow: () => syncInto(into),
@@ -75,18 +75,18 @@ after(async () => {
 
 const jobOf = (id: string, over: Partial<Job>): Job => ({ item: ref(id), workspace: `/srv/clone-${id}`, branch: `scopesoup/${id}`, step: "triage", failures: 0, fixRounds: 0, startedAt: at, ...over });
 
-/** Item `id` parked on round 1 of its triage, posted as the cycle does: the draft comment, then its question. */
-async function draftParked(id: string): Promise<{ draft: string; question: string }> {
+/** Item `id` parked on round 1 of its triage, posted as the cycle does: the rewrite comment, then its question. */
+async function rewriteParked(id: string): Promise<{ rewrite: string; question: string }> {
   store.put((await host.work.getWork(ref(id)))!, "sync", at);
-  const draft = await actions.postDraft!(ref(id), { round: 1, draft: DRAFT });
-  const asked = await actions.askQuestions!(ref(id), [{ ...QUESTION, parked: "needs-decision", step: "triage", draft: draft!.id }]);
+  const rewrite = await actions.postRewrite!(ref(id), { round: 1, text: REWRITE });
+  const asked = await actions.askQuestions!(ref(id), [{ ...QUESTION, parked: "needs-decision", step: "triage", rewrite: rewrite!.id }]);
   const job = jobOf(id, {
-    triage: { ready: true, size: "small", paths: [], hidesDecision: true, decisions: [QUESTION], draft: DRAFT },
-    refine: { original: "Show the tides.", draft: DRAFT, questions: [QUESTION], round: 1 }, refineRounds: 1,
-    parked: { as: "needs-decision", reason: "Triage, round 1.", at, draft: { id: draft!.id, questions: asked!.ids } },
+    triage: { ready: true, size: "small", paths: [], hidesDecision: true, decisions: [QUESTION], rewrite: REWRITE },
+    rewrite: { original: "Show the tides.", text: REWRITE, questions: [QUESTION], round: 1 }, rewriteRounds: 1,
+    parked: { as: "needs-decision", reason: "Triage, round 1.", at, rewrite: { id: rewrite!.id, questions: asked!.ids } },
   });
   saveJobs(store, { ...loadJobs(store), [key(id)]: job });
-  return { draft: draft!.id, question: asked!.ids[0]! };
+  return { rewrite: rewrite!.id, question: asked!.ids[0]! };
 }
 
 const post = (url: string, body: Record<string, unknown>, where = base) => fetch(`${where}${url}`, { method: "POST", headers: { "Content-Type": "application/json", "X-ScopeSoup-Person": "Ada" }, body: JSON.stringify(body) });
@@ -94,16 +94,16 @@ const writes = (): string[] => fake.calls.filter((call) => !call.startsWith("GET
 const lastMarker = (id: string) => readMarker(fake.comments.get(id)!.at(-1)!.body)!;
 const errorCode = async (response: Response): Promise<string> => ((await response.json()) as { error: { code: string } }).error.code;
 
-describe("triage drafts and restructurings as comments", () => {
-  test("Accept: the body is checked, then PATCHed, then an answer comment to the question and one to the draft with proposal accepted", async () => {
-    const { draft, question } = await draftParked("1");
+describe("triage rewrites and restructurings as comments", () => {
+  test("Accept: the body is checked, then PATCHed, then an answer comment to the question and one to the rewrite with proposal accepted", async () => {
+    const { rewrite, question } = await rewriteParked("1");
     fake.clear();
-    const response = await post("/api/draft", { ref: key("1"), parkedAt: at, answers: ["Metric"], action: "accept" });
+    const response = await post("/api/rewrite", { ref: key("1"), parkedAt: at, answers: ["Metric"], action: "accept" });
     assert.equal(response.status, 200, await response.clone().text());
     assert.deepEqual(await response.json(), { recorded: true, settled: "accepted", written: true });
-    // The body, the edited line in a new log comment, the answer, the draft's answer; the label goes only with the draft settled.
+    // The body, the edited line in a new log comment, the answer, the rewrite's answer; the label goes only with the rewrite settled.
     assert.deepEqual(writes(), [`PATCH ${R}/1`, `POST ${R}/1/comments`, `POST ${R}/1/comments`, `POST ${R}/1/comments`, `DELETE ${LABEL_PATH.replace("%s", "1")}`]);
-    assert.equal(fake.issues.get("1")!.body, DRAFT);
+    assert.equal(fake.issues.get("1")!.body, REWRITE);
     const comments = fake.comments.get("1")!;
     const log = comments.map((comment) => readMarker(comment.body)).find((marker) => marker?.kind === "log")!;
     assert.deepEqual((log.data.lines as { kind: string; fields: unknown }[]).map((line) => [line.kind, line.fields]), [
@@ -112,9 +112,9 @@ describe("triage drafts and restructurings as comments", () => {
     assert.deepEqual([readMarker(comments.at(-2)!.body)!.data.to, readMarker(comments.at(-2)!.body)!.data.answer], [Number(question), "Metric"]);
     const decided = lastMarker("1");
     assert.equal(decided.kind, "answer");
-    assert.equal(decided.data.to, Number(draft));
+    assert.equal(decided.data.to, Number(rewrite));
     assert.equal(decided.data.proposal, "accepted");
-    assert.equal(loadJobs(store)[key("1")]?.refine?.settled, "accepted");
+    assert.equal(loadJobs(store)[key("1")]?.rewrite?.settled, "accepted");
     // Nothing kept in the store's answers: the answers are read from the markers.
     assert.equal(store.getValue("person.answers"), null);
     assert.deepEqual(knownAnswers(store).filter((each) => each.subject.id === "1").map((each) => [each.question, each.answer]), [
@@ -124,37 +124,37 @@ describe("triage drafts and restructurings as comments", () => {
   });
 
   test("Accept after a person edited the body is a 409 BODY_CHANGED; nothing is written, the new body is in the store, and Edit still settles it", async () => {
-    const { draft } = await draftParked("2");
+    const { rewrite } = await rewriteParked("2");
     const issue = fake.issues.get("2")!;
     issue.body = "Show the tides, in feet please.";
     issue.updated_at = "2026-11-22T10:00:00Z";
     fake.clear();
-    const refused = await post("/api/draft", { ref: key("2"), parkedAt: at, answers: ["Metric"], action: "accept" });
+    const refused = await post("/api/rewrite", { ref: key("2"), parkedAt: at, answers: ["Metric"], action: "accept" });
     assert.equal(refused.status, 409);
     assert.equal(await errorCode(refused), "BODY_CHANGED");
     assert.deepEqual(writes(), []);
     assert.equal(issue.body, "Show the tides, in feet please.");
     assert.equal(loadJobs(store)[key("2")]?.parked?.as, "needs-decision");
-    // The board shows the new body next to the draft.
+    // The board shows the new body next to the rewrite.
     assert.equal(store.get<WorkItem>(ref("2"))?.body, "Show the tides, in feet please.");
 
-    const edited = await post("/api/draft", { ref: key("2"), parkedAt: at, answers: ["Metric"], action: "edit", text: "Show the tide table in metres and feet." });
+    const edited = await post("/api/rewrite", { ref: key("2"), parkedAt: at, answers: ["Metric"], action: "edit", text: "Show the tide table in metres and feet." });
     assert.equal(edited.status, 200, await edited.clone().text());
     assert.equal(issue.body, "Show the tide table in metres and feet.");
-    assert.deepEqual([lastMarker("2").data.to, lastMarker("2").data.proposal], [Number(draft), "edited"]);
+    assert.deepEqual([lastMarker("2").data.to, lastMarker("2").data.proposal], [Number(rewrite), "edited"]);
   });
 
   test("Reject posts an answer comment with proposal rejected and leaves the body", async () => {
-    const { draft } = await draftParked("3");
+    const { rewrite } = await rewriteParked("3");
     fake.clear();
-    const response = await post("/api/draft", { ref: key("3"), parkedAt: at, answers: ["Metric"], action: "reject" });
+    const response = await post("/api/rewrite", { ref: key("3"), parkedAt: at, answers: ["Metric"], action: "reject" });
     assert.equal(response.status, 200, await response.clone().text());
     assert.deepEqual(await response.json(), { recorded: true, settled: "rejected" });
     assert.ok(!writes().some((call) => call.startsWith("PATCH")));
     assert.equal(fake.issues.get("3")!.body, "Show the tides.");
-    assert.deepEqual([lastMarker("3").data.to, lastMarker("3").data.proposal], [Number(draft), "rejected"]);
-    // Pressing again: the draft has its answer.
-    const again = await post("/api/draft", { ref: key("3"), parkedAt: at, answers: ["Metric"], action: "reject" });
+    assert.deepEqual([lastMarker("3").data.to, lastMarker("3").data.proposal], [Number(rewrite), "rejected"]);
+    // Pressing again: the rewrite has its answer.
+    const again = await post("/api/rewrite", { ref: key("3"), parkedAt: at, answers: ["Metric"], action: "reject" });
     assert.equal(again.status, 409);
   });
 
@@ -232,8 +232,8 @@ describe("triage drafts and restructurings as comments", () => {
   });
 });
 
-// The triage's label changes go with its draft: Accept applies them with one call per label, Reject applies none.
-describe("label changes in a triage draft on GitHub", () => {
+// The triage's label changes go with its rewrite: Accept applies them with one call per label, Reject applies none.
+describe("label changes in a triage rewrite on GitHub", () => {
   const gh = fakeIssues("harbour/tides", [11, 12, 13, 14, 15]);
   const ghHost = createGitHubHost({ token: "t", repo: "harbour/tides", apiUrl: ISSUES_API, fetchImpl: gh.fetch, allowWrites: true, conventions: true, login: "scopesoup-bot" });
   let db: Store;
@@ -252,7 +252,7 @@ describe("label changes in a triage draft on GitHub", () => {
     acts = createHostActions({ host: ghHost, git: async () => ({ code: 0, stdout: "", stderr: "" }), config: () => (aiLabel ? { ...config, labels: { aiGenerated: aiLabel } } : config), store: db });
     board = createServer({
       store: db, port: 0,
-      questions: { host: "github", answer: acts.answerQuestion!, checkDraft: acts.checkDraft! },
+      questions: { host: "github", answer: acts.answerQuestion!, checkRewrite: acts.checkRewrite! },
       description: { host: "github", replace: acts.replaceDescription! },
       labels: { host: "github", change: acts.changeLabels! },
       aiLabel: () => aiLabel,
@@ -268,23 +268,23 @@ describe("label changes in a triage draft on GitHub", () => {
     db.close();
   });
 
-  /** Item `id` parked on a draft (no questions) proposing +bug, −question, posted as the cycle posts it. */
+  /** Item `id` parked on a rewrite (no questions) proposing +bug, −question, posted as the cycle posts it. */
   async function proposing(id: string): Promise<string> {
     db.put((await ghHost.work.getWork(ref(id)))!, "sync", at);
-    const draft = await acts.postDraft!(ref(id), { round: 1, draft: DRAFT, labels: CHANGE });
+    const rewrite = await acts.postRewrite!(ref(id), { round: 1, text: REWRITE, labels: CHANGE });
     saveJobs(db, { ...loadJobs(db), [key(id)]: jobOf(id, {
-      triage: { ready: true, size: "small", paths: [], hidesDecision: false, draft: DRAFT },
-      refine: { original: "Show the tides.", draft: DRAFT, questions: [], round: 1, labels: CHANGE }, refineRounds: 1,
-      parked: { as: "needs-decision", reason: "Triage, round 1.", at, draft: { id: draft!.id, questions: [] } },
+      triage: { ready: true, size: "small", paths: [], hidesDecision: false, rewrite: REWRITE },
+      rewrite: { original: "Show the tides.", text: REWRITE, questions: [], round: 1, labels: CHANGE }, rewriteRounds: 1,
+      parked: { as: "needs-decision", reason: "Triage, round 1.", at, rewrite: { id: rewrite!.id, questions: [] } },
     }) });
-    return draft!.id;
+    return rewrite!.id;
   }
 
   test("Accept applies the description and +bug, −question together: exactly one add and one remove call, then the re-read", async () => {
-    const draft = await proposing("11");
+    const rewrite = await proposing("11");
     assert.deepEqual(readMarker(gh.comments.get("11")!.at(-1)!.body)?.data.labels, CHANGE);
     gh.clear();
-    const response = await post("/api/draft", { ref: key("11"), parkedAt: at, answers: [], action: "accept" }, url);
+    const response = await post("/api/rewrite", { ref: key("11"), parkedAt: at, answers: [], action: "accept" }, url);
     assert.equal(response.status, 200, await response.clone().text());
     assert.deepEqual(await response.json(), { recorded: true, settled: "accepted", written: true, labels: { added: ["bug"], removed: ["question"] } });
     assert.deepEqual(labelWrites(), [`POST ${R}/11/labels`, `DELETE ${R}/11/labels/question`]);
@@ -293,22 +293,22 @@ describe("label changes in a triage draft on GitHub", () => {
     const after = gh.calls.slice(gh.calls.indexOf(`DELETE ${R}/11/labels/question`) + 1);
     assert.ok(after.includes(`GET ${R}/11`), gh.calls.join("\n"));
     assert.deepEqual(labelsOf("11"), ["bug"]);
-    assert.equal(gh.issues.get("11")!.body, DRAFT);
+    assert.equal(gh.issues.get("11")!.body, REWRITE);
     const decided = readMarker(gh.comments.get("11")!.at(-1)!.body)!;
-    assert.deepEqual([decided.data.to, decided.data.proposal], [Number(draft), "accepted"]);
+    assert.deepEqual([decided.data.to, decided.data.proposal], [Number(rewrite), "accepted"]);
     assert.match(String(decided.data.answer), /Labels: \+bug, −question\.$/);
     assert.deepEqual(db.get<WorkItem>(ref("11"))?.labels, ["bug"]);
   });
 
-  test("Accept with the AI label on: the label is made in the repository and put on the Item, beside the draft's own label changes", async () => {
+  test("Accept with the AI label on: the label is made in the repository and put on the Item, beside the rewrite's own label changes", async () => {
     aiLabel = "ai-generated";
     try {
       await proposing("15");
-      const response = await post("/api/draft", { ref: key("15"), parkedAt: at, answers: [], action: "accept" }, url);
+      const response = await post("/api/rewrite", { ref: key("15"), parkedAt: at, answers: [], action: "accept" }, url);
       assert.equal(response.status, 200, await response.clone().text());
       assert.deepEqual(labelsOf("15").sort(), ["ai-generated", "bug"]);
       assert.equal(gh.labels.has("ai-generated"), true);
-      assert.equal(gh.issues.get("15")!.body, DRAFT);
+      assert.equal(gh.issues.get("15")!.body, REWRITE);
     } finally {
       aiLabel = undefined;
     }
@@ -317,19 +317,19 @@ describe("label changes in a triage draft on GitHub", () => {
   test("Reject leaves the labels and the description unchanged", async () => {
     await proposing("12");
     gh.clear();
-    const response = await post("/api/draft", { ref: key("12"), parkedAt: at, answers: [], action: "reject" }, url);
+    const response = await post("/api/rewrite", { ref: key("12"), parkedAt: at, answers: [], action: "reject" }, url);
     assert.equal(response.status, 200, await response.clone().text());
     assert.deepEqual(labelWrites(), []);
     assert.deepEqual(labelsOf("12"), ["question"]);
     assert.equal(gh.issues.get("12")!.body, "Show the tides.");
   });
 
-  test("labels a person changed after the draft stay as they set them: an add already there and a remove already gone are no-ops", async () => {
+  test("labels a person changed after the rewrite stay as they set them: an add already there and a remove already gone are no-ops", async () => {
     await proposing("13");
     const issue = gh.issues.get("13")!;
     issue.labels = [{ name: "bug" }];
     gh.clear();
-    const response = await post("/api/draft", { ref: key("13"), parkedAt: at, answers: [], action: "accept" }, url);
+    const response = await post("/api/rewrite", { ref: key("13"), parkedAt: at, answers: [], action: "accept" }, url);
     assert.equal(response.status, 200, await response.clone().text());
     assert.deepEqual(labelWrites(), []);
     assert.deepEqual(labelsOf("13"), ["bug"]);
@@ -338,7 +338,7 @@ describe("label changes in a triage draft on GitHub", () => {
   test("Edit lets a person change the labels with the description; scopesoup:* is never applied", async () => {
     await proposing("14");
     gh.clear();
-    const response = await post("/api/draft", { ref: key("14"), parkedAt: at, answers: [], action: "edit", text: "Show the tides in metres.", labels: { add: ["bug", "scopesoup:claimed"], remove: [] } }, url);
+    const response = await post("/api/rewrite", { ref: key("14"), parkedAt: at, answers: [], action: "edit", text: "Show the tides in metres.", labels: { add: ["bug", "scopesoup:claimed"], remove: [] } }, url);
     assert.equal(response.status, 200, await response.clone().text());
     assert.deepEqual(labelWrites(), [`POST ${R}/14/labels`]);
     assert.deepEqual(labelsOf("14"), ["question", "bug"]);
@@ -346,7 +346,7 @@ describe("label changes in a triage draft on GitHub", () => {
   });
 });
 
-describe("scopesoup:needs-decision while a triage draft waits for an answer", () => {
+describe("scopesoup:needs-decision while a triage rewrite waits for an answer", () => {
   const gh = fakeIssues("harbour/tides", [21, 22, 23, 24, 25]);
   const ghHost = createGitHubHost({ token: "t", repo: "harbour/tides", apiUrl: ISSUES_API, fetchImpl: gh.fetch, allowWrites: true, conventions: true, login: "scopesoup-bot" });
   let db: Store;
@@ -361,7 +361,7 @@ describe("scopesoup:needs-decision while a triage draft waits for an answer", ()
     acts = createHostActions({ host: ghHost, git: async () => ({ code: 0, stdout: "", stderr: "" }), config: () => config, store: db });
     board = createServer({
       store: db, port: 0,
-      questions: { host: "github", answer: acts.answerQuestion!, checkDraft: acts.checkDraft! },
+      questions: { host: "github", answer: acts.answerQuestion!, checkRewrite: acts.checkRewrite! },
       description: { host: "github", replace: acts.replaceDescription! },
       syncNow: async () => {
         for (const each of (await ghHost.work.listWork()).items) db.put(each, "sync", at);
@@ -375,49 +375,49 @@ describe("scopesoup:needs-decision while a triage draft waits for an answer", ()
     db.close();
   });
 
-  /** Item `id` parked on round 1 of its triage with a changed description, posted as the cycle posts it: the draft, then its questions. */
+  /** Item `id` parked on round 1 of its triage with a changed description, posted as the cycle posts it: the rewrite, then its questions. */
   async function parkedJob(id: string, questions: (typeof QUESTION)[]): Promise<string[]> {
     db.put((await ghHost.work.getWork(ref(id)))!, "sync", at);
-    const draft = await acts.postDraft!(ref(id), { round: 1, draft: DRAFT });
-    const asked = questions.length > 0 ? await acts.askQuestions!(ref(id), questions.map((each) => ({ ...each, parked: "needs-decision", step: "triage", draft: draft!.id }))) : null;
+    const rewrite = await acts.postRewrite!(ref(id), { round: 1, text: REWRITE });
+    const asked = questions.length > 0 ? await acts.askQuestions!(ref(id), questions.map((each) => ({ ...each, parked: "needs-decision", step: "triage", rewrite: rewrite!.id }))) : null;
     saveJobs(db, { ...loadJobs(db), [key(id)]: jobOf(id, {
-      triage: { ready: true, size: "small", paths: [], hidesDecision: questions.length > 0, decisions: questions, draft: DRAFT },
-      refine: { original: "Show the tides.", draft: DRAFT, questions, round: 1 }, refineRounds: 1,
-      parked: { as: "needs-decision", reason: "Triage, round 1.", at, draft: { id: draft!.id, questions: asked?.ids ?? [] } },
+      triage: { ready: true, size: "small", paths: [], hidesDecision: questions.length > 0, decisions: questions, rewrite: REWRITE },
+      rewrite: { original: "Show the tides.", text: REWRITE, questions, round: 1 }, rewriteRounds: 1,
+      parked: { as: "needs-decision", reason: "Triage, round 1.", at, rewrite: { id: rewrite!.id, questions: asked?.ids ?? [] } },
     }) });
     return asked?.ids ?? [];
   }
 
   for (const action of ["accept", "edit", "reject"] as const) {
-    test(`a draft with no question puts the label on; ${action} takes it off`, async () => {
+    test(`a rewrite with no question puts the label on; ${action} takes it off`, async () => {
       const id = { accept: "21", edit: "22", reject: "23" }[action];
       await parkedJob(id, []);
-      assert.ok(labelled(id), "the label is on once the draft is posted");
+      assert.ok(labelled(id), "the label is on once the rewrite is posted");
       // The board agrees with GitHub: the Item waits for an answer, also with no question.
       assert.equal((await ghHost.work.getWork(ref(id)))?.needsDecision, true);
-      const response = await post("/api/draft", { ref: key(id), parkedAt: at, answers: [], action, ...(action === "edit" ? { text: "Show the tide table in metres, please." } : {}) }, url);
+      const response = await post("/api/rewrite", { ref: key(id), parkedAt: at, answers: [], action, ...(action === "edit" ? { text: "Show the tide table in metres, please." } : {}) }, url);
       assert.equal(response.status, 200, await response.clone().text());
-      assert.ok(!labelled(id), "the label is off once the draft is settled");
+      assert.ok(!labelled(id), "the label is off once the rewrite is settled");
       assert.equal((await ghHost.work.getWork(ref(id)))?.needsDecision, undefined);
     });
   }
 
-  test("a draft with one question: the answer leaves the label on until Accept", async () => {
+  test("a rewrite with one question: the answer leaves the label on until Accept", async () => {
     const [question] = await parkedJob("24", [QUESTION]);
     assert.ok(labelled("24"));
     await acts.answerQuestion!(ref("24"), question!, { answer: "Metric", textHash: "x" });
-    assert.ok(labelled("24"), "answered with the recommendation, the draft still waits");
+    assert.ok(labelled("24"), "answered with the recommendation, the rewrite still waits");
     assert.equal((await ghHost.work.getWork(ref("24")))?.needsDecision, true);
-    const response = await post("/api/draft", { ref: key("24"), parkedAt: at, answers: ["Metric"], action: "accept" }, url);
+    const response = await post("/api/rewrite", { ref: key("24"), parkedAt: at, answers: ["Metric"], action: "accept" }, url);
     assert.equal(response.status, 200, await response.clone().text());
     assert.ok(!labelled("24"));
   });
 
-  test("a draft with one question: the answer leaves the label on until Reject", async () => {
+  test("a rewrite with one question: the answer leaves the label on until Reject", async () => {
     const [question] = await parkedJob("25", [QUESTION]);
     await acts.answerQuestion!(ref("25"), question!, { answer: "Metric", textHash: "x" });
     assert.ok(labelled("25"));
-    const response = await post("/api/draft", { ref: key("25"), parkedAt: at, answers: ["Metric"], action: "reject" }, url);
+    const response = await post("/api/rewrite", { ref: key("25"), parkedAt: at, answers: ["Metric"], action: "reject" }, url);
     assert.equal(response.status, 200, await response.clone().text());
     assert.ok(!labelled("25"));
   });

@@ -92,7 +92,7 @@ test("the demo's item 68, put back in the queue from a failed batch, lists that 
   store.close();
 });
 
-test("the demo shows today's Scope Soup: triage questions and a draft, sessions to talk to, Settings, and none of the removed parts", async () => {
+test("the demo shows today's Scope Soup: triage questions and a rewrite, sessions to talk to, Settings, and none of the removed parts", async () => {
   const store = openStore(":memory:");
   const dir = mkdtempSync(join(tmpdir(), "scopesoup-demo-test-"));
   try {
@@ -115,10 +115,10 @@ test("the demo shows today's Scope Soup: triage questions and a draft, sessions 
       assert.ok((settings.mergeQueue?.checkCandidates ?? []).some((each) => each.from === "the Makefile"));
     }
 
-    // Item 52 parked on two triage questions, one of them multi-select; item 41 on a triage draft.
+    // Item 52 parked on two triage questions, one of them multi-select; item 41 on a triage rewrite.
     const questions = pages.find((page) => page.item.label === "#52")!.parked?.questions ?? [];
     assert.deepEqual(questions.map((each) => each.multiSelect === true), [false, true]);
-    assert.ok(pages.find((page) => page.item.label === "#41")!.parked?.refine?.draft);
+    assert.ok(pages.find((page) => page.item.label === "#41")!.parked?.rewrite?.text);
     // Item 53 waits on a proposed restructuring: it keeps one part, and the others go elsewhere.
     const restructuring = pages.find((page) => page.item.label === "#53")!.proposal;
     assert.equal(restructuring?.original, "keeps");

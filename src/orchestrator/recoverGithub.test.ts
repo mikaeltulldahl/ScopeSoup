@@ -1,5 +1,5 @@
 // On a GitHub Item Scope Soup's progress is one log comment, edited in place, and `recover.ts` rebuilds jobs from the
-// comments after the store is deleted: the log, the questions, and a triage draft that waits. The real adapter and host
+// comments after the store is deleted: the log, the questions, and a triage rewrite that waits. The real adapter and host
 // actions run on a fake GitHub that keeps issues, comments and labels. Nothing reaches the network. All names are synthetic.
 
 import assert from "node:assert/strict";
@@ -32,7 +32,7 @@ const config = (() => {
   return result.config;
 })();
 const QUESTION = { question: "Metric or imperial?", options: [{ label: "Metric", description: "Metres." }, { label: "Imperial", description: "Feet." }], recommendation: "Metric" };
-const DRAFT = "Show the tide table in metres.";
+const REWRITE = "Show the tide table in metres.";
 
 const actionsOn = (store: Store) => createHostActions({ host, git: async () => ({ code: 0, stdout: "", stderr: "" }), config: () => config, store });
 const writes = (): string[] => fake.calls.filter((call) => !call.startsWith("GET"));
@@ -159,51 +159,51 @@ describe("recovery from GitHub", () => {
     const first = openStore(":memory:");
     const actions = actionsOn(first);
     first.put((await host.work.getWork(ref("5")))!, "sync", at);
-    const old = await actions.postDraft!(ref("5"), { round: 1, draft: "Show the tides in feet." });
-    await actions.askQuestions!(ref("5"), [{ ...QUESTION, parked: "needs-decision", step: "triage", draft: old!.id }]);
+    const old = await actions.postRewrite!(ref("5"), { round: 1, text: "Show the tides in feet." });
+    await actions.askQuestions!(ref("5"), [{ ...QUESTION, parked: "needs-decision", step: "triage", rewrite: old!.id }]);
     fake.reply(5, "robin", "OWNER", "A1: Imperial");
     await actions.appendLog(ref("5"), "session", { role: "triage", outcome: "succeeded", summary: "Asks the units.", size: "small" });
-    const draft = await actions.postDraft!(ref("5"), { round: 2, draft: DRAFT });
-    await actions.askQuestions!(ref("5"), [{ ...QUESTION, parked: "needs-decision", step: "triage", draft: draft!.id }]);
-    // Every question of round 2 answered with the recommendation by a reply: the draft waits for Accept, and the label stays.
+    const rewrite = await actions.postRewrite!(ref("5"), { round: 2, text: REWRITE });
+    await actions.askQuestions!(ref("5"), [{ ...QUESTION, parked: "needs-decision", step: "triage", rewrite: rewrite!.id }]);
+    // Every question of round 2 answered with the recommendation by a reply: the rewrite waits for Accept, and the label stays.
     fake.reply(5, "robin", "OWNER", "A: Metric");
     first.close();
   });
 
-  test("with the store deleted while a draft waits, one sync rebuilds the same draft, round and questions, and Accept still works", async () => {
+  test("with the store deleted while a rewrite waits, one sync rebuilds the same rewrite, round and questions, and Accept still works", async () => {
     const recovered = await deletedStore();
     store = recovered.store;
     saveJobs(store, recovered.jobs);
     const job = loadJobs(store)[key("5")]!;
     const comments = fake.comments.get("5")!;
-    const draftId = String(comments.filter((comment) => readMarker(comment.body)?.kind === "draft").at(-1)!.id);
+    const rewriteId = String(comments.filter((comment) => readMarker(comment.body)?.kind === "rewrite").at(-1)!.id);
     assert.equal(job.step, "triage");
-    assert.equal(job.refineRounds, 2);
-    assert.deepEqual(job.refine, { original: "Show the tides.", draft: DRAFT, questions: [QUESTION], round: 2 });
+    assert.equal(job.rewriteRounds, 2);
+    assert.deepEqual(job.rewrite, { original: "Show the tides.", text: REWRITE, questions: [QUESTION], round: 2 });
     assert.equal(job.parked?.as, "needs-decision");
-    assert.equal(job.parked?.draft?.id, draftId);
-    assert.equal(job.parked?.draft?.questions.length, 1);
+    assert.equal(job.parked?.rewrite?.id, rewriteId);
+    assert.equal(job.parked?.rewrite?.questions.length, 1);
     assert.doesNotMatch(job.parked?.reason ?? "", /no longer known/);
     // The board reads it from the job.
     const parked = loadSnapshot(store).parked?.find((each) => each.subject.id === "5");
-    assert.deepEqual([parked?.refine?.draft, parked?.refine?.round, parked?.refine?.questions.map((each) => each.question)], [DRAFT, 2, [QUESTION.question]]);
+    assert.deepEqual([parked?.rewrite?.text, parked?.rewrite?.round, parked?.rewrite?.questions.map((each) => each.question)], [REWRITE, 2, [QUESTION.question]]);
     assert.deepEqual(fake.issues.get("5")!.labels.map((label) => (typeof label === "string" ? label : label.name)), ["scopesoup:needs-decision"]);
 
     const actions = actionsOn(store);
     server = createServer({
       store, port: 0,
-      questions: { host: "github", answer: actions.answerQuestion!, checkDraft: actions.checkDraft! },
+      questions: { host: "github", answer: actions.answerQuestion!, checkRewrite: actions.checkRewrite! },
       description: { host: "github", replace: actions.replaceDescription! },
       syncNow: async () => void (await syncInto(store)),
     });
     base = (await server.start()).url;
     try {
       fake.clear();
-      const response = await fetch(`${base}/api/draft`, { method: "POST", headers: { "Content-Type": "application/json", "X-ScopeSoup-Person": "Ada" }, body: JSON.stringify({ ref: key("5"), parkedAt: job.parked!.at, answers: ["Metric"], action: "accept" }) });
+      const response = await fetch(`${base}/api/rewrite`, { method: "POST", headers: { "Content-Type": "application/json", "X-ScopeSoup-Person": "Ada" }, body: JSON.stringify({ ref: key("5"), parkedAt: job.parked!.at, answers: ["Metric"], action: "accept" }) });
       assert.equal(response.status, 200, await response.clone().text());
       assert.deepEqual(await response.json(), { recorded: true, settled: "accepted", written: true });
-      assert.equal(fake.issues.get("5")!.body, DRAFT);
-      // The question had its answer from the reply: only the draft's answer is posted, then the label goes.
+      assert.equal(fake.issues.get("5")!.body, REWRITE);
+      // The question had its answer from the reply: only the rewrite's answer is posted, then the label goes.
       assert.deepEqual(writes().filter((call) => !call.includes("/comments/")), [`PATCH ${R}/5`, `POST ${R}/5/comments`, `DELETE ${R}/5/labels/scopesoup%3Aneeds-decision`]);
       assert.deepEqual(fake.issues.get("5")!.labels, []);
       assert.equal(readMarker(fake.comments.get("5")!.at(-1)!.body)!.data.proposal, "accepted");
@@ -214,16 +214,16 @@ describe("recovery from GitHub", () => {
     }
   });
 
-  test("a draft whose body changed since is rebuilt with the current body as its original, and the parked Item says so", async () => {
+  test("a rewrite whose body changed since is rebuilt with the current body as its original, and the parked Item says so", async () => {
     const actions = actionsOn(openStore(":memory:"));
-    const draft = await actions.postDraft!(ref("6"), { round: 1, draft: "Show the tides, kindly." });
-    assert.ok(draft);
+    const rewrite = await actions.postRewrite!(ref("6"), { round: 1, text: "Show the tides, kindly." });
+    assert.ok(rewrite);
     const issue = fake.issues.get("6")!;
     issue.body = "Show the tides, edited by a person.";
     issue.updated_at = fake.clock;
     const { jobs } = await deletedStore();
     const job = jobs[key("6")]!;
-    assert.deepEqual(job.refine, { original: "Show the tides, edited by a person.", draft: "Show the tides, kindly.", questions: [], round: 1 });
+    assert.deepEqual(job.rewrite, { original: "Show the tides, edited by a person.", text: "Show the tides, kindly.", questions: [], round: 1 });
     assert.match(job.parked?.reason ?? "", /The description the rewrite read is no longer known: the current one is shown as the original\.$/);
   });
 });

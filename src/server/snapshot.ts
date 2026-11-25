@@ -48,9 +48,9 @@ export function loadSnapshot(store: Store): Snapshot {
     parked: Object.values(loadJobs(store)).flatMap((job): Parked[] => {
       if (!job.parked) return [];
       const asked = job.parked.as === "needs-decision";
-      // A draft's questions are shown with the draft, not as the parked state's one decision.
-      const refine = asked && job.refine && !job.refine.settled ? job.refine : undefined;
-      const decision = asked && !refine ? job.decision ?? (job.step === "triage" ? job.triage?.decision : undefined) : undefined;
+      // A rewrite's questions are shown with the rewrite, not as the parked state's one decision.
+      const rewrite = asked && job.rewrite && !job.rewrite.settled ? job.rewrite : undefined;
+      const decision = asked && !rewrite ? job.decision ?? (job.step === "triage" ? job.triage?.decision : undefined) : undefined;
       // A job stored with a proposed rewrite (removed) has no parts; the tick releases it.
       const stored = asked && job.proposal?.parts?.length ? job.proposal : undefined;
       // On GitHub each question is a comment, and its answer is read from there.
@@ -62,7 +62,7 @@ export function loadSnapshot(store: Store): Snapshot {
         const answer = onHost ? hostAnswers.find((given) => given.to !== undefined && given.to === onHost[index])?.answer : job.answered?.find((given) => given.index === index)?.answer;
         return { ...each, ...(answer !== undefined ? { answer } : {}) };
       });
-      return [{ subject: job.item, as: job.parked.as, reason: job.parked.reason, at: job.parked.at, ...(resumesStep(job) ? { canStartOver: true } : {}), ...(decision && !proposal ? { decision } : {}), ...(proposal ? { proposal } : {}), ...(questions.length > 0 ? { questions } : {}), ...(refine ? { refine: { original: refine.original, draft: refine.draft, round: refine.round, questions: refine.questions.map(({ question, options, recommendation, context, multiSelect }) => ({ question, options, recommendation, ...(context ? { context } : {}), ...(multiSelect ? { multiSelect } : {}) })), ...(refine.labels ? { labels: refine.labels } : {}), ...(refine.droppedLabels ? { droppedLabels: refine.droppedLabels } : {}) } } : {}) }];
+      return [{ subject: job.item, as: job.parked.as, reason: job.parked.reason, at: job.parked.at, ...(resumesStep(job) ? { canStartOver: true } : {}), ...(decision && !proposal ? { decision } : {}), ...(proposal ? { proposal } : {}), ...(questions.length > 0 ? { questions } : {}), ...(rewrite ? { rewrite: { original: rewrite.original, text: rewrite.text, round: rewrite.round, questions: rewrite.questions.map(({ question, options, recommendation, context, multiSelect }) => ({ question, options, recommendation, ...(context ? { context } : {}), ...(multiSelect ? { multiSelect } : {}) })), ...(rewrite.labels ? { labels: rewrite.labels } : {}), ...(rewrite.droppedLabels ? { droppedLabels: rewrite.droppedLabels } : {}) } } : {}) }];
     }),
     // The triage's typed links, for the Item page.
     links: Object.values(loadJobs(store)).flatMap((job) => (job.triage?.links?.length ? [{ subject: job.item, links: job.triage.links }] : [])),

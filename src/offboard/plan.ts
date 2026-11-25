@@ -208,7 +208,7 @@ function githubGroup(found: Found): PlanEntry[] {
       }
     }
   }
-  entries.push({ group: "github", key: "comments", what: "Comments Scope Soup left: claims, logs, questions and answers, triage drafts, batch pull request comments", onRemove: "Kept: they are the project's history.", default: "keep", why: "history is never rewritten", action: { do: "none" } });
+  entries.push({ group: "github", key: "comments", what: "Comments Scope Soup left: claims, logs, questions and answers, triage rewrites, batch pull request comments", onRemove: "Kept: they are the project's history.", default: "keep", why: "history is never rewritten", action: { do: "none" } });
   return entries;
 }
 

@@ -1,5 +1,5 @@
 // The Jira host's write port, only with writes on: issues (create, summary, description, labels, priority, transitions, links,
-// parent, assignee) and Scope Soup's conventions (conventions.ts): question, answer, draft and decision comments with their
+// parent, assignee) and Scope Soup's conventions (conventions.ts): question, answer, rewrite and decision comments with their
 // properties, the claim, log and verdict issue properties, and the needs-decision label. Every write is followed by a re-read
 // that must show it, as on GitHub. Text reaching here is inert already (the orchestrator's `inertText`); it is converted to ADF
 // or wiki markup that cannot mention, link a page or run a macro (toJira.ts).
@@ -11,7 +11,7 @@ import type { Priority, Ref } from "../../model/types.ts";
 import type { AnswerWrite, WriteOutcome, WritePort } from "../../ports/host.ts";
 import { AlreadyAnswered, BodyChanged, TooLarge, WriteLater } from "../../ports/host.ts";
 import type { AssumptionEntry, LogKeep, LogLine } from "../github/conventions.ts";
-import { answersBody, assumptionBody, clipLogFields, draftBody, mergedBody, nextQuestionNumber, questionBody, questionNumber, readVerdicts, waitsForAnswer, withdrawnBody } from "../github/conventions.ts";
+import { answersBody, assumptionBody, clipLogFields, rewriteBody, mergedBody, nextQuestionNumber, questionBody, questionNumber, readVerdicts, waitsForAnswer, withdrawnBody } from "../github/conventions.ts";
 import { spliceBody } from "../github/map.ts";
 import type { JiraClient } from "./client.ts";
 import { JiraError, transient } from "./client.ts";
@@ -86,7 +86,7 @@ interface JiraTransition {
 
 const sha256 = (text: string): string => createHash("sha256").update(text).digest("hex");
 
-/** The hash of a description as Jira stores it (ADF as JSON, or wiki text): what a draft names as the body it read. */
+/** The hash of a description as Jira stores it (ADF as JSON, or wiki text): what a rewrite names as the body it read. */
 export const descriptionSha = (description: unknown): string => sha256(typeof description === "string" ? description : JSON.stringify(description ?? null));
 
 /** A failure that can change by itself becomes `WriteLater`, so the orchestrator tries the step again. */
@@ -262,8 +262,8 @@ export function createJiraWrite(deps: JiraWriteDeps): WritePort {
     const numbered = entries.map(({ to, answer: given }) => {
       if (to === null) return { to: null, given };
       if (thread.answers.some((answer) => answer.to === to)) throw new AlreadyAnswered(`Question ${to} on ${subject.id} has an answer already.`);
-      const draft = given.proposal !== undefined && thread.drafts.some((each) => each.id === to && !each.answered);
-      if (!draft && !thread.openQuestions.some((question) => question.id === to)) throw new Error(`There is no open question ${to} on ${subject.id} (it may have been deleted).`);
+      const rewrite = given.proposal !== undefined && thread.rewrites.some((each) => each.id === to && !each.answered);
+      if (!rewrite && !thread.openQuestions.some((question) => question.id === to)) throw new Error(`There is no open question ${to} on ${subject.id} (it may have been deleted).`);
       const n = questionNumber(read.comments.find((comment) => String(comment.id) === to));
       return { to: Number(to), ...(n ? { n } : {}), given };
     });
@@ -424,7 +424,7 @@ export function createJiraWrite(deps: JiraWriteDeps): WritePort {
       await changeIssueLabels(subject, add, remove);
     },
 
-    /** A triage draft's labels at Accept: only what changes is sent (a label exists on Jira by being used), then the re-read. */
+    /** A triage rewrite's labels at Accept: only what changes is sent (a label exists on Jira by being used), then the re-read. */
     async changeLabels(subject, add, remove) {
       const have = (await issueOf(subject)).fields.labels ?? [];
       const added = add.filter((name, index) => !/\s/.test(name) && !have.some((each) => same(each, name)) && add.findIndex((each) => same(each, name)) === index);
@@ -482,7 +482,7 @@ ${note}` : ""}`;
 
     /**
      * The needs-decision label first, then one comment per question, numbered on from the issue's earlier questions (never reused,
-     * nor a deleted one's, which the log keeps). A question still open with the same text and draft is not posted again.
+     * nor a deleted one's, which the log keeps). A question still open with the same text and rewrite is not posted again.
      */
     async askQuestions(subject, questions) {
       try {
@@ -491,7 +491,7 @@ ${note}` : ""}`;
         const open = new Set(read.thread.openQuestions.map((question) => question.id));
         const taken = new Set<string>();
         const already = questions.map((question) => {
-          const found = [...read.data].find(([id, data]) => !taken.has(id) && open.has(id) && data.question === question.question.trim() && data.draft === (question.draft ? Number(question.draft) : undefined));
+          const found = [...read.data].find(([id, data]) => !taken.has(id) && open.has(id) && data.question === question.question.trim() && data.rewrite === (question.rewrite ? Number(question.rewrite) : undefined));
           if (found) taken.add(found[0]);
           return found?.[0];
         });
@@ -541,15 +541,15 @@ ${note}` : ""}`;
     answerQuestion: (subject, to, given) => answerQuestions(subject, [{ to, answer: given }]),
     answerQuestions: (subject, entries) => answerQuestions(subject, entries),
 
-    /** The draft comment with the hash of the description as read now; the proposed text is kept in its property too. */
-    async postDraft(subject, draft) {
+    /** The rewrite comment with the hash of the description as read now; the proposed text is kept in its property too. */
+    async postRewrite(subject, rewrite) {
       try {
         const bodySha = descriptionSha((await issueOf(subject)).fields.description);
-        const { markdown, property } = splitMarked(draftBody(draft.round, draft.draft, bodySha, draft.labels));
-        property.text = draft.draft.trim();
-        checkSize(subject, "The draft", markdown, property);
+        const { markdown, property } = splitMarked(rewriteBody(rewrite.round, rewrite.text, bodySha, rewrite.labels));
+        property.text = rewrite.text.trim();
+        checkSize(subject, "The rewrite", markdown, property);
         await addNeedsDecision(subject);
-        const same = (await deps.read(subject)).thread.drafts.find((each) => !each.answered && each.round === draft.round && each.bodySha === bodySha && each.text === draft.draft.trim() && changeText(each.labels) === changeText(draft.labels));
+        const same = (await deps.read(subject)).thread.rewrites.find((each) => !each.answered && each.round === rewrite.round && each.bodySha === bodySha && each.text === rewrite.text.trim() && changeText(each.labels) === changeText(rewrite.labels));
         if (same) return { id: same.id, at: same.at };
         const posted = await postComment(subject, markdown, property);
         return { id: posted.id, at: isoTime(posted.created) };
@@ -558,11 +558,11 @@ ${note}` : ""}`;
       }
     },
 
-    async checkDraft(subject, id) {
-      const draft = (await deps.read(subject)).thread.drafts.find((each) => each.id === id);
-      if (!draft) throw new Error(`The draft comment ${id} on ${subject.id} is gone (it may have been deleted).`);
-      if (draft.answered) throw new AlreadyAnswered(`The rewrite of round ${draft.round} on ${subject.id} has an answer already.`);
-      if (descriptionSha((await issueOf(subject)).fields.description) !== draft.bodySha) throw new BodyChanged(`The description of ${subject.id} changed on Jira since the rewrite of round ${draft.round} was written.`);
+    async checkRewrite(subject, id) {
+      const rewrite = (await deps.read(subject)).thread.rewrites.find((each) => each.id === id);
+      if (!rewrite) throw new Error(`The rewrite comment ${id} on ${subject.id} is gone (it may have been deleted).`);
+      if (rewrite.answered) throw new AlreadyAnswered(`The rewrite of round ${rewrite.round} on ${subject.id} has an answer already.`);
+      if (descriptionSha((await issueOf(subject)).fields.description) !== rewrite.bodySha) throw new BodyChanged(`The description of ${subject.id} changed on Jira since the rewrite of round ${rewrite.round} was written.`);
     },
 
     /** One line more in the log, the hidden issue property `scopesoup.log` (silent to watchers). */

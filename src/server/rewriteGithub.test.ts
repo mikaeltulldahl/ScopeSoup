@@ -1,4 +1,4 @@
-// Settling a triage draft on a GitHub Item replaces the issue's description, and the board's edits are written
+// Settling a triage rewrite on a GitHub Item replaces the issue's description, and the board's edits are written
 // through, by the real GitHub adapter on a fake GitHub that keeps its issues and records what it is sent. Nothing reaches the
 // network. All names and texts are synthetic.
 
@@ -68,15 +68,15 @@ after(async () => {
 
 const question = { question: "Metric or imperial?", options: [{ label: "Metric", description: "Metres." }, { label: "Imperial", description: "Feet." }], recommendation: "Metric" };
 
-/** A GitHub issue whose triage draft parked for a person. */
+/** A GitHub issue whose triage rewrite parked for a person. */
 function parkedJob(id: string): string {
   const ref: Ref = { host: "github", kind: "work", id };
   const key = `github:work:${id}`;
   store.put({ ref, title: `Tide table ${id}`, body: "Tide table units.", state: "todo", hostState: "open", labels: [], blockedBy: [], openChildren: 0, updatedAt: at }, "sync", at);
   const job: Job = {
     item: ref, workspace: "w", branch: `scopesoup/${id}`, step: "triage", failures: 0, fixRounds: 0, startedAt: at,
-    triage: { ready: true, size: "small", paths: [], hidesDecision: true, decisions: [question], draft: "Show the tide table in metres." },
-    refine: { original: "Tide table units.", draft: "Show the tide table in metres.", questions: [question], round: 1 }, refineRounds: 1,
+    triage: { ready: true, size: "small", paths: [], hidesDecision: true, decisions: [question], rewrite: "Show the tide table in metres." },
+    rewrite: { original: "Tide table units.", text: "Show the tide table in metres.", questions: [question], round: 1 }, rewriteRounds: 1,
     parked: { as: "needs-decision", reason: "Triage, round 1.", at },
   };
   store.tx(() => saveJobs(store, { ...loadJobs(store), [key]: job }));
@@ -84,7 +84,7 @@ function parkedJob(id: string): string {
 }
 
 async function post(body: Record<string, unknown>): Promise<{ status: number; body: Record<string, unknown> }> {
-  const response = await fetch(`${base}/api/draft`, { method: "POST", headers: { "Content-Type": "application/json", "X-ScopeSoup-Person": "Ada" }, body: JSON.stringify(body) });
+  const response = await fetch(`${base}/api/rewrite`, { method: "POST", headers: { "Content-Type": "application/json", "X-ScopeSoup-Person": "Ada" }, body: JSON.stringify(body) });
   return { status: response.status, body: (await response.json()) as Record<string, unknown> };
 }
 
@@ -92,8 +92,8 @@ const page = async (key: string): Promise<ItemPage> => (await (await fetch(`${ba
 /** What was written to an issue (not the reads). */
 const sent = (id: string) => calls.filter((call) => call.method !== "GET" && call.path === `/repos/harbour/tides/issues/${id}`);
 
-describe("a triage draft on a GitHub Item", () => {
-  test("Accept sends one issue-body update with the draft as the description, keeping the Verification section", async () => {
+describe("a triage rewrite on a GitHub Item", () => {
+  test("Accept sends one issue-body update with the rewrite as the description, keeping the Verification section", async () => {
     const key = parkedJob("11");
     const answered = await post({ ref: key, parkedAt: at, answers: ["Metric"], action: "accept" });
     assert.equal(answered.status, 200, JSON.stringify(answered.body));
@@ -143,7 +143,7 @@ describe("a triage draft on a GitHub Item", () => {
     assert.equal(last.question, "Triage rewrite, round 1");
     assert.match(last.answer, /could not write it to the issue \(.*403.*\)/);
     assert.match(last.answer, /Use this description instead of the one written above:\nShow the tide table in metres\.$/);
-    assert.equal(loadJobs(store)[key]?.refine?.settled, "accepted");
+    assert.equal(loadJobs(store)[key]?.rewrite?.settled, "accepted");
     const events = store.eventsAfter(0, 10_000).filter((event) => event.kind === "orchestrator.host_write_failed" && event.subject === key);
     assert.equal(events.length, 1);
   });

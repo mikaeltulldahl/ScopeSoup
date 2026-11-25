@@ -33,7 +33,7 @@ const SOUP: LogWriter = { who: "scopesoup", machine: "demo", agent: true };
 const MERGED_BY_BATCH_4 = [30, 31, 33];
 
 /**
- * Activity that the seeded board alone does not show: who created each Item, a triage draft accepted, a question
+ * Activity that the seeded board alone does not show: who created each Item, a triage rewrite accepted, a question
  * answered, the merges of batch 4 in the Items' logs, switches pressed and an upgrade. Times are before `now`.
  */
 export function seedDemoActivity(store: Store, now: Date, version: string): void {
@@ -69,7 +69,7 @@ export function seedDemoActivity(store: Store, now: Date, version: string): void
     for (const name of ["triage", "implement", "review", "merge_queue"]) event(-2 * DAY - 4 * HOUR, `control.${name}_started`, "mira", { via: "board" });
     event(-26 * HOUR, "control.implement_paused", "jonas", { via: "board" });
     event(-25 * HOUR, "control.implement_started", "jonas", { via: "board" });
-    event(-400, "orchestrator.draft_rejected", "ines", { reason: "A person rejected the triage's rewrite (round 1).", round: 1 }, refKey(ref("work", 64)));
+    event(-400, "orchestrator.rewrite_rejected", "ines", { reason: "A person rejected the triage's rewrite (round 1).", round: 1 }, refKey(ref("work", 64)));
   });
 }
 

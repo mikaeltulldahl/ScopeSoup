@@ -10,7 +10,7 @@ import { AlreadyAnswered, BodyChanged, COMMENT_LIMIT, NotScopeSoups, TooLarge, W
 import type { Client, FetchLike } from "./client.ts";
 import { GitHubError, createClient, transient } from "./client.ts";
 import type { LogKeep, LogLine, Thread } from "./conventions.ts";
-import { answersBody, assumptionBody, batchBody, claimBody, clipLogFields, draftBody, mergedBody, liveClaims, logBody, nextQuestionNumber, questionBody, questionNumber, readMarker, readThread, readVerdicts, waitsForAnswer, withConventions, withdrawnBody } from "./conventions.ts";
+import { answersBody, assumptionBody, batchBody, claimBody, clipLogFields, rewriteBody, mergedBody, liveClaims, logBody, nextQuestionNumber, questionBody, questionNumber, readMarker, readThread, readVerdicts, waitsForAnswer, withConventions, withdrawnBody } from "./conventions.ts";
 import type { Scope } from "./map.ts";
 import { actorOf, ASSUMPTION_LABEL, changeRef, CHECK_GREEN, CLAIMED_LABEL, hasLabel, issueRefFromUrl, issueToWork, labelNames, NEEDS_DECISION_LABEL, pullToChange, runToRun, runnerToRunner, spliceBody, workRef } from "./map.ts";
 import type { RestCheckRun, RestCombinedStatus, RestComment, RestIssue, RestJob, RestLabel, RestPull, RestReview, RestRunner, RestUser, RestWorkflow, RestWorkflowRun } from "./rest.ts";
@@ -163,7 +163,7 @@ export function createGitHubHost(config: GitHubConfig): GitHubHost {
     return (await dependencies(String(issue.number), "blocked_by")).filter((blocker) => blocker.state === "open").map(issueRef);
   }
 
-  /** The sha256 of each issue body as last read, for the conventions layer (is a draft's original still the body?). */
+  /** The sha256 of each issue body as last read, for the conventions layer (is a rewrite's original still the body?). */
   const bodyShas = new Map<string, string>();
   const toWork = async (issue: RestIssue): Promise<WorkItem> => {
     if (config.conventions) bodyShas.set(String(issue.number), sha256(issue.body ?? ""));
@@ -473,7 +473,7 @@ export function createGitHubHost(config: GitHubConfig): GitHubHost {
     return { comments, self, thread: readThread(subject, comments, self) };
   }
 
-  /** The needs-decision label on, before a question or draft is posted; the re-read must show it. */
+  /** The needs-decision label on, before a question or rewrite is posted; the re-read must show it. */
   async function addNeedsDecision(subject: Ref): Promise<void> {
     await ensureLabel(NEEDS_DECISION_LABEL);
     await client.send("POST", r(`/issues/${subject.id}/labels`), { labels: [NEEDS_DECISION_LABEL] });
@@ -481,7 +481,7 @@ export function createGitHubHost(config: GitHubConfig): GitHubHost {
   }
 
   /**
-   * Once the Item no longer waits for an answer (`waitsForAnswer`: no question open, no draft waiting for Accept, Edit
+   * Once the Item no longer waits for an answer (`waitsForAnswer`: no question open, no rewrite waiting for Accept, Edit
    * or Reject), the needs-decision label goes; the re-read must show it gone.
    */
   async function settleQuestions(subject: Ref, thread: ReturnType<typeof readThread>): Promise<void> {
@@ -494,7 +494,7 @@ export function createGitHubHost(config: GitHubConfig): GitHubHost {
 
   /**
    * The answers in one comment, after a fresh look that each question is still open (or, with `proposal`, that
-   * the draft waits); the re-read must count each as its question's answer. Nothing is posted when one of them is refused.
+   * the rewrite waits); the re-read must count each as its question's answer. Nothing is posted when one of them is refused.
    */
   async function answerQuestions(subject: Ref, entries: readonly { to: string | null; answer: AnswerWrite }[]): Promise<{ open: number }> {
     if (entries.length === 0) throw new Error(`No answer to post on #${subject.id}.`);
@@ -502,9 +502,9 @@ export function createGitHubHost(config: GitHubConfig): GitHubHost {
     const numbered = entries.map(({ to, answer: given }) => {
       if (to === null) return { to: null, given };
       if (thread.answers.some((answer) => answer.to === to)) throw new AlreadyAnswered(`Question ${to} on #${subject.id} has an answer already.`);
-      // A person's decision on a triage draft answers the draft comment.
-      const draft = given.proposal !== undefined && thread.drafts.some((each) => each.id === to && !each.answered);
-      if (!draft && !thread.openQuestions.some((question) => question.id === to)) throw new Error(`There is no open question ${to} on #${subject.id} (it may have been deleted).`);
+      // A person's decision on a triage rewrite answers the rewrite comment.
+      const rewrite = given.proposal !== undefined && thread.rewrites.some((each) => each.id === to && !each.answered);
+      if (!rewrite && !thread.openQuestions.some((question) => question.id === to)) throw new Error(`There is no open question ${to} on #${subject.id} (it may have been deleted).`);
       const n = questionNumber(comments.find((comment) => String(comment.id) === to));
       return { to: Number(to), ...(n ? { n } : {}), given };
     });
@@ -593,7 +593,7 @@ export function createGitHubHost(config: GitHubConfig): GitHubHost {
      * The label first (a token without push access fails here, before anything is posted), then one comment per question,
      * numbered on from the issue's earlier questions (`Qn:`, never reused; nor a deleted one's, which the log comment keeps).
      * A comment over the limit (a large split) throws `TooLarge` before anything is written. A question still open with
-     * the same text and draft is the one already posted (a retry after a post GitHub took before it failed): it is not posted
+     * the same text and rewrite is the one already posted (a retry after a post GitHub took before it failed): it is not posted
      * again. A failure that can change by itself is `WriteLater`.
      */
     async askQuestions(subject, questions) {
@@ -605,7 +605,7 @@ export function createGitHubHost(config: GitHubConfig): GitHubHost {
           const found = comments.find((comment) => {
             if (taken.has(comment.id) || !open.has(String(comment.id))) return false;
             const data = readMarker(comment.body)?.data ?? {};
-            return data.question === question.question.trim() && data.draft === (question.draft ? Number(question.draft) : undefined);
+            return data.question === question.question.trim() && data.rewrite === (question.rewrite ? Number(question.rewrite) : undefined);
           });
           if (found) taken.add(found.id);
           return found;
@@ -657,33 +657,33 @@ export function createGitHubHost(config: GitHubConfig): GitHubHost {
     /** Several answers in one comment (`answersBody`); every question is checked first, and the re-read must count each. */
     answerQuestions: (subject, entries) => answerQuestions(subject, entries),
     /**
-     * The draft comment, with the hash of the issue's body as read now; over the limit it throws `TooLarge` and posts nothing.
-     * The same draft already there and unanswered (a retry after a post GitHub took before it failed) is not posted again. A
-     * failure that can change by itself is `WriteLater`. A draft waits for an answer even with no question, so the
+     * The rewrite comment, with the hash of the issue's body as read now; over the limit it throws `TooLarge` and posts nothing.
+     * The same rewrite already there and unanswered (a retry after a post GitHub took before it failed) is not posted again. A
+     * failure that can change by itself is `WriteLater`. A rewrite waits for an answer even with no question, so the
      * needs-decision label goes on first (a token without push access fails here, before anything is posted).
      */
-    async postDraft(subject, draft) {
+    async postRewrite(subject, rewrite) {
       try {
         const bodySha = sha256((await reread(subject)).body ?? "");
-        const body = draftBody(draft.round, draft.draft, bodySha, draft.labels);
+        const body = rewriteBody(rewrite.round, rewrite.text, bodySha, rewrite.labels);
         if (body.length > COMMENT_LIMIT) throw new TooLarge(`The rewrite for #${subject.id} is over ${COMMENT_LIMIT} characters.`);
         await addNeedsDecision(subject);
-        const same = (await threadOf(subject)).thread.drafts.find((each) => !each.answered && each.round === draft.round && each.bodySha === bodySha && each.text === draft.draft.trim() && changeText(each.labels) === changeText(draft.labels));
+        const same = (await threadOf(subject)).thread.rewrites.find((each) => !each.answered && each.round === rewrite.round && each.bodySha === bodySha && each.text === rewrite.text.trim() && changeText(each.labels) === changeText(rewrite.labels));
         if (same) return { id: same.id, at: same.at };
         const posted = await client.send<RestComment>("POST", r(`/issues/${subject.id}/comments`), { body });
-        if (!posted?.id) throw new Error(`GitHub took the draft on #${subject.id} but did not describe the comment.`);
+        if (!posted?.id) throw new Error(`GitHub took the rewrite on #${subject.id} but did not describe the comment.`);
         return { id: String(posted.id), at: posted.created_at };
       } catch (error) {
         throw later(error);
       }
     },
-    /** The draft comment is there and unanswered, and the issue's body is still the one it read. */
-    async checkDraft(subject, id) {
+    /** The rewrite comment is there and unanswered, and the issue's body is still the one it read. */
+    async checkRewrite(subject, id) {
       const { thread } = await threadOf(subject);
-      const draft = thread.drafts.find((each) => each.id === id);
-      if (!draft) throw new Error(`The draft comment ${id} on #${subject.id} is gone (it may have been deleted).`);
-      if (draft.answered) throw new AlreadyAnswered(`The rewrite of round ${draft.round} on #${subject.id} has an answer already.`);
-      if (sha256((await reread(subject)).body ?? "") !== draft.bodySha) throw new BodyChanged(`The description of #${subject.id} changed on GitHub since the rewrite of round ${draft.round} was written.`);
+      const rewrite = thread.rewrites.find((each) => each.id === id);
+      if (!rewrite) throw new Error(`The rewrite comment ${id} on #${subject.id} is gone (it may have been deleted).`);
+      if (rewrite.answered) throw new AlreadyAnswered(`The rewrite of round ${rewrite.round} on #${subject.id} has an answer already.`);
+      if (sha256((await reread(subject)).body ?? "") !== rewrite.bodySha) throw new BodyChanged(`The description of #${subject.id} changed on GitHub since the rewrite of round ${rewrite.round} was written.`);
     },
     /**
      * One line more in Scope Soup's log comment on the issue: posted with the first line, then edited in place (an edit
@@ -766,7 +766,7 @@ export function createGitHubHost(config: GitHubConfig): GitHubHost {
       if (pull.merged || pull.merged_at || pull.state === "closed") return;
       await client.send("PATCH", r(`/pulls/${change.id}`), { state: "closed" });
     },
-    /** A draft's label changes: one POST per label to add, one DELETE per label to remove, never a full replace; then the re-read. */
+    /** A rewrite's label changes: one POST per label to add, one DELETE per label to remove, never a full replace; then the re-read. */
     async changeLabels(subject, add, remove) {
       const have = labelNames((await reread(subject)).labels);
       const known = add.length > 0 ? await repoLabels() : [];

@@ -7,7 +7,7 @@
 // session said what comes next starts that step again. Anything else starts as a new item.
 //
 // A GitHub Item has no log of its own. Its record is Scope Soup's comments: the log comment's lines and the waiting triage
-// draft (`hostRecord`), and the question comments. `jobFromHost` reads those. Its answers stay on GitHub and are read from
+// rewrite (`hostRecord`), and the question comments. `jobFromHost` reads those. Its answers stay on GitHub and are read from
 // there, so none is restored into the store.
 
 import type { LogRecord, OpenQuestion, RecordedAnswer, Session, WorkItem } from "../model/types.ts";
@@ -54,8 +54,8 @@ export function jobFromLog(item: WorkItem): Job | null {
 }
 
 /**
- * The job Scope Soup's comments on a GitHub Item describe, or null when the Item may start as new. Pure. A triage draft
- * that waits comes back with its round, questions and draft comment: `original` is the body when its sha256 is the draft's
+ * The job Scope Soup's comments on a GitHub Item describe, or null when the Item may start as new. Pure. A triage rewrite
+ * that waits comes back with its round, questions and rewrite comment: `original` is the body when its sha256 is the rewrite's
  * `bodySha`, else the current body, and the parked state's reason says so. Open question comments come back as the parked state that names them,
  * so their answers are read from GitHub. Otherwise the log comment's last session says which step starts again, as on the meta branch.
  */
@@ -63,28 +63,28 @@ export function jobFromHost(item: WorkItem): Job | null {
   if (item.state === "done" || item.state === "abandoned") return null;
   const record = item.hostRecord;
   const log = (record?.log ?? []).filter(isScopeSoup);
-  const inDraft = new Set(record?.draftQuestions ?? []);
-  const open = (item.openQuestions ?? []).filter((question) => isScopeSoup(question) && !inDraft.has(question.id ?? ""));
-  const draft = record?.draft;
-  const startedAt = log[0]?.at ?? draft?.at ?? open[0]?.at;
+  const inRewrite = new Set(record?.rewriteQuestions ?? []);
+  const open = (item.openQuestions ?? []).filter((question) => isScopeSoup(question) && !inRewrite.has(question.id ?? ""));
+  const rewrite = record?.rewrite;
+  const startedAt = log[0]?.at ?? rewrite?.at ?? open[0]?.at;
   if (startedAt === undefined) return null;
   const { job, sessions, newest, review } = fromLines(item, log, startedAt);
 
-  if (draft) {
-    const questions = draft.questions.map(decisionOf);
+  if (rewrite) {
+    const questions = rewrite.questions.map(decisionOf);
     job.step = "triage";
     job.triage ??= { ready: true, size: "medium", paths: [], hidesDecision: false };
     job.triage.hidesDecision = questions.length > 0;
-    job.refine = { original: (item.body ?? "").trim(), draft: draft.text, questions, round: draft.round, ...(draft.labels ? { labels: draft.labels } : {}) };
-    // The rounds so far are the draft comments.
-    job.refineRounds = Math.max(record!.draftRounds, draft.round);
+    job.rewrite = { original: (item.body ?? "").trim(), text: rewrite.text, questions, round: rewrite.round, ...(rewrite.labels ? { labels: rewrite.labels } : {}) };
+    // The rounds so far are the rewrite comments.
+    job.rewriteRounds = Math.max(record!.rewriteRounds, rewrite.round);
     const said = questions.length > 0
-      ? `Triage, round ${draft.round}: a rewrite of the description and ${questions.length} question(s) wait for an answer: ${questions.map((each, index) => `${index + 1}. ${each.question}`).join(" ")}`
-      : `Triage, round ${draft.round}: a rewrite of the description waits for a person to accept, edit or reject.`;
-    const note = draft.bodyKnown ? "" : " The description the rewrite read is no longer known: the current one is shown as the original.";
-    const ids = draft.questions.flatMap((question) => (question.id ? [question.id] : []));
-    const askedAt = draft.questions[draft.questions.length - 1]?.at;
-    job.parked = { as: "needs-decision", reason: `${said}${note}`, at: draft.at, draft: { id: draft.id, questions: ids, ...(askedAt ? { askedAt } : {}) } };
+      ? `Triage, round ${rewrite.round}: a rewrite of the description and ${questions.length} question(s) wait for an answer: ${questions.map((each, index) => `${index + 1}. ${each.question}`).join(" ")}`
+      : `Triage, round ${rewrite.round}: a rewrite of the description waits for a person to accept, edit or reject.`;
+    const note = rewrite.bodyKnown ? "" : " The description the rewrite read is no longer known: the current one is shown as the original.";
+    const ids = rewrite.questions.flatMap((question) => (question.id ? [question.id] : []));
+    const askedAt = rewrite.questions[rewrite.questions.length - 1]?.at;
+    job.parked = { as: "needs-decision", reason: `${said}${note}`, at: rewrite.at, rewrite: { id: rewrite.id, questions: ids, ...(askedAt ? { askedAt } : {}) } };
     return job;
   }
 

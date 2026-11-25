@@ -22,7 +22,7 @@ import { sameFilesWords } from "../core/sameFiles.ts";
 import type { Context, TickDeps } from "./context.ts";
 import type { ClaimResult } from "./ports.ts";
 import { createLog, errorText } from "./context.ts";
-import { afterRefine, backToImplement, emptyBranch, followDraft, followQuestions, overturnsBack, park, retryHandOver, retryPost, reviewOffAtLevel2, settle, writeAboutOthers } from "./cycle.ts";
+import { afterRewrite, backToImplement, emptyBranch, followRewrite, followQuestions, overturnsBack, park, retryHandOver, retryPost, reviewOffAtLevel2, settle, writeAboutOthers } from "./cycle.ts";
 import { loadOwnBlockers, withOwnBlockers } from "../store/blockers.ts";
 import { decide } from "./usageCheck.ts";
 import { allowanceDecision } from "./allowance.ts";
@@ -374,7 +374,7 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
       await settle(ctx, job, session, readSessionResult(store, job.sessionId), item, main);
     }
     // A person settled the triage's rewrite: triage's other verdicts follow, without a session.
-    if (!job.sessionId && !job.parked && job.step === "triage" && job.refine?.settled) await afterRefine(ctx, job);
+    if (!job.sessionId && !job.parked && job.step === "triage" && job.rewrite?.settled) await afterRewrite(ctx, job);
     // Below level 2 nothing is built, so nothing is handed over either: the hand-over waits for the level to come back.
     if (job.owes && merging && config.level >= 2 && !job.parked && !job.sessionId && item && item.state !== "done" && item.state !== "abandoned") {
       // The item holds no clone: it was parked for a person and the clone was freed (a failed hand-over a person retries), or the record was rebuilt from
@@ -401,11 +401,11 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
     }
     // The question comments it is parked on were answered or deleted on GitHub.
     if (job.parked?.questions && item && (await followQuestions(ctx, job, item))) continue;
-    // The draft's question comments were answered by replies, or deleted.
-    if (job.parked?.draft && item && (await followDraft(ctx, job, item))) continue;
+    // The rewrite's question comments were answered by replies, or deleted.
+    if (job.parked?.rewrite && item && (await followRewrite(ctx, job, item))) continue;
     // A merged Item reopened on GitHub is work again: its merged job is over too.
     const over = !item || item.state === "done" || item.state === "abandoned" || (job.merged !== undefined && item.merged?.reopened !== undefined);
-    // Questions or a draft that could not be posted for a reason that can change are posted again, without waiting for a person.
+    // Questions or a rewrite that could not be posted for a reason that can change are posted again, without waiting for a person.
     if (repost && !job.sessionId && !over && job.parked?.retry === "post") {
       await retryPost(ctx, job);
       continue;

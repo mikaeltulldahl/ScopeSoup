@@ -1,7 +1,7 @@
 // What the tick needs from the runner and from the hosts, as interfaces the caller injects.
 
 import type { LabelChange, Ref, RepoLabel, Session, SessionRole } from "../model/types.ts";
-import type { AnswerWrite, DraftWrite, QuestionWrite, WorkPatch } from "../ports/host.ts";
+import type { AnswerWrite, RewriteWrite, QuestionWrite, WorkPatch } from "../ports/host.ts";
 import type { AssumptionOutcome, AssumptionPick } from "./assumptions.ts";
 
 export interface SessionRequest {
@@ -157,21 +157,21 @@ export interface Actions {
   answerQuestion?(item: Ref, to: string | null, answer: AnswerWrite): Promise<{ open: number } | null>;
   /** Several answers posted together in one comment, then the item read back. */
   answerQuestions?(item: Ref, answers: { to: string | null; answer: AnswerWrite }[]): Promise<{ open: number } | null>;
-  /** Posts a triage round's draft as a comment on the item's host; null when the item is not there. Throws `TooLarge` over the limit. */
-  postDraft?(item: Ref, draft: DraftWrite): Promise<{ id: string; at: string } | null>;
+  /** Posts a triage round's rewrite as a comment on the item's host; null when the item is not there. Throws `TooLarge` over the limit. */
+  postRewrite?(item: Ref, rewrite: RewriteWrite): Promise<{ id: string; at: string } | null>;
   /**
    * The labels the triage may propose for the item, with their descriptions: the repository's (GitHub) or, on a host
    * that keeps no list, every label its items have (meta branch). Null when the item is not on this host. Absent where writes are off.
    */
   repoLabels?(item: Ref): Promise<RepoLabel[] | null>;
   /**
-   * Applies a triage draft's label changes on the item's host at Accept, only those that still make sense, one call per
+   * Applies a triage rewrite's label changes on the item's host at Accept, only those that still make sense, one call per
    * label (GitHub) or in the item's file (meta branch), and reads the item back. Returns what changed; null when the item is not on
    * this host. Throws when the host refuses or did not apply it.
    */
   changeLabels?(item: Ref, change: LabelChange): Promise<{ added: string[]; removed: string[] } | null>;
-  /** Throws `BodyChanged` when the item's body changed since the draft comment `id` was written, `AlreadyAnswered` when it has an answer. */
-  checkDraft?(item: Ref, id: string): Promise<void>;
+  /** Throws `BodyChanged` when the item's body changed since the rewrite comment `id` was written, `AlreadyAnswered` when it has an answer. */
+  checkRewrite?(item: Ref, id: string): Promise<void>;
   /** Removes the needs-decision label once no question is open on the item (answered by a reply on the host). */
   settleQuestions?(item: Ref): Promise<void>;
   /**

@@ -1,4 +1,4 @@
-// Scope Soup's conventions on Jira against the fake, Cloud and Data Center: questions, answers and replies, drafts, decisions,
+// Scope Soup's conventions on Jira against the fake, Cloud and Data Center: questions, answers and replies, rewrites, decisions,
 // claims, the log, the trust rule and inert text.
 
 import assert from "node:assert/strict";
@@ -90,22 +90,22 @@ for (const deployment of ["cloud", "datacenter"] as const) {
       assert.deepEqual((await host.work.getWork(ref("DEMO-3")))?.answers?.map((each) => [each.answer, each.by]), [["up", "Robin"]]);
     });
 
-    test("a draft waits for Accept; a changed description refuses it", async () => {
+    test("a rewrite waits for Accept; a changed description refuses it", async () => {
       const { host, write, ref, fake } = writable(deployment);
-      const posted = await write.postDraft!(ref("DEMO-3"), { round: 1, draft: "Round down, in metres.\n\n## Verification\n\nThe table says m.", labels: { add: ["units"], remove: [] } });
+      const posted = await write.postRewrite!(ref("DEMO-3"), { round: 1, text: "Round down, in metres.\n\n## Verification\n\nThe table says m.", labels: { add: ["units"], remove: [] } });
       let item = await host.work.getWork(ref("DEMO-3"));
-      assert.equal(item?.hostRecord?.draft?.id, posted.id);
-      assert.equal(item?.hostRecord?.draft?.text, "Round down, in metres.\n\n## Verification\n\nThe table says m.");
-      assert.deepEqual(item?.hostRecord?.draft?.labels, { add: ["units"], remove: [] });
-      assert.equal(item?.hostRecord?.draft?.bodyKnown, true);
+      assert.equal(item?.hostRecord?.rewrite?.id, posted.id);
+      assert.equal(item?.hostRecord?.rewrite?.text, "Round down, in metres.\n\n## Verification\n\nThe table says m.");
+      assert.deepEqual(item?.hostRecord?.rewrite?.labels, { add: ["units"], remove: [] });
+      assert.equal(item?.hostRecord?.rewrite?.bodyKnown, true);
       assert.equal(item?.needsDecision, true);
-      assert.deepEqual(await write.postDraft!(ref("DEMO-3"), { round: 1, draft: "Round down, in metres.\n\n## Verification\n\nThe table says m.", labels: { add: ["units"], remove: [] } }), posted);
-      await write.checkDraft!(ref("DEMO-3"), posted.id);
+      assert.deepEqual(await write.postRewrite!(ref("DEMO-3"), { round: 1, text: "Round down, in metres.\n\n## Verification\n\nThe table says m.", labels: { add: ["units"], remove: [] } }), posted);
+      await write.checkRewrite!(ref("DEMO-3"), posted.id);
       fake.issues.get("DEMO-3")!.fields.description = cloud ? { version: 1, type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "Edited." }] }] } : "Edited.";
-      await assert.rejects(write.checkDraft!(ref("DEMO-3"), posted.id), BodyChanged);
+      await assert.rejects(write.checkRewrite!(ref("DEMO-3"), posted.id), BodyChanged);
       await write.answerQuestion!(ref("DEMO-3"), posted.id, { answer: "Accept", proposal: "accepted" });
       item = await host.work.getWork(ref("DEMO-3"));
-      assert.equal(item?.hostRecord?.draft, undefined);
+      assert.equal(item?.hostRecord?.rewrite, undefined);
       assert.equal(item?.labels.includes(NEEDS_DECISION_LABEL), false);
     });
 
@@ -191,7 +191,7 @@ for (const deployment of ["cloud", "datacenter"] as const) {
   const stranger = deployment === "cloud" ? STRANGER : DC_STRANGER;
   const strangerId = stranger.accountId ?? stranger.name!;
   describe(`Jira ${deployment}: who may answer, forged claims, reads that fail`, { concurrency: 4 }, () => {
-    test("only people of the project answer: a stranger's A1: reply, answer property or draft decision counts for nothing, unless named in answerers", async () => {
+    test("only people of the project answer: a stranger's A1: reply, answer property or rewrite decision counts for nothing, unless named in answerers", async () => {
       const w = writable(deployment);
       const { host, write, ref } = w;
       const { ids } = await write.askQuestions!(ref("DEMO-3"), [ASK]);
@@ -200,9 +200,9 @@ for (const deployment of ["cloud", "datacenter"] as const) {
       let item = await host.work.getWork(ref("DEMO-3"));
       assert.equal(item?.answers, undefined);
       assert.equal(item?.openQuestions?.length, 1);
-      const draft = await write.postDraft!(ref("DEMO-1"), { round: 1, draft: "New text." });
-      personSays(w, "DEMO-1", "Accept", stranger, { [COMMENT_PROPERTY]: { v: 1, kind: "answer", to: Number(draft.id), answer: "Accept", proposal: "accepted", by: "Someone" } });
-      assert.equal((await host.work.getWork(ref("DEMO-1")))?.hostRecord?.draft?.id, draft.id, "the draft still waits");
+      const rewrite = await write.postRewrite!(ref("DEMO-1"), { round: 1, text: "New text." });
+      personSays(w, "DEMO-1", "Accept", stranger, { [COMMENT_PROPERTY]: { v: 1, kind: "answer", to: Number(rewrite.id), answer: "Accept", proposal: "accepted", by: "Someone" } });
+      assert.equal((await host.work.getWork(ref("DEMO-1")))?.hostRecord?.rewrite?.id, rewrite.id, "the rewrite still waits");
       // Named in answerers, the same person's reply counts.
       const named = w.another("laptop-c", { answerers: [strangerId] });
       item = await named.work.getWork(ref("DEMO-3"));

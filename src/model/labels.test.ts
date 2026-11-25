@@ -18,7 +18,7 @@ test("the same label added and removed is neither", () => {
 });
 
 test("at Accept only the changes that still make sense are applied, and other labels stay as people set them", () => {
-  // A person added bug and removed question after the draft, and added "harbour".
+  // A person added bug and removed question after the rewrite, and added "harbour".
   assert.deepEqual(applyChange(["bug", "harbour"], { add: ["bug", "priority:major"], remove: ["question"] }), { labels: ["bug", "harbour", "priority:major"], add: ["priority:major"], remove: [] });
   assert.deepEqual(applyChange(["Question"], { add: ["scopesoup:claimed"], remove: ["question", "scopesoup:claimed"] }), { labels: [], add: [], remove: ["Question"] });
 });

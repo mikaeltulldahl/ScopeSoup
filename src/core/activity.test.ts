@@ -11,12 +11,12 @@ let seq = 0;
 const event = (minutes: number, kind: string, actor: string, data: unknown = {}, subject?: string): ScopeSoupEvent => ({ seq: ++seq, at: at(minutes), kind, actor, data, ...(subject ? { subject } : {}) });
 const input = (over: Partial<ActivityInput>): ActivityInput => ({ works: [], changes: [], sessions: [], batches: [], events: [], settings: [], ...over });
 
-test("an Item's log gives created, the accepted draft, questions and answers, holds and the merge, linked to the Item", () => {
+test("an Item's log gives created, the accepted rewrite, questions and answers, holds and the merge, linked to the Item", () => {
   const item = work(12, {
     title: "Tide table",
     log: [
       line(-100, MIRA, "created"),
-      line(-90, SOUP, "question", { question: "Which datum?", refine: 1 }),
+      line(-90, SOUP, "question", { question: "Which datum?", rewrite: 1 }),
       line(-80, MIRA, "answer", { answer: "Lowest astronomical tide" }),
       line(-79, MIRA, "edited", { changed: "description", via: "triage, round 1", was: "old" }),
       line(-70, MIRA, "claimed", { until: at(600) }),
@@ -89,7 +89,7 @@ test("batches: merged with their Items, failed naming the Item that broke it", (
   assert.equal(rows[0]!.who, "merge queue");
 });
 
-test("switches pressed together are one row; upgrades, drafts rejected and settings read as words", () => {
+test("switches pressed together are one row; upgrades, rewrites rejected and settings read as words", () => {
   const events = [
     event(-200, "control.triage_started", "mira", { via: "board" }),
     event(-200, "control.implement_started", "mira", { via: "board" }),
@@ -97,7 +97,7 @@ test("switches pressed together are one row; upgrades, drafts rejected and setti
     event(-100, "control.implement_paused", "main-guard", { via: "main-guard" }),
     event(-90, "control.stopped", "jonas", { via: "board" }),
     event(-80, "scopesoup.upgraded", "scopesoup", { from: "0.7.0", to: "0.8.0" }),
-    event(-70, "orchestrator.draft_rejected", "ines", { round: 2 }, "demo:work:9"),
+    event(-70, "orchestrator.rewrite_rejected", "ines", { round: 2 }, "demo:work:9"),
     event(-60, "config.changed", "mira", { via: "board", fields: ["settings"] }),
     // A shared save is in the settings' log: not shown twice.
     event(-50, "config.changed", "mira", { via: "board", fields: ["level"], shared: { commit: "x", changes: [] } }),
@@ -125,7 +125,7 @@ test("events an Item's log already has are not shown twice; an Item without a lo
   const events = [
     event(-20, "orchestrator.merged", "orchestrator", { sha: "1111111aaaa", batch: 4 }, "demo:work:1"),
     event(-40, "person.answered", "mira", { answer: "Yes", by: "mira" }, "demo:work:1"),
-    event(-30, "orchestrator.draft_accepted", "mira", { round: 1 }, "demo:work:1"),
+    event(-30, "orchestrator.rewrite_accepted", "mira", { round: 1 }, "demo:work:1"),
     event(-15, "orchestrator.merged", "orchestrator", { sha: "2222222bbbb", by: "session" }, "demo:work:2"),
     event(-35, "person.answered", "ines", { answer: "No", by: "ines" }, "demo:work:2"),
     event(-36, "orchestrator.questions_asked", "orchestrator", { questions: ["1", "2"] }, "demo:work:2"),

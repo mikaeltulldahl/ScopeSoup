@@ -1,5 +1,5 @@
 // The Jira host: one Jira project (Cloud or Data Center) as a host of work items. It writes only with `allowWrites`
-// (write.ts). With `conventions`, Scope Soup's questions, answers, drafts, decisions, claims and log are read into each item
+// (write.ts). With `conventions`, Scope Soup's questions, answers, rewrites, decisions, claims and log are read into each item
 // (conventions.ts). Jira has no pull requests: a Jira project's changes stay on its git remote.
 
 import type { Actor, Priority, Ref, WorkItem } from "../../model/types.ts";
@@ -174,7 +174,7 @@ export function createJiraHost(config: JiraConfig): JiraHost {
     commentLimit,
     ...(claims ? { claimMachine: claims } : {}),
   };
-  /** The sha256 of each issue's description as last read: is a draft's original still the description? */
+  /** The sha256 of each issue's description as last read: is a rewrite's original still the description? */
   const bodyShas = new Map<string, string>();
 
   const toWork = (issue: JiraIssue): WorkItem => {
@@ -421,7 +421,7 @@ export function createJiraHost(config: JiraConfig): JiraHost {
     : undefined;
   // The conventions' writes are read back only with the conventions on.
   if (write && !config.conventions) {
-    for (const name of ["askQuestions", "answerQuestion", "answerQuestions", "withdrawQuestions", "postDraft", "checkDraft", "logLine", "settleQuestions", "postAssumptions", "settleAssumptions"] as const) delete write[name];
+    for (const name of ["askQuestions", "answerQuestion", "answerQuestions", "withdrawQuestions", "postRewrite", "checkRewrite", "logLine", "settleQuestions", "postAssumptions", "settleAssumptions"] as const) delete write[name];
   }
 
   // The labels the triage may propose: every label on the site (Cloud's `GET /label`; Data Center has no such list [known]).

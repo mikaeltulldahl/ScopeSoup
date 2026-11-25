@@ -30,7 +30,7 @@ export interface Decision {
   multiSelect?: true;
   /**
    * A question made from a `duplicateOf` or `conflictsWith` link. When the answer is this label, the Item parked
-   * as not ready with that answer once the draft is settled (Scope Soup closes nothing itself).
+   * as not ready with that answer once the rewrite is settled (Scope Soup closes nothing itself).
    */
   stopsOn?: string;
   /** With `stopsOn`, from a `duplicateOf` link: the Item it duplicates, so the host can close it as that one's duplicate. */
@@ -43,37 +43,37 @@ export type { ItemLinkAnswer, LinkType };
 
 /**
  * The triage's rewrite of the Item's description, parked for a person with its questions (each recommendation
- * pre-selected on the Item page). Keeping every recommendation, a person accepts, edits or rejects the draft in one action;
+ * pre-selected on the Item page). Keeping every recommendation, a person accepts, edits or rejects the rewrite in one action;
  * any other answer runs the triage again with the answers.
  */
-export interface Refinement {
+export interface Rewrite {
   /** The description as the triage read it. */
   original: string;
   /** The description written as if a person takes every recommendation. */
-  draft: string;
+  text: string;
   /** Triage's questions, then the ones made from duplicate and conflict links. */
   questions: Decision[];
-  /** Which round of the loop this draft is (1 for the first). There is no cap. */
+  /** Which round of the loop this rewrite is (1 for the first). There is no cap. */
   round: number;
-  /** The label changes proposed with the draft, kept to the repository's labels; applied with it at Accept or Edit. */
+  /** The label changes proposed with the rewrite, kept to the repository's labels; applied with it at Accept or Edit. */
   labels?: LabelChange;
   /** Labels the triage named that the repository does not have: dropped and noted. */
   droppedLabels?: string[];
-  /** A person settled the draft: the next tick goes on from triage's other verdicts (split, not ready, implement). */
+  /** A person settled the rewrite: the next tick goes on from triage's other verdicts (split, not ready, implement). */
   settled?: "accepted" | "edited" | "rejected";
   /** With `settled`: an answer picked a question's `stopsOn` (close as a duplicate, hold for a conflict). */
   stop?: string;
   /** With `stop`, the Item a person said this one duplicates. */
   duplicateOf?: Ref;
   /**
-   * The draft and questions came from agents working on other Items (`aboutOthers`), named here ("triage of A-3"). Once a
+   * The rewrite and questions came from agents working on other Items (`aboutOthers`), named here ("triage of A-3"). Once a
    * person settles them, this Item is triaged again with the answers.
    */
   askedBy?: string[];
 }
 
 /**
- * Questions an agent asks about another Item than its own (`aboutOthers` in its answer), and from triage a draft of that Item's
+ * Questions an agent asks about another Item than its own (`aboutOthers` in its answer), and from triage a rewrite of that Item's
  * description. Scope Soup writes them on that Item (`aboutOthers.ts`). Agent text: data.
  */
 export interface AboutOther {
@@ -81,7 +81,7 @@ export interface AboutOther {
   item: string;
   questions: Decision[];
   /** Triage only. */
-  draft?: string;
+  rewrite?: string;
 }
 
 /** A proposed restructuring (decision 94): a person accepts, edits or rejects it on the item page. */
@@ -106,12 +106,12 @@ export interface TriageAnswer {
   /** A restructuring triage proposes: where each part goes and what becomes of the Item, with why. */
   restructure?: { reason: string; original: OriginalFate; parts: ProposedPart[] };
   /** The description rewritten as if a person takes every recommendation. Absent in answers from earlier. */
-  draft?: string;
+  rewrite?: string;
   /** Typed links to other Items. */
   links?: ItemLinkAnswer[];
   /** Labels the triage proposes to add and remove, as it wrote them (checked against the repository's labels later). */
   labels?: LabelChange;
-  /** Questions about other Items, each with a draft of that Item's description when it needs one. */
+  /** Questions about other Items, each with a rewrite of that Item's description when it needs one. */
   aboutOthers?: AboutOther[];
   /** New Items it proposes, filed as drafts for a person (decision 95). */
   drafts?: ProposedDraft[];
@@ -127,7 +127,7 @@ export interface ImplementAnswer {
   mergedAs?: string;
   /** The questions it decided itself as cheap to change later, recorded on the Item for a person to accept or overturn. */
   decisions?: TakenDecision[];
-  /** Questions about other Items (never a draft). */
+  /** Questions about other Items (never a rewrite). */
   aboutOthers?: AboutOther[];
   /** New Items it proposes, filed as drafts for a person (decision 95). */
   drafts?: ProposedDraft[];
@@ -186,7 +186,7 @@ export interface Job {
     as: ParkedAs; reason: string; at: string;
     /**
      * "hand-over": the work is finished; only the hand-over failed and is retried when a person answers. "post": the parked state's
-     * questions or draft could not be posted on the host for a reason that can change (down, a 5xx, a rate limit); each tick posts
+     * questions or rewrite could not be posted on the host for a reason that can change (down, a 5xx, a rate limit); each tick posts
      * them again by itself.
      */
     retry?: "hand-over" | "post";
@@ -200,8 +200,8 @@ export interface Job {
     texts?: AskedText[];
     /** The host's time of the last question comment, so an older read of the item is not taken for a deletion. */
     askedAt?: string;
-    /** The triage round's draft comment on the host (GitHub) and its question comments, which a person answers on the board. */
-    draft?: { id: string; questions: string[]; /** As `texts` above. */ texts?: AskedText[]; /** The host's time of the last question comment. */ askedAt?: string; /** Each question has its answer from a reply on the host, all the recommendations: the draft waits for Accept on the board. */ answered?: true };
+    /** The triage round's rewrite comment on the host (GitHub) and its question comments, which a person answers on the board. */
+    rewrite?: { id: string; questions: string[]; /** As `texts` above. */ texts?: AskedText[]; /** The host's time of the last question comment. */ askedAt?: string; /** Each question has its answer from a reply on the host, all the recommendations: the rewrite waits for Accept on the board. */ answered?: true };
   };
   /** Set when a person said "try again" after a failed hand-over: the next tick hands over without a session. */
   owes?: "hand-over";
@@ -215,9 +215,9 @@ export interface Job {
   /** The restructuring triage proposed; the job parked until a person decides. */
   proposal?: Proposal;
   /** The triage's rewrite description and its questions, parked for a person, or settled and about to go on. */
-  refine?: Refinement;
-  /** Rounds of the refinement loop so far, kept while the triage runs again with the answers. */
-  refineRounds?: number;
+  rewrite?: Rewrite;
+  /** Rounds of the rewrite loop so far, kept while the triage runs again with the answers. */
+  rewriteRounds?: number;
   implement?: ImplementAnswer;
   /** Every decision the implementor recorded on this job so far, oldest first: the reviewer is shown them. */
   taken?: TakenDecision[];
@@ -286,7 +286,7 @@ export interface Triaged extends TriagedText {
   main?: string;
   /** The ref keys of the Items it was blocked by that were open then. */
   blockers: string[];
-  /** Hashes of texts Scope Soup wrote itself since (an accepted or edited draft): seeing one of them is no edit. */
+  /** Hashes of texts Scope Soup wrote itself since (an accepted or edited rewrite): seeing one of them is no edit. */
   also?: string[];
 }
 
@@ -455,8 +455,8 @@ export function questionsSettled(job: Job, item: Pick<WorkItem, "openQuestions" 
  * question, which is answered and released as before, and for anything that is not a triage decision.
  */
 export function jobQuestions(job: Job): Decision[] {
-  // A draft's questions are answered together with the draft (`POST /api/draft`), not one by one.
-  if (job.parked?.as !== "needs-decision" || job.step !== "triage" || job.proposal || job.decision || job.refine) return [];
+  // A rewrite's questions are answered together with the rewrite (`POST /api/rewrite`), not one by one.
+  if (job.parked?.as !== "needs-decision" || job.step !== "triage" || job.proposal || job.decision || job.rewrite) return [];
   const all = (job.triage?.decisions ?? []).filter((decision) => decision.question.trim());
   return all.length > 1 ? all : [];
 }
@@ -504,20 +504,20 @@ export function answerQuestion(store: Store, item: Ref, index: number, answer: s
   });
 }
 
-/** Why an answer to a draft is refused: no draft parked on the item (any more), the page read another parked state, or the answers do not fit its questions. */
-export type DraftRefusal = "no-draft" | "parked-changed" | "answers";
+/** Why an answer to a rewrite is refused: no rewrite parked on the item (any more), the page read another parked state, or the answers do not fit its questions. */
+export type RewriteRefusal = "no-rewrite" | "parked-changed" | "answers";
 
-/** The draft this job is parked on, unsettled. */
-export function parkedDraft(job: Job | undefined): Refinement | undefined {
-  return job?.parked?.as === "needs-decision" && job.step === "triage" && job.refine && !job.refine.settled ? job.refine : undefined;
+/** The rewrite this job is parked on, unsettled. */
+export function parkedRewrite(job: Job | undefined): Rewrite | undefined {
+  return job?.parked?.as === "needs-decision" && job.step === "triage" && job.rewrite && !job.rewrite.settled ? job.rewrite : undefined;
 }
 
-/** Whether `answers` (one per question, in order) may be given to the draft parked on this job now; null when they may. */
-export function draftRefusal(job: Job | undefined, parkedAt: string, answers: readonly string[]): DraftRefusal | null {
-  const refine = parkedDraft(job);
-  if (!job || !refine) return "no-draft";
+/** Whether `answers` (one per question, in order) may be given to the rewrite parked on this job now; null when they may. */
+export function rewriteRefusal(job: Job | undefined, parkedAt: string, answers: readonly string[]): RewriteRefusal | null {
+  const rewrite = parkedRewrite(job);
+  if (!job || !rewrite) return "no-rewrite";
   if (Date.parse(parkedAt) !== Date.parse(job.parked!.at)) return "parked-changed";
-  if (answers.length !== refine.questions.length || answers.some((answer) => answer.trim() === "")) return "answers";
+  if (answers.length !== rewrite.questions.length || answers.some((answer) => answer.trim() === "")) return "answers";
   return null;
 }
 
@@ -528,42 +528,42 @@ export function picks(answer: string | undefined, label: string): boolean {
   return wanted !== "" && (given === wanted || given.startsWith(`${wanted}:`));
 }
 
-/** True when every answer is the recommendation of its question: then the draft, written for those answers, can be settled. */
-export function keepsRecommendations(refine: Refinement, answers: readonly string[]): boolean {
-  return refine.questions.every((question, index) => picks(answers[index], question.recommendation));
+/** True when every answer is the recommendation of its question: then the rewrite, written for those answers, can be settled. */
+export function keepsRecommendations(rewrite: Rewrite, answers: readonly string[]): boolean {
+  return rewrite.questions.every((question, index) => picks(answers[index], question.recommendation));
 }
 
 /**
- * A person answers a parked draft, in the store transaction the caller holds. Keeping every recommendation, the draft is
- * settled as `action` and the next tick goes on from triage's other verdicts (`afterRefine`); a stopping answer (close as a
+ * A person answers a parked rewrite, in the store transaction the caller holds. Keeping every recommendation, the rewrite is
+ * settled as `action` and the next tick goes on from triage's other verdicts (`afterRewrite`); a stopping answer (close as a
  * duplicate, hold for a conflict) is kept with it. Any other answer sends the item back to its triage, which runs again with
  * the answers in its prompt (the caller records them). No round cap.
  */
-export function settleDraft(store: Store, item: Ref, answers: readonly string[], action: "accept" | "edit" | "reject", actor: string, at: string, parkedAt: string, written: readonly string[] = []): { refused: DraftRefusal } | { rerun: true } | { settled: NonNullable<Refinement["settled"]> } {
+export function settleRewrite(store: Store, item: Ref, answers: readonly string[], action: "accept" | "edit" | "reject", actor: string, at: string, parkedAt: string, written: readonly string[] = []): { refused: RewriteRefusal } | { rerun: true } | { settled: NonNullable<Rewrite["settled"]> } {
   const jobs = loadJobs(store);
   const key = refKey(item);
   const job = jobs[key];
-  const refused = draftRefusal(job, parkedAt, answers);
-  if (refused || !job) return { refused: refused ?? "no-draft" };
-  const refine = job.refine!;
+  const refused = rewriteRefusal(job, parkedAt, answers);
+  if (refused || !job) return { refused: refused ?? "no-rewrite" };
+  const rewrite = job.rewrite!;
   delete job.parked;
   delete job.notBefore;
   job.failures = 0;
-  if (!keepsRecommendations(refine, answers)) {
-    delete job.refine;
-    const changed = refine.questions.map((question, index) => ({ question, answer: answers[index]! })).filter((each) => !picks(each.answer, each.question.recommendation));
+  if (!keepsRecommendations(rewrite, answers)) {
+    delete job.rewrite;
+    const changed = rewrite.questions.map((question, index) => ({ question, answer: answers[index]! })).filter((each) => !picks(each.answer, each.question.recommendation));
     saveJobs(store, jobs);
-    store.appendEvent({ kind: "orchestrator.draft_answered", subject: key, actor, data: { reason: `A person answered round ${refine.round} of the triage otherwise than recommended (${changed.map((each) => `${each.question.question} Answered: ${each.answer}`).join(" ")}); the triage runs again with the answers.`, round: refine.round } }, at);
+    store.appendEvent({ kind: "orchestrator.rewrite_answered", subject: key, actor, data: { reason: `A person answered round ${rewrite.round} of the triage otherwise than recommended (${changed.map((each) => `${each.question.question} Answered: ${each.answer}`).join(" ")}); the triage runs again with the answers.`, round: rewrite.round } }, at);
     return { rerun: true };
   }
   const settled = action === "accept" ? "accepted" : action === "edit" ? "edited" : "rejected";
-  refine.settled = settled;
+  rewrite.settled = settled;
   if (settled !== "rejected" && job.triaged && written.length > 0) job.triaged = adoptWritten(job.triaged, written);
-  const stop = refine.questions.find((question, index) => question.stopsOn !== undefined && picks(answers[index], question.stopsOn));
-  if (stop) refine.stop = stop.stopsOn;
-  if (stop?.duplicateOf) refine.duplicateOf = stop.duplicateOf;
+  const stop = rewrite.questions.find((question, index) => question.stopsOn !== undefined && picks(answers[index], question.stopsOn));
+  if (stop) rewrite.stop = stop.stopsOn;
+  if (stop?.duplicateOf) rewrite.duplicateOf = stop.duplicateOf;
   saveJobs(store, jobs);
-  store.appendEvent({ kind: `orchestrator.draft_${settled}`, subject: key, actor, data: { reason: `A person ${settled} the triage's rewrite (round ${refine.round}).${stop ? ` Answered: ${stop.stopsOn}.` : ""}`, round: refine.round, original: refine.original, draft: refine.draft } }, at);
+  store.appendEvent({ kind: `orchestrator.rewrite_${settled}`, subject: key, actor, data: { reason: `A person ${settled} the triage's rewrite (round ${rewrite.round}).${stop ? ` Answered: ${stop.stopsOn}.` : ""}`, round: rewrite.round, original: rewrite.original, text: rewrite.text } }, at);
   return { settled };
 }
 
@@ -608,7 +608,7 @@ function asDecision(value: unknown): Decision | undefined {
  * Tool-call markup inside a string: the model ran fields together. Only `<parameter name=` or a closing tag named
  * after a field of the triage answer counts; an HTML closing tag such as `</summary>` in a reason is ordinary text.
  */
-const MARKUP = /<parameter\s+name\s*=|<\/(?:ready|notReadyReason|size|paths|blockers|questions|hidesDecision|decisions|decision|question|options|recommendation|context|proposal|parts|title|description|verification|reason|risk|riskReason|draft|links|aboutOthers|drafts|done|mergedAs|chosen|others|why|verdict|findings|severity|parameter)\s*>/;
+const MARKUP = /<parameter\s+name\s*=|<\/(?:ready|notReadyReason|size|paths|blockers|questions|hidesDecision|decisions|decision|question|options|recommendation|context|proposal|parts|title|description|verification|reason|risk|riskReason|rewrite|links|aboutOthers|drafts|done|mergedAs|chosen|others|why|verdict|findings|severity|parameter)\s*>/;
 
 /** True when any string anywhere in the value holds tool-call markup. */
 export function hasMarkup(value: unknown): boolean {
@@ -707,7 +707,7 @@ export function asTriage(value: unknown): TriageAnswer | null {
   const restructure = asRestructuring(value.restructure);
   const why = typeof value.restructure === "object" && value.restructure !== null ? (value.restructure as Record<string, unknown>).reason : undefined;
   if (restructure) answer.restructure = { reason: typeof why === "string" ? why.trim() : "", ...restructure };
-  if (typeof value.draft === "string") answer.draft = value.draft;
+  if (typeof value.rewrite === "string") answer.rewrite = value.rewrite;
   const links = asLinks(value.links);
   if (links.length > 0) answer.links = links;
   const labels = asLabelChange(value.labels);
@@ -720,10 +720,10 @@ export function asTriage(value: unknown): TriageAnswer | null {
 }
 
 /**
- * The questions about other Items in an answer: each needs an Item and a question, or (`drafts`, triage) a draft. An entry with
+ * The questions about other Items in an answer: each needs an Item and a question, or (`rewrites`, triage) a rewrite. An entry with
  * tool-call markup is dropped. No cap on how many; each text clipped.
  */
-export function asAboutOthers(value: unknown, drafts: boolean): AboutOther[] {
+export function asAboutOthers(value: unknown, rewrites: boolean): AboutOther[] {
   if (!Array.isArray(value)) return [];
   const out: AboutOther[] = [];
   for (const entry of value as unknown[]) {
@@ -733,9 +733,9 @@ export function asAboutOthers(value: unknown, drafts: boolean): AboutOther[] {
       const decision = asDecision(each);
       if (decision) questions.push(decision);
     }
-    const draft = drafts && typeof entry.draft === "string" && entry.draft.trim() ? entry.draft.trim().slice(0, 50_000) : undefined;
-    if (questions.length === 0 && !draft) continue;
-    out.push({ item: entry.item.trim().slice(0, 200), questions, ...(draft ? { draft } : {}) });
+    const rewrite = rewrites && typeof entry.rewrite === "string" && entry.rewrite.trim() ? entry.rewrite.trim().slice(0, 50_000) : undefined;
+    if (questions.length === 0 && !rewrite) continue;
+    out.push({ item: entry.item.trim().slice(0, 200), questions, ...(rewrite ? { rewrite } : {}) });
   }
   return out;
 }
