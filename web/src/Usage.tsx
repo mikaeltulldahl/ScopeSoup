@@ -177,23 +177,22 @@ function Meter({ window, now, saver, picked, pick, hint, dismissHint }: { window
     });
   };
   const warnNow = limit !== undefined && used >= limit;
-  // Labels on the bar: the used share inside its end when it fits, else under it; the forecast's end under the bar, on a second row when the two would meet.
+  // Labels under the bar: the used share at the end of the used part; the forecast's end under the bar, on a second row when the two would meet.
   const usedText = pct(used);
-  const usedInside = used * width >= labelWidth(usedText) + 8;
   const reach = bar.forecast.at(-1)?.to;
   const full = current.forecast?.outcome === "used_up";
   const forecastText = reach === undefined ? undefined : full ? `full ${current.forecast?.at ? clockTime(current.forecast.at, now) : "before the reset"}` : `→ ${pct(reach)} at the reset`;
   const forecastWarn = full || bar.forecast.some((segment) => segment.warn);
   const usedLeft = Math.min(Math.max(used * width, labelWidth(usedText) / 2), width - labelWidth(usedText) / 2);
   const forecastRight = Math.max(reach === undefined ? 0 : reach * width, forecastText ? labelWidth(forecastText) : 0);
-  const forecastLow = forecastText !== undefined && !usedInside && forecastRight - labelWidth(forecastText) < usedLeft + labelWidth(usedText) / 2 + 6;
+  const forecastLow = forecastText !== undefined && forecastRight - labelWidth(forecastText) < usedLeft + labelWidth(usedText) / 2 + 6;
   const reserveText = limit === undefined ? "" : `Reserve ${pct(1 - limit)}`;
   const reserveFlip = limit !== undefined && limit * width < labelWidth(reserveText) + 30;
-  const kinds = [...new Set(bar.used.map((segment) => segment.key))];
   return (
     <div class="usage-meter">
       <div class="usage-meter-head">
         <b>{TITLE[window.kind]}</b>
+        <span class="muted">{resetsIn > 0 ? `resets ${clockTime(current.resetsAt, now)}, in ${spanWords(resetsIn)}` : `reset due ${clockTime(current.resetsAt, now)}`}</span>
       </div>
       <div class={`usage-bar${forecastLow ? " two-rows" : ""}`} ref={track}>
         <div class="usage-track" role="meter" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(used * 100)} aria-label={`${TITLE[window.kind]} used`}>
@@ -205,11 +204,7 @@ function Meter({ window, now, saver, picked, pick, hint, dismissHint }: { window
             <div key={segment.from} class={`usage-seg usage-seg-forecast${segment.warn ? " warn" : ""}`} style={place(segment)} title={segment.warn ? "Forecast: past the reserve" : "Forecast up to the reset"} />
           ))}
         </div>
-        {usedInside ? (
-          <span class="usage-used-in" style={{ right: percent(1 - used) }}>{usedText}</span>
-        ) : (
-          <span class="usage-used-out" style={{ left: `${usedLeft}px` }}>{usedText}</span>
-        )}
+        <span class={`usage-used-out${warnNow ? " warn" : ""}`} style={{ left: `${usedLeft}px` }}>{usedText}</span>
         {forecastText !== undefined && reach !== undefined && (
           <span class={`usage-fc-label${forecastWarn ? " warn" : ""}${forecastLow ? " low" : ""}`} style={{ left: `${forecastRight}px` }}>{forecastText}</span>
         )}
@@ -241,16 +236,6 @@ function Meter({ window, now, saver, picked, pick, hint, dismissHint }: { window
           </span>
         )}
       </div>
-      <ul class="usage-legend" aria-label="Colours of the bar">
-        {kinds.map((key) => <li key={key}><span class="usage-dot" style={{ background: COLOR[key] }} /> {SHORT[key]}</li>)}
-        {bar.forecast.length > 0 && <li><span class={`usage-dot usage-dot-forecast${bar.forecast.some((segment) => segment.warn) ? " warn" : ""}`} /> Forecast</li>}
-        {bar.reserve && <li><span class="usage-dot usage-dot-reserve" /> Reserve</li>}
-      </ul>
-      <ul class="usage-facts">
-        <li>{resetsIn > 0 ? `Resets ${clockTime(current.resetsAt, now)} (in ${spanWords(resetsIn)})` : `Reset due ${clockTime(current.resetsAt, now)}`}</li>
-        {current.forecast && <li class={current.forecast.outcome === "used_up" ? "usage-warn" : ""}>Forecast: {current.forecast.words}</li>}
-        {limit !== undefined && <li class={warnNow ? "usage-warn" : ""}>Reserve: Scope Soup starts nothing from {pct(limit)}{reserves ? " (drag the marker to change)" : ""}</li>}
-      </ul>
     </div>
   );
 }

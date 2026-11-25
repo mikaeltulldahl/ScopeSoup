@@ -472,11 +472,10 @@ main > .panel.history-page { max-width: none; width: 100%; margin: 0; box-sizing
 .usage-spans { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .usage-span { display: inline-flex; gap: 6px; align-items: center; }
 .usage-meters { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px 24px; margin-top: 10px; }
-.usage-meter { display: grid; gap: 6px; min-width: 0; }
+.usage-meter { display: grid; gap: 2px; min-width: 0; align-content: start; }
 .usage-meter-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
 .usage-track { position: relative; height: 16px; border-radius: 4px; background: var(--sunken); overflow: hidden; }
 .usage-track-reserve { position: absolute; inset: 0 0 0 auto; right: 0; background: repeating-linear-gradient(135deg, transparent 0 4px, var(--line) 4px 6px); }
-.usage-facts { margin: 0; padding: 0; list-style: none; font-size: 0.85rem; color: var(--muted); display: grid; gap: 2px; }
 .usage-warn { color: var(--blocked); font-weight: 600; }
 .usage-plot { position: relative; width: 100%; min-width: 0; }
 .usage-plot svg { display: block; overflow: visible; }
@@ -644,7 +643,6 @@ button.decision-choice:hover:not(:disabled) { background: var(--accent-soft); fi
 /* Usage "Now" bars: used part by role, forecast stripes, hatched reserve and a draggable marker. */
 .usage-bar { position: relative; padding: 24px 0 22px; font-size: 0.8rem; font-variant-numeric: tabular-nums; }
 .usage-bar.two-rows { padding-bottom: 42px; }
-.usage-used-in { position: absolute; top: 24px; margin-right: 4px; padding: 0 4px; border-radius: 3px; background: var(--surface); color: var(--text); font-weight: 600; line-height: 16px; }
 .usage-used-out, .usage-fc-label { position: absolute; top: 48px; line-height: 1.2; white-space: nowrap; color: var(--text); font-weight: 600; }
 .usage-used-out { transform: translateX(-50%); }
 .usage-used-out::before, .usage-fc-label::before { content: ""; position: absolute; top: -8px; width: 1px; height: 7px; background: var(--text); }
@@ -662,15 +660,12 @@ button.decision-choice:hover:not(:disabled) { background: var(--accent-soft); fi
 .usage-seg { position: absolute; top: 0; bottom: 0; }
 .usage-seg-forecast { background: repeating-linear-gradient(135deg, color-mix(in srgb, var(--text) 45%, transparent) 0 3px, transparent 3px 6px); }
 .usage-seg-forecast.warn { background: repeating-linear-gradient(135deg, var(--blocked) 0 3px, transparent 3px 6px); }
-.usage-thumb { position: absolute; top: 0; bottom: 0; width: 22px; margin-left: -11px; display: flex; justify-content: center; touch-action: none; cursor: ew-resize; }
-.usage-thumb span { display: block; width: 2px; margin-top: 16px; margin-bottom: 20px; background: var(--blocked); box-shadow: 0 0 0 1px var(--surface); }
-.usage-thumb.fixed span { margin-top: 24px; margin-bottom: 22px; }
+.usage-thumb { position: absolute; top: 0; height: 44px; width: 22px; margin-left: -11px; display: flex; justify-content: center; touch-action: none; cursor: ew-resize; }
+.usage-thumb span { display: block; width: 2px; margin-top: 16px; background: var(--blocked); box-shadow: 0 0 0 1px var(--surface); }
+.usage-thumb.fixed span { margin-top: 24px; }
 .usage-knob { position: absolute; top: 0; width: 16px; height: 16px; border-radius: 50%; background: var(--blocked); box-shadow: 0 0 0 1.5px var(--surface); }
 .usage-knob::before { content: ""; position: absolute; left: 5px; top: 4px; width: 6px; height: 8px; background: repeating-linear-gradient(90deg, var(--surface) 0 1px, transparent 1px 3px); }
 .usage-thumb.dragging .usage-knob { transform: scale(1.2); }
 .usage-thumb.busy { opacity: 0.6; cursor: progress; }
 .usage-thumb.fixed { cursor: default; pointer-events: none; }
-.usage-legend { margin: 0; padding: 0; list-style: none; display: flex; flex-wrap: wrap; gap: 2px 12px; font-size: 0.8rem; color: var(--muted); }
-.usage-dot-forecast { background: repeating-linear-gradient(135deg, color-mix(in srgb, var(--text) 45%, transparent) 0 2px, transparent 2px 4px); outline: 1px solid var(--line); }
-.usage-dot-forecast.warn { background: repeating-linear-gradient(135deg, var(--blocked) 0 2px, transparent 2px 4px); }
-.usage-dot-reserve { background: repeating-linear-gradient(135deg, transparent 0 2px, var(--line) 2px 4px); outline: 1px solid var(--line); }
+.usage-used-out.warn { color: var(--blocked); }
