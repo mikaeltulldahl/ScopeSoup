@@ -1,6 +1,6 @@
 # Autonomy: neither a wild goose chase nor a halt at every turn
 
-**Superseded.** Areas, Steer, Assume and Auto, plan first and assume and tell were not built and are retired. How much Scope Soup does is now one setting, the `level` (`docs/RULES.md`, `docs/RUNNING.md`, "Levels"; decisions 52 to 59 in `docs/DECISIONS.md`). Questions always go to a person. What was built from this page stays: the limits of the `persistence` setting, questions with options on the item page, the proposed split, and the fence and progress guards. The rest of this page is kept as history.
+**Superseded.** Areas, Steer, Assume and Auto, plan first and assume and tell were not built and are retired. How much Scope Soup does is now one setting, the `level` (`docs/RULES.md`, `docs/RUNNING.md`, "Levels"; decisions 52 to 59 in `docs/DECISIONS.md`). Questions always go to a person. What was built from this page stays: the limits of the `persistence` setting, questions with options on the item page, the proposed restructuring (`docs/DESIGN.md`, "A proposed restructuring"), and the fence and progress guards. The rest of this page is kept as history.
 
 Status: design, agreed in outline on 2026-11-18, settled on 2026-11-19 (decisions 38 and 44). Built so far: the fixed limits of the `persistence` slider, decisions on the item page. The `autonomy` slider that once took recommended options was removed: questions always go to a person. Planned: areas and levels, plan first, assumptions on the board, the fence and progress guards (built).
 
@@ -28,7 +28,7 @@ This is the same shape as the staged rules in `docs/RULES.md`: those mature with
 
 ## Plan first (the Steer level)
 
-Planned. Today an item goes from triage to implementation with no plan step. Splitting is built on its own: when triage finds an item too large it proposes the parts, and a person accepts, edits or rejects the split on the item page; accepted, the parts become child items, invited at once, and the item an umbrella (`docs/DESIGN.md`, "Agents push back").
+Planned. Today an item goes from triage to implementation with no plan step. Restructuring is built on its own: triage may propose to split an item, fold a part into another Item or close it as a duplicate, and a person accepts, edits or rejects that on the item page (decision 94; `docs/DESIGN.md`, "Agents push back").
 
 The plan step is plan mode made into a step of the cycle:
 

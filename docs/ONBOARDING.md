@@ -17,6 +17,7 @@ The two parts of the backlog question decide what happens (decided):
 - **Today GitHub Issues, from now on GitHub Issues**: Scope Soup reads the issues live. Nothing moves.
 - **Today GitHub Issues, from now on Items**: the skill offers the one-time import (decision 67, `docs/RUNNING.md`, "Importing from GitHub Issues"): every open issue becomes an Item with its labels, priority, parent, blockers and last 3 comments; pull requests and closed issues are left out. The import only reads GitHub. The backlog question then has one more part, what to do with the issues on GitHub: **leave** them (GitHub is not changed), **label** them `moved-to-scopesoup` with a comment naming the Item, or **close** them as not planned after labelling. The yes to the summary covers it; the import runs after the configuration is checked, and can be read and undone as one meta commit.
 - **Today nowhere or a text file, from now on Items**: Items start empty; the skill offers to write the first ones, or file them from the text.
+- **Today Jira**: Items from now on; Settings' "Connect to Jira" reads the project live later (decision 98).
 - **Today another tracker**: Items or GitHub Issues from now on, and the skill says that importing from that tracker is not supported yet.
 
 Everything else it reads from the clone or proposes: the remote and main branch, `realPaths` (the person's own clone), Scope Soup's own clone (`repoPath`), `machineName`, and a config folder outside any git repository.

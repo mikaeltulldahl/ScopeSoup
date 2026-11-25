@@ -34,7 +34,7 @@ You follow one thing, the **Item**. It holds the description, the change and its
 
 An Item travels like this:
 
-1. **Triage.** An agent reads it: is it ready, how big is it, does it hide a decision? It may propose a rewritten description or a restructuring (split it, fold a part into another Item, or close it as a duplicate), for you to accept, edit or reject.
+1. **Triage.** An agent reads it: is it ready, how big is it, does it hide a decision? It may propose a rewritten description or a restructuring (split it, fold a part into another Item, or close it as a duplicate), for you to accept, edit or reject. Triage, the implementor and the reviewer may also propose separate work they found; each proposal is a draft Item that waits for your Approve or Deny, and nothing is filed before.
 2. **Implement.** An agent works on the Item's own branch in a workspace of its own. A person, or your Claude Code session, can take the Item instead and hand a branch back (`scopesoup item`).
 3. **Review.** A second agent reviews. Findings go back to the implementor.
 4. **Merge queue.** The check passes on exactly the commit that is pushed. Fast-forward, never forced.
@@ -53,14 +53,14 @@ At levels 2 and 3 the implementing agent merges the way your `CLAUDE.md` says, o
 
 ![The queue: one batch being bisected (made-up data)](docs/images/queue.png)
 
-Items live in your repository (a text file and an append-only log per Item, on a branch) or are your existing GitHub Issues, read live.
+Items live in your repository (a text file and an append-only log per Item, on a branch) or are your existing GitHub Issues or Jira issues, read live. Settings' "Connect to GitHub Issues" and "Connect to Jira" switch later and move the Items you tick; "Move back to the meta branch" returns them. An optional label (`labels.aiGenerated`) marks Items an AI made or rewrote.
 
 ## What works today
 
 Early, and changing fast. Runs for real are in [`docs/TRIALS.md`](docs/TRIALS.md).
 
 - **Built and run for real**, on a stand-in project: the triage, implement and review loop with questions answered on the Item page; merging after a check, including a failed check; the batching queue with flake rerun and bisect; Items in your repository; the Usage page and the History timeline; images agents attach to an Item; the Item's diff in your own diff tool; `scopesoup item` for people and Claude Code sessions; Windows sessions that start and stop cleanly.
-- **Built and tested, not yet run on a real project:** most of the board, GitHub Copilot CLI as an agent provider, GitHub Issues as the backlog, waiting for CI on GitHub, several people on one project, usage forecasting against your Claude subscription, the onboarding plugin, offboarding, releases and updates; Jira, Cloud and Data Center, reads and writes (untried on a real site): the board and every level, with the changes on the project's git remote.
+- **Built and tested, not yet run on a real project:** most of the board, GitHub Copilot CLI as an agent provider, GitHub Issues as the backlog, waiting for CI on GitHub, several people on one project, usage forecasting against your Claude subscription, the onboarding plugin, offboarding, releases and updates; triage's restructurings and agents' Item drafts; singleplayer; connecting to GitHub Issues or Jira later and moving back to the meta branch; Jira, Cloud and Data Center, reads and writes (untried on a real site): the board and every level, with the changes on the project's git remote.
 - **Planned:** see the issues.
 
 <img src="docs/images/phone.png" alt="The board on a phone" width="300">
@@ -94,7 +94,7 @@ It asks three things, shows one summary and acts on one yes (and can add a Start
 
 ## Where the data lives
 
-- **Origin is the source of truth:** the main branch, the Item branches and the Items (on the ref `refs/scopesoup/meta`, or as GitHub Issues).
+- **Origin is the source of truth:** the main branch, the Item branches and the Items (on the ref `refs/scopesoup/meta`, or as GitHub Issues or Jira issues). Alone on a project (singleplayer, set on the Settings page) you can keep the meta ref in your clone and push nothing under `refs/scopesoup/`.
 - **Scope Soup never works in your clone.** It keeps its own clones and makes a work clone per Item. Claude Code sessions touch only their Item's work clone.
 - **A local SQLite file** caches what it read and holds its event log. Deleting it loses nothing about an Item.
 - No login. The board listens on this machine only.
