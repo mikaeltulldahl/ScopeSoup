@@ -31,38 +31,8 @@ interface Run {
   weight: number;
 }
 
-/** A synthetic Copilot session and what its result records. */
-export interface DemoCopilotSession {
-  session: Session;
-  premiumRequests: number;
-  aiCredits: number;
-}
-
-/** The demo's Copilot sessions: the triage role runs on Copilot, a few sessions a working day for 28 days. Made up from a fixed seed. */
-function demoCopilot(now: Date): DemoCopilotSession[] {
-  const end = now.getTime();
-  const rand = random(94);
-  const out: DemoCopilotSession[] = [];
-  for (let day = 0; day < 28; day++) {
-    for (let k = 0; k < 5; k++) {
-      const from = end - day * DAY - (2 + k * 1.7 + rand()) * HOUR - 30 * MINUTE;
-      const minutes = 3 + rand() * 4;
-      const premiumRequests = rand() < 0.8 ? 1 : 2;
-      out.push({
-        session: session(`cp-${out.length + 1}`, ref("work", 1 + (out.length % 30)), {
-          role: "triage", model: "fusion", provider: "copilot", status: "succeeded", endReason: "succeeded",
-          startedAt: plus((from - end) / MINUTE, now.toISOString()), finishedAt: plus((from + minutes * MINUTE - end) / MINUTE, now.toISOString()),
-        }),
-        premiumRequests,
-        aiCredits: Math.round(premiumRequests * 0.05 * 100) / 100,
-      });
-    }
-  }
-  return out;
-}
-
-/** The demo's usage over the 28 days before `now`: readings every ten minutes and the sessions that ran, and the Copilot sessions. */
-export function demoUsage(now: Date): { samples: UsageSample[]; sessions: Session[]; copilot: DemoCopilotSession[] } {
+/** The demo's usage over the 28 days before `now`: readings every ten minutes and the sessions that ran. */
+export function demoUsage(now: Date): { samples: UsageSample[]; sessions: Session[] } {
   const end = now.getTime();
   const rand = random(85);
   const between = (lo: number, hi: number) => lo + rand() * (hi - lo);
@@ -152,5 +122,5 @@ export function demoUsage(now: Date): { samples: UsageSample[]; sessions: Sessio
         finishedAt: plus((each.to - end) / MINUTE, base),
       }),
     );
-  return { samples, sessions, copilot: demoCopilot(now) };
+  return { samples, sessions };
 }
