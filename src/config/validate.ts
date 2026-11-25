@@ -5,8 +5,8 @@ import { isAbsolute, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { SessionRole } from "../model/types.ts";
 import { COPILOT_DEFAULT_AUTO_TIER, COPILOT_DEFAULT_MODEL, defaultClaude, defaultCopilot, defaultRoles, defaultSettings, expandScopesoup, MACHINE_NAME } from "./defaults.ts";
-import type { Level, ProjectConfig, ProviderName, RoleConfig, SettingName, Settings } from "./types.ts";
-import { LEVELS, PROVIDER_NAMES, ROLES } from "./types.ts";
+import type { Level, McpServer, ProjectConfig, ProviderName, RoleConfig, SettingName, Settings } from "./types.ts";
+import { LEVELS, mcpToolEntry, PROVIDER_NAMES, ROLES } from "./types.ts";
 import { CHECK_ROLES, withCheckRules } from "./checkRule.ts";
 import { proposeCheckCommand } from "./mergeQueue.ts";
 import { migrateConfig } from "./migrate.ts";
@@ -265,7 +265,7 @@ export function validateConfig(given: unknown, baseDir: string): ConfigResult {
           err(`${where} must be an object.`);
           continue;
         }
-        unknownKeys(given, ["provider", "model", "autoTier", "maxTurns", "allowedTools", "permissionMode"], where);
+        unknownKeys(given, ["provider", "model", "autoTier", "maxTurns", "allowedTools", "permissionMode", "mcpServers"], where);
         const target = roles[role];
         const provider = given.provider;
         if (provider !== undefined && !PROVIDER_NAMES.includes(provider as ProviderName)) {
@@ -278,6 +278,10 @@ export function validateConfig(given: unknown, baseDir: string): ConfigResult {
         else if (copilotRole) target.autoTier = COPILOT_DEFAULT_AUTO_TIER;
         if (given.maxTurns !== undefined) target.maxTurns = num(given.maxTurns, `${where}.maxTurns`, 1, 1000, true, target.maxTurns);
         target.allowedTools = strList(given, "allowedTools", `${where}.`, target.allowedTools);
+        if (given.mcpServers !== undefined) {
+          const servers = mcpServersOf(given.mcpServers, `${where}.mcpServers`, err);
+          if (Object.keys(servers).length > 0) target.mcpServers = servers;
+        }
         const mode = str(given, "permissionMode", `${where}.`, target.permissionMode);
         if (mode === "bypassPermissions") {
           err(`${where}.permissionMode: "bypassPermissions" is refused. List the tools the role needs in allowedTools.`);
@@ -290,6 +294,12 @@ export function validateConfig(given: unknown, baseDir: string): ConfigResult {
   // `{{scopesoup}}` in a role's allowed tools is the folder Scope Soup is installed in (the item commands of the triage).
   const scopesoup = fileURLToPath(new URL("../..", import.meta.url));
   for (const role of ROLES) roles[role].allowedTools = expandScopesoup(roles[role].allowedTools, scopesoup);
+  // A role's MCP servers: all their tools count as allowed for it.
+  for (const role of ROLES) {
+    for (const name of Object.keys(roles[role].mcpServers ?? {})) {
+      if (!roles[role].allowedTools.includes(mcpToolEntry(name))) roles[role].allowedTools.push(mcpToolEntry(name));
+    }
+  }
   // The implementor and the reviewer may always run the project's check command: the one in the file, else the one Settings
   // proposes from the project (the candidate it shows). A person's own list in the file wins for everything else.
   const checkWords = checkCommand ?? proposeCheckCommand(repoPath).command;
@@ -348,6 +358,47 @@ export function validateConfig(given: unknown, baseDir: string): ConfigResult {
       claude, copilot, settings, roles,
     },
   };
+}
+
+/** `roles.<role>.mcpServers`: name -> { command, args?, env? }. `env` lists variable names only: a value in the file would be a secret in a file. */
+function mcpServersOf(value: unknown, where: string, err: (message: string) => void): Record<string, McpServer> {
+  const servers: Record<string, McpServer> = {};
+  if (!isObj(value)) {
+    err(`${where} must be an object of servers by name.`);
+    return servers;
+  }
+  const names = (list: unknown, key: string, pattern: RegExp, form: string, at: string): string[] | undefined => {
+    if (list === undefined) return undefined;
+    if (!Array.isArray(list) || list.some((entry) => typeof entry !== "string" || !pattern.test(entry))) {
+      err(`${at}.${key} must be a list of ${form}.`);
+      return undefined;
+    }
+    return list as string[];
+  };
+  for (const [name, given] of Object.entries(value)) {
+    const at = `${where}.${name}`;
+    if (!/^[A-Za-z0-9-]+$/.test(name)) {
+      err(`${where}: the server name "${name}" may hold only letters, digits and "-".`);
+      continue;
+    }
+    if (!isObj(given)) {
+      err(`${at} must be an object with "command", and if you like "args" and "env".`);
+      continue;
+    }
+    const known = ["command", "args", "env"];
+    if (Object.keys(given).some((key) => !known.includes(key))) {
+      err(`${at} may hold only ${known.join(", ")}. "env" is a list of variable names: the values come from the environment, never from the file.`);
+      continue;
+    }
+    if (typeof given.command !== "string" || given.command.trim() === "") {
+      err(`${at}.command must be the program to start, as text.`);
+      continue;
+    }
+    const args = names(given.args, "args", /^/, "strings", at);
+    const env = names(given.env, "env", /^[A-Za-z_][A-Za-z0-9_]*$/, "variable names (NAME, not NAME=value)", at);
+    servers[name] = { command: given.command.trim(), ...(args ? { args } : {}), ...(env && env.length > 0 ? { env } : {}) };
+  }
+  return servers;
 }
 
 const RESOURCE_KEYS = ["name", "units", "neededBy", "env"];
