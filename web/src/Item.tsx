@@ -650,22 +650,20 @@ const GOES_LABEL: Record<PartGoes, string> = { original: "Stays in this item", c
 /** What becomes of this item, as the board says it. */
 const FATE_LABEL: Record<OriginalFate, string> = { keeps: "Keeps one part", umbrella: "Becomes an umbrella", replaced: "Is closed, replaced by the parts" };
 
-/** Where one part goes, in a few words: "New sub-item", "Into #12". */
-const goesText = (part: ProposedPart): string => (part.goes === "into" ? `Into ${/^\d+$/.test(part.into ?? "") ? "#" : ""}${part.into ?? "?"}` : GOES_LABEL[part.goes]);
-
 /** An existing Item a part goes into, as it stands. */
 type IntoTarget = { key: string; label: string; title: string; state: string; busy?: string };
 
-/** The target's title, and a warning when it is closed or being worked on. */
-function TargetNote({ target }: { target: IntoTarget | null | undefined }) {
-  if (target === undefined) return null;
-  if (target === null) return <span class="error"> no such item here</span>;
-  const closed = target.state === "done" || target.state === "abandoned";
+/** Where a part goes as one chip: "New sub-item", or "Into #82 · its title" with a warning when that Item is closed or busy. */
+function GoesChip({ part, target }: { part: ProposedPart; target: IntoTarget | null | undefined }) {
+  if (part.goes !== "into") return <span class="tag">{GOES_LABEL[part.goes]}</span>;
+  const id = `${/^\d+$/.test(part.into ?? "") ? "#" : ""}${part.into ?? "?"}`;
+  const closed = target ? target.state === "done" || target.state === "abandoned" : false;
   return (
     <>
-      {" "}<a href={itemHref(target.key)}>{target.title}</a>
-      {closed && <span class="error"> ({target.state}: Accept refuses it)</span>}
-      {!closed && target.busy && <span class="muted"> ({target.busy})</span>}
+      <span class="tag tag-into">Into{target ? <a href={itemHref(target.key)}>{id} · {target.title}</a> : ` ${id}`}</span>
+      {target === null && <span class="error"> no such item here</span>}
+      {closed && <span class="error"> ({target!.state}: Accept refuses it)</span>}
+      {!closed && target?.busy && <span class="muted"> ({target.busy})</span>}
     </>
   );
 }
@@ -740,7 +738,7 @@ function RestructureProposal({ page, proposal, now, reload, primary }: { page: I
           <p><strong>This item:</strong> {FATE_LABEL[proposal.original].toLowerCase()}.</p>
           {proposal.parts.map((part, index) => (
             <div class="version" key={index}>
-              <p class="num">{index + 1}. {part.title} <span class="tag">{goesText(part)}</span><TargetNote target={shownTarget(part, index)} />{madeFor(index) && part.goes !== "into" && <> <a href={itemHref(madeFor(index)!.key)}>{madeFor(index)!.label}</a></>}</p>
+              <p class="num">{index + 1}. {part.title} <GoesChip part={part} target={shownTarget(part, index)} />{madeFor(index) && part.goes !== "into" && <> <a href={itemHref(madeFor(index)!.key)}>{madeFor(index)!.label}</a></>}</p>
               {part.description ? <Markdown text={part.description} /> : <p class="empty">No description.</p>}
               <p class="muted">Verification: {part.verification || "none given"}</p>
             </div>
@@ -754,36 +752,49 @@ function RestructureProposal({ page, proposal, now, reload, primary }: { page: I
         </div>
       )}
       {editing && (
-        <div class="answer">
-          <label for="restructure-fate">This item</label>
-          <select id="restructure-fate" value={fate} onChange={(event) => setFate(value(event) as OriginalFate)} disabled={busy}>
-            {ORIGINAL_FATES.map((each) => <option key={each} value={each}>{FATE_LABEL[each]}</option>)}
-          </select>
+        <div class="answer restructure-edit">
+          <label class="restructure-field">
+            This item
+            <select value={fate} onChange={(event) => setFate(value(event) as OriginalFate)} disabled={busy}>
+              {ORIGINAL_FATES.map((each) => <option key={each} value={each}>{FATE_LABEL[each]}</option>)}
+            </select>
+          </label>
           {draft.map((part, index) => (
-            <div key={index}>
-              <label for={`part-title-${index}`}>Part {index + 1}: title</label>
-              <input id={`part-title-${index}`} value={part.title} onInput={(event) => change(index, { title: value(event) })} disabled={busy} />
-              <label for={`part-goes-${index}`}>Goes</label>
-              <select id={`part-goes-${index}`} value={part.goes} onChange={(event) => change(index, { goes: value(event) as PartGoes })} disabled={busy}>
-                {PART_GOES.map((each) => <option key={each} value={each}>{GOES_LABEL[each]}</option>)}
-              </select>
-              {part.goes === "into" && (
-                <>
-                  <label for={`part-into-${index}`}>Existing item (its number or id)</label>
-                  <input id={`part-into-${index}`} value={part.into ?? ""} onInput={(event) => change(index, { into: value(event).trim().replace(/^#/, "") })} disabled={busy} />
-                  <p class="muted">{part.into ? <>Into {/^\d+$/.test(part.into) ? "#" : ""}{part.into}<TargetNote target={shownTarget(part, index)} /></> : "Name the item this part's text is added to."}</p>
-                </>
-              )}
-              <label for={`part-description-${index}`}>Description</label>
-              <textarea id={`part-description-${index}`} rows={5} value={part.description} onInput={(event) => change(index, { description: value(event) })} disabled={busy} />
-              <label for={`part-verification-${index}`}>Verification</label>
-              <textarea id={`part-verification-${index}`} rows={2} value={part.verification} onInput={(event) => change(index, { verification: value(event) })} disabled={busy} />
-              {draft.length > 1 && (
-                <button type="button" onClick={() => setDraft(draft.filter((_, at) => at !== index))} disabled={busy}>
-                  Remove part {index + 1}
-                </button>
-              )}
-            </div>
+            <fieldset key={index} class="restructure-part" disabled={busy}>
+              <legend>
+                Part {index + 1}
+                {draft.length > 1 && (
+                  <button type="button" class="restructure-remove" onClick={() => setDraft(draft.filter((_, at) => at !== index))} aria-label={`Remove part ${index + 1}`}>
+                    Remove
+                  </button>
+                )}
+              </legend>
+              <label class="restructure-field restructure-wide">
+                Title
+                <input value={part.title} onInput={(event) => change(index, { title: value(event) })} />
+              </label>
+              <label class="restructure-field">
+                Goes
+                <select value={part.goes} onChange={(event) => change(index, { goes: value(event) as PartGoes })}>
+                  {PART_GOES.map((each) => <option key={each} value={each}>{GOES_LABEL[each]}</option>)}
+                </select>
+              </label>
+              {part.goes === "into" ? (
+                <label class="restructure-field">
+                  Into item (number or id)
+                  <input value={part.into ?? ""} onInput={(event) => change(index, { into: value(event).trim().replace(/^#/, "") })} />
+                  {part.into && <span><GoesChip part={part} target={shownTarget(part, index)} /></span>}
+                </label>
+              ) : <span />}
+              <label class="restructure-field">
+                Description
+                <textarea rows={3} value={part.description} onInput={(event) => change(index, { description: value(event) })} />
+              </label>
+              <label class="restructure-field">
+                Verification
+                <textarea rows={3} value={part.verification} onInput={(event) => change(index, { verification: value(event) })} />
+              </label>
+            </fieldset>
           ))}
           <p>
             <button type="button" onClick={() => setDraft([...draft, { title: "", description: "", verification: "", goes: "child" }])} disabled={busy}>
@@ -791,12 +802,14 @@ function RestructureProposal({ page, proposal, now, reload, primary }: { page: I
             </button>
           </p>
           {problem && <p class="error">{problem}</p>}
-          <button type="button" class={main} onClick={() => decide("edit")} disabled={busy || problem !== undefined}>
-            {busy ? "Saving…" : "Accept my version"}
-          </button>{" "}
-          <button type="button" onClick={() => setEditing(false)} disabled={busy}>
-            Cancel
-          </button>
+          <div class="form-actions">
+            <button type="button" class={main} onClick={() => decide("edit")} disabled={busy || problem !== undefined}>
+              {busy ? "Saving…" : "Accept my version"}
+            </button>
+            <button type="button" onClick={() => setEditing(false)} disabled={busy}>
+              Cancel
+            </button>
+          </div>
         </div>
       )}
       {!editing && (
@@ -823,9 +836,9 @@ function RestructureProposal({ page, proposal, now, reload, primary }: { page: I
       )}
       <p class="muted">
         {proposal.canCreate
-          ? "Accept makes the parts in order, with the decisions above carried over into each new item, then changes this item as it says. Nothing is made before."
+          ? "Accept makes the parts, each with the decisions above, then changes this item."
           : "Scope Soup cannot write items on this host. Accept records your decision; carry it out by hand from the text above."}{" "}
-        {created.length === 0 ? "Reject starts the item over at triage, and triage is told not to propose this again." : "Some parts exist already, so it can no longer be edited or rejected: Accept finishes it, and Stop here ends it with what exists, leaving the rest as text on this item for a person."}
+        {created.length === 0 ? "Reject sends it back to triage, which will not propose this again." : "Some parts exist already, so it can no longer be edited or rejected: Accept finishes it, and Stop here ends it with what exists, leaving the rest as text on this item for a person."}
       </p>
       {error && <p class="error">{error}</p>}
     </section>
@@ -913,7 +926,7 @@ function RewritePanel({ page, rewrite, reload, primary }: { page: ItemPage; rewr
   return (
     <section class="panel panel-yours">
       <h3>Triage: rewrite of the description{rewrite.round > 1 ? ` (round ${rewrite.round})` : ""}</h3>
-      {rewrite.questions.length > 0 && <p class="question">The rewrite is written as if you take every recommendation. Pick another answer and the triage runs again with it.</p>}
+      {rewrite.questions.length > 0 && <p class="muted">Written with the recommended answers; another answer runs the triage again.</p>}
       {questions.length > 0 && <QuestionSteps questions={questions} held={held} send="label" canAnswer={true} busy={busy} change={change} />}
       <div class="rewrite-compare">
         <div class="version">

@@ -374,7 +374,7 @@ export function buildActivity(input: ActivityInput, now: string, limit = MAX_ACT
       case "draft.created": {
         const from = obj(data.from);
         const key = str(from.host) ? `${str(from.host)}:work:${str(from.id)}` : undefined;
-        add({ ...base, kind: "item", items: link(key), who: str(data.role) || "agent", agent: true, text: `Proposed a new Item as a draft: ${clip(str(data.title), 120)}` });
+        add({ ...base, kind: "draft", items: link(key), who: str(data.role) || "agent", agent: true, text: `Proposed a new Item as a draft: ${clip(str(data.title), 120)}` });
         break;
       }
       case "draft.updated": {
@@ -383,7 +383,7 @@ export function buildActivity(input: ActivityInput, now: string, limit = MAX_ACT
         const from = obj(data.from);
         const made = obj(decided.item);
         const keys = [str(from.host) ? `${str(from.host)}:work:${str(from.id)}` : "", str(made.host) ? `${str(made.host)}:work:${str(made.id)}` : ""].filter(Boolean);
-        add({ ...base, kind: "item", items: keys.flatMap((key) => link(key)), who: str(decided.by) || event.actor, agent: false, text: `${decided.verdict === "approved" ? "Approved" : "Denied"} the draft: ${clip(str(data.title), 120)}`, ...(decided.verdict === "approved" ? { tone: "good" as const } : {}) });
+        add({ ...base, kind: "draft", items: keys.flatMap((key) => link(key)), who: str(decided.by) || event.actor, agent: false, text: `${decided.verdict === "approved" ? "Approved" : "Denied"} the draft: ${clip(str(data.title), 120)}`, ...(decided.verdict === "approved" ? { tone: "good" as const } : {}) });
         break;
       }
       case "media.deleted":
@@ -465,4 +465,4 @@ function andList(names: string[]): string {
 }
 
 /** The kinds of rows, for the filter, in the order the page lists them. */
-export const ACTIVITY_KINDS: readonly ActivityKind[] = ["item", "triage", "question", "decision", "session", "merge", "batch", "switch", "upgrade", "settings"];
+export const ACTIVITY_KINDS: readonly ActivityKind[] = ["item", "draft", "triage", "question", "decision", "session", "merge", "batch", "switch", "upgrade", "settings"];

@@ -106,6 +106,6 @@ test("Join theirs waits while an agent session runs, naming the machine", async 
   s.store.put(session(1, ref("work", 1)), "sync", T0);
   const refused = await s.post({ multiplayer: true, players: "join" });
   assert.equal(refused.status, 400);
-  assert.match(refused.body.errors?.join(" ") ?? "", /Join theirs waits until no agent session runs on any machine.*Busy now: laptop-e\./);
+  assert.match(refused.body.errors?.join(" ") ?? "", /Join theirs waits for every agent session to end\. Pause agents on: laptop-e, then try again\./);
   assert.equal(git(s.repo, "rev-parse", "refs/scopesoup/meta"), mine);
 });

@@ -161,8 +161,13 @@ a.status-item { text-decoration: underline; text-decoration-color: var(--line); 
 .your-turn h2 { color: var(--yours); }
 .your-turn-list { display: grid; gap: 8px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr)); }
 .tag-draft { color: var(--yours); border-color: var(--yours); flex: none; }
-.draft-text summary { cursor: pointer; color: var(--muted); font-size: 0.82rem; }
-.draft-actions button { font-size: 0.8rem; padding: 2px 10px; }
+/* A draft's text in two lines at most, so its card is as tall as the others; Edit shows it whole. */
+.draft-preview { margin: 0; font-size: 0.84rem; color: var(--muted); display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; }
+.draft-actions button { font-size: 0.8rem; min-height: 0; padding: 2px 10px; }
+.draft-source { margin: calc(var(--gap) * -0.5) 0 var(--gap); }
+/* Cards in a row of Your turn share its height: the chips sit on the bottom line of each. */
+.your-turn-list > .card { display: flex; flex-direction: column; }
+.your-turn-list > .card > .tags { margin-top: auto; }
 
 /* --- Lanes: stacked on a phone, columns when there is room --- */
 .lanes { display: grid; gap: var(--gap); grid-template-columns: minmax(0, 1fr); align-items: start; }
@@ -325,6 +330,20 @@ button.choice-mark:hover:not(:disabled) { background: none; }
 .answer textarea { font: inherit; width: 100%; box-sizing: border-box; padding: 8px 10px; border-radius: 6px; border: 1px solid var(--line); background: var(--surface); color: var(--text); resize: vertical; }
 .answer textarea:disabled { background: var(--sunken); color: var(--muted); cursor: not-allowed; }
 .answer button { justify-self: start; }
+/* Editing a restructuring: one compact grid per part, the board's input and select style. */
+.restructure-field { display: grid; gap: 3px; min-width: 0; font-size: 0.82rem; color: var(--muted); }
+.restructure-edit input, .restructure-edit select { font: inherit; font-size: 0.9rem; color: var(--text); width: 100%; box-sizing: border-box; padding: 6px 8px; border-radius: 6px; border: 1px solid var(--line); background: var(--surface); min-height: 34px; }
+.restructure-edit textarea { font-size: 0.9rem; padding: 6px 8px; }
+.restructure-edit > .restructure-field { max-width: 22rem; }
+.restructure-part { display: grid; grid-template-columns: minmax(0, 1fr); align-items: start; gap: 6px 10px; margin: 0; padding: 6px 10px 10px; border: 1px solid var(--line); border-radius: 6px; min-width: 0; }
+.restructure-part legend { display: flex; align-items: center; gap: 8px; padding: 0 4px; font-size: 0.82rem; font-weight: 650; color: var(--muted); }
+.answer .restructure-remove { min-height: 0; padding: 0 8px; font-size: 0.76rem; font-weight: 500; }
+.tag-into { white-space: normal; gap: 0.3em; }
+.tag-into a { color: inherit; }
+@media (min-width: 640px) {
+  .restructure-part { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .restructure-wide { grid-column: 1 / -1; }
+}
 .version { margin: 10px 0; }
 .version-text { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 0.85rem; padding: 8px; border: 1px solid var(--line); border-radius: 6px; margin: 4px 0 6px; max-height: 18rem; overflow: auto; }
 .diff-unified { font-family: var(--mono); font-size: 0.82rem; line-height: 1.4; border: 1px solid var(--line); border-radius: 6px; margin: 4px 0 6px; max-height: 28rem; overflow: auto; }
@@ -459,6 +478,8 @@ main > .panel.history-page { max-width: none; width: 100%; margin: 0; box-sizing
 .act-bad { border-left-color: var(--blocked); }
 .act-time { color: var(--muted); font-size: 0.8rem; }
 .act-kind { font-size: 0.72rem; font-weight: 650; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); overflow-wrap: anywhere; }
+/* A draft waits for a person (or was decided by one): its kind in the Your turn colour, so it stands out among sessions. */
+.act-kind-draft { justify-self: start; padding: 0 6px; border: 1px solid var(--yours); border-radius: 999px; color: var(--yours); }
 .act-body { min-width: 0; overflow-wrap: anywhere; }
 .act-who { font-weight: 650; }
 .act-agent { font-weight: 550; font-style: italic; color: var(--muted); }
@@ -541,10 +562,15 @@ body.dialog-open { overflow: hidden; }
 .dialog .item { max-width: none; }
 .dialog-title { margin: 0 40px var(--gap) 0; }
 .dialog:has(.connect-form) { max-width: 640px; }
-.connect-form .notice ul { margin: 4px 0 0; padding-left: 20px; }
+.form-note { align-self: center; font-size: 0.85rem; }
+.connect-form .notice ul { margin: 4px 0 0; padding-left: 20px; list-style: disc; display: grid; gap: 2px; }
 .connect-form .notice { border: 1px solid var(--line); border-radius: 6px; }
 .connect-deployment, .connect-items { display: grid; gap: 4px; border: 0; padding: 0; margin: 0; }
-.connect-items { max-height: 40vh; overflow-y: auto; }
+.connect-items-head { display: flex; align-items: center; gap: 6px; }
+.connect-items-head button { min-height: 0; padding: 1px 10px; font-size: 0.8rem; }
+/* About twelve rows, then it scrolls. */
+.connect-items-list { display: grid; gap: 2px; align-content: start; max-height: 17.5rem; overflow-y: auto; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); }
+.connect-items-list .ref { min-width: 3ch; }
 .connect-where { margin: 0; font-size: 0.87rem; color: var(--text); }
 .players-choice { border: 1px solid var(--line); border-radius: 6px; }
 #setup-banner button { margin-left: 8px; }

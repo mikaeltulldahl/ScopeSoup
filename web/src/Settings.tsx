@@ -510,18 +510,19 @@ export function Settings({ project, openHistory = false }: { project?: ProjectVi
         <h4 id="host">Where the Items are</h4>
         <p class="muted">
           {view.config.host?.kind === "github" ? `GitHub Issues: ${view.config.host.repo}.` : view.config.host?.kind === "jira" ? `Jira: project ${view.config.host.project} on ${view.config.host.site}.` : view.config.host?.kind === "metaBranch" ? "The project's meta branch (refs/scopesoup/meta)." : "Set by the environment (SCOPESOUP_GITHUB_* or SCOPESOUP_META_*)."}
-          {" "}A project setting: connecting changes it for every machine, and takes effect when Scope Soup starts again. You pick which open Items move; the others stay where they are. Between GitHub and Jira, go through the meta branch: move back to it first, then connect.
+          {" "}For every machine, after a restart. You pick which open Items move. Between GitHub and Jira, move back to the meta branch first.
         </p>
         <div class="form-actions">
           {(["github", "jira"] as const).map((kind) => {
             // GitHub and Jira are connected only from the meta branch (or no host): between them, the way is back to the meta branch first.
             const across = (hostKind === "github" || hostKind === "jira") && hostKind !== kind;
-            const why = dirty ? "Save or undo your changes first" : across ? `Going between GitHub and Jira goes through the meta branch: "Move back to the meta branch" first.` : "";
+            const why = across ? `Going between GitHub and Jira goes through the meta branch: "Move back to the meta branch" first.` : "";
             return <button key={kind} type="button" disabled={busy || dirty || across} title={why} onClick={() => setConnecting(kind)}>Connect to {HOST_NAMES[kind]}</button>;
           })}
           {(hostKind === "github" || hostKind === "jira") && (
-            <button type="button" disabled={busy || dirty} title={dirty ? "Save or undo your changes first" : ""} onClick={() => setConnecting("metaBranch")}>Move back to the meta branch</button>
+            <button type="button" disabled={busy || dirty} onClick={() => setConnecting("metaBranch")}>Move back to the meta branch</button>
           )}
+          {dirty && <span class="muted form-note">Save or undo your changes first.</span>}
         </div>
 
         {view.config?.host?.kind === "jira" && (
@@ -570,8 +571,8 @@ export function Settings({ project, openHistory = false }: { project?: ProjectVi
           <label>
             <b>A review's "should" findings on a change it approves</b>
             <select value={draft.shouldFindings} disabled={busy} onChange={(event) => set({ shouldFindings: (event.target as HTMLSelectElement).value as Draft["shouldFindings"] })}>
-              <option value="fix">Fix them before the merge (one more round)</option>
-              <option value="draft">Merge, and make them a draft Item</option>
+              <option value="fix">Fix before merging (one more round)</option>
+              <option value="draft">Merge; make them a draft Item</option>
             </select>
             <span class="muted">A project setting. A draft waits in Your turn for Approve or Deny.</span>
           </label>
@@ -581,8 +582,8 @@ export function Settings({ project, openHistory = false }: { project?: ProjectVi
         <div class="settings-grid">
           <label>
             <b>Label on Items an AI made or rewrote</b>
-            <input type="text" value={draft.aiLabel} placeholder="none (for example ai-generated)" disabled={busy} onInput={(event) => set({ aiLabel: (event.target as HTMLInputElement).value })} />
-            <span class="muted">A project setting. Items from a restructuring, an approved draft, an overturned decision, or whose description a triage rewrite changed. Scope Soup never removes it. Empty: no label.</span>
+            <input type="text" value={draft.aiLabel} placeholder="no label" disabled={busy} onInput={(event) => set({ aiLabel: (event.target as HTMLInputElement).value })} />
+            <span class="muted">A project setting. On Items from a restructuring, a draft, an overturned decision or a triage rewrite; never removed.</span>
           </label>
         </div>
 
