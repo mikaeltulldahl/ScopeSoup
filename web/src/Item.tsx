@@ -11,6 +11,7 @@ import { Assumptions } from "./Assumptions.tsx";
 import { Stepper } from "./Stepper.tsx";
 import { Markdown } from "./Markdown.tsx";
 import { BatchBox } from "./Batch.tsx";
+import type { ChatSessionView } from "../../src/core/views.ts";
 import { hostDiffers } from "../../src/core/lanes.ts";
 import { itemNoun } from "./theme.ts";
 import { ago, fromWords, laneWord, optionRows, span, stateFacts, unmatchedRecommendation } from "./format.ts";
@@ -20,7 +21,7 @@ import type { DiffRow } from "./textDiff.ts";
 import { rememberViewed } from "./ItemList.tsx";
 import { itemHref } from "./route.ts";
 import type { Held } from "./heldAnswers.ts";
-import { answerText, browserStorage, clearHeld, dropOther, loadHeld, pick, pickOther, saveHeld } from "./heldAnswers.ts";
+import { answerText, isAnswered, browserStorage, clearHeld, dropOther, loadHeld, pick, pickOther, saveHeld } from "./heldAnswers.ts";
 
 /** A session's details behind its row: what its stream shows, and the way to its chat. Loaded when opened. */
 function SessionDetails({ id, now, onTalk }: { id: string; now: number; onTalk?: () => void }) {
@@ -229,6 +230,18 @@ const CHAT_ROLES: Record<string, string> = { triage: "Triage", implement: "Imple
 /** The chat panel's element id: a row's "Talk to this session" scrolls to it. */
 const CHAT_PANEL = "item-chat";
 
+/** The newest session of each role that has run, in the order Triage, Implementor, Reviewer (`sessions` is newest first). */
+function newestPerRole(sessions: readonly ChatSessionView[]): ChatSessionView[] {
+  const order = Object.keys(CHAT_ROLES);
+  const rank = (role: string) => (order.includes(role) ? order.indexOf(role) : order.length);
+  const newest = sessions.filter((session, index) => sessions.findIndex((each) => each.role === session.role) === index);
+  return newest.sort((a, b) => rank(a.role) - rank(b.role));
+}
+
+/** Every turn of every session, oldest first, each with its session. */
+const allTurns = (sessions: readonly ChatSessionView[]) =>
+  sessions.flatMap((session) => session.turns.map((turn) => ({ turn, session }))).sort((a, b) => a.turn.at.localeCompare(b.turn.at));
+
 /**
  * A person talks to one of the item's sessions. Each message is one more turn of that session; the reply shows as it is
  * written (polled each second while a turn runs, refetched on every event otherwise). Text only: no reply is set as HTML.
@@ -247,7 +260,10 @@ function Chat({ itemKey, now, picked, setPicked, finished }: { itemKey: string; 
   }, [live]);
   if (!data) return null;
   if (data.sessions.length === 0) return <EmptyPanel id={CHAT_PANEL} title="Talk to a session" text="no session runs now" />;
-  const chosen = data.sessions.find((session) => session.agentSession === picked) ?? data.sessions[0]!;
+  const talkable = newestPerRole(data.sessions);
+  const pickedRole = data.sessions.find((session) => session.agentSession === picked)?.role;
+  const chosen = talkable.find((session) => session.role === (pickedRole ?? data.sessions[0]!.role))!;
+  const turns = allTurns(data.sessions);
   const blocked = data.blocked;
   const send = () => {
     if (!text.trim() || sending || blocked) return;
@@ -270,39 +286,42 @@ function Chat({ itemKey, now, picked, setPicked, finished }: { itemKey: string; 
   return (
     <section class="panel chat" id={CHAT_PANEL}>
       <h3>Talk to a session</h3>
-      <label for={`${id}-session`} class="muted">
-        Session (newest first)
-      </label>
-      <select id={`${id}-session`} value={chosen.agentSession} onChange={(event) => setPicked((event.target as HTMLSelectElement).value)}>
-        {data.sessions.map((session) => (
-          <option key={session.agentSession} value={session.agentSession}>
-            {`${CHAT_ROLES[session.role] ?? session.role}${session.model ? ` · ${session.model}` : ""} · started ${ago(session.startedAt, now)}${session.turns.length > 0 ? ` · ${session.turns.length} message${session.turns.length === 1 ? "" : "s"}` : ""}`}
-          </option>
+      <p class="muted">Ask or tell the agent that did this step. It replies here, and its next round of work remembers what you wrote. Talking doesn't move the {itemNoun()}.</p>
+      <div class="chat-roles" role="group" aria-label="Who to talk to">
+        {talkable.map((session) => (
+          <button type="button" key={session.role} class={session.agentSession === chosen.agentSession ? "primary" : undefined} aria-pressed={session.agentSession === chosen.agentSession} onClick={() => setPicked(session.agentSession)}>
+            {CHAT_ROLES[session.role] ?? session.role}
+          </button>
         ))}
-      </select>
-      {chosen.turns.length === 0 ? (
-        <p class="empty">{finished ? "No messages to this session." : "No messages to this session yet. What you write becomes part of it, so its next step sees it."}</p>
+      </div>
+      {turns.length === 0 ? (
+        <p class="empty">{finished ? "No messages to any session." : "No messages yet. What you write becomes part of the session, so its next step sees it."}</p>
       ) : (
         <ol class="chat-turns">
-          {chosen.turns.map((turn) => (
-            <li key={turn.id} class="chat-turn">
-              <div class="chat-message chat-person">
-                <p class="muted num">
-                  You · <time dateTime={turn.at} title={turn.at}>{ago(turn.at, now)}</time>
-                </p>
-                <p class="chat-text">{turn.message}</p>
-              </div>
-              <div class="chat-message chat-reply">
-                <p class="muted num">
-                  {roleWord}
-                  {turn.live ? " · writing…" : turn.finishedAt ? ` · ${ago(turn.finishedAt, now)}` : ""}
-                </p>
-                {turn.reply ? <p class="chat-text">{turn.reply}</p> : turn.live ? <p class="empty">{turn.lastAction ? `Now: ${turn.lastAction}` : "Starting…"}</p> : !turn.failed && <p class="empty">No reply.</p>}
-                {turn.live && turn.reply && turn.lastAction && <p class="reason">Now: {turn.lastAction}</p>}
-                {turn.failed && <p class="reason">Ended: {turn.failed}</p>}
-              </div>
-            </li>
-          ))}
+          {turns.map(({ turn, session }) => {
+            const word = CHAT_ROLES[session.role] ?? session.role;
+            const earlier = talkable.find((each) => each.role === session.role)?.agentSession !== session.agentSession;
+            return (
+              <li key={turn.id} class="chat-turn">
+                <div class="chat-message chat-person">
+                  <p class="muted num">
+                    You to the {word.toLowerCase()} · <time dateTime={turn.at} title={turn.at}>{ago(turn.at, now)}</time>
+                  </p>
+                  <p class="chat-text">{turn.message}</p>
+                </div>
+                <div class="chat-message chat-reply">
+                  <p class="muted num">
+                    {word}
+                    {earlier ? " (earlier session)" : ""}
+                    {turn.live ? " · writing…" : turn.finishedAt ? ` · ${ago(turn.finishedAt, now)}` : ""}
+                  </p>
+                  {turn.reply ? <p class="chat-text">{turn.reply}</p> : turn.live ? <p class="empty">{turn.lastAction ? `Now: ${turn.lastAction}` : "Starting…"}</p> : !turn.failed && <p class="empty">No reply.</p>}
+                  {turn.live && turn.reply && turn.lastAction && <p class="reason">Now: {turn.lastAction}</p>}
+                  {turn.failed && <p class="reason">Ended: {turn.failed}</p>}
+                </div>
+              </li>
+            );
+          })}
         </ol>
       )}
       {/* The box only while a session can be talked to: a finished Item, or a blocked chat, shows the past turns and why. */}
@@ -426,7 +445,7 @@ const sendOf = (question: Pick<PanelQuestion, "options" | "recommendation">, sen
 
 /** Which of `questions` have an answer: one given already, or one held here that would send something. */
 const answeredOf = (questions: readonly PanelQuestion[], held: Record<string, Held>, send: "answer" | "label"): boolean[] =>
-  questions.map((question) => question.answered !== undefined || answerText(held[question.id], sendOf(question, send)).trim() !== "");
+  questions.map((question) => question.answered !== undefined || isAnswered(held[question.id], sendOf(question, send)));
 
 /** Questions one at a time, each answered as in QuestionCard. */
 function QuestionSteps({ questions, held, send, canAnswer, busy, change }: { questions: readonly PanelQuestion[]; held: Record<string, Held>; send: "answer" | "label"; canAnswer: boolean; busy: boolean; change: (id: string, held: Held) => void }) {
@@ -468,7 +487,8 @@ function QuestionsPanel({ page, questions, now, reload, primary }: { page: ItemP
   const { busy, error, send } = useSend();
   const open = questions.filter((question) => question.answered === undefined);
   const ready = open.flatMap((question) => {
-    const text = answerText(held[question.id], sendOf(question, "answer"));
+    const options = sendOf(question, "answer");
+    const text = isAnswered(held[question.id], options) ? answerText(held[question.id], options) : "";
     return text ? [{ id: question.id, entry: { answer: text, ...question.entry } }] : [];
   });
   const several = parked?.questions && parked.questions.length > 0;

@@ -6,7 +6,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import type { UsagePageWindow, UsageView } from "./api.ts";
 import { fetchUsage, useView } from "./api.ts";
 import { clockTime, span as spanWords } from "./format.ts";
-import { stackPlot, timeTicks } from "../../src/core/usage.ts";
+import { stackPlot, timeTicks, usageParts } from "../../src/core/usage.ts";
 import type { UsageKey, UsagePlotKey } from "../../src/core/usage.ts";
 
 /** Bottom to top in the plot, top to bottom in the table. */
@@ -229,6 +229,7 @@ function Plot({ window, from, to }: { window: UsagePageWindow; from: number; to:
 function WindowBlock({ window, view }: { window: UsagePageWindow; view: UsageView }) {
   const rows = ROLES.filter((key) => window.shares[key] > 0.0005);
   const methods = (Object.keys(METHOD) as (keyof typeof METHOD)[]).filter((method) => window.methods[method] > 0);
+  const parts = usageParts(window, rows);
   const sessions = rows.reduce((sum, key) => sum + (key === "outside" ? 0 : window.sessions[key]), 0);
   return (
     <section class="panel usage-window">
@@ -242,7 +243,7 @@ function WindowBlock({ window, view }: { window: UsagePageWindow; view: UsageVie
           <thead>
             <tr>
               <th scope="col">Who</th>
-              <th scope="col" class="num">Of the window</th>
+              <th scope="col" class="num">{parts.several ? "Of all use" : "Of the window"}</th>
               <th scope="col" class="num">Sessions</th>
             </tr>
           </thead>
@@ -252,26 +253,27 @@ function WindowBlock({ window, view }: { window: UsagePageWindow; view: UsageVie
                 <th scope="row">
                   <span class="usage-dot" style={{ background: COLOR[key] }} /> {LABEL[key]}
                 </th>
-                <td class="num">{pct(window.shares[key])}</td>
+                <td class="num">{parts.several ? `${parts.percents[key]} %` : pct(window.shares[key])}</td>
                 <td class="num">{key === "outside" ? "" : window.sessions[key]}</td>
               </tr>
             ))}
           </tbody>
           <tfoot>
             <tr>
-              <th scope="row">In all{window.resets > 0 ? `, over ${window.resets} reset${window.resets === 1 ? "" : "s"}` : ""}</th>
-              <td class="num">{pct(window.total)}</td>
+              <th scope="row">In all</th>
+              <td class="num">{parts.several ? "100 %" : pct(window.total)}</td>
               <td class="num">{sessions}</td>
             </tr>
           </tfoot>
         </table>
       )}
+      {parts.several && rows.length > 0 && <p class="muted">{parts.windows === 1 ? "About 1 window's worth in all." : `About ${parts.windows} windows' worth in all.`}</p>}
       <details class="usage-how">
         <summary>How this is counted</summary>
         <p>
           Between two readings the rise of the window is spread evenly over the time and given to whoever ran then: one session gets it all; several share it by run time,
           or by tokens when every one of them has a token count. Use while no session ran counts as outside Scope Soup. After a reset, what is read counts from the reset.
-          {" "}"Of the window" adds up over the span, so it passes 100 % when the window reset in it.
+          {" "}Over several windows the shares are of all use in the span.
         </p>
         {methods.length > 0 && (
           <p>
