@@ -25,6 +25,7 @@ import type { CommitView, DiffView, HistoryView, ItemBranchState, ItemPage } fro
 import type { Assumption, CreatedPart, LabelChange, LogWriter, OpenQuestion, Priority, ProposedPart, Ref, Parked, ParkedQuestion, TextProposal, UsageWindowKind, WorkItem, WorkState } from "../model/types.ts";
 import { asParts, refKey } from "../model/types.ts";
 import { applyChange, asLabelChange, changeText, isEmptyChange } from "../model/labels.ts";
+import type { OpenDiffResult } from "../orchestrator/diffTool.ts";
 import { planOrder } from "../orchestrator/candidates.ts";
 import { explainOrder, voteForPlace, voteLimits } from "../orchestrator/score.ts";
 import { setVote, voteInStore } from "../store/votes.ts";
@@ -99,6 +100,8 @@ export interface ServerOptions {
   planning?: () => { bugLabels: string[]; plannedSessions?: number; level?: number; resources?: ResourceConfig[]; reserve?: Record<UsageWindowKind, number> };
   /** Reads the diff of an item's branch for `GET /api/diff`. Absent in board-only mode. */
   diff?: (ref: Ref) => Promise<DiffView>;
+  /** Opens an Item's change, or one of its files, in the person's own diff tool for `POST /api/open-diff` (`src/orchestrator/diffTool.ts`). Absent in board-only mode. */
+  openDiff?: (ref: Ref, file?: string) => Promise<OpenDiffResult>;
   /** The newest `limit` commits of the project for `GET /api/history`, and one commit for `GET /api/commit`. Absent in board-only mode. */
   history?: (limit: number) => Promise<HistoryView>;
   commit?: (sha: string) => Promise<CommitView>;
@@ -1458,6 +1461,36 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
   }
 
   /**
+   * Opens an Item's change, or one file of it, in the person's diff tool on this machine. The body is `{ ref, file? }` and nothing
+   * else: no command, no path, no tool. Only from this machine (the socket and the Host header are loopback, also when the server
+   * listens on the LAN), because it starts a program with a window.
+   */
+  async function openDiff(request: IncomingMessage, response: ServerResponse): Promise<void> {
+    let body: Record<string, unknown>;
+    try {
+      body = await readJson(request);
+    } catch (error) {
+      return sendError(response, 400, "BAD_BODY", error instanceof Error ? error.message : "The body is not JSON.");
+    }
+    const hostName = (request.headers.host ?? "").replace(/:\d+$/, "");
+    if (!isLoopback(request.socket.remoteAddress?.replace(/^::ffff:/i, "") ?? "") || !isLoopback(hostName)) {
+      return sendError(response, 403, "NOT_LOCAL", "A diff tool opens only from the machine Scope Soup runs on.");
+    }
+    const extra = Object.keys(body).filter((key) => key !== "ref" && key !== "file");
+    if (extra.length > 0) return sendError(response, 400, "BAD_BODY", `Only ref and file are read. Not read: ${extra.join(", ")}.`);
+    if (typeof body.ref !== "string" || body.ref === "") return sendError(response, 400, "REF_MISSING", "Give the item as ref: host:work:id.");
+    if (body.file !== undefined && (typeof body.file !== "string" || body.file === "")) return sendError(response, 400, "BAD_FILE", "file must be a path from the change's file list.");
+    const page = buildItemPage(loadSnapshot(store), body.ref, now(), undefined, self());
+    if (!page) return sendError(response, 404, "ITEM_NOT_FOUND", `No item ${body.ref}.`);
+    if (!options.openDiff) return sendError(response, 404, "NO_CONFIG", "This server has no project configuration, so it has no clones to open a diff in.");
+    const file = body.file;
+    const opened = await options.openDiff(page.item.ref, file);
+    if (!opened.ok) return sendError(response, opened.status, opened.code, opened.message);
+    store.appendEvent({ kind: "person.opened_diff", subject: refKey(page.item.ref), actor: picked() ?? "board", data: { reason: `${picked() ?? "Someone"} opened ${file ?? "the change"} of ${page.item.ref.id} in the diff tool (${opened.tool}).`, tool: opened.tool, ...(file !== undefined ? { file } : {}) } }, now().toISOString());
+    return sendJson(response, 200, { opened: true, tool: opened.tool, ...(file !== undefined ? { file } : {}) });
+  }
+
+  /**
    * The overview's one line at level 0: how many ready Items have no triage. With a project configuration only
    * (board-only mode runs no sessions), and only at level 0.
    */
@@ -1503,6 +1536,7 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
         if (path === "/api/item/release") return person(request, response, "release");
         if (path === "/api/config") return changeConfig(request, response);
         if (path === "/api/open-folder") return openProjectFolder(request, response);
+        if (path === "/api/open-diff") return openDiff(request, response);
         request.resume();
         // Each switch on its lane: /api/{triage,implement,review,merge-queue}/{start,pause}; /api/agents/... is the three roles at once.
         const switched = /^\/api\/(triage|implement|review|merge-queue|agents)\/(start|pause)$/.exec(path);

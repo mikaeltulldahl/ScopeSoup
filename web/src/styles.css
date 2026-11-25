@@ -657,3 +657,7 @@ button.decision-choice:hover:not(:disabled) { background: var(--accent-soft); fi
 .usage-dot-forecast { background: repeating-linear-gradient(135deg, color-mix(in srgb, var(--text) 45%, transparent) 0 2px, transparent 2px 4px); outline: 1px solid var(--line); }
 .usage-dot-forecast.warn { background: repeating-linear-gradient(135deg, var(--blocked) 0 2px, transparent 2px 4px); }
 .usage-dot-reserve { background: repeating-linear-gradient(135deg, transparent 0 2px, var(--line) 2px 4px); outline: 1px solid var(--line); }
+.diff-tool { font-size: 0.8rem; padding: 1px 8px; }
+.diff-text mark { color: inherit; border-radius: 2px; }
+.diff-line-del mark { background: color-mix(in srgb, #d04545 38%, transparent); }
+.diff-line-add mark { background: color-mix(in srgb, #2e9d5b 38%, transparent); }

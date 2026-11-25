@@ -44,7 +44,7 @@ function tokens(line: string): string[] {
 }
 
 /** The tokens of `line` that are not in `other` (in order), marked; neighbours of one kind joined. */
-function wordParts(line: string, other: string): Part[] {
+export function wordParts(line: string, other: string): Part[] {
   const mine = tokens(line);
   const kept = new Set(lcs(mine, tokens(other)).map(([i]) => i));
   const parts: Part[] = [];
@@ -55,6 +55,16 @@ function wordParts(line: string, other: string): Part[] {
     else parts.push({ text: token, changed });
   });
   return parts;
+}
+
+/**
+ * The word marks of a removed line and the added line paired with it, or null when they are not partners: lines with no word
+ * in common say nothing when every word is marked. The pairing rule of the draft diff and of a file's diff.
+ */
+export function partnerParts(removed: string, added: string): { del: Part[]; add: Part[] } | null {
+  const theirs = new Set(tokens(added));
+  if (!tokens(removed).some((token) => /\S/.test(token) && theirs.has(token))) return null;
+  return { del: wordParts(removed, added), add: wordParts(added, removed) };
 }
 
 /**
@@ -73,11 +83,10 @@ export function diffLines(before: string, after: string): DiffRow[] {
     const dels: DiffRow[] = removed.map((text) => ({ kind: "del", text }));
     const adds: DiffRow[] = added.map((text) => ({ kind: "add", text }));
     for (let k = 0; k < Math.min(removed.length, added.length); k++) {
-      // Lines with no word in common are not partners: marking every word says nothing.
-      const theirs = new Set(tokens(added[k]!));
-      if (!tokens(removed[k]!).some((token) => /\S/.test(token) && theirs.has(token))) continue;
-      dels[k]!.parts = wordParts(removed[k]!, added[k]!);
-      adds[k]!.parts = wordParts(added[k]!, removed[k]!);
+      const partners = partnerParts(removed[k]!, added[k]!);
+      if (!partners) continue;
+      dels[k]!.parts = partners.del;
+      adds[k]!.parts = partners.add;
     }
     rows.push(...dels, ...adds);
   };
@@ -119,4 +128,29 @@ export function collapse(rows: readonly DiffRow[], context = 3, minHidden = 4): 
     index = end;
   }
   return shown;
+}
+
+/**
+ * Word marks for the lines of a unified diff of one file (git's hunks: "-", "+", " " and "@@" lines). In each run of "-" lines
+ * followed by "+" lines the i-th pair are partners (the draft diff's rule, `partnerParts`). Entry `k` is the parts of line `k`
+ * without its first character, or undefined when the line has no partner.
+ */
+export function hunkParts(lines: readonly string[]): (Part[] | undefined)[] {
+  const out: (Part[] | undefined)[] = new Array(lines.length).fill(undefined);
+  let index = 0;
+  while (index < lines.length) {
+    if (!lines[index]!.startsWith("-")) { index++; continue; }
+    let delEnd = index;
+    while (delEnd < lines.length && lines[delEnd]!.startsWith("-")) delEnd++;
+    let addEnd = delEnd;
+    while (addEnd < lines.length && lines[addEnd]!.startsWith("+")) addEnd++;
+    for (let k = 0; k < Math.min(delEnd - index, addEnd - delEnd); k++) {
+      const partners = partnerParts(lines[index + k]!.slice(1), lines[delEnd + k]!.slice(1));
+      if (!partners) continue;
+      out[index + k] = partners.del;
+      out[delEnd + k] = partners.add;
+    }
+    index = addEnd;
+  }
+  return out;
 }

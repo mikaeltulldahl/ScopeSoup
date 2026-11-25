@@ -2,7 +2,7 @@
 
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { collapse, diffLines, hasChanges } from "../../web/src/textDiff.ts";
+import { collapse, diffLines, hasChanges, hunkParts } from "../../web/src/textDiff.ts";
 
 const marked = (before: string, after: string) => diffLines(before, after).map((row) => (row.kind === "same" ? " " : row.kind === "del" ? "-" : "+") + row.text);
 const lines = (n: number) => Array.from({ length: n }, (_, k) => `line ${k}`);
@@ -50,5 +50,22 @@ describe("collapse", () => {
   });
   it("keeps short runs whole", () => {
     assert.equal(collapse(diffLines("a\nb\nc\nd", "A\nb\nc\nD"), 2).every((entry) => "row" in entry), true);
+  });
+});
+
+describe("hunkParts", () => {
+  it("pairs the i-th removed and added line of a change and marks their differing words", () => {
+    const parts = hunkParts(["@@ -1,3 +1,3 @@", " keep", "-let size = 3;", "-gone entirely", "+let size = 4;", " tail"]);
+    assert.equal(parts[0], undefined);
+    assert.equal(parts[1], undefined);
+    assert.deepEqual(parts[2], [{ text: "let size = ", changed: false }, { text: "3;", changed: true }]);
+    assert.deepEqual(parts[4], [{ text: "let size = ", changed: false }, { text: "4;", changed: true }]);
+    assert.equal(parts[3], undefined, "a removed line without a partner is not marked");
+    assert.equal(parts[5], undefined);
+  });
+
+  it("leaves lines with no word in common unmarked, and a change with only one side", () => {
+    assert.deepEqual(hunkParts(["-alpha beta", "+gamma delta"]), [undefined, undefined]);
+    assert.deepEqual(hunkParts(["-only removed", " same", "+only added"]), [undefined, undefined, undefined]);
   });
 });
