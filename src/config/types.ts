@@ -44,6 +44,9 @@ export interface Settings {
 
 export type SettingName = keyof Settings;
 
+/** What `claude --effort` accepts (`claude --help`, "--effort <level>"). Higher effort uses more of the usage windows. */
+export const EFFORT_LEVELS = ["low", "medium", "high", "xhigh", "max"] as const;
+
 /** The agent CLIs a role can run on (`src/orchestrator/providers/`). */
 export const PROVIDER_NAMES = ["claude", "copilot"] as const;
 export type ProviderName = (typeof PROVIDER_NAMES)[number];
@@ -55,6 +58,8 @@ export interface RoleConfig {
   model: string;
   /** Copilot only: the Auto routing profile (`--auto-tier`) when the model is "fusion" or "auto". Absent there: "balance". */
   autoTier?: string;
+  /** Claude only: the reasoning effort (`--effort`), one of `EFFORT_LEVELS`. Absent: the CLI's own default. */
+  effort?: string;
   maxTurns: number;
   /** Permission rules passed as `--allowedTools`. */
   allowedTools: string[];
@@ -207,6 +212,21 @@ export function mergeQueueCi(config: Pick<ProjectConfig, "mergeQueue">): MergeQu
   return config.mergeQueue?.ci ?? "local";
 }
 
+/**
+ * Images agents attach to their answers (`src/core/media.ts`). A project setting. Absent: `{ push: false, keepDaysAfterClose: null }`.
+ */
+export interface MediaConfig {
+  /** Commit each Item's images to `refs/scopesoup/media/<id>` and push it to the remote. Off: they stay on this machine. */
+  push: boolean;
+  /** Delete a closed Item's images this many days after it closed; null keeps them. */
+  keepDaysAfterClose: number | null;
+}
+
+/** The media setting in use: off and kept when the settings say nothing. */
+export function mediaSettings(config: Pick<ProjectConfig, "media">): MediaConfig {
+  return config.media ?? { push: false, keepDaysAfterClose: null };
+}
+
 /** What needs a resource: a session of a role, or the merge queue's check. */
 export type ResourceUser = SessionRole | "check";
 export const RESOURCE_USERS: readonly ResourceUser[] = [...ROLES, "check"];
@@ -303,6 +323,8 @@ export interface ProjectConfig {
   setupWatch?: string[];
   /** What the merge queue waits for at level 4. Absent: the check command in the queue's clone, as `{ ci: "local" }`. */
   mergeQueue?: MergeQueueConfig;
+  /** Agents' images: pushed or not, and kept how long. Absent: `mediaSettings`' default. */
+  media?: MediaConfig;
   /** This machine's resources (`resources`) and the shared ones (`sharedResources`), in that order. Absent: none. */
   resources?: ResourceConfig[];
   claude: ClaudeConfig;

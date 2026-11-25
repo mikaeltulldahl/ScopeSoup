@@ -12,7 +12,8 @@ import { mergeQueueOn, ROLES, SWITCH_WORDS, switchState } from "../store/control
 import type { SwitchState } from "../store/control.ts";
 import { KEYS } from "../store/keys.ts";
 import type { Level, ProjectConfig } from "../config/types.ts";
-import { levelName } from "../config/types.ts";
+import { levelName, mediaSettings } from "../config/types.ts";
+import { mediaPromptText } from "../core/media.ts";
 import type { Change, Ref, RepoLabel, Session, SessionRole, UsageWindowKind, WorkItem } from "../model/types.ts";
 import { labelsPromptText } from "../model/labels.ts";
 import { refKey } from "../model/types.ts";
@@ -273,6 +274,8 @@ export function promptVars(config: ProjectConfig, item: WorkItem, job: Job, deci
     decisions: decisionsPromptText(job),
     // What changed since the triage before, when the triage is taken again.
     recheck: recheckPromptText(job),
+    // Where to save images for the board, and who sees them (`media.push`).
+    media: mediaPromptText(mediaSettings(config).push),
   };
 }
 

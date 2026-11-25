@@ -335,7 +335,7 @@ test("readConfigView gives the five levels with their sentences and what each la
   assert.equal(view.levels[0]?.blocked, null);
   assert.match(view.levels[3]?.blocked ?? "", /^Level 3 needs claude/);
   assert.equal(view.levels[4]?.blocked, `Level 4 needs claude (the program "claude" was not found), a check command (checkCommand) and the remote's URL (remoteUrl).`);
-  assert.deepEqual(view.safeFields, ["level", "settings", "roles", "checkCommand", "remoteUrl", "setupCommand", "setupWatch", "resources", "sharedResources"]);
+  assert.deepEqual(view.safeFields, ["level", "settings", "roles", "checkCommand", "remoteUrl", "setupCommand", "setupWatch", "resources", "sharedResources", "media"]);
 });
 
 test("level 4 saved with its check command and remote URL writes all three; the check command must be startable; below level 4 they are refused", async () => {
@@ -430,4 +430,16 @@ test("resources declared in the file load; one added on the Settings page is wri
   const removed = await edit(file, { resources: null, sharedResources: null }, found);
   assert.ok(removed.ok);
   assert.equal("resources" in both(file) || "sharedResources" in both(file), false);
+});
+
+test("a role's effort is saved from the board, and null removes it", async () => {
+  const file = setup({ roles: { implement: { model: "opus", allowedTools: ["Read"] } } });
+  const saved = await edit(file, { roles: { implement: { effort: "high" } } });
+  assert.equal(saved.ok, true);
+  assert.equal((both(file) as Record<string, any>).roles.implement.effort, "high");
+  const bad = await edit(file, { roles: { implement: { effort: "extreme" } } });
+  assert.equal(bad.ok, false);
+  const cleared = await edit(file, { roles: { implement: { effort: null } } });
+  assert.equal(cleared.ok, true);
+  assert.deepEqual((both(file) as Record<string, any>).roles.implement, { model: "opus", allowedTools: ["Read"] });
 });

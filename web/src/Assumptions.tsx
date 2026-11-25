@@ -13,26 +13,27 @@ import { clearPicks, loadPicks, readyPicks, savePicks } from "./heldDecisions.ts
 import { itemNoun } from "./theme.ts";
 import { itemHref } from "./route.ts";
 import { Stepper } from "./Stepper.tsx";
+import { AgentText } from "./Markdown.tsx";
 
 function Decision({ decision, now, canSettle, pick, busy, onPick }: { decision: AssumptionView; now: number; canSettle: boolean; pick: HeldPick | undefined; busy: boolean; onPick: (pick: HeldPick | null) => void }) {
   const settled = decision.settled;
   return (
     <li class={`row decision${settled ? " decision-settled" : ""}${pick ? " decision-picked" : ""}`}>
       <div class="row-head">
-        <span class="row-title">{decision.question}</span>
+        <span class="row-title"><AgentText text={decision.question} /></span>
         <span class="muted num">{ago(decision.at, now)}</span>
       </div>
       <p>
-        <span class="muted">Chose:</span> {decision.chosen}
+        <span class="muted">Chose:</span> <AgentText text={decision.chosen} />
       </p>
       {decision.others.length > 0 && (
         <p>
-          <span class="muted">Other options:</span> {decision.others.join("; ")}
+          <span class="muted">Other options:</span> <AgentText text={decision.others.join("; ")} />
         </p>
       )}
       {decision.why && (
         <p>
-          <span class="muted">Why:</span> {decision.why}
+          <span class="muted">Why:</span> <AgentText text={decision.why} />
         </p>
       )}
       {settled ? (

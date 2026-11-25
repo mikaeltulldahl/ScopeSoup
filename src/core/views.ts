@@ -511,6 +511,11 @@ export interface ItemPage {
   /** Set by the server: the item can be edited here. */
   canEdit?: boolean;
   /**
+   * Set by the server when the Item has images agents attached (`src/core/media.ts`): their names, and whether they are pushed
+   * to the project's remote (`media.push`), so that everyone with the repository sees them, or stay on this machine.
+   */
+  media?: { names: string[]; shared: boolean };
+  /**
    * Set by the server where the Item's hold can be changed here: the board's buttons. Claim is there unless the board's person
    * holds the Item, Hand back when they do, Release while a person holds it (anyone releases anyone's hold, the log names
    * both). `why` says why a button cannot be pressed now. `branch` is there for the holder: where to work and push.

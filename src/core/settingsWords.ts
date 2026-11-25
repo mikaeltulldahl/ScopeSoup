@@ -9,7 +9,7 @@ export interface SettingChangeLike {
 }
 
 const ROLE_WORDS: Record<string, string> = { triage: "triage", implement: "implementor", review: "reviewer" };
-const ROLE_FIELDS: Record<string, string> = { model: "model", maxTurns: "turn limit", allowedTools: "allowed commands", permissionMode: "permission mode", provider: "agent CLI", autoTier: "automatic model" };
+const ROLE_FIELDS: Record<string, string> = { model: "model", maxTurns: "turn limit", allowedTools: "allowed commands", permissionMode: "permission mode", provider: "agent CLI", autoTier: "automatic model", effort: "effort" };
 
 /** The numbers in `settings`, with their unit. */
 const NUMBERS: Record<string, [string, string]> = {
@@ -116,6 +116,12 @@ export function settingsWords(changes: readonly SettingChangeLike[]): string[] {
     }
     if (top === "mergeQueue") {
       out.push(fromTo(second ? `Merge queue ${spaced(parts.slice(1).join(" "))}` : "Merge queue", change));
+      continue;
+    }
+    if (top === "media") {
+      if (second === "push" && parts.length === 2) out.push(change.to === true ? "Images pushed to the remote" : "Images kept on each machine only");
+      else if (second === "keepDaysAfterClose" && parts.length === 2) out.push(typeof change.to === "number" ? `Images deleted ${change.to} days after an Item closes` : "Images kept after an Item closes");
+      else out.push(fromTo("Images", change));
       continue;
     }
     if (top === "host") {
