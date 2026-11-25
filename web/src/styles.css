@@ -71,6 +71,10 @@ a.project-repo:hover { color: var(--bar-text); text-decoration: underline; }
 .version-available { font-weight: 650; }
 .top nav { display: flex; flex-wrap: wrap; gap: 2px; min-width: 0; order: 3; flex-basis: 100%; }
 @media (min-width: 720px) { .top nav { order: 0; flex-basis: auto; } }
+.top button.new-item { padding: 4px 12px; min-height: 30px; white-space: nowrap; font-weight: 650; }
+/* Narrow: the tabs take their own row, so the button follows them there. */
+.top button.new-item { order: 4; }
+@media (min-width: 720px) { .top button.new-item { order: 0; } }
 .top nav a { padding: 6px 10px; border-radius: 6px; white-space: nowrap; color: var(--bar-muted); font-weight: 550; }
 .top nav a:hover { color: var(--bar-text); }
 .top nav a[aria-current="page"] { background: rgba(255, 255, 255, 0.13); color: #fff; }
@@ -367,7 +371,6 @@ button.choice-mark:hover:not(:disabled) { background: none; }
 .rewrite-compare { display: grid; grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr)); gap: 0 12px; }
 
 /* --- Writing items --- */
-.new-item { margin: 0 0 var(--gap); }
 .empty-board p { max-width: 60ch; }
 main > .panel { max-width: 900px; margin: 0 auto var(--gap); }
 .panel-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }

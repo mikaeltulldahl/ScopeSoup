@@ -8,14 +8,10 @@ import { useState } from "preact/hooks";
 import type { BoardView, ControlPath, LaneView } from "./api.ts";
 import { BatchMini } from "./Batch.tsx";
 import { Card } from "./Card.tsx";
-import { Dialog } from "./Dialog.tsx";
-import { ItemForm } from "./ItemForm.tsx";
 import { laneIcon, laneLabel } from "./format.ts";
-import { itemHref } from "./route.ts";
 import { MERGE_LANE, mergeLane, queueShown } from "./mergeLane.ts";
 import { itemNoun, words } from "./theme.ts";
 import { useTheme } from "./useTheme.ts";
-import { postItem } from "./api.ts";
 import { laneSwitch, switchPath, switchTitle, SWITCH_WORDS } from "./switches.ts";
 import type { SwitchName, SwitchState } from "./switches.ts";
 
@@ -149,34 +145,9 @@ export function Overview({ board, busy, onSwitch }: { board: BoardView; busy: bo
       // Private mode: the choice lasts until the page is closed.
     }
   };
-  const [writing, setWriting] = useState(false);
-  // The draft in the dialog has text in it: a click outside then keeps the dialog.
-  const [dirty, setDirty] = useState(false);
   const level = board.status.level;
   const states = { triage: board.status.triage, implement: board.status.implement, review: board.status.review, mergeQueue: board.status.mergeQueue };
   const control = (lane: string): LaneControl => ({ own: laneSwitch(lane, level), states, busy, onSwitch });
-  const close = () => {
-    setWriting(false);
-    setDirty(false);
-  };
-  const dialog =
-    board.canWrite && writing ? (
-      <Dialog label={`New ${theme.words.itemOne}`} onClose={close} focusSelector="input" keepOnOutsideClick={dirty}>
-        <h3 class="dialog-title">New {theme.words.itemOne}</h3>
-        <ItemForm
-          start={{ title: "", body: "", verification: "", labels: "", blockedBy: "", priority: "" }}
-          submitWords="Create"
-          onDirty={setDirty}
-          onSubmit={(fields) =>
-            postItem(fields).then(({ ref }) => {
-              close();
-              location.hash = itemHref(ref);
-            })
-          }
-          onCancel={close}
-        />
-      </Dialog>
-    ) : null;
   const drafts = board.drafts ?? [];
   const waiting = board.yourTurn.length + drafts.length;
   const empty = board.lanes.every((lane) => lane.total === 0) && waiting === 0;
@@ -192,27 +163,11 @@ export function Overview({ board, busy, onSwitch }: { board: BoardView; busy: bo
             project can file the {theme.words.itemMany} too (see the project's CLAUDE.md).
           </p>
         )}
-        {board.canWrite && (
-          <p>
-            <button type="button" class="primary" onClick={() => setWriting(true)}>
-              New {theme.words.itemOne}
-            </button>
-          </p>
-        )}
-        {dialog}
       </section>
     );
   }
   return (
     <>
-      {board.canWrite && (
-        <p class="new-item">
-          <button type="button" class="primary" onClick={() => setWriting(true)}>
-            New {theme.words.itemOne}
-          </button>
-        </p>
-      )}
-      {dialog}
       {board.withoutTriage ? <NoTriage count={board.withoutTriage} /> : null}
       <section class={waiting > 0 ? "your-turn waiting" : "your-turn"} aria-labelledby="your-turn-title">
         <h2 id="your-turn-title">

@@ -9,6 +9,7 @@ import { History } from "./History.tsx";
 import { Usage } from "./Usage.tsx";
 import { Item } from "./Item.tsx";
 import { ItemList } from "./ItemList.tsx";
+import { NewItem } from "./NewItem.tsx";
 import { Overview } from "./Overview.tsx";
 import { Queue } from "./Queue.tsx";
 import { Settings } from "./Settings.tsx";
@@ -36,6 +37,9 @@ function ItemDialog({ closeHref, children }: { closeHref: string; children: Comp
   );
 }
 
+/** Where the New item button sits in the top bar: "after-nav" (after Settings), "before-nav" (between "You are" and the tabs) or "after-project" (before "You are"). */
+const NEW_ITEM_AT: "after-nav" | "before-nav" | "after-project" = "after-nav";
+
 function App() {
   const { route: current, below: route, belowHash } = useRoute();
   const { data: board, error, reload } = useView(fetchBoard, "board");
@@ -55,6 +59,7 @@ function App() {
         reload();
       });
   };
+  const canWrite = board?.canWrite === true;
   const status = board?.status;
   // No level: board only (no project configuration), so there is no orchestrator to start.
   const level = status?.level;
@@ -75,7 +80,9 @@ function App() {
           Scope Soup
         </a>
         {board?.project && <ProjectHeader project={board.project} onError={setFailed} />}
+        {canWrite && NEW_ITEM_AT === "after-project" && <NewItem />}
         <PersonPicker known={board?.people ?? []} names={board?.peopleNames} />
+        {canWrite && NEW_ITEM_AT === "before-nav" && <NewItem />}
         <nav aria-label="Views">
           <a href="#/" aria-current={route.view === "overview" ? "page" : undefined}>{theme.words.startPage}</a>
           <a href="#/items" aria-current={route.view === "items" ? "page" : undefined}>{theme.words.itemMany.replace(/^./, (first) => first.toUpperCase())}</a>
@@ -86,6 +93,7 @@ function App() {
           <a href="#/usage" aria-current={route.view === "usage" ? "page" : undefined}>Usage</a>
           <a href="#/settings" aria-current={route.view === "settings" || route.view === "stop" ? "page" : undefined}>Settings</a>
         </nav>
+        {canWrite && NEW_ITEM_AT === "after-nav" && <NewItem />}
         <div class="actions">
           <button type="button" disabled={busy} onClick={() => act("/api/refresh")}>Sync now</button>
           {level !== undefined && (
