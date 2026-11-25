@@ -372,8 +372,9 @@ export const fetchConfig = () => getJson<ConfigView>("/api/config");
  */
 export async function postConfig(change: Record<string, unknown>): Promise<ConfigView & { shared?: string }> {
   const response = await call("/api/config", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(change) });
-  const body = (await response.json().catch(() => null)) as (ConfigView & { errors?: string[]; error?: { message?: string }; players?: PlayersDiffer["players"] }) | null;
+  const body = (await response.json().catch(() => null)) as (ConfigView & { errors?: string[]; error?: { message?: string }; players?: PlayersDiffer["players"]; filter?: FilterWidens["filter"] }) | null;
   if (response.status === 409 && body?.players) throw new PlayersDiffer(body.errors?.join("\n") ?? "", body.players);
+  if (response.status === 409 && body?.filter) throw new FilterWidens(body.errors?.join("\n") ?? "", body.filter);
   if (!response.ok) throw new Error(body?.errors?.join("\n") ?? body?.error?.message ?? `The server answered ${response.status}.`);
   return body as ConfigView & { shared?: string };
 }
@@ -423,6 +424,15 @@ export class PlayersDiffer extends Error {
   constructor(message: string, players: PlayersDiffer["players"]) {
     super(message);
     this.players = players;
+  }
+}
+
+/** A new Jira filter that adds Items, not saved: what it adds and removes, in words, for the person to confirm (#141). */
+export class FilterWidens extends Error {
+  filter: { added: number; removed: number; lines: string[] };
+  constructor(message: string, filter: FilterWidens["filter"]) {
+    super(message);
+    this.filter = filter;
   }
 }
 

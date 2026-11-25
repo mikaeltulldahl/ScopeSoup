@@ -23,6 +23,8 @@ export interface HostSettings {
   github?: GitHubHostConfig;
   /** A Jira project; only from the configuration file. */
   jira?: JiraHostConfig;
+  /** The Jira host as the shared settings have it now: its filter and components are read from it at each use (Settings changes them). */
+  jiraLive?: () => JiraHostConfig | undefined;
   /** Whether the meta ref is fetched and pushed: the file's `multiplayer`, asked before each round (singleplayer keeps it here). */
   shares?: () => boolean;
   /**
@@ -112,13 +114,19 @@ export function createHosts(settings: HostSettings, env: Env, log: (line: string
   if (jira) {
     const token = env.SCOPESOUP_JIRA_TOKEN;
     if (!token) throw new Error(`The Jira host ${jira.site} (project ${jira.project}) is configured but SCOPESOUP_JIRA_TOKEN is not set. The token is only read from the environment: ${jira.deployment === "cloud" ? "a Jira Cloud API token" : "a personal access token"}.`);
+    // The filter and components as they are now; another site or project (a Connect) waits for the restart, as the rest does.
+    const live = (): JiraHostConfig => {
+      const now = settings.jiraLive?.();
+      return now && now.site === jira.site && now.project === jira.project ? now : jira;
+    };
     // Claims name the machine, as on GitHub. The project's changes stay on its git remote: Jira has no pull requests.
     configured.push(createJiraHost({
       site: jira.site, project: jira.project, deployment: jira.deployment, token, conventions: true, allowWrites: jira.write,
       ...(settings.machine ? { machine: settings.machine } : {}),
       ...(settings.personCommands ? { claimsOfAnyone: true } : {}),
-      ...(jira.filter ? { filter: jira.filter } : {}),
-      ...(jira.components ? { components: jira.components } : {}),
+      // Live: asked at each read and write, so a change in Settings holds from the next one.
+      filter: () => live().filter,
+      components: () => live().components,
       ...(onOutsideFilter ? { onOutsideFilter } : { log }),
       ...(jira.issueType ? { issueType: jira.issueType } : {}),
       ...(jira.childIssueType ? { childIssueType: jira.childIssueType } : {}),
