@@ -1517,6 +1517,8 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
     if (!options.media) return sendError(response, 404, "NO_MEDIA", "This server keeps no images.");
     const result = await options.media.remove(work.ref, name, picked() ?? "board");
     if (!result.removed) return sendError(response, 404, "MEDIA_NOT_FOUND", `No image ${name} on ${work.ref.id}.`);
+    // Gone here, but the remote's ref still has it: the page says so; Scope Soup tries again every hour.
+    if (result.ref === "failed") return sendError(response, 502, "MEDIA_STILL_ON_REMOTE", `Deleted here, but still on the remote: ${result.problem ?? "the remote could not be updated"}. Scope Soup tries again every hour.`);
     return sendJson(response, 200, result);
   }
 

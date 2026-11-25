@@ -42,10 +42,12 @@ describe("media", () => {
   });
 
   it("names the ref and the folder safely", () => {
-    assert.equal(mediaRef("A-12"), "refs/scopesoup/media/A-12");
-    assert.equal(mediaRef("88"), "refs/scopesoup/media/88");
-    assert.equal(mediaKey("../x"), "i___x");
-    assert.equal(mediaKey("a.b"), "a_b");
+    assert.match(mediaRef("github:work:88"), /^refs\/scopesoup\/media\/github_work_88-[0-9a-f]{16}$/);
+    // Item 7 on two hosts, and ids that read alike once made safe, never share a folder or a ref.
+    assert.notEqual(mediaKey("github:work:7"), mediaKey("metaBranch:work:7"));
+    assert.notEqual(mediaKey("x:work:a/b"), mediaKey("x:work:a_b"));
+    assert.match(mediaKey("../../x"), /^x-[0-9a-f]{16}$/);
+    assert.match(mediaKey("..."), /^[0-9a-f]{16}$/);
   });
 
   it("finds the images a text refers to, and gives a host words instead", () => {
@@ -54,7 +56,8 @@ describe("media", () => {
     const host = hostImageText(summary);
     assert.doesNotMatch(host, /media\//);
     assert.match(host, /\(before: image on the board\) \(after: image on the board\)/);
-    assert.match(host, /!\[y\]\(https:\/\/example\.com\/y\.png\)/);
+    assert.match(host, /y \(image: https:\/\/example\.com\/y\.png\)/);
+    assert.doesNotMatch(host, /!\[/);
   });
 
   it("deletes a closed Item's images only when the setting says so and the days have passed", () => {

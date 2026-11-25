@@ -100,15 +100,29 @@ export function planMedia(found: readonly FoundMedia[], existing: readonly strin
   return plan;
 }
 
-/** The ref an Item's images are shared on: `refs/scopesoup/media/<id>`, the id as it is when it is safe in a ref, else made safe. */
-export function mediaRef(id: string): string {
-  return `refs/scopesoup/media/${mediaKey(id)}`;
+/** The ref an Item's images are shared on: `refs/scopesoup/media/<mediaKey>`. `key` is the Item's whole key (`refKey`). */
+export function mediaRef(key: string): string {
+  return `refs/scopesoup/media/${mediaKey(key)}`;
 }
 
-/** The Item's id as a folder and ref name: letters, digits, `-` and `_`, a letter or digit first; anything else becomes `_`. */
-export function mediaKey(id: string): string {
-  const safe = id.replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 64);
-  return /^[A-Za-z0-9]/.test(safe) ? safe : `i${safe}`.slice(0, 64);
+/** FNV-1a, 64 bits, of the text's UTF-16 code units, as 16 hex digits. */
+function fnv64(text: string): string {
+  let hash = 0xcbf29ce484222325n;
+  for (let index = 0; index < text.length; index++) {
+    hash ^= BigInt(text.charCodeAt(index));
+    hash = (hash * 0x100000001b3n) & 0xffffffffffffffffn;
+  }
+  return hash.toString(16).padStart(16, "0");
+}
+
+/**
+ * An Item's folder and ref name, from its whole key (`host:kind:id`), so Items with the same id on two hosts, or ids that
+ * read alike once made safe (`a/b`, `a_b`), never share one: the key made safe for a reader (letters, digits, `-`, `_`) and
+ * a hash of the key as it is, which keeps it unique.
+ */
+export function mediaKey(key: string): string {
+  const safe = key.replace(/[^A-Za-z0-9_-]/g, "_").replace(/^[^A-Za-z0-9]+/, "").slice(0, 48);
+  return `${safe ? `${safe}-` : ""}${fnv64(key)}`;
 }
 
 /** `![alt](media/name)`: an image reference as agents write it. */
@@ -121,9 +135,23 @@ export function mediaNamesIn(text: string): string[] {
   return names;
 }
 
-/** Text for a host: each image reference becomes words, so no picture leaves this machine through a host. */
+/**
+ * Text for a host, with no image left in it: an agent's attached image becomes "(alt: image on the board)", any other Markdown
+ * image (inline or reference style) or HTML `<img>` its alt text and its address as plain words, so a host never shows or fetches
+ * a picture from what Scope Soup posts.
+ */
 export function hostImageText(text: string): string {
-  return text.replace(new RegExp(IMAGE_REFERENCE.source, "g"), (_match, alt: string) => `(${alt.trim() ? `${alt.trim()}: ` : ""}image on the board)`);
+  const words = (alt: string, where: string): string => `${alt.trim() ? `${alt.trim()} ` : ""}(image: ${where.trim() || "no address"})`;
+  return text
+    .replace(new RegExp(IMAGE_REFERENCE.source, "g"), (_match, alt: string) => `(${alt.trim() ? `${alt.trim()}: ` : ""}image on the board)`)
+    // Inline: ![alt](url), ![alt](<url> "title").
+    .replace(/!\[([^\]]*)\]\(\s*<?([^)\s>]*)>?(?:\s+(?:"[^"]*"|'[^']*'|\([^)]*\)))?\s*\)/g, (_match, alt: string, url: string) => words(alt, url))
+    // Reference style: ![alt][ref] and ![alt][].
+    .replace(/!\[([^\]]*)\]\[([^\]]*)\]/g, (_match, alt: string, label: string) => words(alt, label || alt))
+    // HTML: <img src="...">.
+    .replace(/<img\b[^>]*>/gi, (tag) => words(/\balt\s*=\s*["']([^"']*)["']/i.exec(tag)?.[1] ?? "", /\bsrc\s*=\s*["']?([^"'\s>]*)/i.exec(tag)?.[1] ?? ""))
+    // Whatever is left that a host could still read as an image (`![alt]` with a definition elsewhere) loses its "!".
+    .replace(/!\[/g, "[");
 }
 
 /** Whether a closed Item's images are due to go: `keepDays` after it closed (null: kept). */

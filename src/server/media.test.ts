@@ -57,6 +57,26 @@ test("an image is served with its fixed type, nosniff and a strict policy; the p
   }
 });
 
+test("a delete whose remote update failed answers with an error the page shows", async () => {
+  const store = openStore(":memory:");
+  store.put(work(5), "test", "2026-11-25T10:00:00.000Z");
+  const media: Pick<Media, "list" | "read" | "remove" | "pushing"> = {
+    list: async () => ["shot.png"], read: async () => null, pushing: () => true,
+    remove: async () => ({ removed: true, ref: "failed", problem: "git push failed: no network" }),
+  };
+  const server = createServer({ store, port: 0, media });
+  const { url } = await server.start();
+  try {
+    const answer = await fetch(`${url}/api/item/media/delete`, { method: "POST", headers: { Origin: url, "Content-Type": "application/json", "X-ScopeSoup-Person": "mira" }, body: JSON.stringify({ ref: "demo:work:5", name: "shot.png" }) });
+    assert.equal(answer.status, 502);
+    const body = (await answer.json()) as { error: { message: string } };
+    assert.match(body.error.message, /^Deleted here, but still on the remote: git push failed: no network\. Scope Soup tries again every hour\.$/);
+  } finally {
+    await server.stop();
+    store.close();
+  }
+});
+
 test("the demo's images are real PNGs that pass the same checks", async () => {
   const { demoImages } = await import("./demoMedia.ts");
   const { mediaType } = await import("../core/media.ts");

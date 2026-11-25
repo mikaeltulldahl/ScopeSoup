@@ -1101,7 +1101,11 @@ function Body({ page, reload, resources }: { page: ItemPage; reload: () => void;
       onDelete: (name) => {
         if (!confirm(`Delete the image ${name}? It goes from this machine${page.media?.shared ? " and from the project's remote" : ""}, and cannot be brought back here.`)) return;
         setMediaError(null);
-        postMediaDelete(item.key, name).then(reload, (problem: unknown) => setMediaError(problem instanceof Error ? problem.message : String(problem)));
+        postMediaDelete(item.key, name).then(reload, (problem: unknown) => {
+          setMediaError(problem instanceof Error ? problem.message : String(problem));
+          // It may be gone here even so (only the remote kept it): the page shows what is left.
+          reload();
+        });
       },
     }
     : null;
