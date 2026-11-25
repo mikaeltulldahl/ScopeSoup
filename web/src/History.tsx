@@ -4,7 +4,8 @@
 // shown as text.
 
 import { useState } from "preact/hooks";
-import type { ActivityKind, ActivityRow, ActivityView, CommitView, HistoryCommit } from "./api.ts";
+import { foldSessions } from "../../src/core/activity.ts";
+import type { ActivityKind, ActivityRow, ActivityView, CommitView, FoldedActivityRow, HistoryCommit } from "./api.ts";
 import { fetchActivity, fetchCommit, fetchHistory, useView } from "./api.ts";
 import { ago } from "./format.ts";
 import { DiffFiles } from "./Item.tsx";
@@ -83,7 +84,8 @@ function dayName(iso: string, now: number): string {
 }
 const clock = (iso: string): string => new Date(iso).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
 
-function Row({ row }: { row: ActivityRow }) {
+function Row({ row, nested }: { row: FoldedActivityRow; nested?: boolean }) {
+  const [open, setOpen] = useState(false);
   return (
     <li class={`act-row${row.tone ? ` act-${row.tone}` : ""}`}>
       <time class="act-time num" dateTime={row.at} title={new Date(row.at).toLocaleString("en-GB")}>{clock(row.at)}</time>
@@ -92,7 +94,7 @@ function Row({ row }: { row: ActivityRow }) {
         <span class={`act-who${row.agent ? " act-agent" : ""}`}>{row.who}</span>{" "}
         <span class="act-text">{row.text}</span>
         {row.kind === "settings" && <> <a class="tag-link act-more" href="#/settings/history">History of settings</a></>}
-        {row.items.map((item) =>
+        {!nested && row.items.map((item) =>
           item.gone ? (
             <span key={item.key} class="act-item act-gone" title="No such Item is known here any more.">#{item.id}</span>
           ) : (
@@ -102,6 +104,15 @@ function Row({ row }: { row: ActivityRow }) {
           ),
         )}
         {row.detail && <p class="act-detail">{row.detail}</p>}
+        {row.folded && (
+          <>
+            {" "}
+            <button type="button" class="act-fold" aria-expanded={open} onClick={() => setOpen(!open)}>
+              {open ? "Hide the sessions" : "Show the sessions"}
+            </button>
+            {open && <ol class="act-rows act-folded">{[...row.folded].reverse().map((each) => <Row key={each.id} row={each} nested />)}</ol>}
+          </>
+        )}
       </div>
     </li>
   );
@@ -112,6 +123,7 @@ function Activity() {
   const [item, setItem] = useState("");
   const [who, setWho] = useState("");
   const [kind, setKind] = useState("");
+  const [noSessions, setNoSessions] = useState(false);
   const [shown, setShown] = useState(ROWS_PAGE);
   if (error) return <p class="notice notice-bad" role="alert">{error}</p>;
   if (!data) return <p class="empty">Loading…</p>;
@@ -124,16 +136,17 @@ function Activity() {
   const agents = [...new Set(data.rows.filter((row) => row.agent).map((row) => row.who))].sort();
   const kinds = KINDS.filter(([name]) => data.rows.some((row) => row.kind === name));
 
-  const matching = data.rows.filter((row) => (!item || row.items.some((each) => each.key === item)) && (!who || row.who === who) && (!kind || row.kind === kind));
-  const page = matching.slice(0, shown);
-  const days: { key: string; name: string; rows: ActivityRow[] }[] = [];
+  const matching = data.rows.filter((row) => (!item || row.items.some((each) => each.key === item)) && (!who || row.who === who) && (!kind || row.kind === kind) && !(noSessions && row.kind === "session"));
+  const entries = foldSessions(matching);
+  const page = entries.slice(0, shown);
+  const days: { key: string; name: string; rows: FoldedActivityRow[] }[] = [];
   for (const row of page) {
     const key = dayKey(row.at);
     const last = days.at(-1);
     if (last?.key === key) last.rows.push(row);
     else days.push({ key, name: dayName(row.at, now), rows: [row] });
   }
-  const filtered = item !== "" || who !== "" || kind !== "";
+  const filtered = item !== "" || who !== "" || kind !== "" || noSessions;
   const pick = (set: (value: string) => void) => (event: Event) => {
     set((event.currentTarget as HTMLSelectElement).value);
     setShown(ROWS_PAGE);
@@ -164,8 +177,12 @@ function Activity() {
             {kinds.map(([name, label]) => <option key={name} value={name}>{label}</option>)}
           </select>
         </label>
+        <label class="act-nosessions">
+          <input type="checkbox" checked={noSessions} onChange={(event) => { setNoSessions((event.currentTarget as HTMLInputElement).checked); setShown(ROWS_PAGE); }} />
+          Everything but sessions
+        </label>
         {filtered && (
-          <button type="button" class="act-clear" onClick={() => { setItem(""); setWho(""); setKind(""); setShown(ROWS_PAGE); }}>
+          <button type="button" class="act-clear" onClick={() => { setItem(""); setWho(""); setKind(""); setNoSessions(false); setShown(ROWS_PAGE); }}>
             Clear filters
           </button>
         )}
@@ -180,12 +197,12 @@ function Activity() {
           </ol>
         </section>
       ))}
-      {matching.length > page.length && (
+      {entries.length > page.length && (
         <button type="button" onClick={() => setShown(shown + ROWS_PAGE)}>
-          Show older ({matching.length - page.length} more)
+          Show older ({entries.length - page.length} more)
         </button>
       )}
-      {data.more && matching.length <= page.length && <p class="muted">Older activity is not shown.</p>}
+      {data.more && entries.length <= page.length && <p class="muted">Older activity is not shown.</p>}
     </div>
   );
 }

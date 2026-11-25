@@ -639,6 +639,13 @@ export interface ActivityRow {
   /** The Items it is about; the first is the main one. */
   items: ActivityItem[];
   tone?: "good" | "bad";
+  /** A session row's role, duration and cost, for folding sessions together. */
+  session?: { role: string; ms?: number; usd?: number };
+}
+
+/** A row as shown: consecutive sessions on one Item folded into one row that holds them (newest first). */
+export interface FoldedActivityRow extends ActivityRow {
+  folded?: ActivityRow[];
 }
 
 export interface ActivityView {
