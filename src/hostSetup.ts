@@ -146,3 +146,22 @@ export function describeHosts(settings: HostSettings): string {
   if (names.length === 0) return "No host is configured: nothing is synced.";
   return `Syncing ${names.join(" and ")} (host from the ${settings.from === "file" ? "configuration file" : "environment"}).`;
 }
+
+/** What this machine still needs for the project's host, before it starts agents (decision 98). */
+export interface MachineSetup {
+  kind: "github" | "jira";
+  /** In words, each with where it goes: `jira.email` (this machine's file), `SCOPESOUP_JIRA_TOKEN` (the environment). */
+  missing: string[];
+}
+
+/**
+ * What the active host needs from this machine and it lacks: a GitHub or Jira token in the environment, a Jira Cloud account's
+ * email in this machine's file. Null when nothing is missing, or for a meta branch host (onboarding sets that one up).
+ */
+export function machineSetup(config: ProjectConfig | null, env: Env): MachineSetup | null {
+  const host = config?.host;
+  if (host?.kind === "github") return env.SCOPESOUP_GITHUB_TOKEN ? null : { kind: "github", missing: ["SCOPESOUP_GITHUB_TOKEN"] };
+  if (host?.kind !== "jira") return null;
+  const missing = [...(host.deployment === "cloud" && !host.email ? ["jira.email"] : []), ...(env.SCOPESOUP_JIRA_TOKEN ? [] : ["SCOPESOUP_JIRA_TOKEN"])];
+  return missing.length > 0 ? { kind: "jira", missing } : null;
+}

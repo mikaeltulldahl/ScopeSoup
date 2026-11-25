@@ -10,7 +10,7 @@ import { MACHINE_NAME_MISSING, validateConfig } from "./config/validate.ts";
 import { readMarker } from "./hosts/github/conventions.ts";
 import { fakeIssues, ISSUES_API } from "./hosts/github/fakeIssues.ts";
 import { createTestRepo, itemMd } from "./hosts/metaBranch/testRepo.ts";
-import { createHosts, describeHosts, hostSettings, ignoredVariables } from "./hostSetup.ts";
+import { createHosts, describeHosts, hostSettings, ignoredVariables, machineSetup } from "./hostSetup.ts";
 import { createServer } from "./server/server.ts";
 import { openStore } from "./store/store.ts";
 import { createSync } from "./sync/index.ts";
@@ -212,4 +212,13 @@ test("without a configuration file nothing names the machine, so a host may be r
   const meta = { SCOPESOUP_META_REPO: "meta", SCOPESOUP_META_WRITE: "1", SCOPESOUP_META_AUTHOR_NAME: "Test Person", SCOPESOUP_META_AUTHOR_EMAIL: "test.person@example.invalid", SCOPESOUP_MACHINE: "laptop-b" };
   assert.throws(() => hostSettings(null, meta, resolve), /SCOPESOUP_META_WRITE=1 needs a configuration file with machineName/);
   assert.throws(() => hostSettings(null, { SCOPESOUP_GITHUB_REPO: "owner/name", SCOPESOUP_WRITE: "1" }, resolve), /SCOPESOUP_WRITE=1 needs a configuration file with machineName/);
+});
+
+test("machineSetup names what this machine lacks for the project's host: a token, the Jira Cloud email; nothing for the meta branch", () => {
+  const jira = { kind: "jira", site: "https://example.atlassian.net", project: "DEMO", deployment: "cloud", write: true };
+  assert.deepEqual(machineSetup(config({ repoPath: "/srv/clone", host: jira }, "/srv"), {}), { kind: "jira", missing: ["jira.email", "SCOPESOUP_JIRA_TOKEN"] });
+  assert.equal(machineSetup(config({ repoPath: "/srv/clone", host: { ...jira, email: "robin@example.test" } }, "/srv"), { SCOPESOUP_JIRA_TOKEN: "x" }), null);
+  assert.deepEqual(machineSetup(config({ repoPath: "/srv/clone", host: { ...jira, deployment: "datacenter" } }, "/srv"), {}), { kind: "jira", missing: ["SCOPESOUP_JIRA_TOKEN"] });
+  assert.deepEqual(machineSetup(config({ repoPath: "/srv/clone", host: { kind: "github", repo: "acme/widgets", write: false } }, "/srv"), {}), { kind: "github", missing: ["SCOPESOUP_GITHUB_TOKEN"] });
+  assert.equal(machineSetup(config({ repoPath: "/srv/clone", host: { kind: "metaBranch" } }, "/srv"), {}), null);
 });

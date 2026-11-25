@@ -554,7 +554,8 @@ export function jqlFragmentProblem(text: string): string | null {
 function jiraHostOf(value: Obj, write: boolean, text: (key: string) => string | undefined, err: (message: string) => void): JiraHostConfig {
   const site = text("site")?.replace(/\/+$/, "");
   if (site === undefined) err(`host.site must be the Jira site's address, as "https://example.atlassian.net" (Cloud) or your Data Center's base URL.`);
-  else if (!/^https?:\/\/[^\s/?#]+(\/[^\s?#]*)?$/.test(site)) err(`host.site (${site}) must be an http or https address with no query, as "https://example.atlassian.net".`);
+  else if (/^http:\/\//i.test(site)) err(`host.site (${site}) must be an https address: over http the Jira token would travel unencrypted. Use the site's https address, as "https://example.atlassian.net".`);
+  else if (!/^https:\/\/[^\s/?#]+(\/[^\s?#]*)?$/.test(site)) err(`host.site (${site}) must be an https address with no query, as "https://example.atlassian.net".`);
   const project = text("project");
   if (project === undefined) err(`host.project must be the Jira project key, as "DEMO".`);
   else if (!/^[A-Z][A-Z0-9_]+$/.test(project)) err(`host.project (${project}) must be a Jira project key: capital letters, digits and "_", starting with a letter, as "DEMO".`);
@@ -572,7 +573,7 @@ function jiraHostOf(value: Obj, write: boolean, text: (key: string) => string | 
   const deployment = value.deployment;
   if (deployment !== "cloud" && deployment !== "datacenter") err(`host.deployment must be "cloud" (Jira Cloud, an API token with the account's email) or "datacenter" (self-hosted Jira, a personal access token).`);
   const email = text("email");
-  if (deployment === "cloud" && email === undefined) err(`host.deployment is "cloud", so the account's email is required with the API token: set jira.email in this machine's scopesoup.config.json.`);
+  // A Cloud host without this machine's email is valid: the machine is not set up for it yet (`machineSetup`, src/hostSetup.ts), so the board asks.
   if (deployment === "datacenter" && email !== undefined) err("host.deployment is \"datacenter\": a personal access token needs no email. Remove jira.email.");
   const config: JiraHostConfig = { kind: "jira", site: site ?? "", project: project ?? "", deployment: deployment === "datacenter" ? "datacenter" : "cloud", write };
   if (email !== undefined) config.email = email;

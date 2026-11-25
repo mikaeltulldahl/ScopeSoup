@@ -48,7 +48,7 @@ import { findConfig } from "./config/locate.ts";
 import { metaSettings } from "./config/metaSettings.ts";
 import { repositoryOf } from "./config/shared.ts";
 import { recommendations } from "./config/recommend.ts";
-import { createHosts, describeHosts, hostSettings, ignoredVariables } from "./hostSetup.ts";
+import { createHosts, describeHosts, hostSettings, ignoredVariables, machineSetup } from "./hostSetup.ts";
 import { remoteBranches } from "./items/remoteBranch.ts";
 import { jiraBoard } from "./items/jiraBackend.ts";
 import type { JiraHost } from "./hosts/jira/index.ts";
@@ -156,6 +156,14 @@ async function main(): Promise<void> {
   const first = config?.load();
   if (first && !first.config) throw new Error(`${configFile}: ${first.error ?? "could not be read"}`);
   const hostSet = hostSettings(first?.config ?? null, env, (path) => resolve(path));
+  // What this machine lacks for the project's host (a token, the Jira Cloud email): the board asks for it ("Set up this machine"),
+  // and until it is there the host is not read and no agent starts (decision 98).
+  const setup = machineSetup(first?.config ?? null, env);
+  if (setup) {
+    delete hostSet.github;
+    delete hostSet.jira;
+    console.log(`This machine is not set up for the project's ${setup.kind === "jira" ? "Jira" : "GitHub"} host: ${setup.missing.join(" and ")} missing. The board asks for it; no agent starts until it is there and Scope Soup is started again.`);
+  }
   // Singleplayer or multiplayer as the file says now: a switch on the Settings page holds from the next sharing round.
   const multiplayer = (): boolean => config?.load().config?.multiplayer ?? first?.config?.multiplayer ?? true;
   if (hostSet.shares) hostSet.shares = multiplayer;
@@ -210,7 +218,7 @@ async function main(): Promise<void> {
   let resources: Resources | undefined;
   // Set below: the merge queue, which Get latest waits for.
   let queue: QueueDriver | undefined;
-  if (config && first?.config) {
+  if (config && first?.config && !setup) {
     for (const notice of first.notices ?? []) console.log(`Notice: ${notice}`);
     for (const advice of recommendations(first.config)) console.log(`Advice: ${advice}`);
     const current = () => {
@@ -378,6 +386,8 @@ async function main(): Promise<void> {
     : undefined;
 
   const server = createServer({
+    // This machine lacks what the project's host needs: the board asks for it ("Set up this machine").
+    ...(setup ? { machineSetup: setup } : {}),
     upgrade: upgrader,
     media,
     ...(branchProtection ? { branchProtection } : {}),

@@ -9,6 +9,7 @@ import { execFileSync } from "node:child_process";
 import { checkRepoRoot, gitEnvironment, gitIn, type StoppableGit } from "../hosts/metaBranch/git.ts";
 import { parseLog } from "../hosts/metaBranch/log.ts";
 import { RefusedWrite } from "../hosts/metaBranch/serialize.ts";
+import { fetchRef, moveRef, networkEnvironment, remoteRef } from "../hosts/metaBranch/plumbing.ts";
 import { META_REF, SETTINGS_FILE, SETTINGS_LOG, type SettingChange, settingChanges, settingsText } from "../hosts/metaBranch/settings.ts";
 import { createWriter, type SharingReport, type Writer } from "../hosts/metaBranch/writer.ts";
 import { SaveRefused, type SaveRequest, type SaveResult, type SettingsLogEntry, SHARED_WHERE, type SharedRead, type SharedSettings } from "./shared.ts";
@@ -18,6 +19,8 @@ const COMMITTER = { name: "Scope Soup", email: "scopesoup@localhost.invalid" };
 
 export interface MetaSettings extends SharedSettings {
   save(request: SaveRequest): Promise<SaveResult>;
+  remote(repoPath: string, remote: string): Promise<{ ok: true; raw: Record<string, unknown> | null; commit: string | null } | { ok: false; error: string }>;
+  adopt(repoPath: string, remote: string, commit: string, backup: string): Promise<() => Promise<void>>;
   log(repoPath: string): SettingsLogEntry[];
   /** Fetches the meta ref and pushes what waits: the other machines' saves arrive this way. Never throws for a sharing problem. */
   fetch(repoPath: string, remote: string, machine: string, multiplayer?: boolean): Promise<SharingReport>;
@@ -136,6 +139,71 @@ export function metaSettings(options: { now?: () => string; git?: (args: string[
       }
       // Newest first: by time, and for the same time the later line first.
       return entries.reverse().sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
+    },
+
+    async remote(repoPath, remote) {
+      // Into a ref of this machine's own, so the meta ref and the writer's tracking refs stay as they are.
+      const into = `refs/scopesoup-local/peek/${remote}/meta`;
+      const network = gitIn(repoPath, { timeoutMs: 5 * 60_000 });
+      try {
+        const env = await networkEnvironment(network);
+        if ((await remoteRef(network, remote, META_REF, env)) === null) return { ok: true, raw: null, commit: null };
+        await fetchRef(network, remote, META_REF, into, env);
+        // The commit as fetched (the remote may have moved since ls-remote): that one is read, and joined.
+        const commit = git(["rev-parse", "--verify", "--quiet", `${into}^{commit}`], repoPath).trim();
+        let raw: unknown = null;
+        try {
+          raw = JSON.parse(git(["cat-file", "blob", `${commit}:${SETTINGS_FILE}`], repoPath));
+        } catch {
+          raw = null;
+        }
+        return { ok: true, raw: isObj(raw) ? raw : null, commit };
+      } catch (error) {
+        return { ok: false, error: `The remote's ${META_REF} could not be read: ${error instanceof Error ? error.message : String(error)}` };
+      } finally {
+        await network.stop();
+      }
+    },
+
+    async adopt(repoPath, remote, commit, backup) {
+      const local = gitIn(repoPath);
+      const run = async (args: string[]): Promise<void> => {
+        const result = await local(args);
+        if (result.code !== 0) throw new Error(`git ${args.join(" ")} failed: ${result.stderr.trim()}`);
+      };
+      // The writer's own refs for the remote: what was last fetched, and the last commit known to be there. Both are the joined
+      // commit after this, so the writer finds no commits of its own to put on top (and none moved by hand).
+      const rest = META_REF.slice("refs/".length);
+      const kept = [`refs/scopesoup-remote/${remote}/${rest}`, `refs/scopesoup-local/shared/${remote}/${rest}`];
+      try {
+        const mine = tip(repoPath);
+        const was = kept.map((ref) => git(["for-each-ref", "--format=%(objectname)", ref], repoPath).trim() || null);
+        if (mine !== null) {
+          const there = git(["for-each-ref", "--format=%(objectname)", backup], repoPath).trim();
+          if (there && there !== mine) throw new Error(`${backup} exists already and holds another commit; nothing was changed.`);
+          if (!there && !(await moveRef(local, backup, mine, null))) throw new Error(`${backup} could not be made; nothing was changed.`);
+        }
+        if (!(await moveRef(local, META_REF, commit, mine))) throw new Error(`${META_REF} moved while it was being replaced; nothing else was changed. Try again.`);
+        for (const ref of kept) await run(["update-ref", ref, commit]);
+        last = null;
+        // Undo: the meta ref and the writer's refs as they were (the backup stays).
+        return async () => {
+          const undo = gitIn(repoPath);
+          try {
+            if (mine !== null) await moveRef(undo, META_REF, mine, commit);
+            for (const [index, ref] of kept.entries()) {
+              const before = was[index];
+              const result = await undo(before ? ["update-ref", ref, before] : ["update-ref", "-d", ref]);
+              if (result.code !== 0) throw new Error(`git update-ref ${ref} failed: ${result.stderr.trim()}`);
+            }
+            last = null;
+          } finally {
+            await undo.stop();
+          }
+        };
+      } finally {
+        await local.stop();
+      }
     },
 
     fetch(repoPath, remote, machine, multiplayer) {

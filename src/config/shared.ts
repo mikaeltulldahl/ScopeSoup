@@ -20,7 +20,7 @@ export type { SettingChange };
 /** Where the shared settings are, in words. */
 export const SHARED_WHERE = `the project's shared settings (${SETTINGS_FILE} on ${META_REF})`;
 
-/** Top-level keys of the private file. `settings` is split by name below; `meta` is this machine's part of a meta branch host. */
+/** Top-level keys of the private file. `settings` is split by name below; `meta` and `jira` are this machine's parts of those hosts, kept side by side. */
 export const PRIVATE_KEYS: readonly string[] = [
   "version", "machineName", "repoPath", "remote", "remoteUrl", "realPaths", "ownClone", "keepAwake", "multiplayer", "workspacesDir", "workspaces",
   "streamsDir", "promptsDir", "claude", "copilot", "meta", "jira", "settings", "resources",
@@ -72,7 +72,6 @@ export function combineFiles(privateRaw: Obj, sharedRaw: Obj): { combined: Obj; 
     if (!isObj(jira)) errors.push(`jira must be an object: this machine's part of a Jira host (${JIRA_PRIVATE_KEYS.join(", ")}).`);
     else {
       for (const key of Object.keys(jira)) if (!JIRA_PRIVATE_KEYS.includes(key)) errors.push(/token/i.test(key) ? `jira.${key}: a token is never kept in the configuration file. Set SCOPESOUP_JIRA_TOKEN in the environment.` : `jira: unknown key "${key}". Known keys: ${JIRA_PRIVATE_KEYS.join(", ")}.`);
-      if (!isObj(host) || host.kind !== "jira") errors.push(`jira is this machine's part of a Jira host, but the host in ${SHARED_WHERE} is not "jira". Remove jira.`);
     }
   }
   const meta = privateRaw.meta;
@@ -80,7 +79,6 @@ export function combineFiles(privateRaw: Obj, sharedRaw: Obj): { combined: Obj; 
     if (!isObj(meta)) errors.push(`meta must be an object: this machine's part of a meta branch host (${META_KEYS.join(", ")}).`);
     else {
       for (const key of Object.keys(meta)) if (!META_KEYS.includes(key)) errors.push(`meta: unknown key "${key}". Known keys: ${META_KEYS.join(", ")}.`);
-      if (!isObj(host) || host.kind !== "metaBranch") errors.push(`meta is this machine's part of a meta branch host, but the host in ${SHARED_WHERE} is not "metaBranch". Remove meta.`);
     }
   }
 
@@ -88,7 +86,8 @@ export function combineFiles(privateRaw: Obj, sharedRaw: Obj): { combined: Obj; 
   for (const [key, value] of Object.entries(privateRaw)) if (key !== "meta" && key !== "jira" && key !== "settings") combined[key] = value;
   for (const [key, value] of Object.entries(sharedRaw)) if (key !== "settings" && !Object.hasOwn(combined, key)) combined[key] = value;
   if (isObj(host) && host.kind === "metaBranch" && isObj(meta)) combined.host = { ...host, ...meta };
-  if (isObj(host) && host.kind === "jira" && isObj(jira)) combined.host = { ...host, ...Object.fromEntries(Object.entries(jira).filter(([key]) => JIRA_PRIVATE_KEYS.includes(key))) };
+  // Each host's part of this machine stays side by side (decision 98): only the active host's is used, and a leftover one is ignored.
+  if (isObj(host) && host.kind === "jira" && host.deployment !== "datacenter" && isObj(jira)) combined.host = { ...host, ...Object.fromEntries(Object.entries(jira).filter(([key]) => JIRA_PRIVATE_KEYS.includes(key))) };
   if (privateRaw.settings !== undefined || sharedRaw.settings !== undefined) {
     if (privateRaw.settings !== undefined && !isObj(privateRaw.settings)) errors.push(`settings in ${PRIVATE_NAME} must be an object.`);
     if (sharedRaw.settings !== undefined && !isObj(sharedRaw.settings)) errors.push(`settings in ${SHARED_WHERE} must be an object.`);
@@ -168,6 +167,16 @@ export interface SharedSettings {
   save?(request: SaveRequest): Promise<SaveResult>;
   /** The settings' log, newest first. */
   log?(repoPath: string): SettingsLogEntry[];
+  /**
+   * The remote's shared settings, fetched without touching this clone's meta ref: what a switch to multiplayer would join (decision
+   * 95). `raw` null: the remote has no meta ref (or no settings on it).
+   */
+  remote?(repoPath: string, remote: string): Promise<{ ok: true; raw: Record<string, unknown> | null; commit: string | null } | { ok: false; error: string }>;
+  /**
+   * "Join theirs": this clone's meta ref kept under `backup`, then moved to the remote's commit fetched by `remote`, with the
+   * writer's refs for the remote set to it. Returns an undo, for a save that fails after it.
+   */
+  adopt?(repoPath: string, remote: string, commit: string, backup: string): Promise<() => Promise<void>>;
 }
 
 /** Parses a shared read, or says why it cannot be used. */

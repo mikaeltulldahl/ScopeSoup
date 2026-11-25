@@ -45,6 +45,8 @@ import { createServer, DEFAULT_PORT } from "./server.ts";
 import { offboardPlan, type Found } from "../offboard/plan.ts";
 import { defaultOutFolder } from "../offboard/scan.ts";
 import { projectInfo } from "./project.ts";
+import { fakeJira } from "../hosts/jira/fakeJira.ts";
+import { CLOUD_EMAIL, CLOUD_ROBIN, cloudIssues, TOKEN as JIRA_TOKEN } from "../hosts/jira/fixtures.ts";
 import type { Upgrader } from "../upgrade/upgrader.ts";
 import type { UpgradeTask, UpgradeView } from "../upgrade/view.ts";
 import { versionOf } from "../upgrade/version.ts";
@@ -535,9 +537,13 @@ export async function writeDemoConfig(dir: string, settings: MetaSettings = meta
     ...allowanceDemo.machine(new Date()),
     // This machine's one emulator, its own port for whoever holds it.
     resources: [{ name: "emulator", units: 1, neededBy: ["implement", "check"], env: { ANDROID_SERIAL: "emulator-555{{unit}}" } }],
+    // This machine's part of the meta branch host (synthetic person), so Settings' Connect can list the Items to move.
+    meta: { authorName: "Demo Person", authorEmail: "demo@example.invalid", prefix: "D" },
   };
   const shared = {
     project: "tidepool",
+    // The demo's Items are its own store's; named as a meta branch so Settings' Connect offers to move them.
+    host: { kind: "metaBranch", write: true },
     level: 4,
     bugLabels: ["bug"],
     roles: allowanceDemo.roles,
@@ -569,6 +575,9 @@ export function demoConfigOptions(dir: string, settings: MetaSettings = metaSett
     settingsLog: () => demoSettingsLog(settings.log(join(dir, "repo")), started),
     // "Stop using Scope Soup" lists what a project Scope Soup ran for a while would leave; the demo has no git, so it is made up.
     offboard: async () => ({ now: new Date().toISOString(), available: true as const, plan: offboardPlan(demoFound(dir)), configFolder: dir, outFolder: defaultOutFolder(dir) }),
+    // Settings' "Connect to Jira" looks at a fake Jira Cloud site (https://example.atlassian.net, project DEMO, synthetic issues)
+    // with a made-up token; "Connect to GitHub Issues" finds no token. No real host is ever asked.
+    connect: { env: { SCOPESOUP_JIRA_TOKEN: JIRA_TOKEN }, fetchImpl: fakeJira({ deployment: "cloud", token: JIRA_TOKEN, email: CLOUD_EMAIL, user: CLOUD_ROBIN, issues: cloudIssues() }).fetch },
   };
 }
 

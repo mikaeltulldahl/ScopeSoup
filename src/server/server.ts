@@ -45,13 +45,16 @@ import type { Backend } from "../items/service.ts";
 import type { RemoteBranches } from "../items/remoteBranch.ts";
 import { branchCommands, farUntil, handBackItem, holdsIt, itemDetails, itemRef as itemRefOn, listItems, Refused, releaseItem, claimItem, whyNotHandBack, whyNotRelease, whyNotClaim } from "../items/service.ts";
 import type { JiraBoard } from "../items/jiraBackend.ts";
-import { editConfig, readConfigView, type SharedSaved } from "../config/edit.ts";
+import { connectHost, editConfig, readConfigView, type SharedSaved } from "../config/edit.ts";
+import { busyMachines, busyText, type ConnectDeps, connectionOf, HOST_NAME, hostFor, hostWhere, joinConnection, lookAtHost, TOKEN_VARIABLE } from "./connect.ts";
+import { type MoveReport, moveItems, moveLines } from "../items/moveToHost.ts";
+import type { MachineSetup } from "../hostSetup.ts";
 import type { SettingsLogEntry, SharedSettings } from "../config/shared.ts";
 import { activityView } from "./activity.ts";
 import { decide as decideItemDraft, draftRequest, draftViews } from "./drafts.ts";
 import type { MergeQueueOptions } from "../config/mergeQueue.ts";
 import { addAnswer, loadAnswers } from "../store/answers.ts";
-import { applyControl } from "../store/control.ts";
+import { applyControl, pauseRemembering, startAgain } from "../store/control.ts";
 import { countWithoutTriage, withoutTriageKeys } from "./triage.ts";
 import type { ControlAction } from "../store/control.ts";
 import { itemTextHash, optionTexts } from "../core/answerReuse.ts";
@@ -132,6 +135,10 @@ export interface ServerOptions {
   branches?: RemoteBranches;
   /** Where the shared settings are read from and saved to: the meta ref (`metaSettings`) by default. */
   sharedSettings?: SharedSettings;
+  /** How Settings' connect dialogs read the token and look at GitHub or Jira (#127): `process.env` and `fetch` by default. Tests and the demo give fakes. */
+  connect?: ConnectDeps;
+  /** What this machine lacks for the project's host, found at start (`machineSetup`): the board asks "Set up this machine", and no agent runs. */
+  machineSetup?: MachineSetup;
   /** The saves of the shared settings, newest first, for History (`GET /api/settings/log`). */
   settingsLog?: () => SettingsLogEntry[];
   /**
@@ -1616,9 +1623,17 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
       return sendError(response, 400, "BAD_BODY", error instanceof Error ? error.message : "The body is not JSON.");
     }
     const person = picked();
-    const result = await editConfig(options.configFile, body, { ...configOptions, ...(person ? { by: person } : {}) });
+    // A switch to multiplayer whose remote names another project or host: the person's choice, "join" or "mine" (decision 98).
+    const { players, ...change } = body;
+    // Join theirs replaces this clone's Items: not while an agent works on them, here or (by its claims) elsewhere.
+    if (players === "join") {
+      const snapshot = loadSnapshot(store);
+      const busy = busyMachines(snapshot.works, snapshot.sessions, options.machine, now());
+      if (busy.length > 0) return sendJson(response, 400, { error: { code: "CONFIG_REFUSED", message: busyText(busy, "Join theirs") }, errors: [busyText(busy, "Join theirs")] });
+    }
+    const result = await editConfig(options.configFile, change, { ...configOptions, ...(person ? { by: person } : {}), ...(players === "join" || players === "mine" ? { players } : {}) });
     if (!result.ok) {
-      return sendJson(response, result.status, { error: { code: result.status === 400 ? "CONFIG_REFUSED" : "CONFIG_WRITE_FAILED", message: result.errors.join(" ") }, errors: result.errors });
+      return sendJson(response, result.status, { error: { code: result.status === 409 ? "PLAYERS_DIFFER" : result.status === 400 ? "CONFIG_REFUSED" : "CONFIG_WRITE_FAILED", message: result.errors.join(" ") }, errors: result.errors, ...("players" in result ? { players: result.players } : {}) });
     }
     let saved: string | undefined;
     if (result.changed) {
@@ -1626,11 +1641,126 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
       const by = picked() ?? "board";
       // A level change carries the level it came from and went to. A shared change carries its meta commit and
       // what it changed; it is in effect now.
-      store.appendEvent({ kind: "config.changed", actor: by, data: { via: "board", fields: Object.keys(body), ...(result.level ? { level: result.level } : {}), ...(result.shared ? { shared: { commit: result.shared.commit, changes: result.shared.changes } } : {}) } }, at);
+      store.appendEvent({ kind: "config.changed", actor: by, data: { via: "board", fields: Object.keys(change), ...(players === "join" || players === "mine" ? { players } : {}), ...(result.level ? { level: result.level } : {}), ...(result.shared ? { shared: { commit: result.shared.commit, changes: result.shared.changes } } : {}) } }, at);
       if (result.shared) saved = sharedSavedText(result.shared, by);
       options.onConfigChanged?.();
     }
     return sendJson(response, 200, { changed: result.changed, ...(saved ? { shared: saved } : {}), ...readConfigView(options.configFile, configOptions) });
+  }
+
+  /**
+   * Settings' "Connect to GitHub Issues" / "Connect to Jira" (#127, decision 98). Without `confirm` it only says what connecting
+   * would do, or why it cannot: the configuration checked as a whole, the token from the environment, one look at the host, no
+   * agent session running on any machine; from the meta branch it lists the open Items to tick (`move`). With `confirm` and nothing
+   * in the way it moves the ticked Items, then writes the shared `host` (one meta commit) and this machine's part. `mode: "join"`
+   * sets this machine up for the host the project already has ("Set up this machine"): only this machine's part is written.
+   */
+  async function connect(request: IncomingMessage, response: ServerResponse): Promise<void> {
+    if (options.configFile === undefined) return sendError(response, 404, "NO_CONFIG", "There is no project configuration: Scope Soup runs as a board only.");
+    let body: Record<string, unknown>;
+    try {
+      body = await readJson(request);
+    } catch (error) {
+      return sendError(response, 400, "BAD_BODY", error instanceof Error ? error.message : "The body is not JSON.");
+    }
+    const view = readConfigView(options.configFile, configOptions);
+    const current = view.present ? view.config?.host : undefined;
+    const join = body.mode === "join";
+    const given = join ? (current ? joinConnection(current, body.email) : { ok: false as const, error: "The project has no host in its settings to set this machine up for." }) : connectionOf(body);
+    if (!given.ok) return sendError(response, 400, "BAD_FIELD", given.error);
+    const { kind, connection } = given;
+    const person = picked();
+    const editOptions = { ...configOptions, ...(person ? { by: person } : {}), join };
+    const deps = options.connect ?? { env: process.env };
+    const host = connection.host;
+    const target = kind === "github" ? `GitHub Issues (${String(host.repo)})` : `Jira (project ${String(host.project)})`;
+    const snapshot = loadSnapshot(store);
+    // From another host only through the meta branch: GitHub and Jira are not connected to each other (decision 98).
+    const across = !join && (current?.kind === "github" || current?.kind === "jira") && current.kind !== kind;
+    const busy = join ? [] : busyMachines(snapshot.works, snapshot.sessions, options.machine, now());
+    // The open Items a person may tick to move: from the meta branch only.
+    const fromMeta = !join && current?.kind === "metaBranch" && items ? items : undefined;
+    const open = fromMeta ? snapshot.works.filter((work) => work.ref.host === fromMeta.host && work.state !== "done" && work.state !== "abandoned") : [];
+    const ticked = new Set(Array.isArray(body.move) ? body.move.filter((id): id is string => typeof id === "string") : []);
+    const moving = open.filter((work) => ticked.has(work.ref.id));
+    const checked = across ? null : await connectHost(options.configFile, connection, { ...editOptions, dryRun: true });
+    const looked = checked?.ok ? await lookAtHost(kind, connection, deps) : { problems: [], lines: [] };
+    const problems = [
+      ...(across ? [`The project's host is ${hostWhere(current)}. Going from there to ${HOST_NAME[kind]} goes through the meta branch, and going back to the meta branch is not supported yet.`] : []),
+      ...(checked && !checked.ok ? checked.errors : looked.problems),
+      ...(busy.length > 0 ? [busyText(busy, "Connecting")] : []),
+      ...(moving.length > 0 && host.write !== true ? ['Moving Items needs writes on: tick "Let Scope Soup write", or move none.'] : []),
+    ];
+    const stay = open.length - moving.length;
+    const lines = join
+      ? [
+        ...looked.lines,
+        ...(connection.email !== undefined ? [`Writes jira.email (${connection.email}) to this machine's scopesoup.config.json; the project's shared settings stay as they are.`] : []),
+        "Start Scope Soup again on this machine: it reads the host, and starts agents, only then.",
+      ]
+      : [
+        ...looked.lines,
+        `Sets the project's host to ${target}${host.write ? ", with writes on" : ", read-only"}: one commit to the shared settings on refs/scopesoup/meta${person ? `, named after ${person}` : ""}, for every machine.`,
+        ...(connection.email !== undefined ? [`Writes jira.email (${connection.email}) to this machine's scopesoup.config.json, next to its other hosts' parts.`] : []),
+        ...(moving.length > 0 ? [`Moves ${moving.length} Item(s) to ${target}: ${moving.map((work) => work.ref.id).join(", ")}. Each becomes a new issue with its title, description and verification, ending with a line naming its old id; references between them get the new ids; its history goes there as one comment; the old Item is closed on the meta branch, saying where it went.`] : []),
+        ...(fromMeta ? [stay > 0 ? `The other ${stay} open Item(s) stay on the meta branch, readable there; the board shows ${target} only.` : moving.length > 0 ? "No open Item stays behind." : "There are no open Items to move."] : []),
+        `Each other machine keeps its own settings: its board asks "Set up this machine for ${HOST_NAME[kind]}" until it has ${kind === "jira" ? `SCOPESOUP_JIRA_TOKEN${host.deployment === "datacenter" ? "" : " and its person's Jira email"}` : "SCOPESOUP_GITHUB_TOKEN"}, and starts no agent until then.`,
+        "The new host is read when Scope Soup starts again: restart it after connecting.",
+      ];
+    const listed = fromMeta ? { items: open.map((work) => ({ id: work.ref.id, title: work.title })) } : {};
+    if (body.confirm !== true) return sendJson(response, 200, { problems, lines, ...listed });
+    if (problems.length > 0) return sendJson(response, 400, { error: { code: "CONNECT_REFUSED", message: problems.join(" ") }, problems, lines, ...listed });
+    let moved: MoveReport | undefined;
+    if (moving.length > 0 && fromMeta) {
+      const token = deps.env[TOKEN_VARIABLE[kind]] ?? "";
+      const outside = new Map<string, string>();
+      const to = hostFor(kind, connection, token, deps, options.machine, { onOutside: (key, reason) => outside.set(key, reason) });
+      // Issues an earlier run made are found by their marker in the whole project, whatever the filter says.
+      const find = kind === "jira" && typeof host.filter === "string" ? hostFor(kind, connection, token, deps, options.machine, { unfiltered: true }).work : undefined;
+      // No new session starts on this machine while the Items move; the switches are put back as they were after.
+      const actor = person ?? "board";
+      const paused = pauseRemembering(store, now().toISOString(), "connect", actor);
+      try {
+        moved = await moveItems({
+          kind, items: moving, all: snapshot.works.filter((work) => work.ref.host === fromMeta.host), from: fromMeta.write, to, ...(find ? { find } : {}), by: actor,
+          // Made now: the host said so while making it. Found again: read through the filter, as the board would.
+          outside: async (made) => outside.get(made.id) ?? (find && (await to.work!.getWork(made)) === null ? `falls outside host.filter (${String(host.filter)}): Scope Soup would not read, show or touch it.` : undefined),
+          beforeClose: () => {
+            const fresh = loadSnapshot(store);
+            const still = busyMachines(fresh.works, fresh.sessions, options.machine, now());
+            return still.length > 0 ? busyText(still, "Closing the old Items") : undefined;
+          },
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return sendJson(response, 400, { error: { code: "MOVE_REFUSED", message }, problems: [message], lines, ...listed });
+      } finally {
+        startAgain(store, paused, now().toISOString(), "connect", actor);
+      }
+      store.appendEvent({ kind: "items.moved", actor: person ?? "board", data: { to: kind, rows: moved.rows, ...(moved.failed ? { failed: moved.failed } : {}) } }, now().toISOString());
+      // Not connected while a ticked Item is not moved: running it again finishes the move, making nothing twice.
+      if (moved.failed) return sendJson(response, 500, { error: { code: "MOVE_FAILED", message: moveLines(moved).join(" ") }, problems: moveLines(moved), lines, ...listed });
+    }
+    const result = await connectHost(options.configFile, connection, editOptions);
+    if (!result.ok) return sendJson(response, result.status, { error: { code: "CONNECT_REFUSED", message: result.errors.join(" ") }, problems: result.errors, lines, ...(moved ? { moved: moveLines(moved) } : {}) });
+    let saved: string | undefined;
+    if (result.changed) {
+      const by = person ?? "board";
+      store.appendEvent({ kind: "config.changed", actor: by, data: { via: "board", fields: [join ? "jira" : "host"], connect: kind, ...(join ? { join: true } : {}), ...(result.shared ? { shared: { commit: result.shared.commit, changes: result.shared.changes } } : {}) } }, now().toISOString());
+      if (result.shared) saved = sharedSavedText(result.shared, by);
+      options.onConfigChanged?.();
+    }
+    return sendJson(response, 200, { done: true, problems: [], lines, ...(moved ? { moved: moveLines(moved) } : {}), ...(saved ? { shared: saved } : {}), ...readConfigView(options.configFile, configOptions) });
+  }
+
+  /** What this machine lacks for the project's host (decision 98), for the board's "Set up this machine" note; null when nothing. */
+  function setupNow(): { setup: MachineSetup; host: Record<string, unknown> } | null {
+    if (!options.machineSetup) return null;
+    const host = options.configFile === undefined ? undefined : readConfigView(options.configFile, configOptions);
+    const shared = host?.present ? host.config?.host : undefined;
+    if (!shared || (shared.kind !== "github" && shared.kind !== "jira")) return null;
+    const { email: _own, ...shown } = shared as Record<string, unknown>;
+    return { setup: options.machineSetup, host: shown };
   }
 
   /** The project now, or null when there is none or it cannot be read. */
@@ -1825,6 +1955,7 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
         if (path === "/api/item/handback") return person(request, response, "handback");
         if (path === "/api/item/release") return person(request, response, "release");
         if (path === "/api/config") return changeConfig(request, response);
+        if (path === "/api/connect") return connect(request, response);
         if (path === "/api/open-folder") return openProjectFolder(request, response);
         if (path === "/api/open-diff") return openDiff(request, response);
         request.resume();
@@ -1932,6 +2063,7 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
         return sendJson(response, 200, { ok: true, seq: store.lastSeq(), now: now().toISOString(), ...(project ? { project: { name: project.name, repository: project.repository } } : {}) });
       }
       if (path === "/api/config") return sendJson(response, 200, readConfigView(options.configFile, configOptions));
+      if (path === "/api/machine-setup") return sendJson(response, 200, setupNow() ?? { setup: null });
       if (path === "/api/offboard") {
         if (!options.offboard) return sendJson(response, 200, { now: now().toISOString(), available: false, reason: "This server has no project configuration, so Scope Soup has left nothing for this project." });
         try {
