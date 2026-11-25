@@ -55,7 +55,7 @@ const LEGACY_SETTINGS = ["reserveFiveHour", "reserveSevenDay"];
 
 const TOP_KEYS = [
   "workspaces", "remoteUrl", "checkCommand", "rerunFilesCommand", "setupCommand", "setupWatch",
-  "version", "project", "repoPath", "ownClone", "mainBranch", "remote", "realPaths", "level", "keepAwake", "machineName", "workspacesDir",
+  "version", "project", "repoPath", "ownClone", "mainBranch", "remote", "realPaths", "level", "keepAwake", "multiplayer", "machineName", "workspacesDir",
   "streamsDir", "promptsDir", "bugLabels", "claude", "copilot", "settings", "roles", "host", "mergeQueue", "resources", "sharedResources", "media",
 ];
 
@@ -128,6 +128,8 @@ export function validateConfig(given: unknown, baseDir: string): ConfigResult {
   // This machine's own clone, which a setup script copies personal files from: `{{ownClone}}` in setupCommand.
   const ownClone = raw.ownClone === undefined ? undefined : path(str(raw, "ownClone", ""));
   const keepAwake = bool(raw, "keepAwake", "", true);
+  // Singleplayer (false) keeps everything under refs/scopesoup/* in this clone; this machine's choice (decision 93).
+  const multiplayer = bool(raw, "multiplayer", "", true);
   let machineName = "";
   if (raw.machineName === undefined) err(MACHINE_NAME_MISSING);
   else if (typeof raw.machineName !== "string" || !MACHINE_NAME.test(raw.machineName)) err('machineName must be 1 to 40 letters, digits, "-", "_" or ".", for example "desk". Hosts show it in claims and log lines.');
@@ -355,7 +357,7 @@ export function validateConfig(given: unknown, baseDir: string): ConfigResult {
       ...(host === undefined ? {} : { host }),
       machineName,
       ...(ownClone === undefined ? {} : { ownClone }),
-      project, repoPath, mainBranch, remote, realPaths, level, keepAwake, workspacesDir, streamsDir,
+      project, repoPath, mainBranch, remote, realPaths, level, keepAwake, multiplayer, workspacesDir, streamsDir,
       promptsDir, bugLabels,
       ...(remoteUrl === undefined ? {} : { remoteUrl }), ...(checkCommand === undefined ? {} : { checkCommand }), ...(rerunFilesCommand === undefined ? {} : { rerunFilesCommand }),
       ...(setupCommand === undefined ? {} : { setupCommand }), ...(setupWatch === undefined ? {} : { setupWatch }),

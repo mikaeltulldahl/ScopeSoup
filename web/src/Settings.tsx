@@ -3,7 +3,8 @@
 // Picking level 4 while the file lacks its check command or remote URL asks for them right there, proposed by the server.
 // The project's settings (level, check, setup, models, the triage's age) are shared by every machine: a save is
 // one commit on the meta ref, named after the person picked at the top of the board, and in effect at once (on the other
-// machines at their next fetch). Parallel sessions, the usage reserve and the remote's URL are this machine's own. The page shows
+// machines at their next fetch). Singleplayer or multiplayer, parallel sessions, the usage reserve and the remote's URL are this
+// machine's own. The page shows
 // the two as one: no key is in both.
 // The limited resources: a shared one is a project setting (`sharedResources`), the others this machine's (`resources`).
 
@@ -27,6 +28,12 @@ type SettingName = (typeof SETTINGS)[number];
 
 /** What a role set to the Copilot provider is told (`COPILOT_WARNING` in src/orchestrator/providers/copilot/command.ts; the board reads no server code). */
 const COPILOT_WARNING = "Copilot's rules name a program and its first word only (such as git push), never a flag. So --no-verify and --force cannot be refused on Copilot: this role may use them on any git command it may run, and only its prompt says not to. Protect the main branch on the remote (no force push) to be safe.";
+
+/** Singleplayer or multiplayer, as the page names them (decision 93). */
+const PLAYERS: [boolean, string, string][] = [
+  [false, "Singleplayer", "You play alone: the Items and shared settings (meta ref), the merge queue lease and images stay in this clone. Nothing under refs/scopesoup/ is fetched or pushed; work branches and the main branch are pushed as ever."],
+  [true, "Multiplayer", "Several machines play: Scope Soup shares the meta ref, the merge queue lease and (if on) images on the remote under refs/scopesoup/. Switching to it pushes what this clone has."],
+];
 
 /** The three roles, as the page names them. */
 const ROLES: [string, string][] = [
@@ -54,6 +61,8 @@ interface Draft {
   resources: ResourceDraft[];
   /** Agents' images: pushed to the remote or not, and the days a closed Item's are kept ("" keeps them). */
   media: { push: boolean; keepDays: string };
+  /** Multiplayer (refs/scopesoup/* shared on the remote) or singleplayer (they stay in this clone): this machine's. */
+  multiplayer: boolean;
 }
 
 /** One resource in the form: the units as typed, the environment one `NAME=value` per line. */
@@ -108,7 +117,7 @@ function draftOf(config: ProjectConfig, raw: unknown, mergeQueue: MergeQueueSetu
   // The command as the shared file holds it, with {{ownClone}} unexpanded (the configuration in use has this machine's path in it).
   const command = (raw as { setupCommand?: unknown } | null)?.setupCommand;
   const setup = { command: Array.isArray(command) ? commandText(command as string[]) : config.setupCommand ? commandText(config.setupCommand) : "", watch: (config.setupWatch ?? []).join("\n") };
-  return { level: config.level, settings: { maxParallelSessions: setting("maxParallelSessions"), budgetReserve: setting("budgetReserve"), triageMaxAgeDays: setting("triageMaxAgeDays") }, roles, mergeQueue: asked, setup, resources: resourceDrafts(config), media: { push: config.media?.push ?? false, keepDays: config.media?.keepDaysAfterClose === null || config.media?.keepDaysAfterClose === undefined ? "" : String(config.media.keepDaysAfterClose) } };
+  return { level: config.level, settings: { maxParallelSessions: setting("maxParallelSessions"), budgetReserve: setting("budgetReserve"), triageMaxAgeDays: setting("triageMaxAgeDays") }, roles, mergeQueue: asked, setup, resources: resourceDrafts(config), media: { push: config.media?.push ?? false, keepDays: config.media?.keepDaysAfterClose === null || config.media?.keepDaysAfterClose === undefined ? "" : String(config.media.keepDaysAfterClose) }, multiplayer: config.multiplayer };
 }
 
 /** The watched files as the file holds them: one per line, blank lines dropped. */
@@ -143,6 +152,7 @@ function changeOf(draft: Draft, base: Draft, asks: readonly AskedField[], showsC
     if (Object.keys(each).length > 0) roles[name] = each;
   }
   if (Object.keys(roles).length > 0) change.roles = roles;
+  if (draft.multiplayer !== base.multiplayer) change.multiplayer = draft.multiplayer;
   // Both media values together, when either differs.
   if (draft.media.push !== base.media.push || draft.media.keepDays.trim() !== base.media.keepDays.trim()) {
     change.media = { push: draft.media.push, keepDaysAfterClose: draft.media.keepDays.trim() === "" ? null : Number(draft.media.keepDays) };
@@ -271,8 +281,21 @@ export function Settings({ project, openHistory = false }: { project?: ProjectVi
         <Folders project={project} />
         <p class="muted">
           The project's settings (the level, the check, the setup, the models, the triage's age) are the same on every machine: a save takes effect at once, here and on the other machines at their next fetch, and History says who changed what.
-          {" "}Parallel sessions, the usage reserve and the remote's URL are this machine's own. Everything not on this page is set by hand.
+          {" "}Singleplayer or multiplayer, parallel sessions, the usage reserve and the remote's URL are this machine's own. Everything not on this page is set by hand.
         </p>
+
+        <fieldset class="levels" disabled={busy}>
+          <legend><b>Players</b>: this machine's choice</legend>
+          {PLAYERS.map(([multiplayer, name, text]) => (
+            <label key={name} class={`level-row${draft.multiplayer === multiplayer ? " level-on" : ""}`}>
+              <input type="radio" name="players" checked={draft.multiplayer === multiplayer} onChange={() => set({ multiplayer })} />
+              <span>
+                <b>{name}</b>
+                <span class="level-text">{text}</span>
+              </span>
+            </label>
+          ))}
+        </fieldset>
 
         <fieldset class="levels" disabled={busy}>
           <legend><b>Level</b>: how much Scope Soup does on its own; each level includes the ones below</legend>
@@ -439,10 +462,10 @@ export function Settings({ project, openHistory = false }: { project?: ProjectVi
           Agents may attach images to what they answer (a screenshot, a before and after of a UI change). Scope Soup keeps them in this machine's data folder and shows them on the Item page. Hosts (GitHub, Jira) get only the words "image on the board", never the picture.
         </p>
         <div class="settings-grid">
-          <label class="resource-check">
+          {!draft.multiplayer ? <p class="muted">Singleplayer: images stay on this machine; they are pushed only in multiplayer, with this project setting on.</p> : <label class="resource-check">
             <input type="checkbox" checked={draft.media.push} disabled={busy} onChange={(event) => set({ media: { ...draft.media, push: (event.target as HTMLInputElement).checked } })} />
             {" "}Push images to the project's remote, so that everyone with the repository sees them (a project setting; off: only the machine that ran the session sees them)
-          </label>
+          </label>}
           <label>
             <b>Delete a closed Item's images after</b>
             <input type="number" min={0} max={3650} step={1} value={draft.media.keepDays} placeholder="never: keep them" disabled={busy} onInput={(event) => set({ media: { ...draft.media, keepDays: (event.target as HTMLInputElement).value } })} />

@@ -20,7 +20,7 @@ export interface MetaSettings extends SharedSettings {
   save(request: SaveRequest): Promise<SaveResult>;
   log(repoPath: string): SettingsLogEntry[];
   /** Fetches the meta ref and pushes what waits: the other machines' saves arrive this way. Never throws for a sharing problem. */
-  fetch(repoPath: string, remote: string, machine: string): Promise<SharingReport>;
+  fetch(repoPath: string, remote: string | null, machine: string): Promise<SharingReport>;
   /** Ends every git still running (a push in flight). */
   stop(): Promise<void>;
 }
@@ -37,7 +37,7 @@ export function metaSettings(options: { now?: () => string; git?: (args: string[
   const now = options.now ?? (() => new Date().toISOString());
   const git = options.git ?? gitText;
   const writers = new Map<string, { writer: Writer; runners: StoppableGit[] }>();
-  const writerFor = (repoPath: string, remote: string, machine: string): Writer => {
+  const writerFor = (repoPath: string, remote: string | null, machine: string): Writer => {
     const key = JSON.stringify([repoPath, remote, machine]);
     const known = writers.get(key);
     if (known) return known.writer;

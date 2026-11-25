@@ -31,14 +31,14 @@ export async function initSettings(sharedFile: string, privateFile: string, by: 
   if (!where.machine) return { ok: false, lines: [`${privateFile} has no machineName: the commit names this machine.`] };
   const checked = validateFiles(privateRaw, sharedRaw, dirname(privateFile));
   if (!checked.ok) return { ok: false, lines: [`${sharedFile} with ${privateFile} is not valid. ${checked.errors.length} problem(s):`, ...checked.errors.map((error) => `- ${error}`)] };
-  const fetched = await settings.fetch(where.repoPath, where.remote, where.machine);
+  const fetched = await settings.fetch(where.repoPath, where.metaRemote, where.machine);
   if (fetched.problem) return { ok: false, lines: [`The meta ref could not be fetched from ${where.remote}, so nothing was written (the project may have shared settings there already): ${fetched.problem}`] };
   if (settings.read(where.repoPath).ok) {
     return { ok: false, lines: [`This project has ${SHARED_WHERE} already: you are joining a project Scope Soup runs. Nothing was written. Write only this machine's private file (${privateFile}); change a shared setting on the Settings page.`] };
   }
   const done = await settings.save({
     repoPath: where.repoPath,
-    remote: where.remote,
+    remote: where.metaRemote,
     machine: where.machine,
     by,
     update: (current) => {
@@ -57,7 +57,7 @@ export async function initSettings(sharedFile: string, privateFile: string, by: 
     ok: true,
     lines: [
       `Wrote ${SHARED_WHERE} in ${where.repoPath}${done.commit ? ` as ${done.commit.slice(0, 7)}` : ""}, by ${by}.`,
-      done.sharing.state === "shared" ? `Pushed to ${where.remote}: everyone who joins reads them from there.` : done.sharing.state === "local" ? "The repository has no remote: they stay on this machine." : `Not pushed yet: ${done.sharing.problem ?? "it goes with the next push"} Scope Soup pushes it when it starts.`,
+      done.sharing.state === "shared" ? `Pushed to ${where.remote}: everyone who joins reads them from there.` : done.sharing.state === "local" ? (where.metaRemote === null ? "Singleplayer: they stay in this clone, and nothing is pushed under refs/scopesoup/." : "The repository has no remote: they stay on this machine.") : `Not pushed yet: ${done.sharing.problem ?? "it goes with the next push"} Scope Soup pushes it when it starts.`,
     ],
   };
 }

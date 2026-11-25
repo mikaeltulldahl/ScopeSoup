@@ -11,12 +11,14 @@
 // and the image from the ref, here and on the remote; with sharing off since, the remote's ref only shrinks to what is still
 // here. A remote update that fails is kept pending and tried again every hour. `media.keepDaysAfterClose` deletes a closed
 // Item's images, folder and refs, that many days after this machine saw it closed.
+// Singleplayer (`multiplayer: false`, decision 93) touches no remote: with `media.push` on the images still go on the local ref,
+// kept pending, and the first retry in multiplayer pushes them; a delete or an expiry waits the same way. The remote is left alone.
 
 import { copyFileSync, existsSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, closeSync, realpathSync, renameSync, rmdirSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { join, sep } from "node:path";
 import { recordInManifest } from "../config/manifest.ts";
 import type { ProjectConfig } from "../config/types.ts";
-import { mediaSettings } from "../config/types.ts";
+import { mediaSettings, mediaShared } from "../config/types.ts";
 import type { MediaPlan, MediaType } from "../core/media.ts";
 import { MAX_MEDIA_BYTES, MAX_MEDIA_PER_ITEM, MEDIA_FOLDER, MEDIA_HEAD_BYTES, isMediaName, mediaExpired, mediaKey, mediaRef, mediaType, planMedia } from "../core/media.ts";
 import { gitIn } from "../hosts/metaBranch/git.ts";
@@ -39,7 +41,7 @@ export interface MediaDeps {
   dataDir: string;
   store: Store;
   /** The configuration in use: Scope Soup's clone, the remote, the media setting. Null: no git, local images only. */
-  config: () => Pick<ProjectConfig, "repoPath" | "remote" | "media"> | null;
+  config: () => Pick<ProjectConfig, "repoPath" | "remote" | "media" | "multiplayer"> | null;
   /** The manifest the media refs are recorded on. */
   configFile?: string;
   now?: () => string;
@@ -256,6 +258,11 @@ export function createMedia(deps: MediaDeps): Media {
 
   /** `syncRemote`, with a failure kept pending (and said) to be tried again. */
   async function share(subject: Ref): Promise<{ ok: true; how: string } | { ok: false; problem: string }> {
+    // Singleplayer: the remote is not touched; the Item waits for a retry in multiplayer.
+    if (deps.config()?.multiplayer === false) {
+      setPending(subject, true);
+      return { ok: true, how: "same" };
+    }
     try {
       const how = await syncRemote(subject);
       setPending(subject, false);
@@ -294,7 +301,7 @@ export function createMedia(deps: MediaDeps): Media {
     if (!config) return null;
     const git = gitFor(config.repoPath);
     const key = refKey(subject);
-    if (fetch && mediaSettings(config).push && Date.now() - (lastFetch.get(key) ?? 0) >= FETCH_EVERY_MS) {
+    if (fetch && mediaShared(config) && Date.now() - (lastFetch.get(key) ?? 0) >= FETCH_EVERY_MS) {
       lastFetch.set(key, Date.now());
       try {
         await fetchRef(git, config.remote, refOf(subject), refOf(subject), await networkEnvironment(git, deps.env));
@@ -530,7 +537,7 @@ export function createMedia(deps: MediaDeps): Media {
 
     pushing() {
       const config = deps.config();
-      return config ? mediaSettings(config).push : false;
+      return config ? mediaShared(config) : false;
     },
 
     idle() {

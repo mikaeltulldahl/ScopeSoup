@@ -49,6 +49,8 @@ export interface MetaBranchConfig {
   idPrefix?: string;
   /** With writes: the remote to share the ref with. Default "origin"; null for none. A repository without that remote is not shared. */
   remote?: string | null;
+  /** With writes and a remote: asked before each fetch and push; false keeps the ref here (singleplayer). Default always. */
+  shares?: () => boolean;
   /** With writes and a remote: how often a read fetches first. Default 60 s. */
   fetchIntervalMs?: number;
   /** With writes and a remote: pushes tried when the remote keeps moving. Default 5. */
@@ -165,6 +167,7 @@ export function createMetaBranchHost(config: MetaBranchConfig): MetaBranchHost {
       now,
       before: ready,
       repoDir: config.repoDir,
+      ...(config.shares === undefined ? {} : { shares: config.shares }),
       ...(config.pushAttempts === undefined ? {} : { pushAttempts: config.pushAttempts }),
       ...(config.maxAppendLogBytes === undefined ? {} : { maxAppendLogBytes: config.maxAppendLogBytes }),
       ...(config.staleLockMs === undefined ? {} : { staleLockMs: config.staleLockMs }),

@@ -377,4 +377,19 @@ test("without allowWrites there is no write port, and a read neither fetches nor
   // No id prefix: nothing can be created.
   await assert.rejects(writing.write?.createWork?.({ title: "New" }) ?? Promise.resolve(), /No id prefix/);
 });
+
+test("singleplayer fetches and pushes nothing; back in multiplayer the next write pushes what there is", async () => {
+  const origin = remote();
+  let multiplayer = false;
+  const a = laptop(origin, "laptop-a", "A", { shares: () => multiplayer });
+  const made = await write(a).createWork({ title: "Kept here" });
+  assert.equal(made.shared, "local");
+  assert.equal((await writer(a).share()).state, "local");
+  assert.equal(tryGit(origin, ["rev-parse", "--verify", "--quiet", REF]), null);
+  assert.deepEqual(marked(a.clone, "pre-push"), []);
+  multiplayer = true;
+  await write(a).createWork({ title: "Now shared" });
+  assert.equal(origin.git(["rev-parse", REF]), a.clone.git(["rev-parse", REF]));
+  assert.equal(origin.git(["log", "--format=%s", REF]).split("\n").length, 2);
+});
 });

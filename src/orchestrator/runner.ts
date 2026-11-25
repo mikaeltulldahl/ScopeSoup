@@ -8,7 +8,7 @@ import { createWriteStream, mkdirSync } from "node:fs";
 import type { WriteStream } from "node:fs";
 import { join } from "node:path";
 import type { ProjectConfig } from "../config/types.ts";
-import { mediaSettings } from "../config/types.ts";
+import { mediaShared } from "../config/types.ts";
 import { mediaPromptText } from "../core/media.ts";
 import { refKey } from "../model/types.ts";
 import type { Ref, Session, SessionRole, SessionStatus, UsageSample } from "../model/types.ts";
@@ -383,7 +383,7 @@ export function createRunner(deps: RunnerDeps): Runner {
         }
       }
       // A resumed session with a message (findings, a failed merging) is sent only the message: it has the prompt already.
-      const rendered = request.resume && request.message ? request.message : renderTemplate(spec.template, { setup: setupPromptLine(config), decisions: NO_DECISIONS, recheck: "", media: mediaPromptText(mediaSettings(config).push), ...request.vars, base });
+      const rendered = request.resume && request.message ? request.message : renderTemplate(spec.template, { setup: setupPromptLine(config), decisions: NO_DECISIONS, recheck: "", media: mediaPromptText(mediaShared(config)), ...request.vars, base });
       const prompt = request.message && rendered !== request.message ? `${rendered}\n\n${request.message}` : rendered;
       command = provider.launch({
         config, role: spec.role, prompt: restored ? `${prompt}\n\n${restored}\n` : prompt, partial: request.chat === true, env: { ...(deps.env ?? process.env) }, streamPath, nodePath: process.execPath,

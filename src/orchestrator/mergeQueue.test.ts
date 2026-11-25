@@ -84,4 +84,22 @@ test("when the remote cannot be reached nobody merges", async () => {
   assert.equal(result.held, false);
   assert.match((result as { why: string }).why, /could not reach origin/);
 });
+
+test("singleplayer holds the lease here, touching no remote; another machine's lease there is left alone", async () => {
+  const origin = remote();
+  const other = machine(origin, "laptop-b");
+  await other.acquire(T(0), 30);
+  const before = origin.git(["rev-parse", MERGE_QUEUE_REF]);
+  const clone = cloneTestRepo(origin);
+  cleanups.push(() => clone.cleanup());
+  let alone = true;
+  const lone = createMergeQueue({ git: realGit, repo: clone.dir, remote: "origin", machine: "laptop-a", alone: () => alone });
+  assert.deepEqual(await lone.acquire(T(1), 30), { held: true, until: T(31) });
+  assert.equal(await lone.peek(T(1)), null);
+  await lone.release(T(2));
+  assert.equal(origin.git(["rev-parse", MERGE_QUEUE_REF]), before);
+  // Asked at each call: back in multiplayer the remote's lease counts again.
+  alone = false;
+  assert.equal((await lone.acquire(T(3), 30)).held, false);
+});
 });

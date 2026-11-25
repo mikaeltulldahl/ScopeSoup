@@ -44,7 +44,7 @@ export function checkConfigFile(file: string, readFile: (path: string) => string
   const { config } = result;
   const lines = [
     `${path} with ${SHARED_WHERE} is valid.`,
-    `  project ${JSON.stringify(config.project)}, repoPath ${config.repoPath}, main branch ${config.mainBranch} on ${config.remote}`,
+    `  project ${JSON.stringify(config.project)}, repoPath ${config.repoPath}, main branch ${config.mainBranch} on ${config.remote}${config.multiplayer ? "" : "; singleplayer: nothing under refs/scopesoup/ is fetched or pushed"}`,
     `  host ${config.host?.kind ?? "(from the environment)"}, workspaces ${config.workspaces.kind}, level ${config.level}${config.level >= 4 ? " (merges through the merge queue)" : ""}`,
   ];
   if (config.host?.kind === "jira") {
@@ -90,7 +90,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
         const raw = JSON.parse(readFileSync(resolve(file), "utf8")) as unknown;
         const where = repositoryOf(raw, dirname(resolve(file)));
         if (where.machine) {
-          const report = await meta.fetch(where.repoPath, where.remote, where.machine);
+          const report = await meta.fetch(where.repoPath, where.metaRemote, where.machine);
           if (report.problem) console.log(`Fetching the shared settings: ${report.problem}`);
         }
       } catch {

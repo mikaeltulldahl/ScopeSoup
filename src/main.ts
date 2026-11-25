@@ -141,10 +141,11 @@ async function main(): Promise<void> {
 
   // The shared settings are on the meta ref: fetched before the first read (a new clone does not have it), then every minute.
   const shared = metaSettings({ now: iso });
-  const repository = existsSync(configFile) ? privateWhere(configFile) : null;
   const fetchShared = async (): Promise<void> => {
+    // Read each time: singleplayer (nothing fetched or pushed) can be switched on the Settings page.
+    const repository = existsSync(configFile) ? privateWhere(configFile) : null;
     if (!repository?.machine) return;
-    const report = await shared.fetch(repository.repoPath, repository.remote, repository.machine);
+    const report = await shared.fetch(repository.repoPath, repository.metaRemote, repository.machine);
     if (report.problem) console.log(`Fetching the shared settings (refs/scopesoup/meta): ${report.problem}`);
   };
   await fetchShared();
@@ -154,6 +155,9 @@ async function main(): Promise<void> {
   const first = config?.load();
   if (first && !first.config) throw new Error(`${configFile}: ${first.error ?? "could not be read"}`);
   const hostSet = hostSettings(first?.config ?? null, env, (path) => resolve(path));
+  // Singleplayer or multiplayer as the file says now: a switch on the Settings page holds from the next sharing round.
+  const multiplayer = (): boolean => config?.load().config?.multiplayer ?? first?.config?.multiplayer ?? true;
+  if (hostSet.shares) hostSet.shares = multiplayer;
   const ignored = ignoredVariables(hostSet, env);
   if (ignored.length > 0) console.log(`The configuration file has a host, so these are not read: ${ignored.join(", ")}.`);
   if (env.SCOPESOUP_MACHINE !== undefined) console.log("SCOPESOUP_MACHINE is no longer read: the configuration file's machineName names this machine.");
@@ -212,7 +216,7 @@ async function main(): Promise<void> {
     // The limited resources; a shared one is held on the project's remote, one lease per unit, named by this machine.
     const units = createResources({
       store, config: current, now: iso,
-      lease: (resource, unit) => createMergeQueue({ git: realGit, repo: current().repoPath, remote: current().remote, machine: current().machineName, ref: unitRef(resource, unit), doing: `holds ${resource} unit ${unit}` }),
+      lease: (resource, unit) => createMergeQueue({ git: realGit, repo: current().repoPath, remote: current().remote, machine: current().machineName, ref: unitRef(resource, unit), doing: `holds ${resource} unit ${unit}`, alone: () => !multiplayer() }),
     });
     // What an earlier run held goes back: its sessions did not survive it.
     resources = units;
@@ -259,8 +263,8 @@ async function main(): Promise<void> {
     const answerWaitHook = answerWaitTickHook(store, desktopNotify(), () => loadSnapshot(store));
     // Several machines share the main branch: only the one that holds the merge queue lease merges (decision 31). SCOPESOUP_MERGE_QUEUE=off leaves it out.
     const machine = writable?.info.machine;
-    mergeQueue = machine && env.SCOPESOUP_MERGE_QUEUE !== "off" ? createMergeQueue({ git: realGit, repo: first.config.repoPath, remote: first.config.remote, machine }) : undefined;
-    if (mergeQueue) console.log(`Merging waits for the merge queue lease on ${first.config.remote} (this machine: ${machine}).`);
+    mergeQueue = machine && env.SCOPESOUP_MERGE_QUEUE !== "off" ? createMergeQueue({ git: realGit, repo: first.config.repoPath, remote: first.config.remote, machine, alone: () => !multiplayer() }) : undefined;
+    if (mergeQueue) console.log(multiplayer() ? `Merging waits for the merge queue lease on ${first.config.remote} (this machine: ${machine}).` : "Singleplayer: merging takes no lease on the remote.");
     // The batches go to remoteUrl and their pull requests to the GitHub host: refused at start when they are not one repository.
     const ciRefused = githubCiRefusal(first.config, hostSet.github?.repo) ?? undefined;
     if (ciRefused) console.log(`Merging waits for no CI: ${ciRefused}.`);
@@ -501,7 +505,7 @@ async function main(): Promise<void> {
   const where = await server.start();
   upgrader.start();
   if (configured.length > 0) sync.start();
-  const stopMigration = startMetaMigration(configured, mergeQueue, hostSet.meta, store);
+  const stopMigration = startMetaMigration(configured, mergeQueue, hostSet.meta, store, multiplayer);
   loop?.start();
   // The orchestrator came up paused: start again what Get latest or Go back paused, as it was before.
   upgrader.restore();
@@ -550,13 +554,13 @@ function privateWhere(file: string): ReturnType<typeof repositoryOf> | null {
  * The lease is merging's (`merge queue`, on the project's remote); without one (SCOPESOUP_MERGE_QUEUE=off: one machine only, or a
  * meta branch with no remote) the migration needs none. Returns a function that stops the retries.
  */
-function startMetaMigration(hosts: Host[], mergeQueue: MergeQueue | undefined, meta: HostSettings["meta"], store: Store): () => void {
+function startMetaMigration(hosts: Host[], mergeQueue: MergeQueue | undefined, meta: HostSettings["meta"], store: Store, multiplayer: () => boolean): () => void {
   const host = hosts.find((one): one is MetaBranchHost => "writer" in one && (one as MetaBranchHost).writer !== null) as MetaBranchHost | undefined;
   const writer = host?.writer;
   const machine = host?.info.machine;
   if (!writer || !machine) return () => undefined;
   // No merging lease here (say, its remote is not the configured one): the lease is taken on the meta branch's own remote.
-  const lease = env.SCOPESOUP_MERGE_QUEUE === "off" ? null : (mergeQueue ?? (meta?.remote ? createMergeQueue({ git: realGit, repo: meta.repoPath, remote: meta.remote, machine }) : null));
+  const lease = env.SCOPESOUP_MERGE_QUEUE === "off" ? null : (mergeQueue ?? (meta?.remote ? createMergeQueue({ git: realGit, repo: meta.repoPath, remote: meta.remote, machine, alone: () => !multiplayer() }) : null));
   let said = "";
   let timer: NodeJS.Timeout | undefined;
   let stopped = false;

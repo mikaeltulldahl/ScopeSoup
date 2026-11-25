@@ -13,6 +13,9 @@
 // that died while merging does not block the others for longer than the lease's length.
 //
 // The same lease holds a unit of a shared resource (`resources.ts`): one ref per unit, named by `ref`.
+//
+// Singleplayer (`multiplayer: false`, decision 93): one machine, so the lease is this machine's without asking the remote;
+// nothing is fetched or pushed under `refs/scopesoup/`, and what an earlier multiplayer run left there is left alone.
 
 import type { Git } from "./process.ts";
 
@@ -56,6 +59,8 @@ export interface MergeQueueDeps {
   ref?: string;
   /** What the holder does while it holds the lease, in a refusal ("laptop-a merges until ..."). Default: "merges". */
   doing?: string;
+  /** Asked at each call: true (singleplayer) holds the lease here, with no git call. Default never. */
+  alone?: () => boolean;
 }
 
 const tail = (text: string): string => text.trim().slice(-300);
@@ -107,8 +112,11 @@ export function createMergeQueue(deps: MergeQueueDeps): MergeQueue {
 
   const live = (info: LeaseInfo | null, at: string): info is LeaseInfo => info !== null && !info.released && Date.parse(info.until) > Date.parse(at);
 
+  const alone = (): boolean => deps.alone?.() === true;
+
   return {
     async acquire(at, minutes) {
+      if (alone()) return { held: true, until: new Date(Date.parse(at) + minutes * 60_000).toISOString() };
       const seen = await look();
       if ("error" in seen) return { held: false, why: seen.error };
       if (live(seen.info, at) && seen.info.holder !== machine) {
@@ -126,6 +134,7 @@ export function createMergeQueue(deps: MergeQueueDeps): MergeQueue {
     },
 
     async release(at) {
+      if (alone()) return;
       try {
         const seen = await look();
         if ("error" in seen || !live(seen.info, at) || seen.info.holder !== machine) return;
@@ -136,6 +145,7 @@ export function createMergeQueue(deps: MergeQueueDeps): MergeQueue {
     },
 
     async peek(at) {
+      if (alone()) return null;
       const seen = await look();
       return "error" in seen || !live(seen.info, at) ? null : seen.info;
     },

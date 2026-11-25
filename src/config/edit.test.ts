@@ -111,6 +111,19 @@ test("a change of this machine's settings only is written to its file, with no c
   assert.deepEqual(JSON.parse(readFileSync(file, "utf8")).settings, { maxParallelSessions: { value: 3 }, budgetReserve: { value: 4 } });
 });
 
+test("singleplayer is this machine's: written to its file with no commit, and a shared save after it is pushed nowhere", async () => {
+  const file = setup();
+  const single = await edit(file, { multiplayer: false }, { ...found, by: undefined });
+  assert.ok(single.ok && single.changed && single.shared === undefined && single.config.multiplayer === false);
+  assert.equal(saves.get(file), undefined);
+  assert.equal(JSON.parse(readFileSync(file, "utf8")).multiplayer, false);
+  assert.ok((await edit(file, { level: 0 })).ok);
+  assert.ok((await edit(file, { setupWatch: ["pnpm-lock.yaml"] }, found)).ok);
+  assert.equal(saves.get(file)?.at(-1)?.remote, null);
+  assert.ok((await edit(file, { multiplayer: true, setupWatch: ["package.json"] }, found)).ok);
+  assert.equal(saves.get(file)?.at(-1)?.remote, "origin");
+});
+
 test("a save of a shared setting names a person: without one it is refused and nothing is written", async () => {
   const file = setup();
   const before = texts(file);
@@ -335,7 +348,7 @@ test("readConfigView gives the five levels with their sentences and what each la
   assert.equal(view.levels[0]?.blocked, null);
   assert.match(view.levels[3]?.blocked ?? "", /^Level 3 needs claude/);
   assert.equal(view.levels[4]?.blocked, `Level 4 needs claude (the program "claude" was not found), a check command (checkCommand) and the remote's URL (remoteUrl).`);
-  assert.deepEqual(view.safeFields, ["level", "settings", "roles", "checkCommand", "remoteUrl", "setupCommand", "setupWatch", "resources", "sharedResources", "media"]);
+  assert.deepEqual(view.safeFields, ["level", "settings", "roles", "checkCommand", "remoteUrl", "setupCommand", "setupWatch", "resources", "sharedResources", "media", "multiplayer"]);
 });
 
 test("level 4 saved with its check command and remote URL writes all three; the check command must be startable; below level 4 they are refused", async () => {

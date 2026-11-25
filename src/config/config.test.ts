@@ -32,6 +32,10 @@ test("a blank project has only the core: no rule switch and the level is 0", () 
   assert.equal(config.keepAwake, true);
   assert.equal(good({ project: "p", machineName: "laptop-a", repoPath: "/srv/clone", keepAwake: false }).keepAwake, false);
   assert.match(bad({ project: "p", machineName: "laptop-a", repoPath: "/srv/clone", keepAwake: "no" }), /keepAwake must be true or false/);
+  // Multiplayer unless this machine says singleplayer.
+  assert.equal(config.multiplayer, true);
+  assert.equal(good({ project: "p", machineName: "laptop-a", repoPath: "/srv/clone", multiplayer: false }).multiplayer, false);
+  assert.match(bad({ project: "p", machineName: "laptop-a", repoPath: "/srv/clone", multiplayer: "solo" }), /multiplayer must be true or false/);
   assert.equal(config.mainBranch, "main");
   assert.equal(config.remote, "origin");
   assert.equal("rules" in config, false);
