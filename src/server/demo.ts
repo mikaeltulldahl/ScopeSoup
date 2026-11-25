@@ -493,18 +493,23 @@ export function seedDemo(store: Store, now: Date, dir?: string): void {
   store.setValue(KEYS.sync, JSON.stringify({ lastAt: at(-0.5) }));
   // 30 days of synthetic usage readings and the finished sessions that filled the windows, for the Usage page.
   const usage = demoUsage(now);
+  // Those sessions ran on the demo's own Items, so History names each one.
+  const onItem = <T extends { subject: Ref }>(each: T, index: number): T => ({ ...each, subject: ref("work", USAGE_ITEMS[index % USAGE_ITEMS.length]!) });
   store.tx(() => {
-    for (const each of usage.sessions) store.put(each, "demo", each.finishedAt ?? base);
+    usage.sessions.forEach((each, index) => store.put(onItem(each, index), "demo", each.finishedAt ?? base));
     for (const sample of usage.samples) store.addUsageSample(sample);
     // One role runs on a provider with a monthly allowance: its sessions and the results they recorded.
-    for (const each of allowanceDemo.sessions(now)) {
-      store.put(each.session, "demo", each.session.finishedAt ?? base);
+    allowanceDemo.sessions(now).forEach((each, index) => {
+      store.put(onItem(each.session, index), "demo", each.session.finishedAt ?? base);
       store.setValue(sessionResultKey(each.session.ref.id), JSON.stringify(each.result));
-    }
+    });
   });
   // Who created the Items, a rewrite accepted, merges, switches and an upgrade, for History.
   seedDemoActivity(store, now, versionOf(resolve(dirname(fileURLToPath(import.meta.url)), "../..")));
 }
+
+/** Items the Usage page's synthetic sessions ran on: done ones, so the open Items' rounds stay as the demo sets them. */
+const USAGE_ITEMS = [30, 31, 33];
 
 /**
  * The demo's project configuration, written to `dir` (a temporary folder): level 4 with its check command and remote URL,

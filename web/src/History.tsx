@@ -23,6 +23,7 @@ const COMMITS_PAGE = 30;
 /** The kinds in the filter and on each row. */
 const KINDS: [ActivityKind, string][] = [
   ["item", "Items"],
+  ["draft", "Drafts"],
   ["triage", "Triage rewrites"],
   ["question", "Questions"],
   ["decision", "Decisions"],
@@ -33,7 +34,7 @@ const KINDS: [ActivityKind, string][] = [
   ["upgrade", "Upgrades"],
   ["settings", "Settings"],
 ];
-const KIND_WORD: Record<ActivityKind, string> = { item: "Item", triage: "triage", question: "question", decision: "decision", session: "session", merge: "merge", batch: "batch", switch: "switch", upgrade: "upgrade", settings: "settings" };
+const KIND_WORD: Record<ActivityKind, string> = { item: "Item", draft: "draft", triage: "triage", question: "question", decision: "decision", session: "session", merge: "merge", batch: "batch", switch: "switch", upgrade: "upgrade", settings: "settings" };
 
 /** One row's lines and dot. A line runs from a lane at the row's edge to a lane at its middle. */
 function Graph({ commit, lanes }: { commit: HistoryCommit; lanes: number }) {
@@ -89,7 +90,7 @@ function Row({ row, nested }: { row: FoldedActivityRow; nested?: boolean }) {
   return (
     <li class={`act-row${row.tone ? ` act-${row.tone}` : ""}`}>
       <time class="act-time num" dateTime={row.at} title={new Date(row.at).toLocaleString("en-GB")}>{clock(row.at)}</time>
-      <span class="act-kind">{KIND_WORD[row.kind]}</span>
+      <span class={`act-kind act-kind-${row.kind}`}>{KIND_WORD[row.kind]}</span>
       <div class="act-body">
         <span class={`act-who${row.agent ? " act-agent" : ""}`}>{row.who}</span>{" "}
         <span class="act-text">{row.text}</span>

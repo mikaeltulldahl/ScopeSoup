@@ -5,11 +5,13 @@ import { useState } from "preact/hooks";
 import type { DraftView } from "./api.ts";
 import { postItemDraft, useNow } from "./api.ts";
 import { Dialog } from "./Dialog.tsx";
-import { Markdown } from "./Markdown.tsx";
 import { ago } from "./format.ts";
 import { itemHref } from "./route.ts";
 
 const ROLE_WORDS: Record<DraftView["role"], string> = { triage: "the triage", implementor: "the implementor", reviewer: "the reviewer" };
+
+/** The description as one line of plain text, for the card's two-line preview; Edit shows it whole. */
+const plain = (markdown: string): string => markdown.replace(/^\s*(#+|>|[-+*]|\d+\.)\s+/gm, "").replace(/[`*_|]/g, "").replace(/\s+/g, " ").trim();
 
 export function DraftCard({ draft }: { draft: DraftView }) {
   const now = useNow();
@@ -26,24 +28,22 @@ export function DraftCard({ draft }: { draft: DraftView }) {
       .finally(() => setBusy(false));
   };
   const field = (key: keyof typeof text) => (event: Event) => setText({ ...text, [key]: (event.target as HTMLInputElement).value });
+  const source = (
+    <>
+      From {ROLE_WORDS[draft.role]}, on <a href={itemHref(draft.from.key)}>{/^\d+$/.test(draft.from.id) ? `#${draft.from.id}` : draft.from.id}</a>
+      {draft.from.title ? ` (${draft.from.title})` : ""}
+    </>
+  );
+  const preview = plain(draft.description) || (draft.verification ? `Verification: ${draft.verification}` : "");
   return (
     <div class="card tone-yours draft-card">
       <div class="card-head">
-        <span class="tag tag-draft">draft</span>
         <span class="card-title">{draft.title}</span>
       </div>
-      <p class="reason">
-        From {ROLE_WORDS[draft.role]}, found while working on <a href={itemHref(draft.from.key)}>{/^\d+$/.test(draft.from.id) ? `#${draft.from.id}` : draft.from.id}</a>
-        {draft.from.title ? ` (${draft.from.title})` : ""}
-      </p>
-      {(draft.description || draft.verification) && (
-        <details class="draft-text">
-          <summary>Text</summary>
-          {draft.description && <Markdown text={draft.description} />}
-          {draft.verification && <p><strong>Verification:</strong> {draft.verification}</p>}
-        </details>
-      )}
+      <p class="reason">{source}</p>
+      {preview && <p class="draft-preview">{preview}</p>}
       <div class="tags draft-actions">
+        <span class="tag tag-draft">draft</span>
         {!draft.readOnly && (
           <>
             <button type="button" class="primary" disabled={busy} onClick={() => act("approve")}>Approve</button>
@@ -58,6 +58,7 @@ export function DraftCard({ draft }: { draft: DraftView }) {
       {editing && (
         <Dialog label="Edit the draft" onClose={() => setEditing(false)} focusSelector="input" keepOnOutsideClick>
           <h3 class="dialog-title">Edit the draft, then approve</h3>
+          <p class="muted draft-source">{source}</p>
           <form class="item-form" onSubmit={(event) => { event.preventDefault(); act("approve", text); }}>
             <label>
               Title

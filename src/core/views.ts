@@ -633,7 +633,7 @@ export type HistoryView =
   | { now: string; available: true; mainBranch: string; commits: HistoryCommit[]; lanes: number; limit: number; more: boolean };
 
 /** What a row of the activity timeline is about, for its filter: one word each. */
-export type ActivityKind = "item" | "triage" | "question" | "decision" | "session" | "merge" | "batch" | "switch" | "upgrade" | "settings";
+export type ActivityKind = "item" | "draft" | "triage" | "question" | "decision" | "session" | "merge" | "batch" | "switch" | "upgrade" | "settings";
 
 /** An Item a row links to. The title is data from people and agents. */
 export interface ActivityItem {

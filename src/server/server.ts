@@ -1737,12 +1737,12 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
       ]
       : [
         ...looked.lines,
-        `Sets the project's host to ${target}${host.write ? ", with writes on" : ", read-only"}: one commit to the shared settings on refs/scopesoup/meta${person ? `, named after ${person}` : ""}, for every machine.`,
-        ...(connection.email !== undefined ? [`Writes jira.email (${connection.email}) to this machine's scopesoup.config.json, next to its other hosts' parts.`] : []),
-        ...(moving.length > 0 ? [`Moves ${moving.length} Item(s) to ${target}: ${moving.map((work) => work.ref.id).join(", ")}. Each becomes a new issue with its title, description and verification, ending with a line naming its old id; references between them get the new ids; its history goes there as one comment; the old Item is closed on the meta branch, saying where it went.`] : []),
-        ...(fromMeta ? [stay > 0 ? `The other ${stay} open Item(s) stay on the meta branch, readable there; the board shows ${target} only.` : moving.length > 0 ? "No open Item stays behind." : "There are no open Items to move."] : []),
-        `Each other machine keeps its own settings: its board asks "Set up this machine for ${HOST_NAME[kind]}" until it has ${kind === "jira" ? `SCOPESOUP_JIRA_TOKEN${host.deployment === "datacenter" ? "" : " and its person's Jira email"}` : "SCOPESOUP_GITHUB_TOKEN"}, and starts no agent until then.`,
-        "The new host is read when Scope Soup starts again: restart it after connecting.",
+        `Host: ${target}${host.write ? "" : ", read-only"}, for every machine (one commit to the shared settings${person ? ` by ${person}` : ""}).`,
+        ...(connection.email !== undefined ? [`Saves jira.email (${connection.email}) on this machine only.`] : []),
+        ...(moving.length > 0 ? [`Moves ${moving.length} Item(s) to ${target}: ${moving.map((work) => work.ref.id).join(", ")}. Each becomes an issue with its text and history; the old Item is closed, naming it.`] : []),
+        ...(fromMeta ? [stay > 0 ? `The other ${stay} open Item(s) stay on the meta branch, off the board.` : moving.length > 0 ? "No open Item stays behind." : "There are no open Items to move."] : []),
+        `Other machines then need ${kind === "jira" ? `SCOPESOUP_JIRA_TOKEN${host.deployment === "datacenter" ? "" : " and a Jira email"}` : "SCOPESOUP_GITHUB_TOKEN"} ("Set up this machine for ${HOST_NAME[kind]}") before their agents start.`,
+        "Then restart Scope Soup.",
       ];
     const listed = fromMeta ? { items: open.map((work) => ({ id: work.ref.id, title: work.title })) } : {};
     if (body.confirm !== true) return sendJson(response, 200, { problems, lines, ...listed });
@@ -1814,11 +1814,11 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
     const editOptions = { ...configOptions, ...(person ? { by: person } : {}), join };
     const meta = connection.meta;
     const prefix = meta?.prefix || "?";
-    const part = `this machine's meta part (commits as ${meta?.authorName || "?"} <${meta?.authorEmail || "?"}>, Item ids ${prefix}-1, ${prefix}-2, ...)`;
+    const part = `commits as ${meta?.authorName || "?"} <${meta?.authorEmail || "?"}>, Item ids ${prefix}-1, ${prefix}-2, ...`;
     const checked = await connectHost(options.configFile!, connection, { ...editOptions, dryRun: true });
     const problems = [...metaPartProblems(meta, !join && current?.kind === "jira" ? current.project : undefined), ...(checked.ok ? [] : checked.errors)];
     if (join) {
-      const lines = [`Writes ${part} to this machine's scopesoup.config.json; the project's shared settings stay as they are.`, "Start Scope Soup again on this machine: it reads the meta branch, and starts agents, only then."];
+      const lines = [`This machine ${part}; the project's shared settings stay as they are.`, "Then restart Scope Soup here: it reads the meta branch, and starts agents, only then."];
       if (body.confirm !== true) return sendJson(response, 200, { problems, lines });
       if (problems.length > 0) return sendJson(response, 400, { error: { code: "CONNECT_REFUSED", message: problems.join(" ") }, problems, lines });
       await connected(response, connection, editOptions, { kind: "metaBranch", join, person, lines });
@@ -1857,17 +1857,17 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
     const marked = close ? (from?.kind === "jira" ? "closed there" : "closed there as not planned") : from?.kind === "github" ? "left open, labelled moved-to-scopesoup" : "left open";
     const stay = open.length - moving.length;
     lines.push(
-      `Sets the project's host to the meta branch (refs/scopesoup/meta), with writes on: one commit to the shared settings${person ? `, named after ${person}` : ""}, for every machine.`,
-      `Writes ${part} to this machine's scopesoup.config.json, next to its other hosts' parts.`,
+      `Host: the meta branch, for every machine (one commit to the shared settings${person ? ` by ${person}` : ""}).`,
+      `This machine: ${part}`,
       ...(moving.length > 0
         ? [
-          `Moves ${moving.length} issue(s) to the meta branch: ${moving.map((issue) => issue.id).join(", ")}. All become Items in one meta commit, with their title, description and verification; references between them get the new ids (not in code or addresses); each issue's comments go to its Item's log as one line.`,
+          `Moves ${moving.length} issue(s) to the meta branch: ${moving.map((issue) => issue.id).join(", ")}. Their text comes along; their comments go to the Items' logs.`,
           `Then each gets a comment on ${hostName} naming its new Item and is ${marked}.`,
         ]
         : []),
-      ...(source && !unread ? [stay > 0 ? `The other ${stay} open issue(s) stay on ${where}, readable there; the board shows the meta branch only.` : moving.length > 0 ? "No open issue stays behind." : "There are no open issues to move."] : []),
-      `Each other machine keeps its own settings: its board asks "Set up this machine for the meta branch" until it has its own meta part (name, email, id prefix), and starts no agent until then.`,
-      `This machine's agents are paused from the start and stay paused after a move back that succeeded, so none works on ${from ? where : "the old host"}, which this machine still reads until Scope Soup starts again: restart it, then press Start. If the move stops, they start again as they were.`,
+      ...(source && !unread ? [stay > 0 ? `The other ${stay} open issue(s) stay on ${where}, off the board.` : moving.length > 0 ? "No open issue stays behind." : "There are no open issues to move."] : []),
+      `Other machines then need their own name, email and id prefix ("Set up this machine for the meta branch") before their agents start.`,
+      `Agents here stay paused: restart Scope Soup, then press Start.`,
     );
     const listed = source ? { items: open } : {};
     if (body.confirm !== true) return sendJson(response, 200, { problems, lines, ...listed });

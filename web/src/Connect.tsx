@@ -156,17 +156,17 @@ export function ConnectDialog({ kind, from, join = false, host, onClose, onConne
           </>
         ) : back ? (
           <>
-            <p class="muted">The project's Items go back to its meta branch (refs/scopesoup/meta), for every machine. The issues you tick move there from {fromName}; the others stay where they are.</p>
+            <p class="muted">The Items go back to the meta branch, for every machine. The issues you tick move there.</p>
             {metaPart}
           </>
         ) : kind === "github" ? (
           <>
-            <p class="muted">The project's Items become the repository's issues. The token is read from <code>{variable}</code> in the environment Scope Soup runs in; it is not asked for here.</p>
+            <p class="muted">The Items become the repository's issues. The token comes from <code>{variable}</code> in Scope Soup's environment.</p>
             {input("repo", "Repository", "account/repository")}
           </>
         ) : (
           <>
-            <p class="muted">The project's Items become the Jira project's issues. The token is read from <code>{variable}</code> in the environment Scope Soup runs in; it is not asked for here.</p>
+            <p class="muted">The Items become the Jira project's issues. The token comes from <code>{variable}</code> in Scope Soup's environment.</p>
             {input("site", "Site", "https://example.atlassian.net")}
             {input("project", "Project key", "DEMO")}
             <fieldset class="connect-deployment" disabled={busy}>
@@ -183,22 +183,25 @@ export function ConnectDialog({ kind, from, join = false, host, onClose, onConne
         {!join && !back && (
           <label class="resource-check">
             <input type="checkbox" checked={fields.write} disabled={busy} onChange={(event) => set({ write: (event.target as HTMLInputElement).checked })} />
-            {" "}Let Scope Soup write ({kind === "github" ? "issues, labels and comments" : "issues, comments, labels and properties"}); off: it only shows them, and the level must be 0 (Watch)
+            {" "}Let Scope Soup write {kind === "github" ? "issues, labels and comments" : "issues, comments, labels and properties"} (off: it only reads, at level 0)
           </label>
         )}
         {items && items.length > 0 && (
           <fieldset class="connect-items" disabled={busy}>
             <legend>{back ? <><b>Move these issues to the meta branch</b> (the others stay on {fromName})</> : <><b>Move these Items to {HOST_NAMES[kind]}</b> (the others stay on the meta branch)</>}</legend>
-            <label class="resource-check">
-              <input type="checkbox" checked={move.length === items.length} onChange={(event) => { setMove((event.target as HTMLInputElement).checked ? items.map((item) => item.id) : []); setPlan(null); }} />
-              <i>All {items.length}</i>
-            </label>
-            {items.map((item) => (
-              <label key={item.id} class="resource-check">
-                <input type="checkbox" checked={move.includes(item.id)} onChange={(event) => tick(item.id, (event.target as HTMLInputElement).checked)} />
-                <code>{item.id}</code> {item.title}
-              </label>
-            ))}
+            <div class="connect-items-head">
+              <button type="button" onClick={() => { setMove(items.map((item) => item.id)); setPlan(null); }}>All</button>
+              <button type="button" onClick={() => { setMove([]); setPlan(null); }}>None</button>
+              <span class="muted num">{move.length} of {items.length}</span>
+            </div>
+            <div class="connect-items-list">
+              {items.map((item) => (
+                <label key={item.id} class="resource-check">
+                  <input type="checkbox" checked={move.includes(item.id)} onChange={(event) => tick(item.id, (event.target as HTMLInputElement).checked)} />
+                  <span class="ref">{/^\d+$/.test(item.id) ? `#${item.id}` : item.id}</span> {item.title}
+                </label>
+              ))}
+            </div>
           </fieldset>
         )}
         {back && move.length > 0 && (

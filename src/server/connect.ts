@@ -96,7 +96,7 @@ export function busyMachines(works: readonly WorkItem[], sessions: readonly Sess
 
 /** Why a Connect or a Join theirs waits, naming the busy machines. */
 export function busyText(busy: readonly string[], what: string): string {
-  return `${what} waits until no agent session runs on any machine, so no session writes to the Items meanwhile. Busy now: ${busy.join(", ")}. Other machines are seen only through their agents' claims on Items. Pause the agents there and try again when their sessions have ended.`;
+  return `${what} waits for every agent session to end. Pause agents on: ${busy.join(", ")}, then try again.`;
 }
 
 /**

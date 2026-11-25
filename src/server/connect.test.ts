@@ -118,7 +118,7 @@ describe("POST /api/connect", { concurrency: 4 }, () => {
       assert.deepEqual(plan.body.problems, []);
       const text = plan.body.lines.join("\n");
       assert.match(text, /reads acme\/widgets, with write access/);
-      assert.match(text, /Set up this machine for GitHub Issues" until it has SCOPESOUP_GITHUB_TOKEN/);
+      assert.match(text, /Other machines then need SCOPESOUP_GITHUB_TOKEN \("Set up this machine for GitHub Issues"\)/);
       assert.deepEqual(s.settings.current(), SHARED, "a plan writes nothing");
 
       const done = await s.post({ kind: "github", repo: "acme/widgets", confirm: true });
@@ -212,7 +212,7 @@ describe("POST /api/connect", { concurrency: 4 }, () => {
       s.store.put(session(1, ref("work", 3)), "sync", T0);
       const plan = await s.post({ kind: "github", repo: "acme/widgets", confirm: true });
       assert.equal(plan.status, 400);
-      assert.match(plan.body.problems.join(" "), /Busy now: laptop-a, laptop-b\. Other machines are seen only through their agents' claims on Items\./);
+      assert.match(plan.body.problems.join(" "), /Connecting waits for every agent session to end\. Pause agents on: laptop-a, laptop-b, then try again\./);
       assert.deepEqual(s.settings.current(), SHARED);
     } finally {
       await s.stop();
@@ -415,7 +415,7 @@ describe("POST /api/connect back to the meta branch (#134)", { concurrency: 4 },
       s.store.put(work(1, { holder: { actor: { id: "scopesoup@laptop-b", name: "scopesoup on laptop-b", bot: true } } }), "sync", T0);
       const plan = await s.post(back({ move: ["#1"], confirm: true }));
       assert.equal(plan.status, 400);
-      assert.match(plan.body.problems.join(" "), /Moving back waits until no agent session runs on any machine.*Busy now: laptop-b/);
+      assert.match(plan.body.problems.join(" "), /Moving back waits for every agent session to end\. Pause agents on: laptop-b,/);
       assert.deepEqual(s.settings.current(), GITHUB);
     } finally {
       await s.stop();
