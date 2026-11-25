@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
@@ -8,7 +8,7 @@ import type { ProjectConfig } from "../../../config/types.ts";
 import type { AgentEvent } from "../../agent.ts";
 import { providerFor } from "../index.ts";
 import { checkAnswer, uncheckedKeywords } from "./answer.ts";
-import { copilotArgs, copilotRefusal, copilotRules, retryUsageFile, shellRule, usageFile } from "./command.ts";
+import { copilotArgs, copilotRefusal, DRIVER, pathOfFileUrl, copilotRules, retryUsageFile, shellRule, usageFile } from "./command.ts";
 import { copilotCommandsText, copilotProvider } from "./index.ts";
 import { replyIn, tokensIn, tokensInUsage, toolCallsIn } from "./readers.ts";
 import { createCopilotReader } from "./stream.ts";
@@ -102,16 +102,21 @@ test("a role that may run a git command beyond reading is refused on Copilot: it
   assert.equal(copilotRefusal(reading, "implement"), null);
 });
 
+test("the driver's path is a path on this machine, read from its URL without Node's helpers", () => {
+  assert.equal(pathOfFileUrl(new URL("file:///C:/work/my%20demo/driver.ts")), "C:\\work\\my demo\\driver.ts");
+  assert.equal(pathOfFileUrl(new URL("file:///work/demo/driver.ts")), "/work/demo/driver.ts");
+  assert.ok(existsSync(DRIVER), DRIVER);
+});
+
 test("the launch runs the driver with the prompt, the schema and the instruction about the answer on stdin", () => {
   const c = config({ review: { provider: "copilot" } }, 2, { path: process.execPath });
-  const launch = copilotProvider.launch({ config: c, role: "review", prompt: "Review it.", schema: '{"type":"object"}', partial: false, env: {}, resume: "abc" });
+  const launch = copilotProvider.launch({ config: c, role: "review", prompt: "Review it.", schema: '{"type":"object"}', partial: false, env: {}, resume: "abc", nodePath: process.execPath });
   assert.equal(launch.command, process.execPath);
   assert.match(launch.args.at(-1) ?? "", /driver\.ts$/);
   const spec = JSON.parse(launch.stdin ?? "") as { program: string; prompt: string; resume: string; schema: string };
   assert.equal(spec.program, process.execPath);
-  // On Windows a program that is not there (or only a shim) fails the launch, with what to do about it.
-  const missing = config({ review: { provider: "copilot" } }, 2, { path: join(dir, "no-such-copilot.exe") });
-  if (process.platform === "win32") assert.throws(() => copilotProvider.launch({ config: missing, role: "review", prompt: "x", partial: false, env: {} }), /copilot\.path/);
+  // The driver runs with the Node program the runner names; without one there is no launch.
+  assert.throws(() => copilotProvider.launch({ config: c, role: "review", prompt: "x", partial: false, env: {} }), /named no Node program/);
   assert.equal(spec.resume, "abc");
   assert.match(spec.prompt, /^Review it\.\n\nWhen you are done, your last message is your answer/);
 });
@@ -194,12 +199,20 @@ test("tokens come from the usage file beside the stream", () => {
   assert.equal(tokensInUsage(fixture("usage.json")), 1448 + 72);
   const stream = join(dir, "s1.ndjson");
   writeFileSync(stream, fixture("plain.jsonl"));
-  assert.equal(tokensIn(fixture("plain.jsonl"), stream), undefined);
+  const beside = (suffix: string): string | undefined => {
+    try {
+      return readFileSync(`${stream}${suffix}`, "utf8");
+    } catch {
+      return undefined;
+    }
+  };
+  assert.equal(tokensIn(fixture("plain.jsonl"), beside), undefined);
+  assert.equal(tokensIn(fixture("plain.jsonl")), undefined);
   writeFileSync(usageFile(stream), fixture("usage.json"));
-  assert.equal(copilotProvider.tokensIn(fixture("plain.jsonl"), stream), 1520);
+  assert.equal(copilotProvider.tokensIn(fixture("plain.jsonl"), beside), 1520);
   // The driver's second run (asking again) has a file of its own; both count.
   writeFileSync(retryUsageFile(usageFile(stream)), fixture("usage.json"));
-  assert.equal(copilotProvider.tokensIn(fixture("plain.jsonl"), stream), 3040);
+  assert.equal(copilotProvider.tokensIn(fixture("plain.jsonl"), beside), 3040);
 });
 
 test("a chat reply streams from the deltas of the message being written", () => {

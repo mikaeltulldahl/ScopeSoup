@@ -47,7 +47,7 @@ export const copilotProvider: AgentProvider = {
   launch: (request) => buildLaunch({
     config: request.config, role: request.role, prompt: request.prompt, env: request.env,
     ...(request.schema ? { schema: request.schema } : {}), ...(request.resume ? { resume: request.resume } : {}),
-    ...(request.streamPath ? { streamPath: request.streamPath } : {}),
+    ...(request.streamPath ? { streamPath: request.streamPath } : {}), ...(request.nodePath ? { nodePath: request.nodePath } : {}),
   }),
   reader: (now, root, schema) => createCopilotReader(now, root, schema),
 

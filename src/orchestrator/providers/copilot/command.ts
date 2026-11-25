@@ -2,13 +2,13 @@
 // Copilot names a shell command by its program and, for git, npm, pnpm and the like, its first subcommand only: `shell(git:*)`
 // allows every git command, `shell(git push)` every push, and a rule for `git push --force` matches nothing. So a Claude-style
 // entry is mapped only when the mapping allows no more than the entry did; anything else is left out (narrower, never wider).
+// No Node modules here or in what the provider's index imports: the board's build reads the provider list through
+// `config/levels.ts`. What needs Node (finding copilot.exe, reading files) is in `driver.ts` or passed in by the caller.
 
-import { fileURLToPath } from "node:url";
 import { COPILOT_DEFAULT_AUTO_TIER } from "../../../config/defaults.ts";
 import type { CopilotConfig, ProjectConfig } from "../../../config/types.ts";
 import type { SessionRole } from "../../../model/types.ts";
 import type { Env, Launch, ProgramAdvice } from "../../agent.ts";
-import { resolveExecutable } from "../../executable.ts";
 import { answerInstruction } from "./answer.ts";
 
 export function copilotConfig(config: ProjectConfig): CopilotConfig {
@@ -100,8 +100,14 @@ export function copilotRefusal(config: ProjectConfig, role: SessionRole): string
   return `Refused: Copilot CLI cannot refuse a flag such as \`--no-verify\` (its rules name a command, never its flags), so a role on it may run only read-only git commands, and roles.${role} allows ${beyond.map((text) => `\`${text}\``).join(", ")}. Run ${role} on Claude, or take those out of its allowedTools.`;
 }
 
+/** A `file:` URL as a path on this machine (`C:\\x\\y.ts` on Windows, `/x/y.ts` elsewhere), without `node:url`. */
+export function pathOfFileUrl(url: URL): string {
+  const path = decodeURIComponent(url.pathname);
+  return /^\/[A-Za-z]:/.test(path) ? path.slice(1).replace(/\//g, "\\") : path;
+}
+
 /** The driver that runs the CLI and asks again once for an answer that fits (`driver.ts`). */
-export const DRIVER = fileURLToPath(new URL("./driver.ts", import.meta.url));
+export const DRIVER = pathOfFileUrl(new URL("./driver.ts", import.meta.url));
 const NODE_FLAGS = ["--disable-warning=ExperimentalWarning"];
 
 /** What the driver is sent on stdin. */
@@ -115,14 +121,17 @@ export interface DriverSpec {
   schema?: string;
 }
 
-/** The usage file Copilot writes beside the session's stream. */
+/** The usage file Copilot writes beside the session's stream: `<stream><USAGE_SUFFIX>`. */
+export const USAGE_SUFFIX = ".usage.json";
+/** The usage file of the driver's second run (asking again), so it does not overwrite the first run's. */
+export const RETRY_USAGE_SUFFIX = ".usage-2.json";
+
 export function usageFile(streamPath: string): string {
-  return `${streamPath}.usage.json`;
+  return `${streamPath}${USAGE_SUFFIX}`;
 }
 
-/** The usage file of the driver's second run (asking again), so it does not overwrite the first run's. */
 export function retryUsageFile(path: string): string {
-  return path.replace(/\.usage\.json$/, ".usage-2.json");
+  return path.endsWith(USAGE_SUFFIX) ? `${path.slice(0, -USAGE_SUFFIX.length)}${RETRY_USAGE_SUFFIX}` : path;
 }
 
 export interface CopilotLaunchRequest {
@@ -133,6 +142,8 @@ export interface CopilotLaunchRequest {
   resume?: string;
   env: Env;
   streamPath?: string;
+  /** The Node program that runs Scope Soup, which runs the driver. */
+  nodePath?: string;
 }
 
 /** The CLI's own arguments for one session of a role (the prompt and `--resume` are the driver's). */
@@ -155,11 +166,12 @@ export function copilotArgs(config: ProjectConfig, role: SessionRole, streamPath
 }
 
 /**
- * The child to spawn: Node running the driver, which runs the CLI. The prompt travels on stdin to the driver. The CLI's path
- * is found here (on Windows the real .exe, never a shim), so a missing program fails the session before anything starts.
+ * The child to spawn: Node running the driver, which runs the CLI. The prompt travels on stdin to the driver. The driver finds
+ * the CLI's real path (on Windows the .exe, never a shim) and ends the session with `ADVICE` when there is none.
  */
 export function buildLaunch(request: CopilotLaunchRequest): Launch {
-  const program = resolveExecutable(copilotConfig(request.config).path, { env: request.env, advice: ADVICE });
+  if (!request.nodePath) throw new Error("the Copilot provider runs its driver with Node, and the launch named no Node program");
+  const program = copilotConfig(request.config).path;
   const spec: DriverSpec = {
     program,
     args: copilotArgs(request.config, request.role, request.streamPath),
@@ -168,5 +180,5 @@ export function buildLaunch(request: CopilotLaunchRequest): Launch {
     ...(request.resume ? { resume: request.resume } : {}),
     ...(request.schema ? { schema: request.schema } : {}),
   };
-  return { command: process.execPath, args: [...NODE_FLAGS, DRIVER], stdin: JSON.stringify(spec), env: { ...request.env } };
+  return { command: request.nodePath, args: [...NODE_FLAGS, DRIVER], stdin: JSON.stringify(spec), env: { ...request.env } };
 }

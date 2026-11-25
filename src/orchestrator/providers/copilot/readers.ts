@@ -1,11 +1,10 @@
 // What the board reads from a finished `copilot` stream file: a chat turn's reply, the tools called, and the tokens used
-// (from the usage file Copilot writes beside the stream, `--usage-output-file`).
+// (from the usage file Copilot writes beside the stream, `--usage-output-file`, which the caller reads).
 
-import { readFileSync } from "node:fs";
-import type { ToolCall } from "../../agent.ts";
+import type { BesideStream, ToolCall } from "../../agent.ts";
 import { isObj, objectsOnLine } from "../lines.ts";
 import type { Obj } from "../lines.ts";
-import { retryUsageFile, usageFile } from "./command.ts";
+import { RETRY_USAGE_SUFFIX, USAGE_SUFFIX } from "./command.ts";
 import { describeTool } from "./stream.ts";
 
 function* events(text: string): Generator<Obj> {
@@ -66,16 +65,12 @@ export function tokensInUsage(text: string): number | undefined {
  * line instead: the recording shows them counted for the whole session, earlier runs included. Whether a resumed run's usage
  * file counts only that run, as this sum takes it, is not recorded yet.)
  */
-export function tokensIn(_stream: string, streamPath?: string): number | undefined {
-  if (!streamPath) return undefined;
+export function tokensIn(_stream: string, beside?: BesideStream): number | undefined {
+  if (!beside) return undefined;
   let total: number | undefined;
-  for (const path of [usageFile(streamPath), retryUsageFile(usageFile(streamPath))]) {
-    let text: string;
-    try {
-      text = readFileSync(path, "utf8");
-    } catch {
-      continue;
-    }
+  for (const suffix of [USAGE_SUFFIX, RETRY_USAGE_SUFFIX]) {
+    const text = beside(suffix);
+    if (text === undefined) continue;
     const tokens = tokensInUsage(text);
     if (tokens !== undefined) total = (total ?? 0) + tokens;
   }

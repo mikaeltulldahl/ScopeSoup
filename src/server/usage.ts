@@ -34,7 +34,15 @@ export function streamTokens(path: string | undefined, provider?: string): numbe
   } catch {
     return undefined;
   }
-  return providerNamed(provider).tokensIn(text, path);
+  // A provider may keep its counts in a file of its own beside the stream (a usage file).
+  const beside = (suffix: string): string | undefined => {
+    try {
+      return readFileSync(`${path}${suffix}`, "utf8");
+    } catch {
+      return undefined;
+    }
+  };
+  return providerNamed(provider).tokensIn(text, beside);
 }
 
 /** How many even steps a span's plot is sampled in: about one per pixel column's worth, at most a few hundred. */

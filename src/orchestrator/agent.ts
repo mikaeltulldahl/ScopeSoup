@@ -39,7 +39,12 @@ export interface LaunchRequest {
   env: Env;
   /** Where the runner writes the session's stdout. A provider may keep a file of its own beside it (`<streamPath>.<suffix>`). */
   streamPath?: string;
+  /** The Node program that runs Scope Soup, for a provider that runs a helper script of its own with it. */
+  nodePath?: string;
 }
+
+/** Reads a provider's file beside a finished stream (`<streamPath><suffix>`); undefined when there is none. */
+export type BesideStream = (suffix: string) => string | undefined;
 
 /** A child process to spawn, never through a shell. */
 export interface Launch {
@@ -163,6 +168,6 @@ export interface AgentProvider {
   replyIn(stream: string): string;
   /** Every tool call, oldest first. */
   toolCallsIn(stream: string, root?: string): ToolCall[];
-  /** The tokens the session used, when the stream (or the provider's file beside it, `streamPath`) says. */
-  tokensIn(stream: string, streamPath?: string): number | undefined;
+  /** The tokens the session used, when the stream (or the provider's file beside it, read with `beside`) says. */
+  tokensIn(stream: string, beside?: BesideStream): number | undefined;
 }

@@ -381,7 +381,7 @@ export function createRunner(deps: RunnerDeps): Runner {
       const rendered = request.resume && request.message ? request.message : renderTemplate(spec.template, { setup: setupPromptLine(config), decisions: NO_DECISIONS, recheck: "", ...request.vars, base });
       const prompt = request.message && rendered !== request.message ? `${rendered}\n\n${request.message}` : rendered;
       command = provider.launch({
-        config, role: spec.role, prompt: restored ? `${prompt}\n\n${restored}\n` : prompt, partial: request.chat === true, env: { ...(deps.env ?? process.env) }, streamPath,
+        config, role: spec.role, prompt: restored ? `${prompt}\n\n${restored}\n` : prompt, partial: request.chat === true, env: { ...(deps.env ?? process.env) }, streamPath, nodePath: process.execPath,
         ...(spec.schema ? { schema: spec.schema } : {}), ...(request.resume ? { resume: request.resume } : {}),
       });
       mkdirSync(config.streamsDir, { recursive: true });

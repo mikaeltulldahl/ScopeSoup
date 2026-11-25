@@ -28,7 +28,7 @@ after(async () => {
 
 const COPILOT_ROLES = { triage: { provider: "copilot" }, implement: { provider: "copilot" }, review: { provider: "copilot" } };
 
-function world(mode: string, env: NodeJS.ProcessEnv = {}, roles: Record<string, unknown> = COPILOT_ROLES) {
+function world(mode: string, env: NodeJS.ProcessEnv = {}, roles: Record<string, unknown> = COPILOT_ROLES, copilot: Record<string, unknown> = { path: process.execPath, prefixArgs: ["--disable-warning=ExperimentalWarning", FAKE] }) {
   const dir = mkdtempSync(join(tmpdir(), "scopesoup-copilot-"));
   dirs.push(dir);
   const repo = join(dir, "repo");
@@ -41,7 +41,7 @@ function world(mode: string, env: NodeJS.ProcessEnv = {}, roles: Record<string, 
   git("commit", "-q", "-m", "first");
   const result = validateConfig({
     project: "synthetic", machineName: "laptop-a", repoPath: "repo", level: 3, roles,
-    copilot: { path: process.execPath, prefixArgs: ["--disable-warning=ExperimentalWarning", FAKE] },
+    copilot,
   }, dir);
   if (!result.ok) assert.fail(result.errors.join("\n"));
   const config = result.config;
@@ -170,6 +170,14 @@ describe("Copilot sessions", { concurrency: 4 }, () => {
     const c = await crash.runner.finished((await crash.runner.start(request("review"))).ref.id);
     assert.equal(c.status, "failed");
     assert.match(c.endReason ?? "", /no result\. Last error output: fake copilot: something broke/);
+  });
+
+  test("a copilot program that is not there ends the session with what to do", async () => {
+    const w = world("ok", {}, COPILOT_ROLES, { path: join(tmpdir(), "no-such-folder", "copilot.exe") });
+    const session = await w.runner.finished((await w.runner.start(request("review"))).ref.id);
+    assert.equal(session.status, "failed");
+    if (process.platform === "win32") assert.match(session.endReason ?? "", /Could not find .*copilot\.exe.*copilot\.path/);
+    else assert.match(session.endReason ?? "", /no result/);
   });
 
   test("a chat turn on Copilot replies in free text", async () => {

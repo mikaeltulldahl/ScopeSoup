@@ -4,8 +4,9 @@
 // The runner's tree kill (stall, timeout, Stop) ends this process and the CLI under it together.
 
 import { spawn } from "node:child_process";
+import { resolveExecutable } from "../../executable.ts";
 import { askAgainMessage, checkAnswer } from "./answer.ts";
-import { retryUsageFile } from "./command.ts";
+import { ADVICE, retryUsageFile } from "./command.ts";
 import type { DriverSpec } from "./command.ts";
 import { createCopilotReader } from "./stream.ts";
 
@@ -57,7 +58,15 @@ function run(spec: DriverSpec, prompt: string, resume: string | undefined): Prom
   });
 }
 
-const spec = JSON.parse(await readStdin()) as DriverSpec;
+const given = JSON.parse(await readStdin()) as DriverSpec;
+// The real program: on Windows the .exe (a shim cannot start without a shell). None: the session ends here, with what to do.
+let spec: DriverSpec;
+try {
+  spec = { ...given, program: resolveExecutable(given.program, { advice: ADVICE }) };
+} catch (error) {
+  process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+  process.exit(127);
+}
 /** The second run writes its own usage file (`retryUsageFile`); `tokensIn` adds both. */
 function retryArgs(args: readonly string[]): string[] {
   const at = args.indexOf("--usage-output-file");
