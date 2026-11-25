@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { UsageSample } from "../model/types.ts";
 import { at, ref, T0 } from "./testing.ts";
-import { attributeUsage, forecastLine, stackPlot, timeTicks, usageParts, usagePlot } from "./usage.ts";
+import { attributeUsage, forecastLine, paceAt, paceLines, resetMarks, stackPlot, timeTicks, usageParts, usagePlot, WINDOW_MS } from "./usage.ts";
 import type { UsageSession } from "./usage.ts";
 
 const t = (minutes: number) => Date.parse(at(minutes));
@@ -190,4 +190,35 @@ test("usageParts: one window keeps its own shares; a small total is still one wi
   assert.deepEqual(one.percents, {});
   assert.equal(one.windows, 1);
   assert.equal(usageParts({ total: 0, resets: 1, shares: { implement: 0, review: 0, triage: 0, outside: 0 } }, ["implement"]).several, false);
+});
+
+test("resetMarks keeps resets inside the span and the coming one, in order, without doubles", () => {
+  const from = Date.parse("2026-01-01T00:00:00Z");
+  const to = Date.parse("2026-01-08T00:00:00Z");
+  const marks = resetMarks(["2026-01-05T10:00:00Z", "2025-12-31T00:00:00Z", "2026-01-03T00:00:00Z", "2026-01-05T10:00:20Z", "2026-01-09T00:00:00Z", "nonsense"], from, to);
+  assert.deepEqual(marks.map((ms) => new Date(ms).toISOString()), ["2026-01-03T00:00:00.000Z", "2026-01-05T10:00:00.000Z"]);
+  assert.deepEqual(resetMarks([], from, to), []);
+});
+
+test("paceLines run from 0 at the window's start to the level at its reset", () => {
+  const reset = Date.parse("2026-01-08T00:00:00Z");
+  const [segment] = paceLines([reset], WINDOW_MS.seven_day, 0.8);
+  assert.equal(segment!.from, Date.parse("2026-01-01T00:00:00Z"));
+  assert.equal(segment!.to, reset);
+  assert.equal(segment!.level, 0.8);
+  assert.equal(paceAt(segment!, segment!.from), 0);
+  assert.ok(Math.abs(paceAt(segment!, Date.parse("2026-01-04T12:00:00Z"))! - 0.4) < 1e-9);
+  assert.equal(paceAt(segment!, reset), 0.8);
+  assert.equal(paceAt(segment!, reset + 1), undefined);
+  assert.equal(paceAt(segment!, segment!.from - 1), undefined);
+});
+
+test("paceLines for the 5-hour window and a level outside 0 to 1", () => {
+  const reset = Date.parse("2026-01-01T15:00:00Z");
+  const [a, b] = paceLines([reset - 5 * 3600_000, reset], WINDOW_MS.five_hour, 1.4);
+  assert.equal(a!.from, reset - 10 * 3600_000);
+  assert.equal(b!.level, 1);
+  assert.equal(paceAt(b!, reset - 2.5 * 3600_000), 0.5);
+  assert.equal(paceLines([reset], WINDOW_MS.five_hour, -1)[0]!.level, 0);
+  assert.deepEqual(paceLines([], WINDOW_MS.five_hour, 0.5), []);
 });
