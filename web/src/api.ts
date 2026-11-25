@@ -86,6 +86,19 @@ export async function fetchUpgrade(): Promise<UpgradeView | null> {
   return (await response.json()) as UpgradeView;
 }
 
+/** The warning about an unprotected main branch on the GitHub remote; null when there is none (or the server has no such check). */
+export type BranchProtectionWarning = import("../../src/server/branchProtection.ts").BranchProtectionWarning;
+
+export async function fetchBranchProtection(): Promise<BranchProtectionWarning | null> {
+  const response = await call("/api/branch-protection", { headers: { Accept: "application/json" } });
+  if (!response.ok) return null;
+  return ((await response.json()) as { warning: BranchProtectionWarning | null }).warning;
+}
+
+export async function dismissBranchProtection(): Promise<void> {
+  await call("/api/branch-protection/dismiss", { method: "POST" });
+}
+
 export async function postUpgrade(what: "check" | "get" | "back" | "cancel" | "dismiss"): Promise<UpgradeView> {
   const response = await call(`/api/upgrade/${what}`, { method: "POST" });
   const body = (await response.json().catch(() => null)) as (UpgradeView & { error?: { message?: string } }) | null;

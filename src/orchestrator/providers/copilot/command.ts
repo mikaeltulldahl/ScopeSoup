@@ -2,6 +2,7 @@
 // Copilot names a shell command by its program and, for git, npm, pnpm and the like, its first subcommand only: `shell(git:*)`
 // allows every git command, `shell(git push)` every push, and a rule for `git push --force` matches nothing. So a Claude-style
 // entry is mapped only when the mapping allows no more than the entry did; anything else is left out (narrower, never wider).
+// A rule cannot name a flag, so `--no-verify` and `--force` cannot be refused on a git command it allows: `COPILOT_WARNING` says so.
 // No Node modules here or in what the provider's index imports: the board's build reads the provider list through
 // `config/levels.ts`. What needs Node (finding copilot.exe, reading files) is in `driver.ts` or passed in by the caller.
 
@@ -59,10 +60,10 @@ export function shellRule(tool: string): string | null | undefined {
 }
 
 /**
- * The permission rules for a role's allowedTools. A push is always refused: Copilot cannot refuse a force push alone
- * (`docs/DECISIONS.md`), so it refuses every `git push`.
+ * The permission rules for a role's allowedTools: what each entry maps to without allowing more; the rest is in `left`. As on
+ * Claude, from level 4 no session pushes (`docs/RULES.md`): the merge queue pushes the checked commit.
  */
-export function copilotRules(allowedTools: readonly string[]): CopilotRules {
+export function copilotRules(allowedTools: readonly string[], level = 0): CopilotRules {
   const allow: string[] = [];
   const left: string[] = [];
   const add = (rule: string) => {
@@ -79,26 +80,15 @@ export function copilotRules(allowedTools: readonly string[]): CopilotRules {
     if (rule) add(rule);
     else left.push(name);
   }
-  return { allow, deny: ["shell(git push)"], left };
-}
-
-/** The git commands a rule allows beyond the read-only ones: `git` for every git command, else `git <sub>`; null for none. */
-export function gitBeyondReading(rule: string): string | null {
-  if (rule === "shell" || rule === "shell(git:*)") return "git";
-  const match = /^shell\(git (\S+?)(?::\*)?\)$/.exec(rule);
-  return match && !READ_ONLY_GIT.has(match[1] ?? "") ? `git ${match[1]}` : null;
+  return { allow, deny: level >= 4 ? ["shell(git push)"] : [], left };
 }
 
 /**
- * Why the role's sessions cannot be held to the core rules on Copilot, or null. Every session is refused `--no-verify`
- * (`docs/RULES.md`), and commit, merge, rebase, pull, am, revert, cherry-pick and stash make commits or run hooks. Copilot
- * cannot refuse a flag, so a role may run no git command on it but the read-only ones (`READ_ONLY_GIT`).
+ * What a person is told wherever a role is set to Copilot (the Settings page, `docs/RUNNING.md`, `docs/DECISIONS.md`): a Copilot
+ * rule names a program and its first word, never a flag, so a role that may run `git commit` or `git push` on Copilot runs them with
+ * any flags. The prompt forbids `--no-verify` and force pushes there; nothing on the command line holds it to that.
  */
-export function copilotRefusal(config: ProjectConfig, role: SessionRole): string | null {
-  const beyond = copilotRules(config.roles[role].allowedTools).allow.map(gitBeyondReading).filter((text): text is string => text !== null);
-  if (beyond.length === 0) return null;
-  return `Refused: Copilot CLI cannot refuse a flag such as \`--no-verify\` (its rules name a command, never its flags), so a role on it may run only read-only git commands, and roles.${role} allows ${beyond.map((text) => `\`${text}\``).join(", ")}. Run ${role} on Claude, or take those out of its allowedTools.`;
-}
+export const COPILOT_WARNING = "Copilot's rules name a program and its first word only (such as git push), never a flag. So --no-verify and --force cannot be refused on Copilot: this role may use them on any git command it may run, and only its prompt says not to. Protect the main branch on the remote (no force push) to be safe.";
 
 /** A `file:` URL as a path on this machine (`C:\\x\\y.ts` on Windows, `/x/y.ts` elsewhere), without `node:url`. */
 export function pathOfFileUrl(url: URL): string {
@@ -155,7 +145,7 @@ export function copilotArgs(config: ProjectConfig, role: SessionRole, streamPath
   if (/^(fusion|auto)$/i.test(spec.model)) args.push("--auto-tier", spec.autoTier ?? COPILOT_DEFAULT_AUTO_TIER);
   // Nothing the person did not ask for: no question form, no built-in GitHub tools on the person's account, no self-update.
   args.push("--no-ask-user", "--disable-builtin-mcps", "--no-auto-update");
-  const rules = copilotRules(spec.allowedTools);
+  const rules = copilotRules(spec.allowedTools, config.level);
   for (const rule of rules.allow) args.push(`--allow-tool=${rule}`);
   for (const rule of rules.deny) args.push(`--deny-tool=${rule}`);
   // The sign-in token stays out of the commands the agent runs.
