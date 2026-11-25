@@ -287,7 +287,7 @@ Owner decisions of 2026-11-21 from epic GF-283, written down here with the docs 
 
 | # | Topic | Decision |
 |---|---|---|
-| 95 | Claude Code's own shipping tools: mentioned, not integrated | Claude Code's `/ship`, `/steward` and the Claude Ship products (Code Review, PR Steward) are mentioned in the README, not integrated. They finish one PR in a person's session or on GitHub; Scope Soup keeps its own sessions and merge queue and does not call them. They can be used side by side. See [`research/ship-command.md`](research/ship-command.md). |
+| 96 | Claude Code's own shipping tools: mentioned, not integrated | Claude Code's `/ship`, `/steward` and the Claude Ship products (Code Review, PR Steward) are mentioned in the README, not integrated. They finish one PR in a person's session or on GitHub; Scope Soup keeps its own sessions and merge queue and does not call them. They can be used side by side. See [`research/ship-command.md`](research/ship-command.md). |
 
 ## Facts established by research (not decisions)
 
