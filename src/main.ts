@@ -66,6 +66,7 @@ import type { Loop } from "./orchestrator/loop.ts";
 import { createKeepAwake, shouldStayAwake } from "./orchestrator/keepAwake.ts";
 import type { KeepAwake } from "./orchestrator/keepAwake.ts";
 import { dryActions } from "./orchestrator/ports.ts";
+import { aiLabelOf } from "./config/types.ts";
 import type { LabelChange, Ref, WorkItem } from "./model/types.ts";
 import { itemDiff } from "./orchestrator/diff.ts";
 import { openInDiffTool } from "./orchestrator/diffTool.ts";
@@ -399,6 +400,7 @@ async function main(): Promise<void> {
     // Board-only mode has no configuration, and no Settings to change.
     ...(config
       ? {
+          aiLabel: () => { const loaded = config.load().config; return loaded ? aiLabelOf(loaded) : undefined; },
           planning: () => {
             const loaded = config.load().config;
             return loaded

@@ -49,6 +49,8 @@ const SAFE: Record<string, true | ((value: unknown, err: (message: string) => vo
   media: true,
   // What a reviewer's `should` findings on an approved change do: "fix" or "draft" (decision 95).
   review: true,
+  // The label on Items an AI made or rewrote: false, true or a name (decision 97).
+  labels: true,
   // Singleplayer (false) or multiplayer (true): this machine's, in its private file (decision 93).
   multiplayer: true,
 };

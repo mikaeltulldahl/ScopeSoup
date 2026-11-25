@@ -377,8 +377,9 @@ export function createGitHubHost(config: GitHubConfig): GitHubHost {
 
   /** Labels known to exist in the repository, so each is created at most once per run. */
   const knownLabels = new Set<string>();
-  async function ensureLabel(name: string): Promise<void> {
-    const look = LABEL_LOOKS[name];
+  /** `anyName`: a label a project chose (the AI label): made with a plain look when it is not one of Scope Soup's own. */
+  async function ensureLabel(name: string, anyName = false): Promise<void> {
+    const look = LABEL_LOOKS[name] ?? (anyName ? { color: "ededed", description: "Added by Scope Soup" } : undefined);
     if (!look || knownLabels.has(name)) return;
     try {
       await client.send("POST", r("/labels"), { name, ...look });
@@ -777,12 +778,14 @@ export function createGitHubHost(config: GitHubConfig): GitHubHost {
       return { added, removed };
     },
     async setLabels(subject, add, remove) {
+      for (const name of add) await ensureLabel(name, true);
       if (add.length > 0) await client.send("POST", r(`/issues/${subject.id}/labels`), { labels: add });
       await removeLabels(subject, remove);
       if (add.length > 0 || remove.length > 0) failIf(subject, notApplied(await reread(subject), { add, remove }));
     },
     /** A new issue. The priority has no place on GitHub and is not kept; the caller says so. */
     async createWork(input) {
+      for (const name of input.labels ?? []) await ensureLabel(name, true);
       const issue = await client.send<RestIssue>("POST", r("/issues"), {
         title: input.title,
         ...(input.body ? { body: input.body } : {}),

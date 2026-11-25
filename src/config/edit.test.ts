@@ -348,7 +348,7 @@ test("readConfigView gives the five levels with their sentences and what each la
   assert.equal(view.levels[0]?.blocked, null);
   assert.match(view.levels[3]?.blocked ?? "", /^Level 3 needs claude/);
   assert.equal(view.levels[4]?.blocked, `Level 4 needs claude (the program "claude" was not found), a check command (checkCommand) and the remote's URL (remoteUrl).`);
-  assert.deepEqual(view.safeFields, ["level", "settings", "roles", "checkCommand", "remoteUrl", "setupCommand", "setupWatch", "resources", "sharedResources", "media", "review", "multiplayer"]);
+  assert.deepEqual(view.safeFields, ["level", "settings", "roles", "checkCommand", "remoteUrl", "setupCommand", "setupWatch", "resources", "sharedResources", "media", "review", "labels", "multiplayer"]);
 });
 
 test("level 4 saved with its check command and remote URL writes all three; the check command must be startable; below level 4 they are refused", async () => {

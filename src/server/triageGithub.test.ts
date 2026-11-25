@@ -234,26 +234,28 @@ describe("triage drafts and restructurings as comments", () => {
 
 // The triage's label changes go with its draft: Accept applies them with one call per label, Reject applies none.
 describe("label changes in a triage draft on GitHub", () => {
-  const gh = fakeIssues("harbour/tides", [11, 12, 13, 14]);
+  const gh = fakeIssues("harbour/tides", [11, 12, 13, 14, 15]);
   const ghHost = createGitHubHost({ token: "t", repo: "harbour/tides", apiUrl: ISSUES_API, fetchImpl: gh.fetch, allowWrites: true, conventions: true, login: "scopesoup-bot" });
   let db: Store;
   let acts: ReturnType<typeof createHostActions>;
   let board: ScopeSoupServer;
   let url: string;
   const CHANGE = { add: ["bug"], remove: ["question"] };
+  let aiLabel: string | undefined;
   const labelsOf = (id: string): string[] => gh.issues.get(id)!.labels.map((label) => (typeof label === "string" ? label : label.name));
   const labelWrites = (): string[] => gh.calls.filter((call) => /\/labels/.test(call) && !call.startsWith("GET") && !call.includes("scopesoup"));
 
   before(async () => {
     for (const name of ["bug", "question", "scopesoup:claimed"]) gh.labels.add(name);
-    for (const id of ["11", "12", "13", "14"]) gh.issues.get(id)!.labels.push({ name: "question" });
+    for (const id of ["11", "12", "13", "14", "15"]) gh.issues.get(id)!.labels.push({ name: "question" });
     db = openStore(":memory:");
-    acts = createHostActions({ host: ghHost, git: async () => ({ code: 0, stdout: "", stderr: "" }), config: () => config, store: db });
+    acts = createHostActions({ host: ghHost, git: async () => ({ code: 0, stdout: "", stderr: "" }), config: () => (aiLabel ? { ...config, labels: { aiGenerated: aiLabel } } : config), store: db });
     board = createServer({
       store: db, port: 0,
       questions: { host: "github", answer: acts.answerQuestion!, checkDraft: acts.checkDraft! },
       description: { host: "github", replace: acts.replaceDescription! },
       labels: { host: "github", change: acts.changeLabels! },
+      aiLabel: () => aiLabel,
       syncNow: async () => {
         for (const each of (await ghHost.work.listWork()).items) db.put(each, "sync", at);
       },
@@ -296,6 +298,20 @@ describe("label changes in a triage draft on GitHub", () => {
     assert.deepEqual([decided.data.to, decided.data.proposal], [Number(draft), "accepted"]);
     assert.match(String(decided.data.answer), /Labels: \+bug, −question\.$/);
     assert.deepEqual(db.get<WorkItem>(ref("11"))?.labels, ["bug"]);
+  });
+
+  test("Accept with the AI label on: the label is made in the repository and put on the Item, beside the draft's own label changes", async () => {
+    aiLabel = "ai-generated";
+    try {
+      await proposing("15");
+      const response = await post("/api/draft", { ref: key("15"), parkedAt: at, answers: [], action: "accept" }, url);
+      assert.equal(response.status, 200, await response.clone().text());
+      assert.deepEqual(labelsOf("15").sort(), ["ai-generated", "bug"]);
+      assert.equal(gh.labels.has("ai-generated"), true);
+      assert.equal(gh.issues.get("15")!.body, DRAFT);
+    } finally {
+      aiLabel = undefined;
+    }
   });
 
   test("Reject leaves the labels and the description unchanged", async () => {

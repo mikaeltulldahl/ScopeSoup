@@ -247,6 +247,20 @@ export function reviewSettings(config: Pick<ProjectConfig, "review">): ReviewCon
   return config.review ?? { shouldFindings: "fix" };
 }
 
+/** The label on Items an AI made or rewrote (#129; decision 97). A project setting. Absent: off. */
+export interface LabelsConfig {
+  /** The label's name, or false for none. */
+  aiGenerated: string | false;
+}
+
+/** The name `labels.aiGenerated: true` stands for. */
+export const AI_LABEL_DEFAULT = "ai-generated";
+
+/** The label to put on an Item an AI made or rewrote: its name, or undefined when the project keeps none. */
+export function aiLabelOf(config: Pick<ProjectConfig, "labels">): string | undefined {
+  return config.labels?.aiGenerated || undefined;
+}
+
 /** Whether this machine pushes agents' images: `media.push`, in multiplayer only. */
 export function mediaShared(config: Pick<ProjectConfig, "media" | "multiplayer">): boolean {
   return mediaSettings(config).push && config.multiplayer;
@@ -358,6 +372,8 @@ export interface ProjectConfig {
   media?: MediaConfig;
   /** What a reviewer's `should` findings do. Absent: `reviewSettings`' default. */
   review?: ReviewConfig;
+  /** The label on Items an AI made or rewrote. Absent: none (`aiLabelOf`). */
+  labels?: LabelsConfig;
   /** This machine's resources (`resources`) and the shared ones (`sharedResources`), in that order. Absent: none. */
   resources?: ResourceConfig[];
   claude: ClaudeConfig;

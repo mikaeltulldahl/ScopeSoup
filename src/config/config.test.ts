@@ -591,3 +591,15 @@ test("review.shouldFindings: \"fix\" (the default) or \"draft\"; anything else i
   const wrong = read({ shouldFindings: "later", other: 1 });
   assert.deepEqual(wrong.ok ? [] : wrong.errors, ['review: unknown key "other". Known keys: shouldFindings.', 'review.shouldFindings must be one of "fix", "draft".']);
 });
+
+test("labels.aiGenerated: false (the default), true (\"ai-generated\") or a label name; anything else is refused", () => {
+  const base = { project: "synthetic", machineName: "laptop-a", repoPath: "/srv/clone", version: 1 };
+  const read = (labels: unknown) => validateConfig({ ...base, labels }, "/srv/scopesoup");
+  assert.deepEqual((read({ aiGenerated: true }) as { config: { labels: unknown } }).config.labels, { aiGenerated: "ai-generated" });
+  assert.deepEqual((read({ aiGenerated: " by-ai " }) as { config: { labels: unknown } }).config.labels, { aiGenerated: "by-ai" });
+  assert.deepEqual((read({ aiGenerated: false }) as { config: { labels: unknown } }).config.labels, { aiGenerated: false });
+  assert.equal((validateConfig(base, "/srv/scopesoup") as { config: { labels?: unknown } }).config.labels, undefined);
+  for (const bad of ["", "two words", "a,b", "scopesoup:x", 3]) assert.equal(read({ aiGenerated: bad }).ok, false, String(bad));
+  const unknown = read({ other: 1, aiGenerated: false });
+  assert.deepEqual(unknown.ok ? [] : unknown.errors, ['labels: unknown key "other". Known keys: aiGenerated.']);
+});

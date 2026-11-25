@@ -139,6 +139,20 @@ function storeWith(job: Job): Store {
 const message = (body: Record<string, unknown>): string => (body.error as { message: string }).message;
 
 describe("a proposed restructuring on a writable host", { concurrency: 4 }, () => {
+  test("with the AI label on, every part made carries it", async () => {
+    const store = storeWith(proposalJob());
+    const host = fakeHost();
+    const board = await serve(store, { restructure: hostOf(host, store, { verificationInBody: true }), aiLabel: () => "ai-generated" });
+    try {
+      const accepted = await board.post({ ref: KEY, action: "accept" });
+      assert.equal(accepted.status, 200, JSON.stringify(accepted.body));
+      assert.equal(host.made.length, PARTS.length);
+      for (const made of host.made) assert.deepEqual(made.labels, ["ai-generated"]);
+    } finally {
+      await board.stop();
+    }
+  });
+
   test("into children under an umbrella: on the item page with its parts; accepting makes them in order as children, with the decisions carried over", async () => {
     const store = storeWith(proposalJob());
     const host = fakeHost();

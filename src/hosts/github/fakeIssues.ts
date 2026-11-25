@@ -226,6 +226,7 @@ export function fakeIssues(repo: string, numbers: number[], others: { repo: stri
         const number = Math.max(...[...issues.values()].map((issue) => issue.number)) + 1;
         const issue = add(repo, number, 9000 + number);
         Object.assign(issue, { title: String(body?.title), body: typeof body?.body === "string" ? body.body : null, updated_at: tick() });
+        if (Array.isArray(body?.labels)) issue.labels = body.labels.map((name) => ({ name: String(name) }));
         issues.set(String(number), issue);
         answer = [201, structuredClone(issue)];
       } else if (method === "POST" && own && rest[1] === "sub_issues" && rest.length === 2) {
