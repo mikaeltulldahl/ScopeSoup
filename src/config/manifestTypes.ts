@@ -1,7 +1,7 @@
 // The manifest's entries (`manifest.ts`), with no imports, so the board's build can read the offboarding plan's types.
 
 /** What a project file holds of Scope Soup's. */
-export type ProjectChange = "claude-md-section" | "plugin-settings" | "setup-script";
+export type ProjectChange = "claude-md-section" | "readme-line" | "plugin-settings" | "setup-script";
 
 export type ManifestThing =
   /** A folder Scope Soup made outside the config folder: its clone, the workspaces, the streams, the data folder. */

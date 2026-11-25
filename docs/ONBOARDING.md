@@ -30,7 +30,7 @@ It shows one summary with the whole file and does nothing before one yes. Then i
 
 A person who joins a project that a teammate already runs with Scope Soup runs the same skill on their own machine, in a session in their clone of the project. The project's shared settings are on its meta ref already, so the skill writes only that machine's private `scopesoup.config.json` (its name, where the clones are, for Items the person's name, email and own prefix, what the machine may spend). It runs `pnpm config:check`, which fetches the meta ref and checks the private file with the project's settings. Nothing is committed and nothing is pushed: `pnpm settings:init` refuses when the settings exist, and says the person is joining. The level and every other project setting are as the team set them; a change on the Settings page is in effect for everyone, and History says who made it.
 
-Two optional steps, each only on the person's yes: the plugin in the project's `.claude/settings.json`, for teammates, and the Scope Soup section in the project's `CLAUDE.md`. That section lists the item commands and sets no rules for sessions.
+Three optional steps, each only on the person's yes: the plugin in the project's `.claude/settings.json`, for teammates, the Scope Soup section in the project's `CLAUDE.md`, and a short part at the end of the `README.md` (if there is one) saying how to open the board. The section opens with how to open the board, lists the item commands and sets no rules for sessions.
 
 The skill does not ask for a check command, the remote's URL or anything else a higher level needs. The Settings page asks for those when the level is picked.
 
@@ -75,7 +75,7 @@ Everything Scope Soup adds is a file or state that reads without Scope Soup: a c
 - **Work in progress:** `scopesoup/*` branches on the remote and in the clones, open pull requests Scope Soup opened (a batch's pull request and `scopesoup/batch-...` branch left after a failure among them). Anything not merged is kept unless the person says so for that group's kept entries too.
 - **Items:** exported first as Markdown files (one per Item, with its log) and the shared settings; then `refs/scopesoup/meta`, `refs/scopesoup/merge-queue` and `refs/scopesoup/resources/*` are deleted on the remote. Exporting as GitHub issues is not built.
 - **On GitHub:** the labels Scope Soup created. Its comments stay: they are history.
-- **In the project:** the CLAUDE.md section, the plugin lines and the setup script, taken out as a patch the person applies and commits. Their checkout is not touched.
+- **In the project:** the CLAUDE.md section, the README part, the plugin lines and the setup script, taken out as a patch the person applies and commits. Their checkout is not touched.
 - **On this machine:** the `.v*` copies, worktrees, streams, data folder, Scope Soup's clone, and the config folder last. Pool clones are the person's and stay. The installation and the plugin (`/plugin uninstall scopesoup@scopesoup`) are the person's to remove.
 
 The project's history (merged commits, closed issues and pull requests, comments) is never rewritten.

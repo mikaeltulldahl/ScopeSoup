@@ -2,7 +2,7 @@
 //
 //   pnpm offboard [--config <scopesoup.config.json>] [--data <folder>]            the plan, grouped; nothing is changed
 //   pnpm offboard --remove work,items,github,project,machine [--include-kept work,...] [--out <folder>]
-//   pnpm offboard record setup-script|claude-md|plugin-settings [--config <scopesoup.config.json>]
+//   pnpm offboard record setup-script|claude-md|readme-line|plugin-settings [--config <scopesoup.config.json>]
 //
 // Without --remove it only shows the plan. With it, only the groups named are acted on, and in each only the entries whose
 // default is "remove"; --include-kept names the groups whose kept entries (unmerged branches, open pull requests, folders with
@@ -21,11 +21,11 @@ import { act, reportText } from "./act.ts";
 import { githubPort } from "./github.ts";
 import { chosen, GROUPS, offboardPlan, planText, type Group, type OffboardPlan } from "./plan.ts";
 import { defaultOutFolder, readSetup, scan, type OffboardGitHub, type OffboardSetup } from "./scan.ts";
-import { CLAUDE_MD, PLUGIN_SETTINGS, SETUP_SCRIPT } from "./projectFiles.ts";
+import { CLAUDE_MD, PLUGIN_SETTINGS, README, SETUP_SCRIPT } from "./projectFiles.ts";
 
 export const INSTALL = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 
-const USAGE = "Usage: pnpm offboard [--config <scopesoup.config.json>] [--data <folder>] [--remove <groups>|all] [--include-kept <groups>|all] [--out <folder>]\n       pnpm offboard record setup-script|claude-md|plugin-settings [--config <scopesoup.config.json>]";
+const USAGE = "Usage: pnpm offboard [--config <scopesoup.config.json>] [--data <folder>] [--remove <groups>|all] [--include-kept <groups>|all] [--out <folder>]\n       pnpm offboard record setup-script|claude-md|readme-line|plugin-settings [--config <scopesoup.config.json>]";
 
 export interface PlanOptions {
   git?: Git;
@@ -109,6 +109,7 @@ export async function offboard(configFile: string, options: RunOptions): Promise
 export function recordThings(what: string): ManifestThing[] | null {
   if (what === "setup-script") return [{ kind: "project-file", path: SETUP_SCRIPT, change: "setup-script" }, { kind: "branch", branch: "scopesoup/onboard", what: "the setup script, for the person to merge" }];
   if (what === "claude-md") return [{ kind: "project-file", path: CLAUDE_MD, change: "claude-md-section" }];
+  if (what === "readme-line") return [{ kind: "project-file", path: README, change: "readme-line" }];
   if (what === "plugin-settings") return [{ kind: "project-file", path: PLUGIN_SETTINGS, change: "plugin-settings" }];
   return null;
 }

@@ -182,6 +182,7 @@ Show, in plain words:
 - What the person does themselves: set `SCOPESOUP_GITHUB_TOKEN` for a github host, or for the import; `SCOPESOUP_JIRA_TOKEN` for a Jira host (the variable is named, its value never asked for).
 - A recommendation, when the remote is on GitHub (only said, never done by you): protect the main branch in the repository's settings on GitHub (no force pushes, and required status checks if the project has CI). It is the one guard that holds on the remote whatever an agent CLI can or cannot refuse: a role on GitHub Copilot CLI cannot be refused a flag such as `--no-verify` or `--force`. The board shows one dismissable warning when a GitHub remote's main branch has no protection.
 - On Windows, an optional shortcut (step 6c), offered as: "A Start menu shortcut 'Scope Soup – <project>' that starts Scope Soup and opens the board (also on the desktop? start at login?)". Say it needs no admin rights and no PATH change, goes in the person's own folders, and is removed by offboarding. Not offered elsewhere (`scopesoup open` still works there).
+- Optional, only if the project has a `README.md` (offer nothing otherwise): "A short part at the end of README.md saying how to open the board (`scopesoup open`)" (step 6d). Say offboarding removes it again.
 - Two optional steps, each only if the person picks it: the plugin in the project's `.claude/settings.json` (step 8), and the Scope Soup section in the project's `CLAUDE.md` (step 9).
 
 Ask once: "Do all of this?" Change the plan if they correct it and ask again. Do nothing until a clear yes.
@@ -253,6 +254,10 @@ pnpm --silent --dir "SCOPESOUP" shortcut --name "<project>" --repo "<the person'
 ```
 
 It writes "Scope Soup – <project>" into the person's Start menu (and the desktop, and the Startup folder, when asked) and records each file on the manifest. If it says there is no launcher, run `setup-home` (step 6) first.
+
+## 6d. The README part (optional)
+
+Only when the person picked it in the summary and the project's clone has a `README.md` (never make one). Append `SCOPESOUP/plugins/scopesoup/readme-line.md` to it as it is, after a blank line. Never copy its text into this skill, read it from the project clone, or write a path into it. The person commits it. Then note it for offboarding: `pnpm --silent --dir "SCOPESOUP" offboard record readme-line --config "<absolute path to scopesoup.config.json>"`.
 
 ## 7. How to start Scope Soup
 

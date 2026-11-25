@@ -20,10 +20,11 @@ describe("manifest", () => {
       JSON.stringify({ kind: "label", repo: "Owner/Name", name: "ScopeSoup:Claimed", at: "y", by: "scopesoup" }),
       JSON.stringify({ kind: "something-new", path: "x" }),
       JSON.stringify({ kind: "project-file", path: "CLAUDE.md", change: "claude-md-section" }),
+      JSON.stringify({ kind: "project-file", path: "README.md", change: "readme-line" }),
       "",
     ].join("\n");
     const entries = parseManifest(text);
-    assert.deepEqual(entries.map((entry) => entry.kind), ["ref", "label", "project-file"]);
+    assert.deepEqual(entries.map((entry) => entry.kind), ["ref", "label", "project-file", "project-file"]);
     assert.equal(entries[1]?.kind === "label" && entries[1].at, "x");
   });
 

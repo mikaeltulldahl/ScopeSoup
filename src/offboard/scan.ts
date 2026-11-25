@@ -14,7 +14,7 @@ import { backupsOf } from "../config/write.ts";
 import { META_REF, SETTINGS_FILE } from "../hosts/metaBranch/settings.ts";
 import type { Git } from "../orchestrator/process.ts";
 import type { Found, FoundBranch, FoundFolder, FoundLocalBranch, FoundPull } from "./plan.ts";
-import { CLAUDE_MD, PLUGIN_SETTINGS, SECTION_HEADING, SETUP_SCRIPT, withoutPluginLines } from "./projectFiles.ts";
+import { CLAUDE_MD, PLUGIN_SETTINGS, README, SECTION_HEADING, SETUP_SCRIPT, withoutPluginLines, withoutReadmePart } from "./projectFiles.ts";
 
 /** What offboarding reads and changes on GitHub. The real one is `github.ts`; tests give a fake. */
 export interface OffboardGitHub {
@@ -220,6 +220,8 @@ export async function scan(setup: OffboardSetup, options: ScanOptions): Promise<
     const show = (path: string) => ok(git, ["show", `${mainSha}:${path}`], repo);
     const instructions = await show(CLAUDE_MD);
     if (instructions !== null && instructions.split(/\r?\n/).some((line) => line.trimEnd() === SECTION_HEADING)) projectFiles.push({ path: CLAUDE_MD, change: "claude-md-section" });
+    const readme = await show(README);
+    if (readme !== null && withoutReadmePart(readme) !== null) projectFiles.push({ path: README, change: "readme-line" });
     const plugin = await show(PLUGIN_SETTINGS);
     if (plugin !== null && withoutPluginLines(plugin) !== null) projectFiles.push({ path: PLUGIN_SETTINGS, change: "plugin-settings" });
     if ((await show(SETUP_SCRIPT)) !== null) projectFiles.push({ path: SETUP_SCRIPT, change: "setup-script" });

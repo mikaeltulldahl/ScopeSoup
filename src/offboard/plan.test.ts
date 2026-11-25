@@ -24,7 +24,7 @@ const found = (patch: Partial<Found> = {}): Found => ({
     labels: ["bug", "scopesoup:claimed", "scopesoup:needs-decision", "scopesoup:review", "priority:major", "priority:minor", "moved-to-scopesoup"],
     pulls: [{ number: 41, title: "Batch 3", head: "scopesoup/batch-3-abcdef0" }],
   },
-  projectFiles: [{ path: "CLAUDE.md", change: "claude-md-section" }, { path: ".scopesoup/scopesoup-setup.mjs", change: "setup-script" }],
+  projectFiles: [{ path: "CLAUDE.md", change: "claude-md-section" }, { path: "README.md", change: "readme-line" }, { path: ".scopesoup/scopesoup-setup.mjs", change: "setup-script" }],
   folders: [
     { path: "/work/shop-scopesoup/repo", what: "Scope Soup's clone of the project", exists: true, holdsWork: "commits on a branch that no remote has" },
     { path: "/work/shop-scopesoup/data", what: "the data folder", exists: true },
@@ -63,7 +63,7 @@ describe("offboarding plan", () => {
     assert.equal(all.get("comments")?.action.do, "none");
     // The project's files, as a patch.
     assert.deepEqual(plan.groups.find((group) => group.group === "project")?.entries.map((entry) => entry.action), [
-      { do: "patch", path: "CLAUDE.md", delete: false }, { do: "patch", path: ".scopesoup/scopesoup-setup.mjs", delete: true },
+      { do: "patch", path: "CLAUDE.md", delete: false }, { do: "patch", path: "README.md", delete: false }, { do: "patch", path: ".scopesoup/scopesoup-setup.mjs", delete: true },
     ]);
     // This machine: the copies, the folders, the config folder last; the pool clone kept; the installation and the plugin are yours.
     const machine = plan.groups.find((group) => group.group === "machine")?.entries ?? [];
