@@ -76,6 +76,8 @@ a.project-repo:hover { color: var(--bar-text); text-decoration: underline; }
 .top button.new-item { order: 4; }
 @media (min-width: 720px) { .top button.new-item { order: 0; } }
 .top nav a { padding: 6px 7px; border-radius: 6px; white-space: nowrap; color: var(--bar-muted); font-weight: 550; }
+.top nav a.cog { display: inline-flex; align-items: center; padding: 6px 8px; }
+.top nav a.cog svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linejoin: round; }
 .top nav a:hover { color: var(--bar-text); }
 .top nav a[aria-current="page"] { background: rgba(255, 255, 255, 0.13); color: #fff; }
 .top a:focus-visible, .top button:focus-visible { outline-color: var(--brand); }
