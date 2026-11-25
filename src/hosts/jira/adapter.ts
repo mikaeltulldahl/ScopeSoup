@@ -97,6 +97,8 @@ export interface JiraHost extends Host {
   thread(ref: Ref): Promise<JiraThread>;
   /** The same through the trust rule, as the conventions read it. */
   read(ref: Ref): Promise<JiraRead>;
+  /** The project's assignable users (asked every five minutes). */
+  people(): Promise<Actor[]>;
   write?: WritePort;
   /** What reading the issue's description simplified, as of its last read (node or macro names); empty when nothing. */
   simplified(id: string): string[];
@@ -245,18 +247,29 @@ export function createJiraHost(config: JiraConfig): JiraHost {
    * deployments) and the configured `answerers`, lower case. Read again after five minutes; a failed read keeps the last good list.
    */
   const configured = new Set((config.answerers ?? []).map((id) => id.toLowerCase()));
-  let assignable: { ids: Set<string>; at: number } | null = null;
-  async function answerers(): Promise<Set<string>> {
-    if (!assignable || now() - assignable.at > 5 * 60_000) {
-      try {
-        const users = await client.get<JiraUser[]>(`${api}/user/assignable/search?project=${encodeURIComponent(scope.project)}&maxResults=1000`);
-        assignable = { ids: new Set((Array.isArray(users) ? users : []).map((user) => actorOf(user).id.toLowerCase())), at: now() };
-      } catch (error) {
-        log(`Jira: could not read who may be assigned in ${scope.project}, so only host.answerers may answer until it can: ${error instanceof Error ? error.message : String(error)}`);
-        if (assignable) assignable.at = now();
-      }
+  let assignable: { users: Actor[]; at: number } | null = null;
+  /** The project's assignable users, read again after five minutes; a failed read keeps the last good list (and says why it failed). */
+  async function readAssignable(): Promise<string | null> {
+    if (assignable && now() - assignable.at <= 5 * 60_000) return null;
+    try {
+      const users = await client.get<JiraUser[]>(`${api}/user/assignable/search?project=${encodeURIComponent(scope.project)}&maxResults=1000`);
+      assignable = { users: (Array.isArray(users) ? users : []).map((user) => actorOf(user)), at: now() };
+      return null;
+    } catch (error) {
+      if (assignable) assignable.at = now();
+      return error instanceof Error ? error.message : String(error);
     }
-    return new Set([...configured, ...(assignable?.ids ?? [])]);
+  }
+  async function answerers(): Promise<Set<string>> {
+    const problem = await readAssignable();
+    if (problem !== null) log(`Jira: could not read who may be assigned in ${scope.project}, so only host.answerers may answer until it can: ${problem}`);
+    return new Set([...configured, ...(assignable?.users ?? []).map((user) => user.id.toLowerCase())]);
+  }
+  /** Who may be assigned in the project, for the board's Claim (the picked person by account id, user name or display name). */
+  async function people(): Promise<Actor[]> {
+    const problem = await readAssignable();
+    if (!assignable) throw new Error(`could not read who may be assigned in ${scope.project}: ${problem ?? "no answer"}`);
+    return assignable.users;
   }
 
   /**
@@ -385,6 +398,7 @@ export function createJiraHost(config: JiraConfig): JiraHost {
     ...(write ? { write } : {}),
     thread,
     read,
+    people,
     simplified: (id) => simplifiedByKey.get(id) ?? [],
     stats: () => client.stats(),
   };

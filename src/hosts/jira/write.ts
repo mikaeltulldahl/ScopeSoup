@@ -417,13 +417,14 @@ export function createJiraWrite(deps: JiraWriteDeps): WritePort {
 
     /**
      * A person's hand-back: a comment that says it, with the branch and its tip in its property; then the re-read must count it.
-     * The branch name is shown in a code span and the note is inert already.
+     * The branch name is shown in a code span and the note is inert already. `person`: the hand-back goes through this token for
+     * someone else (the board's picked person); the comment names them, inert already, and its property keeps who they are.
      */
-    async recordHandback(subject, { sha, branch, note }) {
-      const markdown = `**Handed back** on \`${branch.replaceAll("`", "")}\` (${sha.slice(0, 9)}) for Scope Soup's review.${note ? `
+    async recordHandback(subject, { sha, branch, note, person }) {
+      const markdown = `**Handed back**${person ? ` by ${person.name}` : ""} on \`${branch.replaceAll("`", "")}\` (${sha.slice(0, 9)}) for Scope Soup's review.${note ? `
 
 ${note}` : ""}`;
-      const property = { v: 1, kind: HANDBACK_KIND, sha, branch, ...(note ? { note } : {}) };
+      const property = { v: 1, kind: HANDBACK_KIND, sha, branch, ...(note ? { note } : {}), ...(person ? { person: { id: person.id, name: person.name } } : {}) };
       checkSize(subject, "The hand-back", markdown, property);
       await postComment(subject, markdown, property);
       if (!(await deps.read(subject)).handbacks.some((each) => each.sha === sha && each.branch === branch)) throw new Error(`Jira took the hand-back of ${subject.id} but it does not show as one.`);

@@ -32,6 +32,11 @@ export interface Backend {
   agentClaim?: (ref: Ref) => Promise<string | undefined>;
   /** Jira: waits the agents' claim settle time, so a claim written just before an assignee showed can be seen. */
   settle?: () => Promise<void>;
+  /**
+   * Jira: the writes go through another account's token (the server's, for the board's picked person), so the host does not say
+   * who acted: a hand-back's comment and property name the person, and a release always leaves a comment that names them.
+   */
+  onBehalf?: boolean;
   work: WorkPort;
   write: WritePort;
   now: () => Date;
@@ -287,7 +292,7 @@ export async function handBackItem(backend: Backend, name: string, input: HandBa
     const { write } = backend;
     if (!write.recordHandback || !write.setAssignees) throw new Refused(`Items cannot be handed back on ${backend.host}: it is read-only here.`);
     // The hand-back comment first: until the assignee is taken off, nothing adopts it.
-    await write.recordHandback(ref, { sha, branch, ...(note ? { note: inertText(note) } : {}) });
+    await write.recordHandback(ref, { sha, branch, ...(note ? { note: inertText(note) } : {}), ...(backend.onBehalf ? { person: { id: backend.who, name: inertText(shown(backend)) } } : {}) });
     await write.setAssignees(ref, [], [backend.who]);
     return { ref, shared: "shared", message: `Handed back ${wording(item)} on ${branch} (${sha.slice(0, 9)}), with a comment on Jira, and unassigned. Scope Soup reviews it next, then checks and merges it.` };
   }
@@ -322,7 +327,7 @@ export async function releaseItem(backend: Backend, name: string, note?: string)
     const jira = backend.kind === "jira";
     // Jira names people by account id: the comment names them as people read them, and the text goes out inert.
     const said = `Released by ${shown(backend)}${mine ? "" : `, held by ${jira ? holder.actor.name : holder.actor.id}`}${text ? `: ${text}` : "."}`;
-    if ((text || !mine) && backend.write.comment) await backend.write.comment(ref, jira ? inertText(said) : said);
+    if ((text || !mine || backend.onBehalf) && backend.write.comment) await backend.write.comment(ref, jira ? inertText(said) : said);
     // Jira: an agent's claim may stand beside the assignee; then no agent picks it up, that one has it.
     const agent = jira ? await backend.agentClaim?.(ref) : undefined;
     return { ref, shared: "shared", message: `${shown(backend)} released ${whose}${wording(item)} (unassigned). ${agent ? `${agent}, an agent, holds a claim on it.` : "An agent may pick it up."}` };

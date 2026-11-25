@@ -20,7 +20,7 @@ import { FROM_CLAUDE_CODE } from "../model/people.ts";
 import type { Git } from "../orchestrator/process.ts";
 import { realGit } from "../orchestrator/process.ts";
 import type { JiraHost } from "../hosts/jira/index.ts";
-import type { Ref } from "../model/types.ts";
+import { jiraBackend } from "./jiraBackend.ts";
 import type { Host } from "../ports/host.ts";
 import { gitRemoteUrl } from "../config/mergeQueue.ts";
 import { DEFAULT_PORT } from "../server/server.ts";
@@ -222,17 +222,6 @@ interface Opened {
   kind: "metaBranch" | "github" | "jira";
 }
 
-/** How long a person's claim on Jira waits for an agent's claim written meanwhile: the agents' own settle time. */
-const JIRA_CLAIM_SETTLE_MS = 2000;
-
-/** Jira: the agent whose live claim stands on the issue, if any. */
-function jiraAgentClaim(host: JiraHost, now: () => Date) {
-  return async (ref: Ref): Promise<string | undefined> => {
-    const live = (await host.read(ref)).claims.filter((each) => !each.released && Date.parse(each.until) > now().getTime());
-    return live[0] ? `scopesoup on ${live[0].machine}` : undefined;
-  };
-}
-
 async function open(deps: CliDeps, setup: Setup, values: { as?: string; server?: string; "no-server"?: boolean }, reading = false): Promise<Opened> {
   const now = deps.now ?? (() => new Date());
   const meta = setup.settings.meta;
@@ -260,11 +249,7 @@ async function open(deps: CliDeps, setup: Setup, values: { as?: string; server?:
     // On Jira, as on GitHub, the person is the token's account: the assignee is whoever the token acts as.
     const me = await host.info.whoami();
     if (values.as && values.as !== me.id && values.as !== me.name) throw new Refused(`On Jira the item is held by the token's account, ${me.name}; --as ${values.as} cannot hold it.`);
-    const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((done) => setTimeout(done, ms)));
-    const backend: Backend = {
-      kind: "jira", host: host.info.id, who: me.id, name: me.name, work: host.work, write: host.write ?? {}, now, mainBranch: setup.mainBranch, branches: branchesOf(deps, setup),
-      agentClaim: jiraAgentClaim(host, now), settle: () => sleep(JIRA_CLAIM_SETTLE_MS),
-    };
+    const backend = jiraBackend(host, { person: me, now, mainBranch: setup.mainBranch, branches: branchesOf(deps, setup), ...(deps.sleep ? { sleep: deps.sleep } : {}) });
     return { doer: hostDoer(backend, host), via: `Jira ${jira.project} as ${me.name}`, kind: "jira" };
   }
   const github = setup.settings.github;

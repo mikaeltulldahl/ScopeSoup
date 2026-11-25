@@ -5,7 +5,7 @@
 // - the log: the issue property `scopesoup.log`; Accept and Overturn verdicts: the issue property `scopesoup.overturns`.
 // - needs-decision: the label `scopesoup-needs-decision`; a follow-up: an issue link, and `scopesoup.followUp` to find it again.
 // - a person's hand-back (`scopesoup item handback`): a comment whose property (`kind: "handback"`) names the Item's branch and its
-//   tip. Scope Soup's `revision` log line that adopts it names the comment (`handback`), which supersedes it and every earlier one.
+//   tip; the board's, posted by the token's own account for the picked person, also names them (`person`). Scope Soup's `revision` log line that adopts it names the comment (`handback`), which supersedes it and every earlier one.
 //
 // The trust rule, as on GitHub: a comment property counts only on a comment whose author is the token's own account (Jira lets only
 // a comment's author and admins edit it and its properties); an answer, and an `A1:` reply, also from any person who can comment
@@ -175,7 +175,10 @@ export function readJiraThread(host: string, subject: Ref, jira: JiraThread, sel
     const fromWhom = self !== null && user.login === self ? true : !comment.author.bot && options.handbackFrom?.(comment) === true;
     if (handback && /^[0-9a-f]{40}([0-9a-f]{24})?$/.test(str(handback.sha)) && str(handback.branch) === handbackBranch(subject) && fromWhom) {
       const note = str(handback.note);
-      handbacks.push({ id: comment.id, by: comment.author, at: comment.created, sha: str(handback.sha), branch: str(handback.branch), ...(note ? { note } : {}) });
+      // The token's own hand-back for a person (the board's, through the server) names them: it is theirs.
+      const person = isObject(handback.person) && self !== null && user.login === self ? handback.person : null;
+      const by: Actor = person && str(person.id) && str(person.name) ? { id: str(person.id), name: str(person.name) } : comment.author;
+      handbacks.push({ id: comment.id, by, at: comment.created, sha: str(handback.sha), branch: str(handback.branch), ...(note ? { note } : {}) });
     }
     if (COMMENT_KINDS.has(kind) && trustedAuthor(comment, self, kind, mayAnswer)) {
       const { kind: _kind, text, ...rest } = property as Record<string, unknown>;
