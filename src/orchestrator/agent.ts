@@ -37,7 +37,14 @@ export interface LaunchRequest {
   partial: boolean;
   /** The environment the child would inherit; the provider may take out what must not reach it. */
   env: Env;
+  /** Where the runner writes the session's stdout. A provider may keep a file of its own beside it (`<streamPath>.<suffix>`). */
+  streamPath?: string;
+  /** The Node program that runs Scope Soup, for a provider that runs a helper script of its own with it. */
+  nodePath?: string;
 }
+
+/** Reads a provider's file beside a finished stream (`<streamPath><suffix>`); undefined when there is none. */
+export type BesideStream = (suffix: string) => string | undefined;
 
 /** A child process to spawn, never through a shell. */
 export interface Launch {
@@ -59,6 +66,10 @@ export interface AgentResult {
   structuredOutput?: unknown;
   hasStructuredOutput: boolean;
   costUsd?: number;
+  /** Premium requests the agent's session used so far, for a plan that counts them. */
+  premiumRequests?: number;
+  /** AI credits the agent's session used so far, for a plan that counts them. */
+  aiCredits?: number;
   turns?: number;
   sessionId?: string;
   /** The commands (or tools) the CLI refused, as the command or the tool's name. */
@@ -124,8 +135,11 @@ export interface AgentProvider {
   // --- Starting and resuming ---
   /** The command line for one session, or one more turn of a session (`resume`). */
   launch(request: LaunchRequest): Launch;
-  /** A reader for one session's stdout. `root`: the folder it runs in; paths inside it are shown relative to it. */
-  reader(now: () => string, root?: string): EventReader;
+  /**
+   * A reader for one session's stdout. `root`: the folder it runs in; paths inside it are shown relative to it. `schema`: the
+   * answer's schema as given to `launch`, for a provider that checks the answer itself.
+   */
+  reader(now: () => string, root?: string, schema?: string): EventReader;
 
   // --- Command limits ---
   readonly commandLimit: CommandLimit;
@@ -136,6 +150,11 @@ export interface AgentProvider {
    * null when unsure. Decides the advice a person gets.
    */
   refusedProgram(refused: string, allowedTools: readonly string[]): string | null;
+  /**
+   * Why the CLI cannot hold a session of this role to the core rules (`docs/RULES.md`) with the role's allowedTools, or null
+   * when it can. The runner starts no session it gets a reason for. Absent: it always can.
+   */
+  refuses?(config: ProjectConfig, role: SessionRole): string | null;
 
   // --- Usage ---
   /**
@@ -149,6 +168,6 @@ export interface AgentProvider {
   replyIn(stream: string): string;
   /** Every tool call, oldest first. */
   toolCallsIn(stream: string, root?: string): ToolCall[];
-  /** The tokens the session used, when the stream says. */
-  tokensIn(stream: string): number | undefined;
+  /** The tokens the session used, when the stream (or the provider's file beside it, read with `beside`) says. */
+  tokensIn(stream: string, beside?: BesideStream): number | undefined;
 }

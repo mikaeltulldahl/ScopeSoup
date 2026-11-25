@@ -1,0 +1,10 @@
+{"type":"session.resume","data":{"selectedModel":"auto","autoTier":"balance","context":{"cwd":"C:\\work\\demo","gitRoot":"C:\\work\\demo","branch":"main"},"eventCount":22,"sessionWasActive":false},"timestamp":"2026-11-20T10:00:01.000Z"}
+{"type":"user.message","data":{"content":"In one short line: which command did you try to run before?"},"timestamp":"2026-11-20T10:00:02.000Z"}
+{"type":"assistant.turn_start","data":{"turnId":"0"},"timestamp":"2026-11-20T10:00:02.000Z"}
+{"type":"assistant.message_start","data":{"messageId":"m-4","phase":"final_answer"},"ephemeral":true,"timestamp":"2026-11-20T10:00:03.000Z"}
+{"type":"assistant.message_delta","data":{"messageId":"m-4","deltaContent":"`git tag demo-tag`"},"ephemeral":true,"timestamp":"2026-11-20T10:00:03.000Z"}
+{"type":"assistant.message","data":{"messageId":"m-4","model":"demo-model-flash","content":"`git tag demo-tag`","toolRequests":[],"turnId":"1","phase":"final_answer"},"timestamp":"2026-11-20T10:00:03.000Z"}
+{"type":"assistant.turn_end","data":{"turnId":"1"},"timestamp":"2026-11-20T10:00:04.000Z"}
+{"type":"session.usage_checkpoint","data":{"totalNanoAiu":72354000,"totalPremiumRequests":2},"timestamp":"2026-11-20T10:00:04.000Z"}
+{"type":"assistant.idle","data":{},"ephemeral":true,"timestamp":"2026-11-20T10:00:04.000Z"}
+{"type":"result","timestamp":"2026-11-20T10:00:04.000Z","sessionId":"00000000-0000-4000-8000-000000000003","exitCode":0,"usage":{"premiumRequests":2,"totalApiDurationMs":1300,"sessionDurationMs":6100,"codeChanges":{"linesAdded":0,"linesRemoved":0,"filesModified":[]}}}

@@ -23,7 +23,7 @@ export const SHARED_WHERE = `the project's shared settings (${SETTINGS_FILE} on 
 /** Top-level keys of the private file. `settings` is split by name below; `meta` is this machine's part of a meta branch host. */
 export const PRIVATE_KEYS: readonly string[] = [
   "version", "machineName", "repoPath", "remote", "remoteUrl", "realPaths", "ownClone", "keepAwake", "workspacesDir", "workspaces",
-  "streamsDir", "promptsDir", "claude", "meta", "jira", "settings", "resources",
+  "streamsDir", "promptsDir", "claude", "copilot", "meta", "jira", "settings", "resources",
 ];
 /** Top-level keys of the shared settings. */
 export const SHARED_KEYS: readonly string[] = [

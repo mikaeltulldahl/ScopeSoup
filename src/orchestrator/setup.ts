@@ -13,10 +13,12 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync,
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { commandText } from "../config/commandLine.ts";
 import { DEFAULT_SETUP_WATCH } from "../config/defaults.ts";
-import { allProviders } from "./providers/index.ts";
+import { defaultProvider, providerFor } from "./providers/index.ts";
 import type { ProjectConfig } from "../config/types.ts";
+import { ROLES } from "../config/types.ts";
+import { createCheckRunner } from "./checkRunner.ts";
 import type { RunCheck } from "./checkRunner.ts";
-import type { Git } from "./process.ts";
+import type { Git, ProcessControl } from "./process.ts";
 
 /** The record's name in the folder's git directory. */
 export const STAMP_FILE = "scopesoup-setup.json";
@@ -174,15 +176,25 @@ async function statusLines(git: Git, repo: string): Promise<string[]> {
   return status.stdout.split("\n").map((line) => line.trimEnd()).filter((line) => line !== "");
 }
 
-/** The environment the setup runs with: without Scope Soup's tokens and settings (SCOPESOUP_*) and without any agent provider's API key (`keyEnv`). */
-export function setupEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+/**
+ * The environment the setup runs with: without Scope Soup's tokens and settings (SCOPESOUP_*) and without the API key of the
+ * default provider and of each provider a role of `config` runs on (`keyEnv`). A provider's keys may be general ones
+ * (`GH_TOKEN`) that a project's setup needs, so they are taken out only while a role runs on that provider.
+ */
+export function setupEnv(env: NodeJS.ProcessEnv, config?: Pick<ProjectConfig, "roles">): NodeJS.ProcessEnv {
   const out: NodeJS.ProcessEnv = {};
-  const keys = new Set(allProviders().flatMap((provider) => provider.keyEnv.map((key) => key.toUpperCase())));
+  const providers = new Set([defaultProvider, ...(config ? ROLES.map((role) => providerFor(config as ProjectConfig, role)) : [])]);
+  const keys = new Set([...providers].flatMap((provider) => provider.keyEnv.map((key) => key.toUpperCase())));
   for (const [name, value] of Object.entries(env)) {
     if (/^SCOPESOUP_/i.test(name) || keys.has(name.toUpperCase())) continue;
     out[name] = value;
   }
   return out;
+}
+
+/** Runs `setupCommand` with `setupEnv` of the configuration in use at each run (a role may move to another provider meanwhile). */
+export function createSetupRunner(processes: ProcessControl, env: NodeJS.ProcessEnv, config: () => Pick<ProjectConfig, "roles"> | undefined, now: () => number = Date.now): RunCheck {
+  return (...args) => createCheckRunner(processes, setupEnv(env, config()), now, SETUP_ADVICE)(...args);
 }
 
 export interface SetupDeps {
