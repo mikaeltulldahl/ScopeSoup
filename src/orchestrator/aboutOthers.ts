@@ -1,5 +1,5 @@
-// Questions an agent asks about another Item than its own, and from triage a draft of that Item's description
-// (`aboutOthers` in its answer). Scope Soup, not the agent, writes them on that Item as triage's own draft and questions are
+// Questions an agent asks about another Item than its own, and from triage a rewrite of that Item's description
+// (`aboutOthers` in its answer). Scope Soup, not the agent, writes them on that Item as triage's own rewrite and questions are
 // written (`writeAboutOthers` in cycle.ts), once no session runs on it and nobody holds it. Until then they wait here, in the
 // store, by the other Item's ref key. Kept apart from the jobs, as overturns are, so the asker's job and the other Item's never race.
 
@@ -12,7 +12,7 @@ import type { Store } from "../store/store.ts";
 import type { Context } from "./context.ts";
 import type { AboutOther, Decision, Job } from "./jobs.ts";
 
-/** Questions (and a draft) waiting to be written on another Item. Agent text: data. */
+/** Questions (and a rewrite) waiting to be written on another Item. Agent text: data. */
 export interface WaitingAbout {
   /** Who asked, in words: "the implementor of A-12", "triage of A-3". */
   askedBy: string;
@@ -20,7 +20,7 @@ export interface WaitingAbout {
   from: string;
   /** Each question names who asked. */
   questions: Decision[];
-  draft?: string;
+  rewrite?: string;
   at: string;
 }
 
@@ -78,7 +78,7 @@ export function askedBefore(ctx: Context, other: WorkItem, question: Decision): 
   const same = (each: Decision) => sameDecision(asked, { question: each.question, options: optionTexts(each.options) });
   if ((readWaitingAbouts(ctx.deps.store)[key] ?? []).some((entry) => entry.questions.some(same))) return "it already waits to be asked there";
   const job = ctx.jobs[key];
-  if (job?.parked?.as === "needs-decision" && job.refine?.questions.some(same)) return "it is open there";
+  if (job?.parked?.as === "needs-decision" && job.rewrite?.questions.some(same)) return "it is open there";
   const answers = knownAnswers(ctx.deps.store);
   const hash = itemTextHash(other);
   const found = reusableAnswer(answers, other, question)
@@ -88,7 +88,7 @@ export function askedBefore(ctx: Context, other: WorkItem, question: Decision): 
 
 /**
  * Keeps an answer's questions about other Items, each naming who asked, until they are written on that Item. An unknown or closed
- * Item (or the asker's own) is dropped with an event; so is a draft that changes nothing with no question, and a question already
+ * Item (or the asker's own) is dropped with an event; so is a rewrite that changes nothing with no question, and a question already
  * open or answered there (`askedBefore`).
  */
 export function keepAboutOthers(ctx: Context, job: Job, role: "triage" | "implement", list: readonly AboutOther[] | undefined): void {
@@ -100,10 +100,10 @@ export function keepAboutOthers(ctx: Context, job: Job, role: "triage" | "implem
     const other = linkedItem(store, job.item, entry.item);
     if (!other || !isOpenItem(other)) {
       const why = other ? `it is ${other.state}` : "there is no such open Item other than its own";
-      ctx.commit("orchestrator.about_other_dropped", `The ${role === "triage" ? "triage" : "implementor"} of ${job.item.id} asked about ${JSON.stringify(entry.item.slice(0, 60))}, but ${why}: ${entry.questions.length} question(s)${entry.draft ? " and a draft" : ""} dropped.`, subject, { item: entry.item.slice(0, 200) });
+      ctx.commit("orchestrator.about_other_dropped", `The ${role === "triage" ? "triage" : "implementor"} of ${job.item.id} asked about ${JSON.stringify(entry.item.slice(0, 60))}, but ${why}: ${entry.questions.length} question(s)${entry.rewrite ? " and a rewrite" : ""} dropped.`, subject, { item: entry.item.slice(0, 200) });
       continue;
     }
-    const draft = entry.draft?.trim() && entry.draft.trim() !== (other.body ?? "").trim() ? entry.draft.trim() : undefined;
+    const rewrite = entry.rewrite?.trim() && entry.rewrite.trim() !== (other.body ?? "").trim() ? entry.rewrite.trim() : undefined;
     const questions: Decision[] = [];
     for (const each of entry.questions) {
       const question = { ...each, question: `${each.question.trim()} (asked by ${askedBy})` };
@@ -111,16 +111,16 @@ export function keepAboutOthers(ctx: Context, job: Job, role: "triage" | "implem
       if (!why) questions.push(question);
       else ctx.commit("orchestrator.about_other_dropped", `${askedBy[0]!.toUpperCase()}${askedBy.slice(1)} asked about ${other.ref.id} again: ${clip(each.question.trim(), 300)} Not asked again: ${why}.`, subject, { item: refKey(other.ref), again: true });
     }
-    if (questions.length === 0 && !draft) {
+    if (questions.length === 0 && !rewrite) {
       if (entry.questions.length === 0) ctx.commit("orchestrator.about_other_dropped", `Triage of ${job.item.id} rewrote ${other.ref.id}'s description as it already is, with no question: nothing to write.`, subject, { item: refKey(other.ref) });
       continue;
     }
     const key = refKey(other.ref);
     store.tx(() => {
       const waiting = readWaitingAbouts(store);
-      waiting[key] = [...(waiting[key] ?? []), { askedBy, from: subject, questions, ...(draft ? { draft } : {}), at: ctx.at }];
+      waiting[key] = [...(waiting[key] ?? []), { askedBy, from: subject, questions, ...(rewrite ? { rewrite } : {}), at: ctx.at }];
       writeWaitingAbouts(store, waiting);
-      ctx.commit("orchestrator.about_other_kept", `${askedBy[0]!.toUpperCase()}${askedBy.slice(1)} asked ${questions.length} question(s)${draft ? " and gave a rewrite of its description" : ""} about ${other.ref.id}; Scope Soup writes them there once no session runs on it and nobody holds it.`, key, { from: subject, questions: questions.length, draft: draft !== undefined });
+      ctx.commit("orchestrator.about_other_kept", `${askedBy[0]!.toUpperCase()}${askedBy.slice(1)} asked ${questions.length} question(s)${rewrite ? " and gave a rewrite of its description" : ""} about ${other.ref.id}; Scope Soup writes them there once no session runs on it and nobody holds it.`, key, { from: subject, questions: questions.length, rewrite: rewrite !== undefined });
     });
   }
 }

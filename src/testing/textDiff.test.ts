@@ -1,4 +1,4 @@
-// The unified line diff behind the triage draft on the Item page (web/src/textDiff.ts).
+// The unified line diff behind the triage rewrite on the Item page (web/src/textDiff.ts).
 
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";

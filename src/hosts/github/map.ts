@@ -121,7 +121,7 @@ export function issueToWork(scope: Scope, issue: RestIssue, blockedBy: Ref[] = [
   const closed = issue.state === "closed";
   const abandoned = issue.state_reason === "not_planned" || issue.state_reason === "duplicate";
   const labels = labelNames(issue.labels);
-  // The needs-decision label is never read as state: `needsDecision` comes from the question and draft comments (conventions layer, `waitsForAnswer`).
+  // The needs-decision label is never read as state: `needsDecision` comes from the question and rewrite comments (conventions layer, `waitsForAnswer`).
   const item: WorkItem = {
     ref: workRef(scope, issue.number, issue.html_url),
     title: issue.title,

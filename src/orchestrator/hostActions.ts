@@ -11,7 +11,7 @@ import { overturnedBy, overturnItem, splitAssumptionId } from "./assumptions.ts"
 import { overturnsFor, takesOverturn } from "./overturns.ts";
 import { holdStands } from "../model/people.ts";
 import { refKey } from "../model/types.ts";
-import type { AnswerWrite, AssumptionWrite, DraftWrite, Host, QuestionWrite, WorkPatch } from "../ports/host.ts";
+import type { AnswerWrite, AssumptionWrite, RewriteWrite, Host, QuestionWrite, WorkPatch } from "../ports/host.ts";
 import { AlreadyAnswered } from "../ports/host.ts";
 import type { Store } from "../store/store.ts";
 import type { Actions } from "./ports.ts";
@@ -212,7 +212,7 @@ export function createHostActions(deps: HostActionsDeps): Actions {
       }
       : {}),
 
-    // Scope Soup's own edits of a GitHub issue (an Accept or Edit of a triage draft, the board's edit), written
+    // Scope Soup's own edits of a GitHub issue (an Accept or Edit of a triage rewrite, the board's edit), written
     // through. New text is made inert like all host text. Not on a host that keeps its own log (meta branch): the board writes there.
     ...(write?.editWork && !write.appendLog
       ? {
@@ -220,7 +220,7 @@ export function createHostActions(deps: HostActionsDeps): Actions {
           if (!mine(item)) return false;
           const was = wasSha(item);
           await write.editWork!(item, { body: inertText(text) });
-          const round = loadJobs(deps.store)[refKey(item)]?.refine?.round;
+          const round = loadJobs(deps.store)[refKey(item)]?.rewrite?.round;
           await logOnHost(item, "edited", { changed: ["description"], via: round ? `triage, round ${round}` : "triage", wasSha: was });
           return true;
         },
@@ -315,12 +315,12 @@ export function createHostActions(deps: HostActionsDeps): Actions {
         },
       }
       : {}),
-    // A draft's label changes on GitHub at Accept: one call per label, the re-read, a log line; the re-read goes into the store.
+    // A rewrite's label changes on GitHub at Accept: one call per label, the re-read, a log line; the re-read goes into the store.
     ...(write?.changeLabels
       ? {
         async changeLabels(item: Ref, change: LabelChange) {
           if (!mine(item)) return null;
-          // Scope Soup's own labels are its code's to set, never a draft's.
+          // Scope Soup's own labels are its code's to set, never a rewrite's.
           const done = await write.changeLabels!(item, change.add.filter((name) => !isOwnLabel(name)), change.remove.filter((name) => !isOwnLabel(name)));
           // The AI label is the project's own choice, not one of the repository's labels a triage may pick: put on if the host kept it out.
           const ai = aiLabelOf(deps.config());
@@ -333,7 +333,7 @@ export function createHostActions(deps: HostActionsDeps): Actions {
             }
           }
           if (done.added.length > 0 || done.removed.length > 0) {
-            const round = loadJobs(deps.store)[refKey(item)]?.refine?.round;
+            const round = loadJobs(deps.store)[refKey(item)]?.rewrite?.round;
             await logOnHost(item, "edited", { changed: ["labels"], via: round ? `triage, round ${round}` : "triage", ...(done.added.length > 0 ? { added: done.added } : {}), ...(done.removed.length > 0 ? { removed: done.removed } : {}) });
           }
           await reread(item);
@@ -342,15 +342,15 @@ export function createHostActions(deps: HostActionsDeps): Actions {
       }
       : {}),
 
-    // Each triage round's draft is a comment on GitHub; Accept first checks that the body is still the one it read.
-    ...(write?.postDraft && write.checkDraft
+    // Each triage round's rewrite is a comment on GitHub; Accept first checks that the body is still the one it read.
+    ...(write?.postRewrite && write.checkRewrite
       ? {
-        async postDraft(item: Ref, draft: DraftWrite) {
+        async postRewrite(item: Ref, rewrite: RewriteWrite) {
           if (!mine(item)) return null;
-          return write.postDraft!(item, { ...draft, draft: inertText(draft.draft) });
+          return write.postRewrite!(item, { ...rewrite, text: inertText(rewrite.text) });
         },
-        async checkDraft(item: Ref, id: string) {
-          if (mine(item)) await write.checkDraft!(item, id);
+        async checkRewrite(item: Ref, id: string) {
+          if (mine(item)) await write.checkRewrite!(item, id);
         },
       }
       : {}),

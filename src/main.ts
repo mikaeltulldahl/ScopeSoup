@@ -206,13 +206,13 @@ async function main(): Promise<void> {
   let keepAwake: KeepAwake | null = null;
   // Set below: the orchestrator's writable host, which a restructuring accepted on the board may make parts on.
   let restructureHost: Host | undefined;
-  // Set below: where an accepted triage draft replaces the issue's description (GitHub with writes on and the right remote).
+  // Set below: where an accepted triage rewrite replaces the issue's description (GitHub with writes on and the right remote).
   let description: { host: string; replace(item: Ref, text: string): Promise<boolean> } | undefined;
   // Set below: where the board's edits of a GitHub Item are written through (GitHub with writes on and the right remote).
   let hostEdit: { host: string; edit(item: Ref, patch: WorkPatch): Promise<boolean> } | undefined;
   // Set below: where the answers are answer comments (GitHub with writes on and the right remote).
-  let questions: { host: string; answer(item: Ref, to: string | null, answer: AnswerWrite): Promise<{ open: number } | null>; answerMany?(item: Ref, answers: { to: string | null; answer: AnswerWrite }[]): Promise<{ open: number } | null>; checkDraft?(item: Ref, draft: string): Promise<void> } | undefined;
-  // Set below: where a triage draft's label changes are written at Accept (GitHub with writes on and the right remote).
+  let questions: { host: string; answer(item: Ref, to: string | null, answer: AnswerWrite): Promise<{ open: number } | null>; answerMany?(item: Ref, answers: { to: string | null; answer: AnswerWrite }[]): Promise<{ open: number } | null>; checkRewrite?(item: Ref, rewrite: string): Promise<void> } | undefined;
+  // Set below: where a triage rewrite's label changes are written at Accept (GitHub with writes on and the right remote).
   let labels: { host: string; change(item: Ref, change: LabelChange): Promise<{ added: string[]; removed: string[] } | null> } | undefined;
   // Set below: where a person accepts and overturns the decisions implementors took themselves (the writable host).
   let assumptions: AssumptionHost[] | undefined;
@@ -270,7 +270,7 @@ async function main(): Promise<void> {
         },
       }];
     }
-    if (writable && actions.answerQuestion) questions = { host: writable.info.id, answer: actions.answerQuestion, ...(actions.answerQuestions ? { answerMany: actions.answerQuestions } : {}), ...(actions.checkDraft ? { checkDraft: actions.checkDraft } : {}) };
+    if (writable && actions.answerQuestion) questions = { host: writable.info.id, answer: actions.answerQuestion, ...(actions.answerQuestions ? { answerMany: actions.answerQuestions } : {}), ...(actions.checkRewrite ? { checkRewrite: actions.checkRewrite } : {}) };
     // Windows: the machine is kept from sleeping while sessions run or work waits (the project can switch it off).
     const awake = createKeepAwake({
       onChange: (holding) => store.appendEvent({ kind: "orchestrator.keep_awake", actor: "orchestrator", data: { holding, reason: holding ? "Keeping the machine awake: sessions run or work is waiting." : "Not keeping the machine awake: there is nothing to do." } }, iso()),

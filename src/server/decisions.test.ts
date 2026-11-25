@@ -184,7 +184,7 @@ test("a job stored with an old proposed rewrite shows no proposal, and none can 
   }
 });
 
-test("a triage's draft: keeping the recommendation accepts it in one action, the description changes and the old text stays in the history", async () => {
+test("a triage's rewrite: keeping the recommendation accepts it in one action, the description changes and the old text stays in the history", async () => {
   const made = await post("/api/items", { title: "Tide table units", body: "Tide table units." });
   const ref = made.body.ref as string;
   const subject = { host: "metaBranch", kind: "work" as const, id: ref.split(":").pop()! };
@@ -192,19 +192,19 @@ test("a triage's draft: keeping the recommendation accepts it in one action, the
   const question = { question: "Metric or imperial?", options: [{ label: "Metric", description: "Metres." }, { label: "Imperial", description: "Feet." }], recommendation: "Metric" };
   const job: Job = {
     item: subject, workspace: "w", branch: `scopesoup/${subject.id}`, step: "triage", failures: 0, fixRounds: 0, startedAt: at,
-    triage: { ready: true, size: "small", paths: [], hidesDecision: true, decision: question, decisions: [question], draft: "Show the tide table in metres." },
-    refine: { original: "Tide table units.", draft: "Show the tide table in metres.", questions: [question], round: 1 }, refineRounds: 1,
+    triage: { ready: true, size: "small", paths: [], hidesDecision: true, decision: question, decisions: [question], rewrite: "Show the tide table in metres." },
+    rewrite: { original: "Tide table units.", text: "Show the tide table in metres.", questions: [question], round: 1 }, rewriteRounds: 1,
     parked: { as: "needs-decision", reason: "Triage, round 1: a rewrite of the description and 1 question(s) wait for an answer: 1. Metric or imperial?", at },
   };
   store.tx(() => saveJobs(store, { ...loadJobs(store), [ref]: job }));
 
   const shown = await page(ref);
-  assert.equal(shown.parked?.refine?.draft, "Show the tide table in metres.");
-  assert.equal(shown.parked?.refine?.questions[0]?.recommendation, "Metric");
+  assert.equal(shown.parked?.rewrite?.text, "Show the tide table in metres.");
+  assert.equal(shown.parked?.rewrite?.questions[0]?.recommendation, "Metric");
 
-  assert.equal((await post("/api/draft", { ref, parkedAt: at, answers: [], action: "accept" })).status, 400);
-  assert.equal((await post("/api/draft", { ref, parkedAt: "2020-01-01T00:00:00Z", answers: ["Metric"], action: "accept" })).status, 409);
-  const accepted = await post("/api/draft", { ref, parkedAt: at, answers: ["Metric"], action: "accept" });
+  assert.equal((await post("/api/rewrite", { ref, parkedAt: at, answers: [], action: "accept" })).status, 400);
+  assert.equal((await post("/api/rewrite", { ref, parkedAt: "2020-01-01T00:00:00Z", answers: ["Metric"], action: "accept" })).status, 409);
+  const accepted = await post("/api/rewrite", { ref, parkedAt: at, answers: ["Metric"], action: "accept" });
   assert.equal(accepted.status, 200, JSON.stringify(accepted.body));
   assert.equal(accepted.body.settled, "accepted");
   assert.equal(accepted.body.written, true);
@@ -214,12 +214,12 @@ test("a triage's draft: keeping the recommendation accepts it in one action, the
   assert.ok(after.history.some((line) => /Changed description \(triage, round 1\)\. Before: Tide table units\./.test(line.text)), JSON.stringify(after.history));
   assert.deepEqual(after.answers.map((each) => each.question), ["Metric or imperial?", "Triage rewrite, round 1"]);
   assert.equal(after.parked, undefined);
-  assert.equal(loadJobs(store)[ref]?.refine?.settled, "accepted");
-  // Answered once: a second press finds no draft.
-  assert.equal((await post("/api/draft", { ref, parkedAt: at, answers: ["Metric"], action: "accept" })).status, 409);
+  assert.equal(loadJobs(store)[ref]?.rewrite?.settled, "accepted");
+  // Answered once: a second press finds no rewrite.
+  assert.equal((await post("/api/rewrite", { ref, parkedAt: at, answers: ["Metric"], action: "accept" })).status, 409);
 });
 
-test("another answer to a draft is recorded and sends the item back to its triage; the description is not changed", async () => {
+test("another answer to a rewrite is recorded and sends the item back to its triage; the description is not changed", async () => {
   const made = await post("/api/items", { title: "Harbour names", body: "Harbour names." });
   const ref = made.body.ref as string;
   const subject = { host: "metaBranch", kind: "work" as const, id: ref.split(":").pop()! };
@@ -227,38 +227,38 @@ test("another answer to a draft is recorded and sends the item back to its triag
   const question = { question: "Local names?", options: [{ label: "Yes", description: "" }, { label: "No", description: "" }], recommendation: "Yes" };
   store.tx(() => saveJobs(store, { ...loadJobs(store), [ref]: {
     item: subject, workspace: "w", branch: `scopesoup/${subject.id}`, step: "triage", failures: 0, fixRounds: 0, startedAt: at,
-    refine: { original: "Harbour names.", draft: "Show local harbour names.", questions: [question], round: 1 },
+    rewrite: { original: "Harbour names.", text: "Show local harbour names.", questions: [question], round: 1 },
     parked: { as: "needs-decision", reason: "Triage, round 1.", at },
   } }));
-  const answered = await post("/api/draft", { ref, parkedAt: at, answers: ["No, the official ones"], action: "accept" });
+  const answered = await post("/api/rewrite", { ref, parkedAt: at, answers: ["No, the official ones"], action: "accept" });
   assert.equal(answered.status, 200, JSON.stringify(answered.body));
   assert.equal(answered.body.rerun, true);
   const stored = loadJobs(store)[ref]!;
-  assert.deepEqual([stored.step, stored.parked, stored.refine], ["triage", undefined, undefined]);
+  assert.deepEqual([stored.step, stored.parked, stored.rewrite], ["triage", undefined, undefined]);
   const after = await page(ref);
   assert.equal(after.item.body?.trim(), "Harbour names.");
   assert.deepEqual(after.answers.map((each) => `${each.question}: ${each.answer}`), ["Local names?: No, the official ones"]);
 });
 
-/** A meta-branch Item labelled `question` parked on a draft that proposes +bug, −question. */
-async function labelDraft(title: string): Promise<{ ref: string; at: string }> {
+/** A meta-branch Item labelled `question` parked on a rewrite that proposes +bug, −question. */
+async function labelRewrite(title: string): Promise<{ ref: string; at: string }> {
   const made = await post("/api/items", { title, body: `${title}.`, labels: "question, harbour" });
   const ref = made.body.ref as string;
   const subject = { host: "metaBranch", kind: "work" as const, id: ref.split(":").pop()! };
   const at = clock();
   store.tx(() => saveJobs(store, { ...loadJobs(store), [ref]: {
     item: subject, workspace: "w", branch: `scopesoup/${subject.id}`, step: "triage", failures: 0, fixRounds: 0, startedAt: at,
-    triage: { ready: true, size: "small", paths: [], hidesDecision: false, draft: `${title}, in metres.` },
-    refine: { original: `${title}.`, draft: `${title}, in metres.`, questions: [], round: 1, labels: { add: ["bug"], remove: ["question"] } }, refineRounds: 1,
+    triage: { ready: true, size: "small", paths: [], hidesDecision: false, rewrite: `${title}, in metres.` },
+    rewrite: { original: `${title}.`, text: `${title}, in metres.`, questions: [], round: 1, labels: { add: ["bug"], remove: ["question"] } }, rewriteRounds: 1,
     parked: { as: "needs-decision", reason: "Triage, round 1: a rewrite of the description waits for a person to accept, edit or reject. Labels: +bug, −question.", at },
   } }));
   return { ref, at };
 }
 
 test("meta branch: Accept writes the description and the label changes to the Item in one edit; other labels stay", async () => {
-  const { ref, at } = await labelDraft("Tide heights");
-  assert.deepEqual((await page(ref)).parked?.refine?.labels, { add: ["bug"], remove: ["question"] });
-  const accepted = await post("/api/draft", { ref, parkedAt: at, answers: [], action: "accept" });
+  const { ref, at } = await labelRewrite("Tide heights");
+  assert.deepEqual((await page(ref)).parked?.rewrite?.labels, { add: ["bug"], remove: ["question"] });
+  const accepted = await post("/api/rewrite", { ref, parkedAt: at, answers: [], action: "accept" });
   assert.equal(accepted.status, 200, JSON.stringify(accepted.body));
   assert.deepEqual(accepted.body.labels, { added: ["bug"], removed: ["question"] });
   const after = await page(ref);
@@ -267,8 +267,8 @@ test("meta branch: Accept writes the description and the label changes to the It
 });
 
 test("meta branch: Reject leaves the labels and the description unchanged", async () => {
-  const { ref, at } = await labelDraft("Tide times");
-  const rejected = await post("/api/draft", { ref, parkedAt: at, answers: [], action: "reject" });
+  const { ref, at } = await labelRewrite("Tide times");
+  const rejected = await post("/api/rewrite", { ref, parkedAt: at, answers: [], action: "reject" });
   assert.equal(rejected.status, 200, JSON.stringify(rejected.body));
   const after = await page(ref);
   assert.equal(after.item.body?.trim(), "Tide times.");

@@ -84,7 +84,7 @@ export function describeLine(entry: LogEntry): string {
     case "created":
       return "Created the item.";
     case "edited":
-      // A description replaced by an accepted triage draft keeps the text it replaced in its line.
+      // A description replaced by an accepted triage rewrite keeps the text it replaced in its line.
       return `${words(d.changed) ? `Changed ${words(d.changed).replace(/; /g, ", ")}` : "Edited the item"}${words(d.via) ? ` (${words(d.via)})` : ""}.${typeof d.was === "string" ? ` Before: ${d.was.trim() || "(no description)"}` : ""}`;
     case "claimed":
       return `Took the item until ${words(d.until)}.`;

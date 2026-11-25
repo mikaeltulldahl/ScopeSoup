@@ -1,4 +1,4 @@
-// Label changes the triage proposes in its draft: read from the agent's answer, kept to the repository's existing
+// Label changes the triage proposes in its rewrite: read from the agent's answer, kept to the repository's existing
 // labels, shown as `+bug, −question`, and applied at Accept as only the changes that still make sense.
 
 import type { LabelChange, RepoLabel } from "./types.ts";

@@ -94,7 +94,7 @@ test("blockers go to the item's own blockedBy field where Scope Soup keeps the i
   assert.equal(world().actions.addBlockers, undefined);
 });
 
-test("an accepted draft replaces the GitHub issue's body, made inert; another host's item and a host without the write are left alone", async () => {
+test("an accepted rewrite replaces the GitHub issue's body, made inert; another host's item and a host without the write are left alone", async () => {
   const result = validateConfig({ project: "tides", machineName: "laptop-a", repoPath: "/srv/clone" }, "/srv/scopesoup");
   if (!result.ok) assert.fail(result.errors.join("\n"));
   const bodies: { work: Ref; body: string }[] = [];

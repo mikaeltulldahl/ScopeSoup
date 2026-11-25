@@ -294,9 +294,9 @@ function parkedTurn(parked: Parked, situation: Situation): Draft {
     const count = (n: number): string => `${n} question${n === 1 ? "" : "s"}`;
     if (parked.proposal) return { ...base, waits: "a restructuring to accept", reason: `Accept, edit or reject the proposed restructuring: ${parked.proposal.reason}` };
     const open = (parked.questions ?? []).filter((question) => question.answer === undefined);
-    if ((parked.questions ?? []).length > 0) return { ...base, waits: open.length === 0 && parked.refine ? "a rewrite to accept" : count(open.length), reason: `Answer ${open.length} of ${parked.questions!.length} questions: ${(open[0] ?? parked.questions![0]!).question}` };
+    if ((parked.questions ?? []).length > 0) return { ...base, waits: open.length === 0 && parked.rewrite ? "a rewrite to accept" : count(open.length), reason: `Answer ${open.length} of ${parked.questions!.length} questions: ${(open[0] ?? parked.questions![0]!).question}` };
     if (parked.decision && parked.decision.options.length > 0) return { ...base, waits: "1 question", reason: `Pick an option: ${parked.decision.question}` };
-    return { ...base, waits: parked.refine ? "a rewrite to accept" : "1 question", reason: `Answer the question: ${parked.decision?.question ?? parked.reason}` };
+    return { ...base, waits: parked.rewrite ? "a rewrite to accept" : "1 question", reason: `Answer the question: ${parked.decision?.question ?? parked.reason}` };
   }
   if (parked.as === "handed-over") {
     const { change, item } = situation;

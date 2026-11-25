@@ -42,7 +42,7 @@ before(async () => {
   actions = createHostActions({ host, git: async () => ({ code: 0, stdout: "", stderr: "" }), config: () => result.config, store });
   server = createServer({
     store, port: 0,
-    questions: { host: "github", answer: actions.answerQuestion!, answerMany: actions.answerQuestions!, checkDraft: actions.checkDraft! },
+    questions: { host: "github", answer: actions.answerQuestion!, answerMany: actions.answerQuestions!, checkRewrite: actions.checkRewrite! },
     description: { host: "github", replace: actions.replaceDescription! },
   });
   base = (await server.start()).url;
@@ -116,28 +116,28 @@ describe("answers sent together on GitHub", () => {
     assert.deepEqual(await last.json(), { recorded: true, released: true, open: 0 });
   });
 
-  test("a draft settled with its questions answered is one comment: the answers and the decision on the draft", async () => {
+  test("a rewrite settled with its questions answered is one comment: the answers and the decision on the rewrite", async () => {
     store.put((await host.work.getWork(ref("3")))!, "sync", at);
     const question = { question: "Metric or imperial?", options: [{ label: "Metric", description: "Metres." }, { label: "Imperial", description: "Feet." }], recommendation: "Metric" };
-    const draft = await actions.postDraft!(ref("3"), { round: 1, draft: "Show the tides in metres." });
-    const asked = await actions.askQuestions!(ref("3"), [{ ...question, parked: "needs-decision", step: "triage", draft: draft!.id }]);
+    const rewrite = await actions.postRewrite!(ref("3"), { round: 1, text: "Show the tides in metres." });
+    const asked = await actions.askQuestions!(ref("3"), [{ ...question, parked: "needs-decision", step: "triage", rewrite: rewrite!.id }]);
     saveJobs(store, {
       ...loadJobs(store),
       [key("3")]: jobOf(ref("3"), {
-        triage: { ready: true, size: "small", paths: [], hidesDecision: true, decisions: [question], draft: "Show the tides in metres." },
-        refine: { original: fake.issues.get("3")!.body ?? "", draft: "Show the tides in metres.", questions: [question], round: 1 }, refineRounds: 1,
-        parked: { as: "needs-decision", reason: "Triage, round 1.", at, draft: { id: draft!.id, questions: asked!.ids } },
+        triage: { ready: true, size: "small", paths: [], hidesDecision: true, decisions: [question], rewrite: "Show the tides in metres." },
+        rewrite: { original: fake.issues.get("3")!.body ?? "", text: "Show the tides in metres.", questions: [question], round: 1 }, rewriteRounds: 1,
+        parked: { as: "needs-decision", reason: "Triage, round 1.", at, rewrite: { id: rewrite!.id, questions: asked!.ids } },
       }),
     });
     fake.clear();
-    const response = await post("/api/draft", { ref: key("3"), parkedAt: at, answers: ["Metric"], action: "reject" });
+    const response = await post("/api/rewrite", { ref: key("3"), parkedAt: at, answers: ["Metric"], action: "reject" });
     assert.equal(response.status, 200, await response.clone().text());
     assert.deepEqual(await response.json(), { recorded: true, settled: "rejected" });
     const posted = answerComments("3");
     assert.equal(posted.length, 1);
     const entries = readMarker(posted[0]!)!.data.answers as { to: number; answer: string; proposal?: string }[];
-    assert.deepEqual(entries.map((each) => [each.to, each.proposal ?? null]), [[Number(asked!.ids[0]), null], [Number(draft!.id), "rejected"]]);
-    assert.equal(loadJobs(store)[key("3")]?.refine?.settled, "rejected");
+    assert.deepEqual(entries.map((each) => [each.to, each.proposal ?? null]), [[Number(asked!.ids[0]), null], [Number(rewrite!.id), "rejected"]]);
+    assert.equal(loadJobs(store)[key("3")]?.rewrite?.settled, "rejected");
   });
 });
 

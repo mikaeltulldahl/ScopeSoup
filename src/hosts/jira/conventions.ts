@@ -1,5 +1,5 @@
 // Scope Soup's own conventions on Jira (issue #6, the mapping decided there): what GitHub keeps in a hidden marker line is a property.
-// - question, answer, draft, assumption, merged: a comment with a short visible first line, and the marker's data in the comment
+// - question, answer, rewrite, assumption, merged: a comment with a short visible first line, and the marker's data in the comment
 //   property `scopesoup` (`{ v: 1, kind, ...data }`).
 // - an agent's hold: the issue property `scopesoup.claim`; a person's hold is the assignee.
 // - the log: the issue property `scopesoup.log`; Accept and Overturn verdicts: the issue property `scopesoup.overturns`.
@@ -14,7 +14,7 @@
 // carry no author: they count only when their `by` is the token's own account, and whoever may edit the issue may change them (as a
 // GitHub collaborator may edit Scope Soup's comment).
 //
-// The thread logic itself (numbering, `An:` replies, drafts waiting, claims, verdicts) is the GitHub conventions' own: each Jira
+// The thread logic itself (numbering, `An:` replies, rewrites waiting, claims, verdicts) is the GitHub conventions' own: each Jira
 // comment is shown to it as a GitHub comment whose marker line is built from its property. Pure.
 
 import { ITEM_BRANCH_PREFIX } from "../../model/people.ts";
@@ -34,7 +34,7 @@ export const HANDBACK_KIND = "handback";
 /** Jira's limit of one property's value, in bytes of JSON [docs: entity properties, 32 KB]. */
 export const PROPERTY_LIMIT = 32_768;
 
-const COMMENT_KINDS = new Set<string>(["question", "answer", "draft", "assumption", "merged"]);
+const COMMENT_KINDS = new Set<string>(["question", "answer", "rewrite", "assumption", "merged"]);
 
 const isObject = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
 const str = (value: unknown): string => (typeof value === "string" ? value.trim() : "");
@@ -163,7 +163,7 @@ export function readJiraThread(host: string, subject: Ref, jira: JiraThread, sel
   const handbacks: JiraHandback[] = [];
   for (const comment of [...jira.comments].sort((a, b) => Number(a.id) - Number(b.id))) {
     const user = { login: comment.author.id.toLowerCase() };
-    // A person of the project may answer (an `A1:` reply or an answer, a draft's decision too); anyone else's is a plain comment.
+    // A person of the project may answer (an `A1:` reply or an answer, a rewrite's decision too); anyone else's is a plain comment.
     const association = mayAnswerAs(comment, mayAnswer) ? "MEMBER" : "NONE";
     const property = comment.properties[COMMENT_PROPERTY];
     const kind = isObject(property) && property.v === 1 ? str(property.kind) : "";
@@ -182,8 +182,8 @@ export function readJiraThread(host: string, subject: Ref, jira: JiraThread, sel
       const { kind: _kind, text, ...rest } = property as Record<string, unknown>;
       data.set(comment.id, property as Record<string, unknown>);
       if (kind === "assumption" && verdicts[comment.id]) rest.settled = verdicts[comment.id];
-      // The draft's proposed text is kept in its property; GitHub's reader takes it from the visible `<details>`.
-      const visible = kind === "draft" ? `<details><summary>Draft</summary>\n\n${str(text)}\n\n</details>` : "";
+      // The rewrite's proposed text is kept in its property; GitHub's reader takes it from the visible `<details>`.
+      const visible = kind === "rewrite" ? `<details><summary>Rewrite</summary>\n\n${str(text)}\n\n</details>` : "";
       comments.push({ id: Number(comment.id), body: `${visible}\n\n${writeMarker(kind as MarkerKind, rest)}`, user, created_at: comment.created, author_association: association });
       continue;
     }

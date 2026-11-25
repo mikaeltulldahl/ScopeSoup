@@ -340,7 +340,7 @@ button.choice-mark:hover:not(:disabled) { background: none; }
 .dl-del mark { background: color-mix(in srgb, var(--blocked) 30%, transparent); }
 .dl-add mark { background: color-mix(in srgb, var(--moving) 30%, transparent); }
 .dl-fold { display: block; width: 100%; text-align: left; font: inherit; color: var(--muted); background: var(--sunken); border: 0; border-block: 1px solid var(--line); padding: 1px 8px; cursor: pointer; }
-.draft-compare { display: grid; grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr)); gap: 0 12px; }
+.rewrite-compare { display: grid; grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr)); gap: 0 12px; }
 
 /* --- Writing items --- */
 .new-item { margin: 0 0 var(--gap); }

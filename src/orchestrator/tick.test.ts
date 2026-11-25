@@ -21,7 +21,7 @@ import { openDrafts } from "./drafts.ts";
 import type { MergeQueue } from "./mergeQueue.ts";
 import { createLoop } from "./loop.ts";
 import { workspaceKey } from "./paths.ts";
-import { answerQuestion, asImplement, asTriage, loadJobs, jobQuestions, releaseJob, resumesStep, saveJobs, settleDraft } from "./jobs.ts";
+import { answerQuestion, asImplement, asTriage, loadJobs, jobQuestions, releaseJob, resumesStep, saveJobs, settleRewrite } from "./jobs.ts";
 import { loadOwnBlockers } from "../store/blockers.ts";
 import { buildItemPage } from "../core/item-page.ts";
 import { addAnswer } from "../store/answers.ts";
@@ -2903,23 +2903,23 @@ test("an answer to a different decision, or kept without a text hash, is not reu
   assert.ok(reusableAnswer([{ ...base, textHash: itemTextHash(it) }], it, again));
 });
 
-// --- the triage refines the description and finds links ---
+// --- the triage rewrites the description and finds links ---
 
 const QUESTION = { question: "Metric or imperial?", options: [{ label: "Metric", description: "Metres and knots." }, { label: "Imperial", description: "Feet." }], recommendation: "Metric", context: "The table shows both now." };
-const DRAFT = "Show the tide table in metres. Done when the table shows metres only.";
-const TRIAGE = { ...TRIAGE_OK, questions: [QUESTION], draft: DRAFT, links: [] };
+const REWRITE = "Show the tide table in metres. Done when the table shows metres only.";
+const TRIAGE = { ...TRIAGE_OK, questions: [QUESTION], rewrite: REWRITE, links: [] };
 
-/** What the server does for `POST /api/draft` in the store (the endpoint itself is tested in server/decisions.test.ts). */
-function answerDraft(w: World, id: string, answers: string[], action: "accept" | "edit" | "reject" = "accept") {
+/** What the server does for `POST /api/rewrite` in the store (the endpoint itself is tested in server/decisions.test.ts). */
+function answerRewrite(w: World, id: string, answers: string[], action: "accept" | "edit" | "reject" = "accept") {
   const job = w.job(id)!;
   const at = new Date(w.clock.ms).toISOString();
   return w.store.tx(() => {
-    job.refine!.questions.forEach((question, index) => addAnswer(w.store, { subject: ref(id), answer: answers[index]!, by: "Ada", at, question: question.question }));
-    return settleDraft(w.store, ref(id), answers, action, "Ada", at, job.parked!.at);
+    job.rewrite!.questions.forEach((question, index) => addAnswer(w.store, { subject: ref(id), answer: answers[index]!, by: "Ada", at, question: question.question }));
+    return settleRewrite(w.store, ref(id), answers, action, "Ada", at, job.parked!.at);
   });
 }
 
-test("a triage with a question and a draft parked with both on the Item page, and no implement session starts", async () => {
+test("a triage with a question and a rewrite parked with both on the Item page, and no implement session starts", async () => {
   const w = world(config({ level: 3 }), [item("1", { body: "Tide table units." })]);
   w.store.addUsageSample(usage(0.1, 0.1));
   await w.run();
@@ -2931,32 +2931,32 @@ test("a triage with a question and a draft parked with both on the Item page, an
   assert.deepEqual(roles(w), ["triage"]);
   const job = w.job("1")!;
   assert.equal(job.parked?.as, "needs-decision");
-  assert.deepEqual(job.refine, { original: "Tide table units.", draft: DRAFT, questions: [QUESTION], round: 1 });
-  // The draft's questions are not the old one-by-one questions, and the log has one line naming the parked state.
+  assert.deepEqual(job.rewrite, { original: "Tide table units.", text: REWRITE, questions: [QUESTION], round: 1 });
+  // The rewrite's questions are not the old one-by-one questions, and the log has one line naming the parked state.
   assert.deepEqual(jobQuestions(job), []);
-  assert.deepEqual(w.lines.filter((line) => line.startsWith("1 question ")).map((line) => JSON.parse(line.slice("1 question ".length)).refine), [1]);
+  assert.deepEqual(w.lines.filter((line) => line.startsWith("1 question ")).map((line) => JSON.parse(line.slice("1 question ".length)).rewrite), [1]);
   const page = buildItemPage(loadSnapshot(w.store), refKey(ref("1")), new Date(w.clock.ms))!;
-  assert.equal(page.parked?.refine?.draft, DRAFT);
-  assert.equal(page.parked?.refine?.original, "Tide table units.");
-  assert.deepEqual(page.parked?.refine?.questions.map((each) => each.recommendation), ["Metric"]);
+  assert.equal(page.parked?.rewrite?.text, REWRITE);
+  assert.equal(page.parked?.rewrite?.original, "Tide table units.");
+  assert.deepEqual(page.parked?.rewrite?.questions.map((each) => each.recommendation), ["Metric"]);
   assert.equal(page.parked?.decision, undefined);
   assert.equal(page.actor, "anyone");
 });
 
-test("keeping every recommendation settles the draft in one action; then implement starts", async () => {
+test("keeping every recommendation settles the rewrite in one action; then implement starts", async () => {
   const w = world(config(), [item("1", { body: "Tide table units." })]);
   w.store.addUsageSample(usage(0.1, 0.1));
   await w.run();
   await step(w, "1", "succeeded", TRIAGE);
   // The recommended label, or the label with its description as the page's other pickers send it, both keep it.
-  assert.deepEqual(answerDraft(w, "1", ["Metric: Metres and knots."]), { settled: "accepted" });
-  assert.equal(w.events("orchestrator.draft_accepted").length, 1);
+  assert.deepEqual(answerRewrite(w, "1", ["Metric: Metres and knots."]), { settled: "accepted" });
+  assert.equal(w.events("orchestrator.rewrite_accepted").length, 1);
   await w.run();
   w.clock.ms += 1000;
   await w.run();
   assert.deepEqual(roles(w), ["triage", "implement"]);
   assert.match(w.reasons("orchestrator.step").at(-1) ?? "", /A person accepted the rewrite\. Next: implement\./);
-  assert.equal(w.job("1")?.refine, undefined);
+  assert.equal(w.job("1")?.rewrite, undefined);
 });
 
 test("another answer runs the triage again with the answer in its prompt, round after round", async () => {
@@ -2964,17 +2964,17 @@ test("another answer runs the triage again with the answer in its prompt, round 
   w.store.addUsageSample(usage(0.1, 0.1));
   await w.run();
   await step(w, "1", "succeeded", TRIAGE);
-  assert.deepEqual(answerDraft(w, "1", ["Imperial"]), { rerun: true });
+  assert.deepEqual(answerRewrite(w, "1", ["Imperial"]), { rerun: true });
   await w.run();
   assert.deepEqual(roles(w), ["triage", "triage"]);
   const prompt = w.runner.requests[1]!.vars.itemBody!;
   assert.match(prompt, /Asked: Metric or imperial\?\n {2}Answered: Imperial/);
-  // The second round asks a new question and writes a new draft.
-  await step(w, "1", "succeeded", { ...TRIAGE, questions: [{ question: "Round to tenths?", options: [{ label: "Yes", description: "" }, { label: "No", description: "" }], recommendation: "Yes" }], draft: "Show the tide table in feet, to tenths." });
-  assert.equal(w.job("1")?.refine?.round, 2);
+  // The second round asks a new question and writes a new rewrite.
+  await step(w, "1", "succeeded", { ...TRIAGE, questions: [{ question: "Round to tenths?", options: [{ label: "Yes", description: "" }, { label: "No", description: "" }], recommendation: "Yes" }], rewrite: "Show the tide table in feet, to tenths." });
+  assert.equal(w.job("1")?.rewrite?.round, 2);
   assert.match(w.reasons("orchestrator.needs_decision").at(-1) ?? "", /^Triage, round 2: a rewrite of the description and 1 question\(s\)/);
   assert.deepEqual(roles(w), ["triage", "triage"]);
-  assert.deepEqual(answerDraft(w, "1", ["Yes"], "reject"), { settled: "rejected" });
+  assert.deepEqual(answerRewrite(w, "1", ["Yes"], "reject"), { settled: "rejected" });
   await w.run();
   w.clock.ms += 1000;
   await w.run();
@@ -3099,11 +3099,11 @@ test("a duplicateOf link becomes a question; keeping the recommendation parked t
   w.store.addUsageSample(usage(0.1, 0.1));
   await w.run();
   await step(w, "1", "succeeded", { ...TRIAGE, questions: [], links: [{ type: "duplicateOf", item: "2", reason: "Both ask for metres." }] });
-  const question = w.job("1")?.refine?.questions[0];
+  const question = w.job("1")?.rewrite?.questions[0];
   assert.equal(question?.question, 'Close 1 as a duplicate of 2 "Tide units"?');
   assert.equal(question?.recommendation, "Close 1 as a duplicate of 2");
   assert.equal(question?.context, "Both ask for metres.");
-  assert.deepEqual(answerDraft(w, "1", ["Close 1 as a duplicate of 2"]), { settled: "accepted" });
+  assert.deepEqual(answerRewrite(w, "1", ["Close 1 as a duplicate of 2"]), { settled: "accepted" });
   await w.run();
   w.clock.ms += 60_000;
   await w.run();
@@ -3124,12 +3124,12 @@ test("on GitHub the answer closes the Item as a duplicate, with the target's dat
   await tick(deps);
   w.runner.end("1", "succeeded", { ...TRIAGE, questions: [], links: [{ type: "duplicateOf", item: "2", reason: "Both ask for metres." }] });
   await tick(deps);
-  const question = loadJobs(w.store)[ghKey("1")]?.refine?.questions[0];
+  const question = loadJobs(w.store)[ghKey("1")]?.rewrite?.questions[0];
   assert.match(optionText(question!.options[0]!), /Scope Soup closes 1 on the host as a duplicate of 2/);
   assert.equal(fake.calls.some((call) => call.startsWith("PATCH")), false);
   const job = loadJobs(w.store)[ghKey("1")]!;
   const at = new Date(w.clock.ms).toISOString();
-  assert.deepEqual(w.store.tx(() => settleDraft(w.store, ghRef("1"), ["Close 1 as a duplicate of 2"], "accept", "Ada", at, job.parked!.at)), { settled: "accepted" });
+  assert.deepEqual(w.store.tx(() => settleRewrite(w.store, ghRef("1"), ["Close 1 as a duplicate of 2"], "accept", "Ada", at, job.parked!.at)), { settled: "accepted" });
   await tick(deps);
   assert.deepEqual(fake.sent.find((each) => each.call === `PATCH ${DEPS}/1`)?.body, { state: "closed", state_reason: "duplicate", duplicate_issue_id: 9002 });
   assert.match(w.reasons("orchestrator.item_closed")[0] ?? "", /^1 was closed on its host as a duplicate of 2/);
@@ -3140,11 +3140,11 @@ test("on GitHub the answer closes the Item as a duplicate, with the target's dat
   assert.deepEqual(roles(w), ["triage"]);
 });
 
-test("a draft that keeps the description and asks nothing goes on at once; an answer from earlier is settled as before", async () => {
+test("a rewrite that keeps the description and asks nothing goes on at once; an answer from earlier is settled as before", async () => {
   const w = world(config({ settings: { maxParallelSessions: { value: 2, reason: "test" } } }), [item("1", { body: "Clear already." }), item("2")]);
   w.store.addUsageSample(usage(0.1, 0.1));
   await w.run();
-  w.runner.end("1", "succeeded", { ...TRIAGE_OK, draft: "Clear already.", links: [] });
+  w.runner.end("1", "succeeded", { ...TRIAGE_OK, rewrite: "Clear already.", links: [] });
   // Another file, so the two do not wait for each other (core/sameFiles.ts).
   w.runner.end("2", "succeeded", { ...TRIAGE_OK, paths: ["src/b.ts"] });
   await w.run();
@@ -3167,8 +3167,8 @@ async function questionWorld(clocked = false) {
   const deps = w.depsFor();
   deps.actions.askQuestions = real.askQuestions;
   deps.actions.settleQuestions = real.settleQuestions;
-  deps.actions.postDraft = real.postDraft;
-  deps.actions.checkDraft = real.checkDraft;
+  deps.actions.postRewrite = real.postRewrite;
+  deps.actions.checkRewrite = real.checkRewrite;
   deps.actions.withdrawQuestions = real.withdrawQuestions;
   await w.run();
   assert.deepEqual(roles(w), ["triage"]);
@@ -3262,37 +3262,37 @@ test("questions GitHub does not take (the label is dropped) post nothing, write 
   assert.match(parked?.reason ?? "", /^github could not be written: .* The questions were: Round up or down\? Which unit\?/);
 });
 
-// --- on GitHub each triage round's draft is a comment, and so is a proposed restructuring ---
+// --- on GitHub each triage round's rewrite is a comment, and so is a proposed restructuring ---
 
-test("a triage round posts its draft as a comment with the hash of the body it read, and its questions as question comments naming it", async () => {
+test("a triage round posts its rewrite as a comment with the hash of the body it read, and its questions as question comments naming it", async () => {
   const { w, fake, deps } = await questionWorld();
   w.runner.end("1", "succeeded", TRIAGE);
   await tick(deps);
   const job = loadJobs(w.store)[ghKey("1")]!;
   assert.equal(job.parked?.as, "needs-decision");
-  const [draft, question] = fake.comments.get("1")!;
-  assert.deepEqual(job.parked?.draft, { id: String(draft!.id), questions: [String(question!.id)], texts: [{ question: "Metric or imperial?", n: 1 }], askedAt: question!.created_at });
-  // The draft's questions are followed apart from the issue questions': their answers settle the draft only with Accept on the board, or start a new round.
+  const [rewrite, question] = fake.comments.get("1")!;
+  assert.deepEqual(job.parked?.rewrite, { id: String(rewrite!.id), questions: [String(question!.id)], texts: [{ question: "Metric or imperial?", n: 1 }], askedAt: question!.created_at });
+  // The rewrite's questions are followed apart from the issue questions': their answers settle the rewrite only with Accept on the board, or start a new round.
   assert.equal(job.parked?.questions, undefined);
-  assert.match(draft!.body!, /^<details><summary>Triage, round 1: proposed description<\/summary>\n\nShow the tide table in metres\. Done when the table shows metres only\.\n\n<\/details>\n\n<!-- scopesoup:draft /);
-  assert.deepEqual(readMarker(draft!.body)?.data, { v: 1, round: 1, bodySha: createHash("sha256").update("Show the tides.").digest("hex") });
-  assert.equal(readMarker(question!.body)?.data.draft, draft!.id);
+  assert.match(rewrite!.body!, /^<details><summary>Triage, round 1: proposed description<\/summary>\n\nShow the tide table in metres\. Done when the table shows metres only\.\n\n<\/details>\n\n<!-- scopesoup:rewrite /);
+  assert.deepEqual(readMarker(rewrite!.body)?.data, { v: 1, round: 1, bodySha: createHash("sha256").update("Show the tides.").digest("hex") });
+  assert.equal(readMarker(question!.body)?.data.rewrite, rewrite!.id);
   assert.match(question!.body!, /^\*\*Q1: Metric or imperial\?\*\*/);
   assert.deepEqual(labelsOn(fake), ["scopesoup:needs-decision"]);
   // The comments tell a person: no person's comment, no log line.
   assert.deepEqual(w.calls.filter((call) => call.startsWith("answerTurn")), []);
   assert.deepEqual(w.lines.filter((line) => line.startsWith("1 question ")), []);
-  assert.equal(w.reasons("orchestrator.draft_posted").length, 1);
+  assert.equal(w.reasons("orchestrator.rewrite_posted").length, 1);
 });
 
-test("a draft over 60,000 characters stays on the board, and the parked Item says so", async () => {
+test("a rewrite over 60,000 characters stays on the board, and the parked Item says so", async () => {
   const { w, fake, deps } = await questionWorld();
-  w.runner.end("1", "succeeded", { ...TRIAGE, draft: "Metres. ".repeat(7600) });
+  w.runner.end("1", "succeeded", { ...TRIAGE, rewrite: "Metres. ".repeat(7600) });
   await tick(deps);
   assert.equal(fake.comments.get("1"), undefined);
   const job = loadJobs(w.store)[ghKey("1")]!;
-  assert.equal(job.parked?.draft, undefined);
-  assert.match(job.parked?.reason ?? "", / The draft is over 60,000 characters, too large for a comment on github: it stays on Scope Soup's board\.$/);
+  assert.equal(job.parked?.rewrite, undefined);
+  assert.match(job.parked?.reason ?? "", / The rewrite is over 60,000 characters, too large for a comment on github: it stays on Scope Soup's board\.$/);
   // As before: a person's list and the log line.
   assert.equal(w.calls.filter((call) => call.startsWith("answerTurn")).length, 1);
 });
@@ -3315,26 +3315,26 @@ test("a proposed restructuring is a question comment with the restructuring in i
   assert.deepEqual(w.calls.filter((call) => call.startsWith("answerTurn")), []);
 });
 
-test("a trusted A1: reply to a draft question other than the recommendation starts round 2; the recommendation leaves the draft for Accept", async () => {
+test("a trusted A1: reply to a rewrite question other than the recommendation starts round 2; the recommendation leaves the rewrite for Accept", async () => {
   const other = await questionWorld();
   other.w.runner.end("1", "succeeded", TRIAGE);
   await tick(other.deps);
   other.fake.reply(1, "kim", "COLLABORATOR", "A1: Imperial");
   await other.sync();
   await tick(other.deps);
-  assert.match(other.w.reasons("orchestrator.draft_answered").at(-1) ?? "", /^Answered on github otherwise than recommended in round 1 of the triage \(Metric or imperial\? Answered: Imperial\)/);
+  assert.match(other.w.reasons("orchestrator.rewrite_answered").at(-1) ?? "", /^Answered on github otherwise than recommended in round 1 of the triage \(Metric or imperial\? Answered: Imperial\)/);
   assert.deepEqual(labelsOn(other.fake), []);
   const rerun = loadJobs(other.w.store)[ghKey("1")];
-  assert.equal(rerun?.refine, undefined);
+  assert.equal(rerun?.rewrite, undefined);
   assert.equal(rerun?.parked, undefined);
   // The next triage is round 2, with the answer in its prompt.
   other.w.clock.ms += 60_000;
   await tick(other.deps);
   assert.deepEqual(roles(other.w), ["triage", "triage"]);
   assert.match(other.w.runner.requests[1]?.vars?.itemBody ?? "", /Answered: Imperial/);
-  other.w.runner.end("1", "succeeded", { ...TRIAGE, questions: [], draft: "Show the tide table in feet." });
+  other.w.runner.end("1", "succeeded", { ...TRIAGE, questions: [], rewrite: "Show the tide table in feet." });
   await tick(other.deps);
-  assert.equal(loadJobs(other.w.store)[ghKey("1")]?.refine?.round, 2);
+  assert.equal(loadJobs(other.w.store)[ghKey("1")]?.rewrite?.round, 2);
 
   const same = await questionWorld();
   same.w.runner.end("1", "succeeded", TRIAGE);
@@ -3344,11 +3344,11 @@ test("a trusted A1: reply to a draft question other than the recommendation star
   await tick(same.deps);
   const waiting = loadJobs(same.w.store)[ghKey("1")]!;
   assert.equal(waiting.parked?.as, "needs-decision");
-  assert.equal(waiting.parked?.draft?.answered, true);
-  assert.equal(waiting.refine?.settled, undefined);
-  // The label stays while the draft waits for Accept, Edit or Reject.
+  assert.equal(waiting.parked?.rewrite?.answered, true);
+  assert.equal(waiting.rewrite?.settled, undefined);
+  // The label stays while the rewrite waits for Accept, Edit or Reject.
   assert.deepEqual(labelsOn(same.fake), ["scopesoup:needs-decision"]);
-  assert.equal(same.w.reasons("orchestrator.draft_questions_answered").length, 1);
+  assert.equal(same.w.reasons("orchestrator.rewrite_questions_answered").length, 1);
   same.w.clock.ms += 60_000;
   await tick(same.deps);
   assert.deepEqual(roles(same.w), ["triage"]);
@@ -3529,7 +3529,7 @@ test("a transferred issue (301) and a deleted one (410) leave the store with wor
   store.close();
 });
 
-// --- the triage proposes label changes in its draft ---
+// --- the triage proposes label changes in its rewrite ---
 
 /** Item 1 is labelled `question` on a fake GitHub whose repository has `bug`, `question` and Scope Soup's own label; its triage starts. */
 async function labelWorld() {
@@ -3543,13 +3543,13 @@ async function labelWorld() {
   const host = createGitHubHost({ token: "t", repo: "harbour/tides", apiUrl: ISSUES_API, fetchImpl: fake.fetch, allowWrites: true, conventions: true, login: "scopesoup-bot" });
   const real = createHostActions({ host, git: async () => ({ code: 0, stdout: "", stderr: "" }), config: () => config(), store: w.store });
   const deps = w.depsFor();
-  Object.assign(deps.actions, { askQuestions: real.askQuestions, settleQuestions: real.settleQuestions, postDraft: real.postDraft, checkDraft: real.checkDraft, repoLabels: real.repoLabels });
+  Object.assign(deps.actions, { askQuestions: real.askQuestions, settleQuestions: real.settleQuestions, postRewrite: real.postRewrite, checkRewrite: real.checkRewrite, repoLabels: real.repoLabels });
   await w.run();
   assert.deepEqual(roles(w), ["triage"]);
   return { w, fake, deps };
 }
 
-test("the triage is shown the repository's labels and the Item's, never scopesoup:*; it proposes +bug, −question with its draft", async () => {
+test("the triage is shown the repository's labels and the Item's, never scopesoup:*; it proposes +bug, −question with its rewrite", async () => {
   const { w, fake, deps } = await labelWorld();
   const vars = w.runner.requests[0]!.vars!;
   assert.match(vars.labels!, /^The repository's labels \(name: description\):\n- bug: Something does not work\n- question\nThe Item's labels: question$/);
@@ -3557,47 +3557,47 @@ test("the triage is shown the repository's labels and the Item's, never scopesou
   w.runner.end("1", "succeeded", { ...TRIAGE, labels: { add: ["bug", "scopesoup:needs-decision", "tidal"], remove: ["question"] } });
   await tick(deps);
   const job = loadJobs(w.store)[ghKey("1")]!;
-  assert.deepEqual(job.refine?.labels, { add: ["bug"], remove: ["question"] });
+  assert.deepEqual(job.rewrite?.labels, { add: ["bug"], remove: ["question"] });
   // A label the repository does not have is dropped and noted, not an error; scopesoup:* is never proposed.
-  assert.deepEqual(job.refine?.droppedLabels, ["tidal"]);
+  assert.deepEqual(job.rewrite?.droppedLabels, ["tidal"]);
   assert.match(job.parked?.reason ?? "", / Labels: \+bug, −question\. The triage named label the repository does not have, dropped: tidal\.$/);
-  const [draft] = fake.comments.get("1")!;
-  assert.deepEqual(readMarker(draft!.body)?.data.labels, { add: ["bug"], remove: ["question"] });
-  assert.match(draft!.body!, /<\/details>\n\nLabels: \+bug, −question\n\n<!-- scopesoup:draft /);
+  const [rewrite] = fake.comments.get("1")!;
+  assert.deepEqual(readMarker(rewrite!.body)?.data.labels, { add: ["bug"], remove: ["question"] });
+  assert.match(rewrite!.body!, /<\/details>\n\nLabels: \+bug, −question\n\n<!-- scopesoup:rewrite /);
   // Nothing is applied before Accept.
   assert.deepEqual(labelsOn(fake), ["question", "scopesoup:needs-decision"]);
-  // The board shows the proposal with the draft.
+  // The board shows the proposal with the rewrite.
   const page = buildItemPage(loadSnapshot(w.store), ghKey("1"), new Date(w.clock.ms));
-  assert.deepEqual(page?.parked?.refine?.labels, { add: ["bug"], remove: ["question"] });
-  assert.deepEqual(page?.parked?.refine?.droppedLabels, ["tidal"]);
+  assert.deepEqual(page?.parked?.rewrite?.labels, { add: ["bug"], remove: ["question"] });
+  assert.deepEqual(page?.parked?.rewrite?.droppedLabels, ["tidal"]);
 });
 
 test("with no question and the description kept, a label proposal still waits for an answer's Accept or Reject", async () => {
   const { w, deps } = await labelWorld();
-  w.runner.end("1", "succeeded", { ...TRIAGE_OK, draft: "", links: [], labels: { add: ["bug"], remove: [] } });
+  w.runner.end("1", "succeeded", { ...TRIAGE_OK, rewrite: "", links: [], labels: { add: ["bug"], remove: [] } });
   await tick(deps);
   const job = loadJobs(w.store)[ghKey("1")]!;
   assert.equal(job.parked?.as, "needs-decision");
-  assert.deepEqual(job.refine?.labels, { add: ["bug"], remove: [] });
+  assert.deepEqual(job.rewrite?.labels, { add: ["bug"], remove: [] });
   assert.deepEqual(roles(w), ["triage"]);
 });
 
-// --- scopesoup:needs-decision is on while a draft waits for an answer, also with no question ---
+// --- scopesoup:needs-decision is on while a rewrite waits for an answer, also with no question ---
 
-test("a triage with no question and a changed description posts its draft and puts scopesoup:needs-decision on", async () => {
+test("a triage with no question and a changed description posts its rewrite and puts scopesoup:needs-decision on", async () => {
   const { w, fake, deps } = await labelWorld();
-  w.runner.end("1", "succeeded", { ...TRIAGE_OK, draft: DRAFT, links: [] });
+  w.runner.end("1", "succeeded", { ...TRIAGE_OK, rewrite: REWRITE, links: [] });
   await tick(deps);
   const job = loadJobs(w.store)[ghKey("1")]!;
   assert.equal(job.parked?.as, "needs-decision");
-  assert.deepEqual(job.parked?.draft?.questions, []);
-  assert.deepEqual(fake.comments.get("1")!.map((comment) => readMarker(comment.body)?.kind), ["draft"]);
+  assert.deepEqual(job.parked?.rewrite?.questions, []);
+  assert.deepEqual(fake.comments.get("1")!.map((comment) => readMarker(comment.body)?.kind), ["rewrite"]);
   assert.deepEqual(labelsOn(fake), ["question", "scopesoup:needs-decision"]);
 });
 
-test("a draft that parked only on a label proposal puts scopesoup:needs-decision on", async () => {
+test("a rewrite that parked only on a label proposal puts scopesoup:needs-decision on", async () => {
   const { w, fake, deps } = await labelWorld();
-  w.runner.end("1", "succeeded", { ...TRIAGE_OK, draft: "", links: [], labels: { add: ["bug"], remove: [] } });
+  w.runner.end("1", "succeeded", { ...TRIAGE_OK, rewrite: "", links: [], labels: { add: ["bug"], remove: [] } });
   await tick(deps);
   assert.equal(loadJobs(w.store)[ghKey("1")]?.parked?.as, "needs-decision");
   assert.deepEqual(labelsOn(fake), ["question", "scopesoup:needs-decision"]);
@@ -3882,31 +3882,31 @@ test("an overturn kept for work whose change merged before it was handed gets th
   assert.deepEqual(overturnsFor(w.store, refKey(ref("1"))), []);
 });
 
-// --- triage and implementors ask questions about other Items (aboutOthers), and triage may draft them ---
+// --- triage and implementors ask questions about other Items (aboutOthers), and triage may rewrite them ---
 
 const ABOUT_Q = { question: "Knots or metres per second?", options: [{ label: "Knots", description: "As the charts." }, { label: "Metres per second", description: "SI." }], recommendation: "Knots" };
-const ABOUT_DRAFT = "Show wind speed in knots. Done when the forecast shows knots.";
+const ABOUT_REWRITE = "Show wind speed in knots. Done when the forecast shows knots.";
 
-test("a triage puts a question and a draft on another backlog Item, which parks on them as needs-decision naming the asker", async () => {
+test("a triage puts a question and a rewrite on another backlog Item, which parks on them as needs-decision naming the asker", async () => {
   const w = world(config(), [item("1", { body: "Tide table units." }), item("2", { body: "Wind units." })]);
   w.store.addUsageSample(usage(0.1, 0.1));
   await w.run();
   assert.deepEqual(roles(w), ["triage"]);
-  await step(w, "1", "succeeded", { ...TRIAGE_OK, aboutOthers: [{ item: "#2", questions: [ABOUT_Q], draft: ABOUT_DRAFT }] });
+  await step(w, "1", "succeeded", { ...TRIAGE_OK, aboutOthers: [{ item: "#2", questions: [ABOUT_Q], rewrite: ABOUT_REWRITE }] });
   const job = w.job("2")!;
   assert.equal(job.parked?.as, "needs-decision");
   assert.equal(job.step, "triage");
-  assert.deepEqual(job.refine, { original: "Wind units.", draft: ABOUT_DRAFT, questions: [{ ...ABOUT_Q, question: "Knots or metres per second? (asked by triage of 1)" }], round: 1, askedBy: ["triage of 1"] });
+  assert.deepEqual(job.rewrite, { original: "Wind units.", text: ABOUT_REWRITE, questions: [{ ...ABOUT_Q, question: "Knots or metres per second? (asked by triage of 1)" }], round: 1, askedBy: ["triage of 1"] });
   assert.match(job.parked?.reason ?? "", /^Asked by triage of 1: a rewrite of the description and 1 question\(s\) about 2 wait for an answer: 1\. Knots or metres per second\? \(asked by triage of 1\)/);
   // Its own triage did not start; item 1 went on to implement.
   assert.deepEqual(w.runner.requests.map((request) => `${request.role} ${request.subject.id}`), ["triage 1", "implement 1"]);
   assert.ok(w.calls.includes("answerTurn 2 decision"));
   const page = buildItemPage(loadSnapshot(w.store), refKey(ref("2")), new Date(w.clock.ms))!;
-  assert.equal(page.parked?.refine?.draft, ABOUT_DRAFT);
-  assert.deepEqual(w.reasons("orchestrator.about_other_written"), ["Wrote on 2 what triage of 1 asked: 1 question(s) and a draft."]);
+  assert.equal(page.parked?.rewrite?.text, ABOUT_REWRITE);
+  assert.deepEqual(w.reasons("orchestrator.about_other_written"), ["Wrote on 2 what triage of 1 asked: 1 question(s) and a rewrite."]);
 
-  // Answering works as for triage's own draft: accepting it triages Item 2 again, with the answer in its prompt.
-  assert.deepEqual(answerDraft(w, "2", ["Knots"]), { settled: "accepted" });
+  // Answering works as for triage's own rewrite: accepting it triages Item 2 again, with the answer in its prompt.
+  assert.deepEqual(answerRewrite(w, "2", ["Knots"]), { settled: "accepted" });
   w.runner.end("1", "succeeded", IMPLEMENT_OK);
   await w.run();
   w.clock.ms += 1000;
@@ -3931,13 +3931,13 @@ test("an implementor puts a question on an Item with paused work, which keeps it
   });
   await w.run();
   await step(w, "1", "succeeded", TRIAGE_OK);
-  await step(w, "1", "succeeded", { ...IMPLEMENT_OK, aboutOthers: [{ item: "2", questions: [ABOUT_Q], draft: "An implementor's draft is not taken." }] });
+  await step(w, "1", "succeeded", { ...IMPLEMENT_OK, aboutOthers: [{ item: "2", questions: [ABOUT_Q], rewrite: "An implementor's rewrite is not taken." }] });
   const job = w.job("2")!;
   assert.equal(job.parked?.as, "needs-decision");
   assert.equal(job.step, "triage");
-  assert.deepEqual(job.refine?.askedBy, ["the implementor of 1"]);
-  assert.equal(job.refine?.draft, "Wind units.");
-  assert.deepEqual(job.refine?.questions.map((each) => each.question), ["Knots or metres per second? (asked by the implementor of 1)"]);
+  assert.deepEqual(job.rewrite?.askedBy, ["the implementor of 1"]);
+  assert.equal(job.rewrite?.text, "Wind units.");
+  assert.deepEqual(job.rewrite?.questions.map((each) => each.question), ["Knots or metres per second? (asked by the implementor of 1)"]);
   assert.deepEqual([job.agentSession, job.resumeWith, job.branch, job.fixRounds], ["agent-old", "Fix the rounding.", "scopesoup/2", 1]);
   // It had given back its workspace and claim when it parked before.
   assert.equal(w.calls.includes("release 2"), false);
@@ -3962,13 +3962,13 @@ test("a question for an Item held by a person, or with a running session, waits 
   w.clock.ms += 1000;
   await w.run();
   assert.equal(w.job("3")?.parked?.as, "needs-decision");
-  assert.deepEqual(w.job("3")?.refine?.questions.map((each) => each.question), ["Gusts too? (asked by triage of 1)"]);
+  assert.deepEqual(w.job("3")?.rewrite?.questions.map((each) => each.question), ["Gusts too? (asked by triage of 1)"]);
   assert.equal(w.runner.requests.some((request) => request.role === "implement" && request.subject.id === "3"), false);
   // Pat lets go of item 2.
   w.store.put(item("2"), "sync", new Date(w.clock.ms).toISOString());
   await w.run();
   assert.equal(w.job("2")?.parked?.as, "needs-decision");
-  assert.deepEqual(w.job("2")?.refine?.askedBy, ["triage of 1"]);
+  assert.deepEqual(w.job("2")?.rewrite?.askedBy, ["triage of 1"]);
   assert.equal(w.store.getValue("orchestrator.aboutOthers"), "{}");
 });
 
@@ -4031,12 +4031,12 @@ test("questions about an unknown or closed Item, or the asker's own, are dropped
   assert.equal(w.job("1")?.step, "implement");
 });
 
-test("an answer's aboutOthers: an entry with tool-call markup or without a question is dropped, and an implementor's draft is not read", () => {
-  assert.deepEqual(asImplement({ done: true, summary: "x", aboutOthers: [{ item: "2", questions: [ABOUT_Q], draft: "no" }, { item: "3", questions: [] }, { item: "4", questions: [{ ...ABOUT_Q, question: "a</question>b" }] }] })?.aboutOthers, [{ item: "2", questions: [ABOUT_Q] }]);
-  assert.deepEqual(asTriage({ ...TRIAGE_OK, aboutOthers: [{ item: " #5 ", questions: [], draft: " D " }] })?.aboutOthers, [{ item: "#5", questions: [], draft: "D" }]);
+test("an answer's aboutOthers: an entry with tool-call markup or without a question is dropped, and an implementor's rewrite is not read", () => {
+  assert.deepEqual(asImplement({ done: true, summary: "x", aboutOthers: [{ item: "2", questions: [ABOUT_Q], rewrite: "no" }, { item: "3", questions: [] }, { item: "4", questions: [{ ...ABOUT_Q, question: "a</question>b" }] }] })?.aboutOthers, [{ item: "2", questions: [ABOUT_Q] }]);
+  assert.deepEqual(asTriage({ ...TRIAGE_OK, aboutOthers: [{ item: " #5 ", questions: [], rewrite: " D " }] })?.aboutOthers, [{ item: "#5", questions: [], rewrite: "D" }]);
 });
 
-test("on GitHub the other Item's draft and question are posted there, the agent's text made inert", async () => {
+test("on GitHub the other Item's rewrite and question are posted there, the agent's text made inert", async () => {
   const w = world(config(), [ghItem("1"), ghItem("2", { body: "Wind units." })]);
   w.store.addUsageSample(usage(0.1, 0.1));
   const fake = fakeIssues("harbour/tides", [1, 2]);
@@ -4044,11 +4044,11 @@ test("on GitHub the other Item's draft and question are posted there, the agent'
   const real = createHostActions({ host, git: async () => ({ code: 0, stdout: "", stderr: "" }), config: () => config(), store: w.store });
   const deps = w.depsFor();
   deps.actions.askQuestions = real.askQuestions;
-  deps.actions.postDraft = real.postDraft;
-  deps.actions.checkDraft = real.checkDraft;
+  deps.actions.postRewrite = real.postRewrite;
+  deps.actions.checkRewrite = real.checkRewrite;
   await tick(deps);
   assert.deepEqual(roles(w), ["triage"]);
-  w.runner.end("1", "succeeded", { ...TRIAGE_OK, aboutOthers: [{ item: "2", questions: [{ ...ABOUT_Q, question: "Fixes #3 too? Ask @ada." }], draft: "Closes #4. Show knots." }] });
+  w.runner.end("1", "succeeded", { ...TRIAGE_OK, aboutOthers: [{ item: "2", questions: [{ ...ABOUT_Q, question: "Fixes #3 too? Ask @ada." }], rewrite: "Closes #4. Show knots." }] });
   await tick(deps);
   const comments = (fake.comments.get("2") ?? []).map((comment) => comment.body);
   assert.equal(comments.length, 2);
@@ -4059,7 +4059,7 @@ test("on GitHub the other Item's draft and question are posted there, the agent'
   assert.ok(!/Fixes #3|@ada|Closes #4/.test(all), all);
   const parked = loadJobs(w.store)[ghKey("2")]?.parked;
   assert.equal(parked?.as, "needs-decision");
-  assert.equal(parked?.draft?.questions.length, 1);
+  assert.equal(parked?.rewrite?.questions.length, 1);
 });
 
 // --- a Jira project at level 2, end to end against the fake Jira: every host action is the real one ---

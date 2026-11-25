@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { answersBody, assumptionBody, draftBody, questionBody } from "../github/conventions.ts";
+import { answersBody, assumptionBody, rewriteBody, questionBody } from "../github/conventions.ts";
 import type { AdfNode } from "./adf.ts";
 import { adfToMarkdown } from "./adf.ts";
 import { spliceAdfVerification, spliceWikiVerification, writeDescription } from "./description.ts";
@@ -33,11 +33,11 @@ test("Markdown to ADF gives documents the fake (Jira's schema) takes, and reads 
   assert.equal(adfToMarkdown(markdownToAdf(SAMPLE[7]!)).markdown, "Line one\\\nline two");
 });
 
-test("Scope Soup's own comment bodies are valid ADF: question, answers, draft (an expand), decisions", () => {
+test("Scope Soup's own comment bodies are valid ADF: question, answers, rewrite (an expand), decisions", () => {
   const bodies = [
     questionBody(1, { question: "Round?", options: [{ label: "up", description: "Always." }, "down"], recommendation: "down", context: "From the triage.", parked: "needs-decision", step: "triage" }),
     answersBody([{ to: 1, n: 1, given: { answer: "down" } }, { to: 2, n: 2, given: { answer: "metres" } }], "Ada"),
-    draftBody(2, "New text.\n\n## Verification\n\nIt works.", "abc", { add: ["units"], remove: [] }),
+    rewriteBody(2, "New text.\n\n## Verification\n\nIt works.", "abc", { add: ["units"], remove: [] }),
     assumptionBody([{ question: "Unit?", chosen: "metres", others: ["feet"], why: "SI." }]),
   ];
   for (const body of bodies) {
@@ -45,9 +45,9 @@ test("Scope Soup's own comment bodies are valid ADF: question, answers, draft (a
     const doc = markdownToAdf(visible);
     assert.equal(adfProblem(doc), null, visible);
   }
-  const draft = markdownToAdf(draftBody(2, "New text.", "abc").split("\n").slice(0, -1).join("\n"));
-  assert.equal(draft.content![0]?.type, "expand");
-  assert.equal(draft.content![0]?.attrs?.title, "Triage, round 2: proposed description");
+  const rewrite = markdownToAdf(rewriteBody(2, "New text.", "abc").split("\n").slice(0, -1).join("\n"));
+  assert.equal(rewrite.content![0]?.type, "expand");
+  assert.equal(rewrite.content![0]?.attrs?.title, "Triage, round 2: proposed description");
 });
 
 test("only plain web and mail links are made; anything else stays text, and no mention or card is ever made", () => {

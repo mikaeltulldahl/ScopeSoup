@@ -143,5 +143,5 @@ export const itemsJql = (scope: Pick<JiraScope, "project" | "filter">): string =
 // The approved mapping of Scope Soup's markers on Jira (issue #6). Read here; written in a later slice.
 /** `needs-decision`: a label (Jira labels hold no spaces). */
 export const NEEDS_DECISION_LABEL = "scopesoup-needs-decision";
-/** Every property Scope Soup reads starts with this: `scopesoup` on a comment (question, answer, draft, assumption, review), and on the issue `scopesoup.claim` (an agent's hold), `scopesoup.overturns` and `scopesoup.log`. */
+/** Every property Scope Soup reads starts with this: `scopesoup` on a comment (question, answer, rewrite, assumption, review), and on the issue `scopesoup.claim` (an agent's hold), `scopesoup.overturns` and `scopesoup.log`. */
 export const PROPERTY_PREFIX = "scopesoup";

@@ -115,27 +115,27 @@ export interface HostRecord {
   log: LogRecord[];
   /** How many older lines the log comment dropped to stay under the comment limit. */
   dropped: number;
-  /** How many triage draft comments the issue has: the rounds so far. */
-  draftRounds: number;
-  /** The ids of the question comments that belong to a draft (they do not park the Item on their own). */
-  draftQuestions: string[];
-  /** The newest triage draft, while it waits: unanswered and no other Scope Soup question after it. */
-  draft?: HostDraft;
+  /** How many triage rewrite comments the issue has: the rounds so far. */
+  rewriteRounds: number;
+  /** The ids of the question comments that belong to a rewrite (they do not park the Item on their own). */
+  rewriteQuestions: string[];
+  /** The newest triage rewrite, while it waits: unanswered and no other Scope Soup question after it. */
+  rewrite?: HostRewrite;
   /** Scope Soup's questions deleted on the host, a person's "don't ask that": every prompt names them. */
   deletedQuestions?: string[];
 }
 
-/** A triage draft comment and its question comments, answered or not. */
-export interface HostDraft {
+/** A triage rewrite comment and its question comments, answered or not. */
+export interface HostRewrite {
   id: string;
   round: number;
   at: string;
   /** The proposed description, as the comment shows it. */
   text: string;
-  /** True when the issue's body is still the one the draft read (its sha256 is the marker's `bodySha`). */
+  /** True when the issue's body is still the one the rewrite read (its sha256 is the marker's `bodySha`). */
   bodyKnown: boolean;
   questions: OpenQuestion[];
-  /** The label changes the draft's marker proposes. */
+  /** The label changes the rewrite's marker proposes. */
   labels?: LabelChange;
 }
 
@@ -469,7 +469,7 @@ export interface Parked {
    */
   questions?: ParkedQuestion[];
   /** The triage's rewrite of the description, with its questions (recommendations pre-selected on the Item page). */
-  refine?: ParkedDraft;
+  rewrite?: ParkedRewrite;
 }
 
 /** How the triage says an Item relates to another. */
@@ -483,14 +483,14 @@ export interface ItemLinkAnswer {
 }
 
 /** The triage's rewrite description parked for a person. Text from an agent: data. */
-export interface ParkedDraft {
+export interface ParkedRewrite {
   /** The description as the triage read it. */
   original: string;
-  draft: string;
-  /** Round of the refinement loop, from 1; there is no cap. */
+  text: string;
+  /** Round of the rewrite loop, from 1; there is no cap. */
   round: number;
   questions: { question: string; options: DecisionOption[]; recommendation: string; context?: string; multiSelect?: true }[];
-  /** The label changes proposed with the draft (existing labels only, never `scopesoup:*`), applied with it at Accept. */
+  /** The label changes proposed with the rewrite (existing labels only, never `scopesoup:*`), applied with it at Accept. */
   labels?: LabelChange;
   /** Labels the triage named that the repository does not have: dropped, and noted here. */
   droppedLabels?: string[];

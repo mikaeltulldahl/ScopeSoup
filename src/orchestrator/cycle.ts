@@ -15,7 +15,7 @@ import { persistenceLimits } from "../config/persistence.ts";
 import type { Context } from "./context.ts";
 import { ACTOR, errorText } from "./context.ts";
 import type { AskedText, Decision, ItemLinkAnswer, Job, ParkedAs, ReviewAnswer, TakenDecision, TriageAnswer } from "./jobs.ts";
-import { ASK_PERSON, asImplement, asReview, asTriage, formatFindings, hasMarkup, recoverFields, keepsRecommendations, picks, questionsSettled, releaseIn, parkedDraft } from "./jobs.ts";
+import { ASK_PERSON, asImplement, asReview, asTriage, formatFindings, hasMarkup, recoverFields, keepsRecommendations, picks, questionsSettled, releaseIn, parkedRewrite } from "./jobs.ts";
 import { providerFor } from "./providers/index.ts";
 import type { Actions, SessionResultRecord } from "./ports.ts";
 import type { QuestionWrite } from "../ports/host.ts";
@@ -79,7 +79,7 @@ export async function park(ctx: Context, job: Job, as: ParkedAs, reason: string,
 }
 
 /**
- * The questions or the draft of a parked Item could not be posted for a reason that can change (GitHub down, a 5xx, a rate limit):
+ * The questions or the rewrite of a parked Item could not be posted for a reason that can change (GitHub down, a 5xx, a rate limit):
  * each tick posts them again by itself, until they are through (the parked Item is a person's question again) or refused for good (it
  * stays escalated). What GitHub took before it failed is found by the host and not posted twice.
  */
@@ -88,23 +88,23 @@ export async function retryPost(ctx: Context, job: Job): Promise<void> {
   await tellPeople(ctx, job, "needs-decision", parked.posting ?? parked.reason, "decision");
 }
 
-/** `park`'s word to a person: the questions, draft or split on the item's host (GitHub), else a person's list and the item's log. */
+/** `park`'s word to a person: the questions, rewrite or split on the item's host (GitHub), else a person's list and the item's log. */
 async function tellPeople(ctx: Context, job: Job, as: ParkedAs, reason: string, ask: Parameters<Actions["answerTurn"]>[1], retry?: "hand-over"): Promise<void> {
   const key = refKey(job.item);
   const { actions } = ctx.deps;
   // In the item's log too (meta branch): the question stays open until the answer names it. `parked` and `retry` let a restart put the job back.
   // A question from triage or the implementer, or a proposed restructuring.
-  // A draft is one line naming the parked Item; its questions are answered with the draft on the item page.
-  const refining = as === "needs-decision" && job.refine !== undefined;
-  const asked = as === "needs-decision" && !refining ? job.decision ?? (job.step === "triage" ? job.triage?.decision : undefined) : undefined;
+  // A rewrite is one line naming the parked Item; its questions are answered with the rewrite on the item page.
+  const rewriting = as === "needs-decision" && job.rewrite !== undefined;
+  const asked = as === "needs-decision" && !rewriting ? job.decision ?? (job.step === "triage" ? job.triage?.decision : undefined) : undefined;
   const decision = asked?.question.trim() ? asked : undefined;
   const proposal = as === "needs-decision" ? job.proposal : undefined;
   // Triage found several decisions: each is its own question in the log.
-  const all = as === "needs-decision" && !refining && !proposal && !job.decision && job.step === "triage" ? (job.triage?.decisions ?? []).filter((d) => d.question.trim()) : [];
+  const all = as === "needs-decision" && !rewriting && !proposal && !job.decision && job.step === "triage" ? (job.triage?.decisions ?? []).filter((d) => d.question.trim()) : [];
   const questions = all.length > 1 ? all : [];
-  // On GitHub the questions are comments, which tell a person too. So are each triage round's draft and a proposed restructuring.
-  const posted = as === "needs-decision" && (refining
-    ? actions.postDraft !== undefined && (await draftOnHost(ctx, job))
+  // On GitHub the questions are comments, which tell a person too. So are each triage round's rewrite and a proposed restructuring.
+  const posted = as === "needs-decision" && (rewriting
+    ? actions.postRewrite !== undefined && (await rewriteOnHost(ctx, job))
     : actions.askQuestions !== undefined && (await askOnHost(ctx, job, proposal
       ? [{ question: `Proposed restructuring: ${proposal.reason}`, options: [], recommendation: "", proposal: { id: proposal.id, reason: proposal.reason, original: proposal.original, parts: proposal.parts, ...(proposal.carried ? { carried: proposal.carried } : {}) } }]
       : questions.length > 0 ? questions : [decision ?? { question: reason, options: [], recommendation: "" }])));
@@ -121,7 +121,7 @@ async function tellPeople(ctx: Context, job: Job, as: ParkedAs, reason: string, 
         ? { question: decision.question, options: decision.options, ...(decision.recommendation ? { recommendation: decision.recommendation } : {}), ...(decision.context ? { context: decision.context } : {}), ...(decision.multiSelect ? { multiSelect: true } : {}) }
         : { question: reason };
     fields.parked = as;
-    if (refining) fields.refine = job.refine!.round;
+    if (rewriting) fields.rewrite = job.rewrite!.round;
     if (retry) fields.retry = retry;
     if (questions.length === 0) await ctx.act("write the question to the item's log", key, () => actions.appendLog(job.item, "question", fields));
   }
@@ -165,8 +165,8 @@ async function askOnHost(ctx: Context, job: Job, questions: readonly (Decision &
   return true;
 }
 
-/** A draft or split over the comment limit is not posted: the parked state's reason says so, and a person's list and log take it as before. */
-function keptLocal(ctx: Context, job: Job, what: "draft" | "split", limit: number = COMMENT_LIMIT): false {
+/** A rewrite or split over the comment limit is not posted: the parked state's reason says so, and a person's list and log take it as before. */
+function keptLocal(ctx: Context, job: Job, what: "rewrite" | "split", limit: number = COMMENT_LIMIT): false {
   const note = `The ${what} is over ${limit.toLocaleString("en-GB")} characters, too large for a comment on ${job.item.host}: it stays on Scope Soup's board.`;
   job.parked = { ...job.parked!, reason: `${job.parked!.reason} ${note}` };
   ctx.commit("orchestrator.kept_local", note, refKey(job.item), { what });
@@ -199,43 +199,43 @@ async function hostFailed(ctx: Context, job: Job, what: string, error: unknown, 
 }
 
 /**
- * Posts the triage round's draft as a comment on the item's host, then its questions as question comments that name
- * it. They are answered with the draft on the board (`POST /api/draft`) or by replies (`followDraft`). False when the item is
- * not on that host, or the draft is too large for a comment (then it stays on the board as before).
+ * Posts the triage round's rewrite as a comment on the item's host, then its questions as question comments that name
+ * it. They are answered with the rewrite on the board (`POST /api/rewrite`) or by replies (`followRewrite`). False when the item is
+ * not on that host, or the rewrite is too large for a comment (then it stays on the board as before).
  */
-async function draftOnHost(ctx: Context, job: Job): Promise<boolean> {
+async function rewriteOnHost(ctx: Context, job: Job): Promise<boolean> {
   const key = refKey(job.item);
   const { actions } = ctx.deps;
-  const refine = job.refine!;
-  let draft: { id: string; at: string } | null;
+  const rewrite = job.rewrite!;
+  let posted: { id: string; at: string } | null;
   try {
-    draft = await actions.postDraft!(job.item, { round: refine.round, draft: refine.draft, ...(refine.labels ? { labels: refine.labels } : {}) });
+    posted = await actions.postRewrite!(job.item, { round: rewrite.round, text: rewrite.text, ...(rewrite.labels ? { labels: rewrite.labels } : {}) });
   } catch (error) {
-    if (error instanceof TooLarge) return keptLocal(ctx, job, "draft", error.limit);
-    await hostFailed(ctx, job, `the rewrite of round ${refine.round}`, error, `The triage's rewrite (round ${refine.round}) waits on Scope Soup's board.`);
+    if (error instanceof TooLarge) return keptLocal(ctx, job, "rewrite", error.limit);
+    await hostFailed(ctx, job, `the rewrite of round ${rewrite.round}`, error, `The triage's rewrite (round ${rewrite.round}) waits on Scope Soup's board.`);
     return true;
   }
-  if (!draft) return false;
-  const id = draft.id;
+  if (!posted) return false;
+  const id = posted.id;
   let ids: string[] = [];
   let numbers: number[] | undefined;
   let askedAt = "";
-  if (refine.questions.length > 0) {
+  if (rewrite.questions.length > 0) {
     try {
-      const asked = await actions.askQuestions!(job.item, refine.questions.map((each): QuestionWrite => ({
+      const asked = await actions.askQuestions!(job.item, rewrite.questions.map((each): QuestionWrite => ({
         question: each.question, options: each.options, ...(each.recommendation ? { recommendation: each.recommendation } : {}), ...(each.context ? { context: each.context } : {}), ...(each.multiSelect ? { multiSelect: true as const } : {}),
-        parked: "needs-decision", step: job.step, draft: id,
+        parked: "needs-decision", step: job.step, rewrite: id,
       })));
       ids = asked?.ids ?? [];
       numbers = asked?.numbers;
       askedAt = asked?.at ?? "";
     } catch (error) {
-      await hostFailed(ctx, job, `the questions of round ${refine.round}`, error, `The triage's rewrite (round ${refine.round}) and its questions wait on Scope Soup's board.`);
+      await hostFailed(ctx, job, `the questions of round ${rewrite.round}`, error, `The triage's rewrite (round ${rewrite.round}) and its questions wait on Scope Soup's board.`);
       return true;
     }
   }
-  job.parked = { ...postedParked(job.parked!), draft: { id, questions: ids, ...(ids.length > 0 ? { texts: textsOf(refine.questions, numbers) } : {}), ...(askedAt ? { askedAt } : {}) } };
-  ctx.commit("orchestrator.draft_posted", `Posted the triage's rewrite of round ${refine.round} on ${job.item.host} (comment ${id})${ids.length > 0 ? ` with ${ids.length} question${ids.length > 1 ? "s" : ""}` : ""}.`, key, { draft: id, questions: ids });
+  job.parked = { ...postedParked(job.parked!), rewrite: { id, questions: ids, ...(ids.length > 0 ? { texts: textsOf(rewrite.questions, numbers) } : {}), ...(askedAt ? { askedAt } : {}) } };
+  ctx.commit("orchestrator.rewrite_posted", `Posted the triage's rewrite of round ${rewrite.round} on ${job.item.host} (comment ${id})${ids.length > 0 ? ` with ${ids.length} question${ids.length > 1 ? "s" : ""}` : ""}.`, key, { rewrite: id, questions: ids });
   return true;
 }
 
@@ -279,42 +279,42 @@ async function questionsDeleted(ctx: Context, item: Ref, deleted: AskedText[]): 
 }
 
 /**
- * The draft's question comments answered on the host by trusted `An:` / `A:` replies, as answers on the board count. All
- * the recommendations: the draft waits for Accept, Edit or Reject on the board, and the needs-decision label stays until
+ * The rewrite's question comments answered on the host by trusted `An:` / `A:` replies, as answers on the board count. All
+ * the recommendations: the rewrite waits for Accept, Edit or Reject on the board, and the needs-decision label stays until
  * then. Any other answer:
  * the triage runs again with the answers, a new round. A deleted question comment un-parks the Item, and the Item starts
  * again at its triage. True when the job left its parked state.
  */
-export async function followDraft(ctx: Context, job: Job, item: WorkItem): Promise<boolean> {
-  const posted = job.parked?.draft;
-  const refine = parkedDraft(job);
-  if (!posted || posted.answered || posted.questions.length === 0 || !refine) return false;
+export async function followRewrite(ctx: Context, job: Job, item: WorkItem): Promise<boolean> {
+  const posted = job.parked?.rewrite;
+  const rewrite = parkedRewrite(job);
+  if (!posted || posted.answered || posted.questions.length === 0 || !rewrite) return false;
   if (posted.askedAt && Date.parse(item.updatedAt) < Date.parse(posted.askedAt)) return false;
   const key = refKey(job.item);
   const open = new Set((item.openQuestions ?? []).map((question) => question.id));
   const given = posted.questions.map((id) => (item.answers ?? []).find((answer) => answer.to === id));
-  const gone = posted.questions.flatMap((id, index) => (!open.has(id) && !given[index] ? [posted.texts?.[index] ?? { question: refine.questions[index]?.question ?? "" }] : []));
+  const gone = posted.questions.flatMap((id, index) => (!open.has(id) && !given[index] ? [posted.texts?.[index] ?? { question: rewrite.questions[index]?.question ?? "" }] : []));
   if (gone.length > 0) {
     const was = releaseIn(ctx.jobs, key, ACTOR, true);
     if (!was) return false;
-    ctx.commit("orchestrator.job_released", `A question comment of the triage's rewrite (round ${refine.round}) was deleted on ${job.item.host}: the Item is no longer parked, and it starts again at its triage.`, key, { was });
+    ctx.commit("orchestrator.job_released", `A question comment of the triage's rewrite (round ${rewrite.round}) was deleted on ${job.item.host}: the Item is no longer parked, and it starts again at its triage.`, key, { was });
     await questionsDeleted(ctx, job.item, gone.filter((each) => each.question.trim()));
     return true;
   }
   if (given.some((answer) => !answer)) return false;
   const answers = given.map((answer) => answer!.answer);
   const settle = ctx.deps.actions.settleQuestions;
-  if (keepsRecommendations(refine, answers)) {
-    job.parked = { ...job.parked!, draft: { ...posted, answered: true } };
-    ctx.commit("orchestrator.draft_questions_answered", `The questions of the triage's rewrite (round ${refine.round}) were answered on ${job.item.host} with the recommendations: the draft waits for a person to accept, edit or reject it.`, key, { round: refine.round });
+  if (keepsRecommendations(rewrite, answers)) {
+    job.parked = { ...job.parked!, rewrite: { ...posted, answered: true } };
+    ctx.commit("orchestrator.rewrite_questions_answered", `The questions of the triage's rewrite (round ${rewrite.round}) were answered on ${job.item.host} with the recommendations: the rewrite waits for a person to accept, edit or reject it.`, key, { round: rewrite.round });
     return false;
   }
-  const changed = refine.questions.map((question, index) => ({ question, answer: answers[index]! })).filter((each) => !picks(each.answer, each.question.recommendation));
+  const changed = rewrite.questions.map((question, index) => ({ question, answer: answers[index]! })).filter((each) => !picks(each.answer, each.question.recommendation));
   delete job.parked;
   delete job.notBefore;
-  delete job.refine;
+  delete job.rewrite;
   job.failures = 0;
-  ctx.commit("orchestrator.draft_answered", `Answered on ${job.item.host} otherwise than recommended in round ${refine.round} of the triage (${changed.map((each) => `${each.question.question} Answered: ${each.answer}`).join(" ")}); the triage runs again with the answers.`, key, { round: refine.round });
+  ctx.commit("orchestrator.rewrite_answered", `Answered on ${job.item.host} otherwise than recommended in round ${rewrite.round} of the triage (${changed.map((each) => `${each.question.question} Answered: ${each.answer}`).join(" ")}); the triage runs again with the answers.`, key, { round: rewrite.round });
   if (settle) await ctx.act("remove the needs-decision label", key, () => settle(job.item));
   return true;
 }
@@ -886,8 +886,8 @@ async function settleStep(ctx: Context, job: Job, session: Session | null, recor
     if (text) job.triaged = triagedNow(text, item, ctx.deps.store.list<WorkItem>("work"), ctx.at, main);
     delete job.triaging;
     delete job.recheck;
-    // An answer with a draft goes through the refinement loop. One without (from earlier) is settled as before.
-    if (answer.draft !== undefined) return triage(ctx, job, answer, item);
+    // An answer with a rewrite goes through the rewrite loop. One without (from earlier) is settled as before.
+    if (answer.rewrite !== undefined) return triage(ctx, job, answer, item);
     const decision = answer.decision;
     // Counted as park and jobQuestions count: only decisions with a question (asTriage already drops blank ones).
     const asked = (answer.decisions ?? []).filter((d) => d.question.trim());
@@ -1060,7 +1060,7 @@ async function recordDecisions(ctx: Context, job: Job, decisions: readonly Taken
     }));
 }
 
-/** Triage's verdicts once its questions (and its draft) are settled: a restructuring, not ready, too large, or implement. */
+/** Triage's verdicts once its questions (and its rewrite) are settled: a restructuring, not ready, too large, or implement. */
 async function afterTriage(ctx: Context, job: Job, answer: TriageAnswer, settled = ""): Promise<void> {
   // A restructuring is proposed whatever `ready` says: the parts are what can be made ready.
   if (answer.restructure) return parkRestructure(ctx, job, answer.restructure, answer.ready ? undefined : answer.notReadyReason);
@@ -1133,11 +1133,11 @@ async function writeBlocksLinks(ctx: Context, subject: Ref, links: readonly Item
 }
 
 /**
- * The triage's answer with a draft. A `blockedBy` link to an open Item is acted on at once: it is recorded as Scope Soup's
+ * The triage's answer with a rewrite. A `blockedBy` link to an open Item is acted on at once: it is recorded as Scope Soup's
  * own blocker (and written to the item's `blockedBy` field where Scope Soup writes items; on GitHub, only written as an issue
  * dependency, and a write that fails parks the Item as escalated), the job closes and the Item waits in Blocked; its first
  * look runs again once the blocker is done. Otherwise the questions (with the duplicate and conflict links
- * made into questions) and the draft are parked for a person; with no question and the draft the same as the description, triage's
+ * made into questions) and the rewrite are parked for a person; with no question and the rewrite the same as the description, triage's
  * other verdicts follow at once.
  */
 async function triage(ctx: Context, job: Job, answer: TriageAnswer, item: WorkItem | null): Promise<void> {
@@ -1176,13 +1176,13 @@ async function triage(ctx: Context, job: Job, answer: TriageAnswer, item: WorkIt
   const questions = [...(answer.decisions ?? []), ...linkQuestions(ctx, job, links)]
     .filter((question) => question.question.trim() && !(item && reusableAnswer(answers, item, question)));
   const original = item?.body?.trim() ?? "";
-  const draft = (answer.draft ?? "").trim();
+  const rewrite = (answer.rewrite ?? "").trim();
   const { change: labels, dropped } = await proposedLabels(ctx, job, answer, item);
   const droppedNote = dropped.length > 0 ? ` The triage named label${dropped.length > 1 ? "s" : ""} the repository does not have, dropped: ${dropped.join(", ")}.` : "";
-  if (questions.length === 0 && (draft === "" || draft === original) && isEmptyChange(labels)) return afterTriage(ctx, job, answer, ` The rewrite keeps the description as it is.${droppedNote}`);
-  const round = (job.refineRounds ?? 0) + 1;
-  job.refineRounds = round;
-  job.refine = { original, draft: draft || original, questions, round, ...(!isEmptyChange(labels) ? { labels } : {}), ...(dropped.length > 0 ? { droppedLabels: dropped } : {}) };
+  if (questions.length === 0 && (rewrite === "" || rewrite === original) && isEmptyChange(labels)) return afterTriage(ctx, job, answer, ` The rewrite keeps the description as it is.${droppedNote}`);
+  const round = (job.rewriteRounds ?? 0) + 1;
+  job.rewriteRounds = round;
+  job.rewrite = { original, text: rewrite || original, questions, round, ...(!isEmptyChange(labels) ? { labels } : {}), ...(dropped.length > 0 ? { droppedLabels: dropped } : {}) };
   const labelNote = isEmptyChange(labels) ? "" : ` Labels: ${changeText(labels)}.`;
   const reason = questions.length > 0
     ? `Triage, round ${round}: a rewrite of the description and ${questions.length} question(s) wait for an answer: ${questions.map((each, index) => `${index + 1}. ${each.question}`).join(" ")}${labelNote}${droppedNote}`
@@ -1209,33 +1209,33 @@ async function proposedLabels(ctx: Context, job: Job, answer: TriageAnswer, item
 }
 
 /**
- * A person settled the triage's rewrite (`settleDraft`): an answer that stops the Item (close as a duplicate, hold for a
+ * A person settled the triage's rewrite (`settleRewrite`): an answer that stops the Item (close as a duplicate, hold for a
  * conflict) parked it as not ready; otherwise triage's other verdicts follow.
  */
-export async function afterRefine(ctx: Context, job: Job): Promise<void> {
-  const refine = job.refine;
-  delete job.refine;
-  delete job.refineRounds;
-  // Questions and a draft from agents of other Items: once settled, this Item is triaged again with the answers.
-  if (refine?.askedBy) return next(ctx, job, "triage", `A person settled what ${refine.askedBy.join(" and ")} asked about ${job.item.id}${refine.settled ? ` (the rewrite ${refine.settled})` : ""}. Next: triage again, with the answers.`);
-  if (refine?.stop && refine.duplicateOf && ctx.deps.actions.closeDuplicate) {
+export async function afterRewrite(ctx: Context, job: Job): Promise<void> {
+  const rewrite = job.rewrite;
+  delete job.rewrite;
+  delete job.rewriteRounds;
+  // Questions and a rewrite from agents of other Items: once settled, this Item is triaged again with the answers.
+  if (rewrite?.askedBy) return next(ctx, job, "triage", `A person settled what ${rewrite.askedBy.join(" and ")} asked about ${job.item.id}${rewrite.settled ? ` (the rewrite ${rewrite.settled})` : ""}. Next: triage again, with the answers.`);
+  if (rewrite?.stop && rewrite.duplicateOf && ctx.deps.actions.closeDuplicate) {
     // Closed on the host, written through; a failure is `orchestrator.host_write_failed`, and the Item parked as before.
     const key = refKey(job.item);
     try {
-      if (await ctx.deps.actions.closeDuplicate(job.item, refine.duplicateOf)) {
-        const closed = `${job.item.id} was closed on its host as a duplicate of ${refine.duplicateOf.id}, as a person answered.`;
-        ctx.commit("orchestrator.item_closed", closed, key, { duplicateOf: refKey(refine.duplicateOf) });
+      if (await ctx.deps.actions.closeDuplicate(job.item, rewrite.duplicateOf)) {
+        const closed = `${job.item.id} was closed on its host as a duplicate of ${rewrite.duplicateOf.id}, as a person answered.`;
+        ctx.commit("orchestrator.item_closed", closed, key, { duplicateOf: refKey(rewrite.duplicateOf) });
         // Parked without a turn for a person; the next tick sees the Item abandoned and closes the job.
         return park(ctx, job, "not-ready", closed);
       }
     } catch (error) {
-      ctx.commit("orchestrator.host_write_failed", `Could not close ${job.item.id} as a duplicate of ${refine.duplicateOf.id}: ${errorText(error)}`, key);
-      return park(ctx, job, "not-ready", `A person answered: ${refine.stop}. Closing it on the host failed (${errorText(error)}); close it there yourself, or answer here to look at it again.`, "not-ready");
+      ctx.commit("orchestrator.host_write_failed", `Could not close ${job.item.id} as a duplicate of ${rewrite.duplicateOf.id}: ${errorText(error)}`, key);
+      return park(ctx, job, "not-ready", `A person answered: ${rewrite.stop}. Closing it on the host failed (${errorText(error)}); close it there yourself, or answer here to look at it again.`, "not-ready");
     }
   }
-  if (refine?.stop) return park(ctx, job, "not-ready", `A person answered: ${refine.stop}. Scope Soup closes nothing itself; answer here to look at it again.`, "not-ready");
+  if (rewrite?.stop) return park(ctx, job, "not-ready", `A person answered: ${rewrite.stop}. Scope Soup closes nothing itself; answer here to look at it again.`, "not-ready");
   if (!job.triage) return next(ctx, job, "implement", "The rewrite is settled. Next: implement.");
-  return afterTriage(ctx, job, job.triage, refine?.settled ? ` A person ${refine.settled} the rewrite.` : "");
+  return afterTriage(ctx, job, job.triage, rewrite?.settled ? ` A person ${rewrite.settled} the rewrite.` : "");
 }
 
 /** A person said "try again" after a failed hand-over: repeat it without a session, if the branch is still there. */
@@ -1256,8 +1256,8 @@ export async function retryHandOver(ctx: Context, job: Job, item: WorkItem | nul
 }
 
 /**
- * Writes the questions (and the draft) agents of other Items asked about an Item, once it is free (`busyWhy`): the Item parks on
- * them as on triage's own draft and questions, with the same Accept, Edit and Reject, and the same posting on its host. Work paused
+ * Writes the questions (and the rewrite) agents of other Items asked about an Item, once it is free (`busyWhy`): the Item parks on
+ * them as on triage's own rewrite and questions, with the same Accept, Edit and Reject, and the same posting on its host. Work paused
  * on it keeps its branch and its implementor's session; the answers send it back to its triage. Questions for an Item that is not
  * free wait, said once; for one unknown or closed they are dropped with an event.
  */
@@ -1285,7 +1285,7 @@ export async function writeAboutOthers(ctx: Context): Promise<void> {
     const askedBy = [...new Set(entries.map((each) => each.askedBy))];
     const questions = entries.flatMap((each) => each.questions);
     const original = item.body?.trim() ?? "";
-    const draft = [...entries].reverse().find((each) => each.draft)?.draft ?? original;
+    const rewrite = [...entries].reverse().find((each) => each.rewrite)?.rewrite ?? original;
     // A job parked before gave back its claim and workspace then; one between steps holds them still.
     const holds = existing !== undefined && !existing.parked;
     const job: Job = existing ?? { item: item.ref, workspace: workspaceKey(item.ref), branch: workBranch(item.ref), step: "triage", failures: 0, fixRounds: 0, startedAt: ctx.at };
@@ -1293,19 +1293,19 @@ export async function writeAboutOthers(ctx: Context): Promise<void> {
     // next waits until the triage has run again with the answers.
     job.step = "triage";
     job.failures = 0;
-    for (const field of ["decision", "proposal", "refine", "notBefore", "resume", "recheck", "triaging", "answered", "merge", "answerArrived"] as const) delete job[field];
-    const round = (job.refineRounds ?? 0) + 1;
-    job.refineRounds = round;
-    job.refine = { original, draft, questions, round, askedBy };
+    for (const field of ["decision", "proposal", "rewrite", "notBefore", "resume", "recheck", "triaging", "answered", "merge", "answerArrived"] as const) delete job[field];
+    const round = (job.rewriteRounds ?? 0) + 1;
+    job.rewriteRounds = round;
+    job.rewrite = { original, text: rewrite, questions, round, askedBy };
     const reason = questions.length > 0
-      ? `Asked by ${askedBy.join(" and ")}: ${draft !== original ? "a rewrite of the description and " : ""}${questions.length} question(s) about ${item.ref.id} wait for an answer: ${questions.map((each, index) => `${index + 1}. ${each.question}`).join(" ")}`
+      ? `Asked by ${askedBy.join(" and ")}: ${rewrite !== original ? "a rewrite of the description and " : ""}${questions.length} question(s) about ${item.ref.id} wait for an answer: ${questions.map((each, index) => `${index + 1}. ${each.question}`).join(" ")}`
       : `Rewrite by ${askedBy.join(" and ")}: a rewrite of ${item.ref.id}'s description waits for a person to accept, edit or reject.`;
     store.tx(() => {
       const waiting = readWaitingAbouts(store);
       delete waiting[key];
       writeWaitingAbouts(store, waiting);
       ctx.jobs[key] = job;
-      ctx.commit("orchestrator.about_other_written", `Wrote on ${item.ref.id} what ${askedBy.join(" and ")} asked: ${questions.length} question(s)${draft !== original ? " and a draft" : ""}.`, key, { askedBy, questions: questions.length });
+      ctx.commit("orchestrator.about_other_written", `Wrote on ${item.ref.id} what ${askedBy.join(" and ")} asked: ${questions.length} question(s)${rewrite !== original ? " and a rewrite" : ""}.`, key, { askedBy, questions: questions.length });
     });
     if (holds) await park(ctx, job, "needs-decision", reason, "decision");
     else await parkFresh(ctx, job, reason);

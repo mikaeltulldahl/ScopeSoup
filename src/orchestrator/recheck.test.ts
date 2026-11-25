@@ -241,7 +241,7 @@ describe("a waiting Item's triage again", { concurrency: 8 }, () => {
     const jobs = loadJobs(w.store);
     jobs[refKey(ref("1"))] = {
       item: ref("1"), workspace: "w1", branch: "scopesoup/1", step: "implement", failures: 0, fixRounds: 0, startedAt: new Date(T0).toISOString(),
-      triage: { ready: true, size: "small", paths: [], hidesDecision: false, draft: "Do 1." },
+      triage: { ready: true, size: "small", paths: [], hidesDecision: false, rewrite: "Do 1." },
       triaged: { at: new Date(T0).toISOString(), ...text, blockers: [refKey(ref("2"))] },
     };
     w.store.tx(() => saveJobs(w.store, jobs));
@@ -273,11 +273,11 @@ describe("a waiting Item's triage again", { concurrency: 8 }, () => {
 });
 
 describe("what counts as a change", () => {
-  test("a description Scope Soup wrote from the accepted draft is no edit; another text is", () => {
+  test("a description Scope Soup wrote from the accepted rewrite is no edit; another text is", () => {
     const work = item("1");
     const job: Job = {
       item: ref("1"), workspace: "w", branch: "scopesoup/1", step: "implement", failures: 0, fixRounds: 0, startedAt: new Date(T0).toISOString(),
-      triage: { ready: true, size: "small", paths: [], hidesDecision: false, draft: "Do 1 well." },
+      triage: { ready: true, size: "small", paths: [], hidesDecision: false, rewrite: "Do 1 well." },
       triaged: adoptWritten({ at: new Date(T0).toISOString(), ...triagedText(work), blockers: [] }, ["Do 1 well."]),
     };
     const now = new Date(T0 + DAY).toISOString();
@@ -288,7 +288,7 @@ describe("what counts as a change", () => {
   });
 
   test("a triage from earlier has no record of what it saw: only its age counts, from when its job started", () => {
-    const job: Job = { item: ref("1"), workspace: "w", branch: "scopesoup/1", step: "implement", failures: 0, fixRounds: 0, startedAt: new Date(T0).toISOString(), triage: { ready: true, size: "small", paths: [], hidesDecision: false, draft: "" } };
+    const job: Job = { item: ref("1"), workspace: "w", branch: "scopesoup/1", step: "implement", failures: 0, fixRounds: 0, startedAt: new Date(T0).toISOString(), triage: { ready: true, size: "small", paths: [], hidesDecision: false, rewrite: "" } };
     assert.deepEqual(staleWithoutGit(job, item("1", { body: "Changed." }), [], new Date(T0 + 2 * DAY).toISOString(), 30).reasons, []);
     assert.equal(staleWithoutGit(job, item("1"), [], new Date(T0 + 31 * DAY).toISOString(), 30).reasons.length, 1);
   });
@@ -389,7 +389,7 @@ describe("Items that change the same files", { concurrency: 4 }, () => {
   function waitingJob(id: string, paths: string[]): Job {
     return {
       item: ref(id), workspace: `w${id}`, branch: `scopesoup/${id}`, step: "implement", failures: 0, fixRounds: 0, startedAt: new Date(T0).toISOString(),
-      triage: { ready: true, size: "small", paths, hidesDecision: false, draft: `Do ${id}.` },
+      triage: { ready: true, size: "small", paths, hidesDecision: false, rewrite: `Do ${id}.` },
       triaged: { at: new Date(T0).toISOString(), ...triagedText(item(id)), blockers: [] },
     };
   }

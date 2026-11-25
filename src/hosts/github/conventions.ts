@@ -2,7 +2,7 @@
 // Comment markers, the trust rule, and Qn:/An: replies. Nothing here writes to GitHub; the adapter posts the bodies built here.
 
 import { asLabelChange, changeText, isEmptyChange } from "../../model/labels.ts";
-import type { Actor, Assumption, AssumptionSettled, DecisionOption, HostDraft, LabelChange, HostRecord, LogRecord, OpenQuestion, OriginalFate, PartGoes, RecordedAnswer, ProposedPart, Ref, WorkItem } from "../../model/types.ts";
+import type { Actor, Assumption, AssumptionSettled, DecisionOption, HostRewrite, LabelChange, HostRecord, LogRecord, OpenQuestion, OriginalFate, PartGoes, RecordedAnswer, ProposedPart, Ref, WorkItem } from "../../model/types.ts";
 import { asOptions, asRestructuringRecord, optionText } from "../../model/types.ts";
 import type { WorkPort } from "../../ports/host.ts";
 import { COMMENT_LIMIT, WorkGone } from "../../ports/host.ts";
@@ -12,8 +12,8 @@ import type { Scope } from "./map.ts";
 import { CLAIMED_LABEL, hasLabel, workRef } from "./map.ts";
 import type { RestComment, RestTimelineEvent } from "./rest.ts";
 
-export type MarkerKind = "question" | "answer" | "draft" | "claim" | "log" | "merged" | "batch" | "assumption" | "moved";
-const KINDS = new Set<string>(["question", "answer", "draft", "claim", "log", "merged", "batch", "assumption", "moved"]);
+export type MarkerKind = "question" | "answer" | "rewrite" | "claim" | "log" | "merged" | "batch" | "assumption" | "moved";
+const KINDS = new Set<string>(["question", "answer", "rewrite", "claim", "log", "merged", "batch", "assumption", "moved"]);
 
 export interface Marker {
   kind: MarkerKind;
@@ -95,16 +95,16 @@ const str = (value: unknown): string => (typeof value === "string" ? value.trim(
 export interface Thread {
   openQuestions: OpenQuestion[];
   answers: RecordedAnswer[];
-  /** The triage drafts, oldest first: round, the hash of the body each read, and whether it has its answer. */
-  drafts: ThreadDraft[];
+  /** The triage rewrites, oldest first: round, the hash of the body each read, and whether it has its answer. */
+  rewrites: ThreadRewrite[];
   /**
    * Scope Soup's one log comment (the token's own, lowest id), or null when there is none yet. With the highest question
    * number Scope Soup has used on the issue as far as the log knows (`asked`), and the questions deleted on GitHub, kept so they are
    * not asked again.
    */
   log: { id: number; lines: LogRecord[]; dropped: number } & LogKeep | null;
-  /** The newest draft, while it waits: no answer, and no other Scope Soup question came after it. */
-  waiting: ThreadDraft | null;
+  /** The newest rewrite, while it waits: no answer, and no other Scope Soup question came after it. */
+  waiting: ThreadRewrite | null;
   /** The newest `merged` marker (the closing comment), with the comment's time; null when there is none. */
   merged: Merged | null;
   /** Scope Soup's claim comments (the token's own), lowest id first, live or not. */
@@ -145,8 +145,8 @@ export interface Merged {
   at: string;
 }
 
-/** One draft comment; `questions` are the question comments naming it, each with its answer once it has one. */
-export interface ThreadDraft {
+/** One rewrite comment; `questions` are the question comments naming it, each with its answer once it has one. */
+export interface ThreadRewrite {
   id: string;
   round: number;
   bodySha: string;
@@ -160,9 +160,9 @@ export interface ThreadDraft {
 
 /** One issue's questions and answers from its comments. Pure. */
 export function readThread(subject: Ref, comments: RestComment[], self: string | null): Thread {
-  const questions: { id: number; n?: number; question: OpenQuestion; optionTexts: string[]; answered: boolean; draft?: number; answer?: string }[] = [];
+  const questions: { id: number; n?: number; question: OpenQuestion; optionTexts: string[]; answered: boolean; rewrite?: number; answer?: string }[] = [];
   const answers: RecordedAnswer[] = [];
-  const drafts: ThreadDraft[] = [];
+  const rewrites: ThreadRewrite[] = [];
   let log: Thread["log"] = null;
   let merged: Merged | null = null;
   const claims: ClaimComment[] = [];
@@ -207,8 +207,8 @@ export function readThread(subject: Ref, comments: RestComment[], self: string |
           if (restructuring) question.proposal = { reason: str(proposal.reason), ...restructuring, ...(carried ? { carried } : {}) };
         }
         const n = typeof data.n === "number" && Number.isInteger(data.n) && data.n > 0 ? data.n : undefined;
-        const draft = typeof data.draft === "number" ? data.draft : undefined;
-        questions.push({ id: comment.id, ...(n ? { n } : {}), question, optionTexts: question.options.map(optionText), answered: false, ...(draft !== undefined ? { draft } : {}) });
+        const rewrite = typeof data.rewrite === "number" ? data.rewrite : undefined;
+        questions.push({ id: comment.id, ...(n ? { n } : {}), question, optionTexts: question.options.map(optionText), answered: false, ...(rewrite !== undefined ? { rewrite } : {}) });
       } else if (marker.kind === "answer") {
         // One comment may carry several answers (`answers`, one per question, sharing `by` and `textHash`).
         const entries = Array.isArray(data.answers)
@@ -233,18 +233,18 @@ export function readThread(subject: Ref, comments: RestComment[], self: string |
           }
           const target = questions.find((each) => each.id === entry.to && !each.answered);
           if (target) answer(comment, text, target, extra);
-          // A person's decision on a triage draft.
-          const draft = target ? undefined : drafts.find((each) => Number(each.id) === entry.to && !each.answered);
-          if (draft) {
-            draft.answered = true;
-            answer(comment, text, undefined, { ...extra, question: `Triage rewrite, round ${draft.round}` });
-            answers[answers.length - 1]!.to = draft.id;
+          // A person's decision on a triage rewrite.
+          const rewrite = target ? undefined : rewrites.find((each) => Number(each.id) === entry.to && !each.answered);
+          if (rewrite) {
+            rewrite.answered = true;
+            answer(comment, text, undefined, { ...extra, question: `Triage rewrite, round ${rewrite.round}` });
+            answers[answers.length - 1]!.to = rewrite.id;
           }
         }
-      } else if (marker.kind === "draft") {
+      } else if (marker.kind === "rewrite") {
         const round = typeof data.round === "number" && Number.isInteger(data.round) && data.round > 0 ? data.round : 0;
         const labels = asLabelChange(data.labels);
-        if (round > 0) drafts.push({ id: String(comment.id), round, bodySha: str(data.bodySha), answered: false, at: comment.created_at, text: draftText(comment.body), questions: [], ...(labels ? { labels } : {}) });
+        if (round > 0) rewrites.push({ id: String(comment.id), round, bodySha: str(data.bodySha), answered: false, at: comment.created_at, text: rewriteText(comment.body), questions: [], ...(labels ? { labels } : {}) });
       } else if (marker.kind === "log" && log === null && self !== null && comment.user?.login?.toLowerCase() === self) {
         // Only the token's own login writes the log; a second log comment (two writers at once) is not read.
         log = { id: comment.id, ...readLogMarker(marker.data) };
@@ -274,13 +274,13 @@ export function readThread(subject: Ref, comments: RestComment[], self: string |
     }
   }
   for (const each of questions) {
-    const draft = each.draft !== undefined ? drafts.find((one) => Number(one.id) === each.draft) : undefined;
-    if (draft) draft.questions.push({ question: each.question, ...(each.answer !== undefined ? { answer: each.answer } : {}) });
+    const rewrite = each.rewrite !== undefined ? rewrites.find((one) => Number(one.id) === each.rewrite) : undefined;
+    if (rewrite) rewrite.questions.push({ question: each.question, ...(each.answer !== undefined ? { answer: each.answer } : {}) });
   }
-  const newest = drafts[drafts.length - 1];
-  const later = !!newest && questions.some((each) => each.id > Number(newest.id) && each.draft !== Number(newest.id));
+  const newest = rewrites[rewrites.length - 1];
+  const later = !!newest && questions.some((each) => each.id > Number(newest.id) && each.rewrite !== Number(newest.id));
   const waiting = newest && !newest.answered && !later ? newest : null;
-  return { openQuestions: questions.filter((each) => !each.answered).map((each) => each.question), answers, drafts, log, waiting, merged, claims, assumptions };
+  return { openQuestions: questions.filter((each) => !each.answered).map((each) => each.question), answers, rewrites, log, waiting, merged, claims, assumptions };
 }
 
 // --- the decisions an implementor took itself ---
@@ -361,8 +361,8 @@ export function assumptionBody(decisions: readonly AssumptionEntry[], settled: r
   });
 }
 
-/** The proposed description inside a draft comment's `<details>`, or the visible part as it is. */
-function draftText(body: string | null | undefined): string {
+/** The proposed description inside a rewrite comment's `<details>`, or the visible part as it is. */
+function rewriteText(body: string | null | undefined): string {
   const lines = (body ?? "").trimEnd().split(/\r?\n/);
   const visible = lines.slice(0, -1).join("\n").trim();
   const match = /^<details><summary>[^\n]*<\/summary>\n\n([\s\S]*)\n\n<\/details>(?:\n\nLabels: [^\n]*)?$/.exec(visible);
@@ -370,13 +370,13 @@ function draftText(body: string | null | undefined): string {
 }
 
 /**
- * The Item waits for an answer, so `scopesoup:needs-decision` is on: a Scope Soup question is open, or a triage draft waits for
- * Accept, Edit or Reject (with no question too, or only labels proposed). A draft still waits once each of
+ * The Item waits for an answer, so `scopesoup:needs-decision` is on: a Scope Soup question is open, or a triage rewrite waits for
+ * Accept, Edit or Reject (with no question too, or only labels proposed). A rewrite still waits once each of
  * its questions is answered with the recommendation; an answer otherwise than recommended starts a new round, so it no longer waits.
  */
 export function waitsForAnswer(thread: Thread): boolean {
-  const draft = thread.waiting;
-  return thread.openQuestions.length > 0 || (!!draft && draft.questions.every((each) => each.answer === undefined || picksRecommendation(each.answer, each.question.recommendation)));
+  const rewrite = thread.waiting;
+  return thread.openQuestions.length > 0 || (!!rewrite && rewrite.questions.every((each) => each.answer === undefined || picksRecommendation(each.answer, each.question.recommendation)));
 }
 
 /** The answer names the recommendation: its label, or `label: ...` (as `picks` in the orchestrator). */
@@ -506,17 +506,17 @@ export function logBody(lines: readonly LogLine[], dropped: number, keep: LogKee
   return body;
 }
 
-/** The item's record for `recover.ts`. `bodyKnown` says whether the issue's body is the one whose sha256 a draft names. */
+/** The item's record for `recover.ts`. `bodyKnown` says whether the issue's body is the one whose sha256 a rewrite names. */
 export function hostRecordOf(thread: Thread, bodyKnown: (sha: string) => boolean): HostRecord {
   const record: HostRecord = {
-    log: thread.log?.lines ?? [], dropped: thread.log?.dropped ?? 0, draftRounds: thread.drafts.length,
-    draftQuestions: thread.drafts.flatMap((draft) => draft.questions.flatMap((each) => (each.question.id ? [each.question.id] : []))),
+    log: thread.log?.lines ?? [], dropped: thread.log?.dropped ?? 0, rewriteRounds: thread.rewrites.length,
+    rewriteQuestions: thread.rewrites.flatMap((rewrite) => rewrite.questions.flatMap((each) => (each.question.id ? [each.question.id] : []))),
   };
   if (thread.log && thread.log.deleted.length > 0) record.deletedQuestions = thread.log.deleted.map((each) => each.question);
   const waiting = thread.waiting;
   if (waiting) {
-    const draft: HostDraft = { id: waiting.id, round: waiting.round, at: waiting.at, text: waiting.text, bodyKnown: bodyKnown(waiting.bodySha), questions: waiting.questions.map((each) => each.question), ...(waiting.labels ? { labels: waiting.labels } : {}) };
-    record.draft = draft;
+    const rewrite: HostRewrite = { id: waiting.id, round: waiting.round, at: waiting.at, text: waiting.text, bodyKnown: bodyKnown(waiting.bodySha), questions: waiting.questions.map((each) => each.question), ...(waiting.labels ? { labels: waiting.labels } : {}) };
+    record.rewrite = rewrite;
   }
   return record;
 }
@@ -543,7 +543,7 @@ export function questionNumber(comment: RestComment | undefined): number | undef
 }
 
 /** What a question comment says: `**Qn: question**`, the context, the options, how to answer; then its marker. The text is inert already. */
-export function questionBody(n: number, ask: { question: string; options: DecisionOption[]; recommendation?: string; context?: string; multiSelect?: true; parked: string; step: string; draft?: string; proposal?: { id: string; reason: string; original: OriginalFate; parts: ProposedPart[]; carried?: string } }): string {
+export function questionBody(n: number, ask: { question: string; options: DecisionOption[]; recommendation?: string; context?: string; multiSelect?: true; parked: string; step: string; rewrite?: string; proposal?: { id: string; reason: string; original: OriginalFate; parts: ProposedPart[]; carried?: string } }): string {
   const option = (each: DecisionOption): string => {
     const label = typeof each === "string" ? each : each.label;
     const description = typeof each === "string" ? "" : each.description;
@@ -562,7 +562,7 @@ export function questionBody(n: number, ask: { question: string; options: Decisi
     n, question: ask.question.trim(), options: ask.options,
     ...(ask.recommendation ? { recommendation: ask.recommendation } : {}), ...(ask.context?.trim() ? { context: ask.context.trim() } : {}), ...(ask.multiSelect ? { multiSelect: true } : {}),
     parked: ask.parked, step: ask.step,
-    ...(ask.draft ? { draft: Number(ask.draft) } : {}),
+    ...(ask.rewrite ? { rewrite: Number(ask.rewrite) } : {}),
     ...(ask.proposal ? { proposal: { id: ask.proposal.id, reason: ask.proposal.reason, original: ask.proposal.original, parts: ask.proposal.parts, ...(ask.proposal.carried ? { carried: ask.proposal.carried } : {}) } } : {}),
   });
 }
@@ -579,13 +579,13 @@ export function withdrawnBody(data: Record<string, unknown>): string {
 }
 
 /**
- * What a draft comment says: the draft inside `<details>`, then its marker with the round and the hash of the body it read.
+ * What a rewrite comment says: the rewrite inside `<details>`, then its marker with the round and the hash of the body it read.
  * The text is inert already. Proposed label changes are a line under it (`Labels: +bug, −question`) and `labels` in the marker.
  */
-export function draftBody(round: number, draft: string, bodySha: string, labels?: LabelChange): string {
+export function rewriteBody(round: number, rewrite: string, bodySha: string, labels?: LabelChange): string {
   const change = labels && !isEmptyChange(labels) ? labels : undefined;
-  const visible = `<details><summary>Triage, round ${round}: proposed description</summary>\n\n${draft.trim()}\n\n</details>${change ? `\n\nLabels: ${changeText(change)}` : ""}`;
-  return withMarker(visible, "draft", { round, bodySha, ...(change ? { labels: { add: change.add, remove: change.remove } } : {}) });
+  const visible = `<details><summary>Triage, round ${round}: proposed description</summary>\n\n${rewrite.trim()}\n\n</details>${change ? `\n\nLabels: ${changeText(change)}` : ""}`;
+  return withMarker(visible, "rewrite", { round, bodySha, ...(change ? { labels: { add: change.add, remove: change.remove } } : {}) });
 }
 
 /** The closing comment of a merged Item: the text, then the `merged` marker. The text is inert already. */
@@ -638,8 +638,8 @@ export function answersBody(entries: readonly { to: number | null; n?: number; g
 }
 
 /**
- * Sets the item's questions, answers and `needsDecision` (`waitsForAnswer`) from its thread. And Scope Soup's record (log comment, drafts), when it
- * has one; `bodyKnown` says whether the issue's body has the sha256 a draft names. An open issue with a live claim at `now`
+ * Sets the item's questions, answers and `needsDecision` (`waitsForAnswer`) from its thread. And Scope Soup's record (log comment, rewrites), when it
+ * has one; `bodyKnown` says whether the issue's body has the sha256 a rewrite names. An open issue with a live claim at `now`
  * (ms) is doing, held by that claim's machine until its `until`; an assignee (a person's hold) stays the holder.
  */
 export function applyThread(item: WorkItem, thread: Thread, bodyKnown: (sha: string) => boolean = () => false, now: number = Date.now()): WorkItem {
@@ -649,10 +649,10 @@ export function applyThread(item: WorkItem, thread: Thread, bodyKnown: (sha: str
     if (item.state === "todo") item.state = "doing";
   }
   if (thread.openQuestions.length > 0) item.openQuestions = thread.openQuestions;
-  // The label's rule: an open question, or a triage draft waiting for Accept, Edit or Reject.
+  // The label's rule: an open question, or a triage rewrite waiting for Accept, Edit or Reject.
   if (waitsForAnswer(thread)) item.needsDecision = true;
   if (thread.answers.length > 0) item.answers = thread.answers;
-  if (thread.log || thread.drafts.length > 0) item.hostRecord = hostRecordOf(thread, bodyKnown);
+  if (thread.log || thread.rewrites.length > 0) item.hostRecord = hostRecordOf(thread, bodyKnown);
   if (thread.merged) item.merged = { ...thread.merged };
   if (thread.assumptions.length > 0) item.assumptions = thread.assumptions;
   // GitHub does not say which issue a duplicate duplicates; Scope Soup's log comment does.
@@ -669,7 +669,7 @@ export interface ConventionsDeps {
   whoami(): Promise<Actor>;
   /** Milliseconds since the epoch. */
   now(): number;
-  /** The sha256 of the issue's body as last read, if known (a draft's `original` is that body when the hashes match). */
+  /** The sha256 of the issue's body as last read, if known (a rewrite's `original` is that body when the hashes match). */
   bodySha?(id: string): string | undefined;
   /**
    * The issue has the `scopesoup:claimed` label and no live claim (it expired, or was released and the label stayed): the

@@ -100,8 +100,8 @@ const DEMO_RESTRUCTURING: Restructuring = {
   ],
 };
 
-/** The triage's question with its draft on item 41. */
-const DRAFT_QUESTION: Decision = {
+/** The triage's question with its rewrite on item 41. */
+const REWRITE_QUESTION: Decision = {
   question: "How many days does the week view show?",
   options: [
     { label: "Seven days from today", description: "Today and the six days after it." },
@@ -109,8 +109,8 @@ const DRAFT_QUESTION: Decision = {
   ],
   recommendation: "Seven days from today",
 };
-const DRAFT_ORIGINAL = "Show tide times for the next seven days.";
-const DRAFT_TEXT = [
+const REWRITE_ORIGINAL = "Show tide times for the next seven days.";
+const REWRITE_TEXT = [
   "Show the high and low tides for today and the six days after it, one row per day, in the harbour's own time zone.",
   "",
   "- Each tide shows its time and its height in metres, to one decimal.",
@@ -256,7 +256,7 @@ function writeDemoStream(dir: string, id: string): string {
 }
 
 /**
- * Fills the store so that every lane, both batch states, a person's questions and draft, and sessions to talk to show. With
+ * Fills the store so that every lane, both batch states, a person's questions and rewrite, and sessions to talk to show. With
  * `dir`, the sessions of item 66 get short stream files there, for their details in the Rounds table.
  */
 export function seedDemo(store: Store, now: Date, dir?: string): void {
@@ -284,13 +284,13 @@ export function seedDemo(store: Store, now: Date, dir?: string): void {
     item(81, "Keep the last tide table for use offline", { body: "Without a connection the app shows nothing; it could show the table it fetched last, marked with its age." });
     item(82, "Share a harbour by link", { body: "A link that opens the app on one harbour's tide table." });
     // Backlog: two Items are parked on their triage for a person.
-    item(41, "Show tide times for the next seven days", { body: DRAFT_ORIGINAL, verification: "The week view lists 28 tides for the test harbour." });
+    item(41, "Show tide times for the next seven days", { body: REWRITE_ORIGINAL, verification: "The week view lists 28 tides for the test harbour." });
     step("t-41", 41, "triage", "opus", 40, 4);
     job(41, {
-      triage: { ready: true, size: "small", paths: ["src/week"], hidesDecision: true, decision: DRAFT_QUESTION, decisions: [DRAFT_QUESTION], draft: DRAFT_TEXT },
-      refine: { original: DRAFT_ORIGINAL, draft: DRAFT_TEXT, questions: [DRAFT_QUESTION], round: 1 },
-      refineRounds: 1,
-      parked: { as: "needs-decision", reason: `Triage, round 1: a rewrite of the description and 1 question wait for an answer: 1. ${DRAFT_QUESTION.question}`, at: at(-36) },
+      triage: { ready: true, size: "small", paths: ["src/week"], hidesDecision: true, decision: REWRITE_QUESTION, decisions: [REWRITE_QUESTION], rewrite: REWRITE_TEXT },
+      rewrite: { original: REWRITE_ORIGINAL, text: REWRITE_TEXT, questions: [REWRITE_QUESTION], round: 1 },
+      rewriteRounds: 1,
+      parked: { as: "needs-decision", reason: `Triage, round 1: a rewrite of the description and 1 question wait for an answer: 1. ${REWRITE_QUESTION.question}`, at: at(-36) },
     });
     item(52, "Chart datum and the first test harbours", {
       body: "Harbours publish heights against different datums, and the first data set needs a few harbours to test against.",
@@ -502,7 +502,7 @@ export function seedDemo(store: Store, now: Date, dir?: string): void {
       store.setValue(sessionResultKey(each.session.ref.id), JSON.stringify(each.result));
     }
   });
-  // Who created the Items, a draft accepted, merges, switches and an upgrade, for History.
+  // Who created the Items, a rewrite accepted, merges, switches and an upgrade, for History.
   seedDemoActivity(store, now, versionOf(resolve(dirname(fileURLToPath(import.meta.url)), "../..")));
 }
 

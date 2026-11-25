@@ -50,7 +50,7 @@ export function triagedNow(text: TriagedText, item: WorkItem | null, items: read
 export function awaitsImplement(job: Job): boolean {
   return job.step === "implement" && !job.parked && job.triage !== undefined && job.implement === undefined
     && job.agentSession === undefined && job.resume === undefined && job.resumeWith === undefined && job.head === undefined
-    && job.failures === 0 && (job.triaged !== undefined || job.triage.draft !== undefined);
+    && job.failures === 0 && (job.triaged !== undefined || job.triage.rewrite !== undefined);
 }
 
 /** The paths of a triage's answer that are looked up in git: plain relative paths, no pathspec magic, no options. */

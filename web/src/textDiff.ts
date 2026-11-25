@@ -1,5 +1,5 @@
 // A unified line diff of two texts, with the changed words marked inside a changed line. Pure (no DOM), so
-// src/testing/textDiff.test.ts can test it. Used for the triage draft against the description (Item.tsx).
+// src/testing/textDiff.test.ts can test it. Used for the triage rewrite against the description (Item.tsx).
 
 /** A run of a line's text; `changed` marks the words that differ from the paired line. */
 export interface Part { text: string; changed: boolean }
@@ -59,7 +59,7 @@ export function wordParts(line: string, other: string): Part[] {
 
 /**
  * The word marks of a removed line and the added line paired with it, or null when they are not partners: lines with no word
- * in common say nothing when every word is marked. The pairing rule of the draft diff and of a file's diff.
+ * in common say nothing when every word is marked. The pairing rule of the rewrite diff and of a file's diff.
  */
 export function partnerParts(removed: string, added: string): { del: Part[]; add: Part[] } | null {
   const theirs = new Set(tokens(added));
@@ -132,7 +132,7 @@ export function collapse(rows: readonly DiffRow[], context = 3, minHidden = 4): 
 
 /**
  * Word marks for the lines of a unified diff of one file (git's hunks: "-", "+", " " and "@@" lines). In each run of "-" lines
- * followed by "+" lines the i-th pair are partners (the draft diff's rule, `partnerParts`). Entry `k` is the parts of line `k`
+ * followed by "+" lines the i-th pair are partners (the rewrite diff's rule, `partnerParts`). Entry `k` is the parts of line `k`
  * without its first character, or undefined when the line has no partner.
  */
 export function hunkParts(lines: readonly string[]): (Part[] | undefined)[] {

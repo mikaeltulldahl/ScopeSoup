@@ -1,7 +1,7 @@
 // The project's activity for History: one row per thing that happened, newest first, built from what Scope Soup
-// already records. The Items' logs are shared by every machine, so they come first: created, triage drafts accepted,
+// already records. The Items' logs are shared by every machine, so they come first: created, triage rewrites accepted,
 // questions and answers, holds, merges, and sessions run on any machine. This machine's store adds its own sessions (model,
-// outcome, cost), the merge queue's batches, the switches, upgrades and drafts rejected; the settings' log adds who
+// outcome, cost), the merge queue's batches, the switches, upgrades and rewrites rejected; the settings' log adds who
 // changed which setting. An event that an Item's log already records is not shown twice. Pure: the caller reads the
 // sources and gives the time. Text from people and agents is data: quoted and cut short, never interpreted.
 
@@ -35,7 +35,7 @@ export const ACTIVITY_EVENTS: readonly string[] = [
   ...Object.keys(SWITCH_NAMES).flatMap((name) => [`control.${name}_started`, `control.${name}_paused`]),
   "control.stopped", "control.startup_paused", "control.paused", "control.resumed", "control.queue_resume", "orchestrator.queue_paused",
   "scopesoup.upgraded", "scopesoup.went_back", "scopesoup.upgrade_failed",
-  "orchestrator.draft_accepted", "orchestrator.draft_edited", "orchestrator.draft_rejected", "orchestrator.draft_answered",
+  "orchestrator.rewrite_accepted", "orchestrator.rewrite_edited", "orchestrator.rewrite_rejected", "orchestrator.rewrite_answered",
   "orchestrator.questions_asked", "person.answered", "person.claimed", "person.handed_back", "person.released", "orchestrator.merged", "config.changed", "media.deleted", "media.expired",
   "draft.created", "draft.updated",
 ];
@@ -152,7 +152,7 @@ export function buildActivity(input: ActivityInput, now: string, limit = MAX_ACT
         case "question": {
           const proposal = obj(f.proposal);
           const parts = Array.isArray(proposal.parts) ? proposal.parts.length : 0;
-          const text = parts > 0 ? `Proposed restructuring the Item into ${parts} parts` : `${typeof f.refine === "number" ? `The triage's rewrite (round ${f.refine}) asks` : "Asked"}: ${clip(str(f.question))}`;
+          const text = parts > 0 ? `Proposed restructuring the Item into ${parts} parts` : `${typeof f.rewrite === "number" ? `The triage's rewrite (round ${f.rewrite}) asks` : "Asked"}: ${clip(str(f.question))}`;
           add({ ...base, kind: "question", text });
           break;
         }
@@ -326,16 +326,16 @@ export function buildActivity(input: ActivityInput, now: string, limit = MAX_ACT
       case "scopesoup.upgrade_failed":
         add({ ...base, kind: "upgrade", text: "An upgrade failed", ...(reason ? { detail: clip(reason) } : {}), tone: "bad" });
         break;
-      case "orchestrator.draft_accepted":
-      case "orchestrator.draft_edited":
+      case "orchestrator.rewrite_accepted":
+      case "orchestrator.rewrite_edited":
         // The Item's log has the accepted text as an `edited` line.
         if (subject && logged.has(subject)) break;
         add({ ...base, kind: "triage", items, text: `Accepted the triage's rewrite${event.kind.endsWith("edited") ? " with edits" : ""}${num(data.round) ? ` (round ${data.round})` : ""}`, tone: "good" });
         break;
-      case "orchestrator.draft_rejected":
+      case "orchestrator.rewrite_rejected":
         add({ ...base, kind: "triage", items, text: `Rejected the triage's rewrite${num(data.round) ? ` (round ${data.round})` : ""}` });
         break;
-      case "orchestrator.draft_answered":
+      case "orchestrator.rewrite_answered":
         if (subject && logged.has(subject)) break;
         add({ ...base, kind: "triage", items, text: `Answered the triage's questions otherwise than recommended${num(data.round) ? ` (round ${data.round})` : ""}; the triage runs again` });
         break;

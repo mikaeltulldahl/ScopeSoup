@@ -180,7 +180,7 @@ export function buildItemPage(snapshot: Snapshot, ref: Ref | string, now: Date, 
   if (parked) {
     // "queued" and "handed-over" are ends of the cycle, not questions: an answer does not restart them.
     const canAnswer = parked.as === "needs-decision" || parked.as === "not-ready" || parked.as === "escalated";
-    page.parked = { as: parked.as, reason: parked.reason, at: parked.at, canAnswer, ...(parked.canStartOver ? { canStartOver: true } : {}), ...(parked.decision ? { decision: parked.decision } : {}), ...(parked.questions && parked.questions.length > 0 ? { questions: parked.questions } : {}), ...(parked.refine ? { refine: parked.refine } : {}) };
+    page.parked = { as: parked.as, reason: parked.reason, at: parked.at, canAnswer, ...(parked.canStartOver ? { canStartOver: true } : {}), ...(parked.decision ? { decision: parked.decision } : {}), ...(parked.questions && parked.questions.length > 0 ? { questions: parked.questions } : {}), ...(parked.rewrite ? { rewrite: parked.rewrite } : {}) };
   }
   const links = (snapshot.links ?? []).find((each) => refKey(each.subject) === key)?.links ?? [];
   if (links.length > 0) {

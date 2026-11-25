@@ -32,8 +32,8 @@ import { explainOrder, voteForPlace, voteLimits } from "../orchestrator/score.ts
 import { setVote, voteInStore } from "../store/votes.ts";
 import { isSha } from "../orchestrator/history.ts";
 import { readMergeQueueNote } from "../orchestrator/mergeQueueLease.ts";
-import { answerQuestion, answerRefusal, draftRefusal, keepsRecommendations, loadJobs, questionsSettled, releaseJob, parkedDraft, resumesStep, settleDraft } from "../orchestrator/jobs.ts";
-import type { AnswerRefusal, DraftRefusal, Refinement } from "../orchestrator/jobs.ts";
+import { answerQuestion, answerRefusal, rewriteRefusal, keepsRecommendations, loadJobs, questionsSettled, releaseJob, parkedRewrite, resumesStep, settleRewrite } from "../orchestrator/jobs.ts";
+import type { AnswerRefusal, RewriteRefusal, Rewrite } from "../orchestrator/jobs.ts";
 import { workBranch } from "../orchestrator/paths.ts";
 import type { Media } from "../orchestrator/media.ts";
 import type { Chat } from "../orchestrator/chat.ts";
@@ -155,7 +155,7 @@ export interface ServerOptions {
    */
   restructure?: RestructureHost[];
   /**
-   * Replaces an issue's description with the triage draft a person accepted or edited, on a host whose items cannot
+   * Replaces an issue's description with the triage rewrite a person accepted or edited, on a host whose items cannot
    * be edited here otherwise (GitHub, with writes on). `replace` makes the text safe for the host (`hostActions`), throws when the
    * host refuses, and gives false for an item of another host.
    */
@@ -177,11 +177,11 @@ export interface ServerOptions {
     answer(item: Ref, to: string | null, answer: AnswerWrite): Promise<{ open: number } | null>;
     /** Several answers in one write (one comment); without it each is posted on its own. */
     answerMany?(item: Ref, answers: { to: string | null; answer: AnswerWrite }[]): Promise<{ open: number } | null>;
-    /** Throws `BodyChanged` when the issue's body changed since the draft comment was written (Accept is then refused). */
-    checkDraft?(item: Ref, draft: string): Promise<void>;
+    /** Throws `BodyChanged` when the issue's body changed since the rewrite comment was written (Accept is then refused). */
+    checkRewrite?(item: Ref, rewrite: string): Promise<void>;
   };
   /**
-   * Where a triage draft's label changes are written at Accept on a host whose items are issues (GitHub, with writes on):
+   * Where a triage rewrite's label changes are written at Accept on a host whose items are issues (GitHub, with writes on):
    * one call per label, only the changes that still make sense, then a re-read (`hostActions`). Throws when the host refuses.
    */
   labels?: { host: string; change(item: Ref, change: LabelChange): Promise<{ added: string[]; removed: string[] } | null> };
@@ -718,14 +718,14 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
 
   /**
    * A person settles the triage's rewrite: `{ ref, parkedAt, answers, action, text? }`. `answers` has one answer per
-   * question of the rewrite, in order. Keeping every recommendation, `action` settles the draft in one step: "accept" writes the
-   * draft as the item's description, "edit" writes a person's `text`, "reject" keeps the description; the original stays in the
+   * question of the rewrite, in order. Keeping every recommendation, `action` settles the rewrite in one step: "accept" writes the
+   * rewrite as the item's description, "edit" writes a person's `text`, "reject" keeps the description; the original stays in the
    * item's history (the `edited` line on the meta branch names it; GitHub keeps its own). On GitHub only the issue's body is replaced
    *; when that fails, or the item cannot be written here at all, the text is recorded as the answer and given to
    * the agents in place of the host's, with the failure in it so the Item page shows it. Any other answer is recorded and the first
    * look runs again with it (no round cap). The answers are recorded either way, and every later session gets them.
    */
-  async function draft(request: IncomingMessage, response: ServerResponse): Promise<void> {
+  async function rewriteRequest(request: IncomingMessage, response: ServerResponse): Promise<void> {
     let body: Record<string, unknown>;
     try {
       body = await readJson(request);
@@ -746,34 +746,34 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
     const item = snapshot.works.find((work) => refKey(work.ref) === ref);
     if (!item) return sendError(response, 404, "ITEM_NOT_FOUND", `No item ${ref}.`);
     const subject = item.ref;
-    const refusals: Record<DraftRefusal, [number, string, string]> = {
-      "no-draft": [409, "NO_DRAFT", `No rewrite of the triage waits on ${ref} (any more): reload the item.`],
+    const refusals: Record<RewriteRefusal, [number, string, string]> = {
+      "no-rewrite": [409, "NO_REWRITE", `No rewrite of the triage waits on ${ref} (any more): reload the item.`],
       "parked-changed": [409, "PARKED_CHANGED", `${ref} parked on another rewrite now: reload the item.`],
       answers: [400, "ANSWERS_MISSING", "Give one answer, not empty, to each question of the rewrite, in order."],
     };
     const job = loadJobs(store)[ref];
-    const before = draftRefusal(job, parkedAt, answers);
+    const before = rewriteRefusal(job, parkedAt, answers);
     if (before) {
       const [status, code, message] = refusals[before];
       return sendError(response, status, code, message);
     }
-    const refine = parkedDraft(job)!;
+    const rewrite = parkedRewrite(job)!;
     const parkedReason = job!.parked!.reason;
-    const keeps = keepsRecommendations(refine, answers);
-    const newText = keeps && action === "accept" ? refine.draft : keeps && action === "edit" ? (text as string).trim() : undefined;
+    const keeps = keepsRecommendations(rewrite, answers);
+    const newText = keeps && action === "accept" ? rewrite.text : keeps && action === "edit" ? (text as string).trim() : undefined;
     // The label changes go with the description: Accept takes the proposal, Edit a person's (or the proposal), Reject none.
-    const proposedLabels: LabelChange | undefined = !keeps || action === "reject" ? undefined : action === "edit" && body.labels !== undefined ? asLabelChange(body.labels) : refine.labels;
+    const proposedLabels: LabelChange | undefined = !keeps || action === "reject" ? undefined : action === "edit" && body.labels !== undefined ? asLabelChange(body.labels) : rewrite.labels;
     // An accepted rewrite makes the Item AI-written: it gets the project's AI label (if any), never removed again.
     const aiLabel = newText !== undefined ? options.aiLabel?.() : undefined;
     const labelChange: LabelChange | undefined = aiLabel && !(item.labels ?? []).some((name) => name.toLowerCase() === aiLabel.toLowerCase())
       ? { add: [...new Set([...(proposedLabels?.add ?? []), aiLabel])], remove: (proposedLabels?.remove ?? []).filter((name) => name.toLowerCase() !== aiLabel.toLowerCase()) }
       : proposedLabels;
-    // A draft posted on GitHub is answered there.
-    const posted = options.questions && subject.host === options.questions.host ? job!.parked!.draft : undefined;
-    if (posted) return draftOnHost(response, item, refine, posted, answers, action, newText, parkedAt, labelChange);
+    // A rewrite posted on GitHub is answered there.
+    const posted = options.questions && subject.host === options.questions.host ? job!.parked!.rewrite : undefined;
+    if (posted) return rewriteOnHost(response, item, rewrite, posted, answers, action, newText, parkedAt, labelChange);
     const write = items?.write;
     const writable = !!write?.editWork && subject.host === items!.host;
-    // The description is written first: when the host refuses, nothing is recorded and the draft still waits.
+    // The description is written first: when the host refuses, nothing is recorded and the rewrite still waits.
     // On the meta branch the labels are written in the same edit: the proposed changes that still make sense on the Item now.
     let written = false;
     let labelsDone: { added: string[]; removed: string[] } | undefined;
@@ -792,7 +792,7 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
         try {
           const done = await write!.editWork!(subject, patch);
           const changed = [...(patch.body !== undefined ? ["description"] : []), ...(patch.labels !== undefined ? ["labels"] : [])];
-          if (write!.appendLog) await write!.appendLog(done.work, { kind: "edited", by: by(), fields: { changed, via: `triage, round ${refine.round}`, ...(patch.body !== undefined ? { was: refine.original } : {}), ...(labelsDone ? { labels: changeText({ add: labelsDone.added, remove: labelsDone.removed }) } : {}) } });
+          if (write!.appendLog) await write!.appendLog(done.work, { kind: "edited", by: by(), fields: { changed, via: `triage, round ${rewrite.round}`, ...(patch.body !== undefined ? { was: rewrite.original } : {}), ...(labelsDone ? { labels: changeText({ add: labelsDone.added, remove: labelsDone.removed }) } : {}) } });
           written = true;
         } catch (error) {
           return sendError(response, 400, "WRITE_REFUSED", error instanceof Error ? error.message : String(error));
@@ -826,9 +826,9 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
     const labelsFailed = labelProblem !== undefined ? ` Scope Soup could not change the labels (${labelProblem}): ${changeText(labelChange)}.` : "";
     const at = now().toISOString();
     const outcome = store.tx(() => {
-      const refused = draftRefusal(loadJobs(store)[ref], parkedAt, answers);
+      const refused = rewriteRefusal(loadJobs(store)[ref], parkedAt, answers);
       if (refused) return { refused };
-      refine.questions.forEach((question, index) => {
+      rewrite.questions.forEach((question, index) => {
         addAnswer(store, { subject, answer: answers[index]!, by: by().who, at, textHash: itemTextHash(item), question: question.question, ...(question.options.length > 0 ? { options: optionTexts(question.options) } : {}) });
       });
       if (keeps) {
@@ -839,7 +839,7 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
             : replaceProblem !== undefined
               ? `${action === "edit" ? "Edited and accepted" : "Accepted"} the triage's rewrite, but Scope Soup could not write it to the issue (${replaceProblem}). Use this description instead of the one written above:\n${newText}`
               : `${action === "edit" ? "Edited and accepted" : "Accepted"} the triage's rewrite. Use this description instead of the one written above (the item is edited on its host, not here):\n${newText}`;
-        addAnswer(store, { subject, answer: `${said}${labelsSaid}${labelsFailed}`, by: by().who, at, question: `Triage rewrite, round ${refine.round}` });
+        addAnswer(store, { subject, answer: `${said}${labelsSaid}${labelsFailed}`, by: by().who, at, question: `Triage rewrite, round ${rewrite.round}` });
       }
       if (labelProblem !== undefined) {
         store.appendEvent({ kind: "orchestrator.host_write_failed", subject: ref, actor: by().who, data: { reason: `Could not change the labels of ${subject.id} on ${subject.host}: ${labelProblem}.` } }, at);
@@ -847,7 +847,7 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
       if (replaceProblem !== undefined) {
         store.appendEvent({ kind: "orchestrator.host_write_failed", subject: ref, actor: by().who, data: { reason: `Could not replace the description of ${subject.id} on ${subject.host}: ${replaceProblem}. The accepted text is kept as the answer.` } }, at);
       }
-      return settleDraft(store, subject, answers, action, by().who, at, parkedAt, newText === undefined ? [] : [newText, inertText(newText)]);
+      return settleRewrite(store, subject, answers, action, by().who, at, parkedAt, newText === undefined ? [] : [newText, inertText(newText)]);
     });
     if ("refused" in outcome) {
       options.onRefresh?.();
@@ -862,7 +862,7 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
       ...(labelsDone ? { labels: labelsDone } : {}),
       ...(labelProblem !== undefined ? { labelProblem: `Could not change the labels: ${labelProblem}.` } : {}),
     };
-    // The line park wrote for the draft is answered in the item's log (meta branch), so it is no longer an open question there.
+    // The line park wrote for the rewrite is answered in the item's log (meta branch), so it is no longer an open question there.
     const asked = (item.openQuestions ?? []).filter((question) => !question.proposal && question.question === parkedReason).pop();
     if (write?.appendLog && subject.host === items!.host) {
       const said = "rerun" in outcome ? `Answered the triage's questions: ${answers.join(" | ")}` : `${outcome.settled === "rejected" ? "Rejected" : outcome.settled === "edited" ? "Edited and accepted" : "Accepted"} the triage's rewrite${answers.length > 0 ? `, keeping the recommendations: ${answers.join(" | ")}` : ""}.`;
@@ -881,16 +881,16 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
   }
 
   /**
-   * A person settles a triage draft posted on GitHub. Accept first checks that the issue's body is still the one the
-   * draft read (else 409 BODY_CHANGED, and the board shows the new body next to the draft). Accept and Edit replace the description
-   *. Then an answer comment goes to each of the draft's questions and, keeping every recommendation, one to the draft with
-   * `proposal`. Nothing is kept in `person.answers`. A failed write leaves the draft waiting; pressing again skips what GitHub has.
+   * A person settles a triage rewrite posted on GitHub. Accept first checks that the issue's body is still the one the
+   * rewrite read (else 409 BODY_CHANGED, and the board shows the new body next to the rewrite). Accept and Edit replace the description
+   *. Then an answer comment goes to each of the rewrite's questions and, keeping every recommendation, one to the rewrite with
+   * `proposal`. Nothing is kept in `person.answers`. A failed write leaves the rewrite waiting; pressing again skips what GitHub has.
    */
-  async function draftOnHost(response: ServerResponse, item: WorkItem, refine: Refinement, posted: { id: string; questions: string[] }, answers: string[], action: "accept" | "edit" | "reject", newText: string | undefined, parkedAt: string, labelChange: LabelChange | undefined): Promise<void> {
+  async function rewriteOnHost(response: ServerResponse, item: WorkItem, rewrite: Rewrite, posted: { id: string; questions: string[] }, answers: string[], action: "accept" | "edit" | "reject", newText: string | undefined, parkedAt: string, labelChange: LabelChange | undefined): Promise<void> {
     const subject = item.ref;
     const ref = refKey(subject);
     const host = options.questions!;
-    const keeps = keepsRecommendations(refine, answers);
+    const keeps = keepsRecommendations(rewrite, answers);
     const at = now().toISOString();
     let written = false;
     let labelsDone: { added: string[]; removed: string[] } | undefined;
@@ -898,7 +898,7 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
       // The issue reads so already (an earlier press wrote it): nothing to check or send.
       if (newText !== undefined && newText !== (item.body ?? "").trim() && inertText(newText) !== (item.body ?? "").trim()) {
         // Only Accept: an Edit is a person's own text, written with the new description in view.
-        if (action === "accept") await host.checkDraft?.(subject, posted.id);
+        if (action === "accept") await host.checkRewrite?.(subject, posted.id);
         if (!options.description || !(await options.description.replace(subject, newText))) throw new Error(`Scope Soup cannot write the description of ${subject.id} on ${subject.host}.`);
         written = true;
       }
@@ -910,7 +910,7 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
       const given = new Set((store.get<WorkItem>(subject)?.answers ?? []).map((each) => each.to));
       const posts: { to: string; answer: AnswerWrite }[] = [];
       for (const [index, id] of posted.questions.entries()) {
-        const question = refine.questions[index];
+        const question = rewrite.questions[index];
         if (given.has(id) || !question) continue;
         posts.push({ to: id, answer: { answer: answers[index]!, textHash: itemTextHash(item), ...(question.options.length > 0 ? { options: optionTexts(question.options) } : {}) } });
       }
@@ -922,11 +922,11 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
         const labelsSaid = labelsDone && (labelsDone.added.length > 0 || labelsDone.removed.length > 0) ? ` Labels: ${changeText({ add: labelsDone.added, remove: labelsDone.removed })}.` : "";
         posts.push({ to: posted.id, answer: { answer: `${said}${labelsSaid}`, proposal: settled } });
       }
-      // The answers to the draft's questions and the decision on the draft go in one comment.
+      // The answers to the rewrite's questions and the decision on the rewrite go in one comment.
       if (posts.length > 1 && host.answerMany) await host.answerMany(subject, posts.map(({ to, answer }) => ({ to, answer: { ...answer, by: by().who } })));
       else for (const post of posts) await host.answer(subject, post.to, { ...post.answer, by: by().who });
     } catch (error) {
-      // The board shows the issue as GitHub has it now: the new body next to the draft, or the description written already.
+      // The board shows the issue as GitHub has it now: the new body next to the rewrite, or the description written already.
       if (written || labelsDone || error instanceof BodyChanged) await options.syncNow?.();
       options.onRefresh?.();
       const reason = error instanceof Error ? error.message : String(error);
@@ -936,9 +936,9 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
       store.appendEvent({ kind: "orchestrator.host_write_failed", subject: ref, actor: by().who, data: { reason: `Could not settle the triage's rewrite of ${subject.id} on ${subject.host}: ${reason}` } }, at);
       return sendError(response, 400, "WRITE_REFUSED", `${reason}${already}`);
     }
-    const outcome = store.tx(() => settleDraft(store, subject, answers, action, by().who, at, parkedAt, newText === undefined ? [] : [newText, inertText(newText)]));
+    const outcome = store.tx(() => settleRewrite(store, subject, answers, action, by().who, at, parkedAt, newText === undefined ? [] : [newText, inertText(newText)]));
     options.onRefresh?.();
-    if ("refused" in outcome) return sendError(response, 409, outcome.refused === "parked-changed" ? "PARKED_CHANGED" : "NO_DRAFT", `${ref} parked on another rewrite now, or none: reload the item. Your answers are on ${subject.host}.`);
+    if ("refused" in outcome) return sendError(response, 409, outcome.refused === "parked-changed" ? "PARKED_CHANGED" : "NO_REWRITE", `${ref} parked on another rewrite now, or none: reload the item. Your answers are on ${subject.host}.`);
     if (written || labelsDone) await options.syncNow?.();
     return sendJson(response, 200, { recorded: true, ...("rerun" in outcome ? { rerun: true } : { settled: outcome.settled }), ...(written ? { written: true } : {}), ...(labelsDone ? { labels: labelsDone } : {}) });
   }
@@ -1994,7 +1994,7 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
   };
 
   /** The POST endpoints that record who did it; the board names its picked person, or the request is refused. */
-  const NEEDS_PERSON = new Set(["/api/answer", "/api/answers", "/api/proposal", "/api/draft", "/api/start-over", "/api/chat", "/api/decisions", "/api/item/edit", "/api/item/vote", "/api/item/resolve", "/api/item/media/delete", "/api/item-draft"]);
+  const NEEDS_PERSON = new Set(["/api/answer", "/api/answers", "/api/proposal", "/api/rewrite", "/api/start-over", "/api/chat", "/api/decisions", "/api/item/edit", "/api/item/vote", "/api/item/resolve", "/api/item/media/delete", "/api/item-draft"]);
 
   /** The Item a request names by its key, as the store has it. */
   const workByKey = (key: string): WorkItem | undefined => loadSnapshot(store).works.find((work) => refKey(work.ref) === key);
@@ -2095,7 +2095,7 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
         if (path === "/api/answer") return answer(request, response);
         if (path === "/api/answers") return answers(request, response);
         if (path === "/api/proposal") return proposal(request, response);
-        if (path === "/api/draft") return draft(request, response);
+        if (path === "/api/rewrite") return rewriteRequest(request, response);
         if (path === "/api/item-draft") return itemDraft(request, response);
         if (path === "/api/start-over") return startOver(request, response);
         if (path === "/api/chat") return chatSend(request, response);

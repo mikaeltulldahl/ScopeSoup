@@ -1,6 +1,6 @@
 // The shapes the server sends to the board. Types only: `web/` imports them with `import type`.
 
-import type { Actor, Assumption, BatchMemberState, DecisionOption, BatchStatus, ConflictVersions, HistoryLine, LinkType, LogWriter, OpenQuestion, OriginalFate, Priority, ProposedPart, Ref, ParkedDraft, ParkedKind, ParkedQuestion, RunStatus, SessionRole, SessionStatus, TurnActor, UsageWindowKind, VerdictValue, WorkState } from "../model/types.ts";
+import type { Actor, Assumption, BatchMemberState, DecisionOption, BatchStatus, ConflictVersions, HistoryLine, LinkType, LogWriter, OpenQuestion, OriginalFate, Priority, ProposedPart, Ref, ParkedRewrite, ParkedKind, ParkedQuestion, RunStatus, SessionRole, SessionStatus, TurnActor, UsageWindowKind, VerdictValue, WorkState } from "../model/types.ts";
 import type { BisectMark } from "./bisect.ts";
 import type { AllowanceUse, AllowanceWords } from "./allowanceBudget.ts";
 import type { ForecastPoint, UsageAttribution, UsagePlot } from "./usage.ts";
@@ -509,7 +509,7 @@ export interface ItemPage {
   /** Set by the server when the item is in conflict: `item.md` as it stands and the versions put aside. The text is data. */
   conflict?: ConflictVersions;
   /** Set when the orchestrator has put the item down. `canAnswer` is true when an answer from a person picks it up again. */
-  parked?: { as: ParkedKind; reason: string; at: string; canAnswer: boolean; /** Offers "Start over": drop the work so far and start at triage. */ canStartOver?: boolean; decision?: { question: string; options: DecisionOption[]; recommendation: string; context?: string; multiSelect?: true }; /** Several open questions, each answered on its own (by its index); the item is picked up once all have an answer. */ questions?: ParkedQuestion[]; /** The triage's rewrite and its questions, settled together (`POST /api/draft`). */ refine?: ParkedDraft };
+  parked?: { as: ParkedKind; reason: string; at: string; canAnswer: boolean; /** Offers "Start over": drop the work so far and start at triage. */ canStartOver?: boolean; decision?: { question: string; options: DecisionOption[]; recommendation: string; context?: string; multiSelect?: true }; /** Several open questions, each answered on its own (by its index); the item is picked up once all have an answer. */ questions?: ParkedQuestion[]; /** The triage's rewrite and its questions, settled together (`POST /api/rewrite`). */ rewrite?: ParkedRewrite };
   /** The triage's typed links to other Items: the other Item when it is known here, else the id as written. Text from an agent: data. */
   links?: { type: LinkType; item: ItemLink | { label: string }; reason?: string }[];
   /** What a person has answered on this item, oldest first. */

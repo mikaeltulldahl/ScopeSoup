@@ -75,7 +75,7 @@ function fakeArgs(session: Session): { args: string[]; prompt: string; hasToken:
   return events(session).filter((event) => event.type === "fake.args").map((event) => event.data as { args: string[]; prompt: string; hasToken: boolean });
 }
 
-const TRIAGE = { ready: true, size: "small", questions: [], draft: "d", links: [], blockers: [], paths: [] };
+const TRIAGE = { ready: true, size: "small", questions: [], rewrite: "d", links: [], blockers: [], paths: [] };
 const REVIEW = { verdict: "approve", findings: [] };
 
 describe("Copilot sessions", { concurrency: 4 }, () => {
