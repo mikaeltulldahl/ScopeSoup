@@ -11,7 +11,7 @@ import { mergeQueueCi, LEVEL_NAMES, LEVELS, type Level, type ProjectConfig } fro
 /** What Scope Soup does at each level and what it needs, one sentence each. */
 export const LEVEL_TEXT: Readonly<Record<Level, string>> = {
   0: "Scope Soup shows your Items, issues and pull requests with their history and starts nothing on its own; it needs only the host it reads.",
-  1: `Scope Soup takes a read-only triage at each Item (size, open questions, blockers, a proposed split) and changes no code; it needs ${defaultProvider.label}, logged in.`,
+  1: `Scope Soup takes a read-only triage at each Item (size, open questions, blockers, a proposed restructuring) and changes no code; it needs ${defaultProvider.label}, logged in.`,
   2: "Scope Soup picks Items from the backlog and runs an implementor in its own clone, which merges to the main branch when it judges the work done; it needs push access to the remote.",
   3: "A reviewer reads every finished change, and the implementor merges only after the reviewer approves; it needs nothing more than level 2.",
   4: "Scope Soup merges reviewed changes itself through its merge queue (newest main merged in, the check command run, a fast-forward push); it needs a check command and the remote's URL.",

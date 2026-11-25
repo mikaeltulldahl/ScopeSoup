@@ -22,7 +22,7 @@ You follow one thing, the **Item**. It holds the description, the change and its
 
 An Item travels like this:
 
-1. **Triage.** An agent reads it: is it ready, how big is it, does it hide a decision? It may propose a rewritten description or a split, for you to accept, edit or reject.
+1. **Triage.** An agent reads it: is it ready, how big is it, does it hide a decision? It may propose a rewritten description or a restructuring (split it, fold a part into another Item, or close it as a duplicate), for you to accept, edit or reject.
 2. **Implement.** An agent works on the Item's own branch in a workspace of its own. A person, or your Claude Code session, can take the Item instead and hand a branch back (`scopesoup item`).
 3. **Review.** A second agent reviews. Findings go back to the implementor.
 4. **Merge queue.** The check passes on exactly the commit that is pushed. Fast-forward, never forced.

@@ -149,10 +149,10 @@ function parkOnDecisions(job: Job, set: readonly OpenQuestion[]): Job {
   return job;
 }
 
-/** One question waits: a proposed split, or a decision with options. */
+/** One question waits: a proposed restructuring, or a decision with options. */
 function parkOnQuestion(job: Job, asked: OpenQuestion): void {
   if (asked.proposal) {
-    // A proposed split is still waiting for a person.
+    // A proposed restructuring is still waiting for a person.
     job.proposal = { ...asked.proposal };
   } else if (asked.options.length > 0) {
     job.triage ??= { ready: true, size: "medium", paths: [], hidesDecision: true };
@@ -188,7 +188,7 @@ const decisionOf = (asked: OpenQuestion): Decision => ({ question: asked.questio
 /**
  * The open questions of the newest parked, in log order: the run of Scope Soup question lines that ends with the newest open
  * question (park writes a parked state's questions one after the other), kept when still open, a "needs-decision" parked and not a
- * proposed split. An earlier parked's questions are cut off by the Scope Soup lines written between them.
+ * proposed restructuring. An earlier parked's questions are cut off by the Scope Soup lines written between them.
  */
 function questionSet(log: readonly LogRecord[], open: readonly OpenQuestion[], lineOf: (question: OpenQuestion) => LogRecord | undefined): OpenQuestion[] {
   const newest = lineOf(open[open.length - 1]!);

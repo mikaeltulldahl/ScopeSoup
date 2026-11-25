@@ -2,7 +2,7 @@
 // (one for work items, one for changes, one for CI), and a host that lacks a capability
 // does not implement that port.
 
-import type { Actor, AssumptionSettled, Batch, LabelChange, RepoLabel, Change, ConflictVersions, DecisionOption, Priority, ProposedPart, Ref, Run, Runner, Turn, VerdictValue, WorkItem, WorkState } from "../model/types.ts";
+import type { Actor, AssumptionSettled, Batch, LabelChange, RepoLabel, Change, ConflictVersions, DecisionOption, OriginalFate, Priority, ProposedPart, Ref, Run, Runner, Turn, VerdictValue, WorkItem, WorkState } from "../model/types.ts";
 
 export type Capability = "work" | "changes" | "ci" | "runners" | "batches" | "turn" | "write";
 
@@ -224,8 +224,8 @@ export interface QuestionWrite {
   step: string;
   /** The draft comment of the triage round this question belongs to. */
   draft?: string;
-  /** A proposed split: the question is a person's decision on it (`POST /api/proposal`). */
-  proposal?: { reason: string; parts: ProposedPart[]; carried?: string };
+  /** A proposed restructuring: the question is a person's decision on it (`POST /api/proposal`). */
+  proposal?: { id: string; reason: string; original: OriginalFate; parts: ProposedPart[]; carried?: string };
 }
 
 /** One triage round's draft of the description, posted on the item's host (GitHub: a draft comment). Its text is already inert. */
@@ -248,7 +248,7 @@ export interface AnswerWrite {
   options?: string[];
   /** `itemTextHash` of the item when the answer was given, for answer reuse. */
   textHash?: string;
-  /** A person's decision on a triage draft or a proposed split. */
+  /** A person's decision on a triage draft or a proposed restructuring. */
   proposal?: "accepted" | "edited" | "rejected";
   /** Who answered: the board's picked person. Without it the host names the account that writes. */
   by?: string;
@@ -325,6 +325,11 @@ export interface WritePort {
   resolveConflict?(work: Ref, text: string, supersedes: string[]): Promise<WriteOutcome>;
   /** Puts an existing item under a parent, where the link is a call of its own (GitHub sub-issues). Nothing when it is already there. */
   linkChild?(parent: Ref, child: Ref): Promise<void>;
+  /**
+   * Links two existing items as related, where the host keeps such links apart from the text (Jira: "relates to"). Nothing when the
+   * link is there already. Hosts without it name the item in the text (GitHub: `#N`).
+   */
+  linkRelated?(item: Ref, related: Ref): Promise<void>;
   /** Adds a line to an item's log. A log is append-only: lines are never changed or removed. */
   appendLog?(work: Ref, line: LogLineInput): Promise<WriteOutcome>;
   /** Several lines added to an item's log in one write (the answers of one Send). */

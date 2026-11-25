@@ -191,8 +191,8 @@ async function main(): Promise<void> {
   let loop: Loop | null = null;
   let runner: Runner | null = null;
   let keepAwake: KeepAwake | null = null;
-  // Set below: the orchestrator's writable host, which a split accepted on the board may create children on.
-  let splitHost: Host | undefined;
+  // Set below: the orchestrator's writable host, which a restructuring accepted on the board may make parts on.
+  let restructureHost: Host | undefined;
   // Set below: where an accepted triage draft replaces the issue's description (GitHub with writes on and the right remote).
   let description: { host: string; replace(item: Ref, text: string): Promise<boolean> } | undefined;
   // Set below: where the board's edits of a GitHub Item are written through (GitHub with writes on and the right remote).
@@ -240,7 +240,7 @@ async function main(): Promise<void> {
         writable = undefined;
       }
     }
-    splitHost = writable?.write?.createWork ? writable : undefined;
+    restructureHost = writable?.write?.createWork ? writable : undefined;
     const actions = writable ? createHostActions({ host: writable, git: realGit, config: current, store }) : dryActions;
     console.log(writable ? `Writes to ${writable.info.id} are on.` : "Writes are off: finished work stays on its local branch.");
     if (writable && actions.replaceDescription) description = { host: writable.info.id, replace: actions.replaceDescription };
@@ -491,11 +491,11 @@ async function main(): Promise<void> {
           },
         }
       : {}),
-    // Each item's split goes to its own host: the orchestrator's writable one (GitHub with writes on and the right remote), and the
+    // Each item's restructuring goes to its own host: the orchestrator's writable one (GitHub with writes on and the right remote), and the
     // host items are written on here (meta branch), when both are configured. GitHub keeps an item's verification in its text.
-    split: [splitHost, itemHost]
+    restructure: [restructureHost, itemHost]
       .filter((host, index, all): host is Host => host?.write?.createWork !== undefined && all.findIndex((other) => other?.info.id === host.info.id) === index)
-      .map((host) => ({ host: host.info.id, write: host.write!, ...(host.info.id === "github" ? { verificationInBody: true, issueNumbers: true } : {}) })),
+      .map((host) => ({ host: host.info.id, write: host.write!, ...(host.work ? { read: (ref: Ref) => host.work!.getWork(ref) } : {}), ...(host.info.id === "github" ? { verificationInBody: true, issueNumbers: true } : {}) })),
     syncNow: async () => {
       await sync.refreshNow();
       loop?.refresh();

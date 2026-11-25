@@ -332,19 +332,20 @@ test("an item left parked on an old proposed rewrite (removed) is not held by it
   assert.equal(laptop.requests[0]?.role, "triage");
 });
 
-test("a proposed split waits across a deleted store, with its parts", async () => {
+test("a proposed restructuring waits across a deleted store, with its parts and the item's fate", async () => {
   const { host, item } = await project();
   const key = refKey(item);
-  const parts = [{ title: "First half", description: "Do half.", verification: "Half works." }, { title: "Second half", description: "Do the rest.", verification: "All works." }];
+  const parts = [{ title: "First half", description: "Do half.", verification: "Half works.", goes: "original" }, { title: "Second half", description: "Do the rest.", verification: "All works.", goes: "related" }];
   const first = start(host);
   await first.run();
-  await first.end("succeeded", { ...TRIAGE_OK, size: "large", parts });
+  await first.end("succeeded", { ...TRIAGE_OK, restructure: { reason: "Two changes.", original: "keeps", parts } });
   assert.equal(loadJobs(first.store)[key]?.parked?.as, "needs-decision");
 
   const second = start(host);
   await second.run();
-  assert.equal(second.requests.length, 0, "nothing is started while the split waits");
+  assert.equal(second.requests.length, 0, "nothing is started while the restructuring waits");
   assert.deepEqual(loadJobs(second.store)[key]?.proposal?.parts, parts);
+  assert.equal(loadJobs(second.store)[key]?.proposal?.original, "keeps");
   assert.deepEqual(second.store.get<WorkItem>(item)?.openQuestions?.[0]?.proposal?.parts, parts);
 });
 

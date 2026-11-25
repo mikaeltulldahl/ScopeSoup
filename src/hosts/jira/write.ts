@@ -237,6 +237,11 @@ export function createJiraWrite(deps: JiraWriteDeps): WritePort {
    */
   const link = (type: string, from: string, to: string): Promise<unknown> => client.post(`${api}/issueLink`, { type: { name: type }, inwardIssue: { key: to }, outwardIssue: { key: from } });
 
+  /** Whether the issue has a link of this type to `other`, either way round. */
+  function linkedTo(issue: JiraIssue, type: string, other: string): boolean {
+    return (issue.fields.issuelinks ?? []).some((each) => same(each.type.name, type) && (each.inwardIssue?.key === other || each.outwardIssue?.key === other));
+  }
+
   async function setBlockers(subject: Ref, wanted: Ref[], addOnly: boolean): Promise<void> {
     const have = blockerLinks(await issueOf(subject));
     const add = wanted.filter((each, index) => each.id !== subject.id && !have.has(each.id) && wanted.findIndex((other) => other.id === each.id) === index);
@@ -386,7 +391,8 @@ export function createJiraWrite(deps: JiraWriteDeps): WritePort {
         const resolution = patch.state === "done" ? settings.resolutions.done : patch.state === "abandoned" ? (patch.duplicateOf ? settings.resolutions.duplicate : settings.resolutions.abandoned) : undefined;
         await transitionTo(subject, patch.state, resolution);
       }
-      if (patch.duplicateOf) await link(settings.duplicateLink, subject.id, patch.duplicateOf.id);
+      // Once: a retry finds the link there already.
+      if (patch.duplicateOf && !linkedTo(await issueOf(subject), settings.duplicateLink, patch.duplicateOf.id)) await link(settings.duplicateLink, subject.id, patch.duplicateOf.id);
       const after = await issueOf(subject);
       const missed: string[] = [];
       if (fields.summary !== undefined && after.fields.summary !== fields.summary) missed.push("summary not changed");
@@ -406,7 +412,14 @@ export function createJiraWrite(deps: JiraWriteDeps): WritePort {
       return { work: subject, shared: "shared", conflict: false };
     },
 
-    /** A split's child put under its parent: the parent field (hierarchy rules of the project apply). */
+    /** A restructuring's related part, linked "relates to" once; then the re-read that must show it. */
+    async linkRelated(item, related) {
+      if (related.host !== scope.host || linkedTo(await issueOf(item), settings.relatesLink, related.id)) return;
+      await link(settings.relatesLink, related.id, item.id);
+      failIf(item, linkedTo(await issueOf(item), settings.relatesLink, related.id) ? [] : [`relates to ${related.id} not added`]);
+    },
+
+    /** A restructuring's child put under its parent: the parent field (hierarchy rules of the project apply). */
     async linkChild(parent, child) {
       const issue = await issueOf(child);
       if (issue.fields.parent?.key === parent.id) return;

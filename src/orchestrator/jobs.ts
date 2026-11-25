@@ -2,8 +2,8 @@
 // resumed with the findings -> review)* -> hand over. Kept in the store so a restart resumes instead of forgetting.
 
 import type { FenceSeen } from "../core/fence.ts";
-import type { CreatedPart, DecisionOption, ItemLinkAnswer, LabelChange, LinkType, ProposedPart, Ref, WorkItem } from "../model/types.ts";
-import { asOptions, asParts, refKey } from "../model/types.ts";
+import type { DecisionOption, ItemLinkAnswer, LabelChange, LinkType, OriginalFate, ProposedPart, Ref, Restructuring, WorkItem } from "../model/types.ts";
+import { asOptions, asRestructuring, refKey } from "../model/types.ts";
 import { asLabelChange } from "../model/labels.ts";
 import type { Store } from "../store/store.ts";
 import { itemTextHash } from "../core/answerReuse.ts";
@@ -82,19 +82,8 @@ export interface AboutOther {
   draft?: string;
 }
 
-/**
- * A proposed split: triage found the item too large and names its parts, created as children of the item on accept. A person
- * accepts, edits or rejects it on the item page. (A proposed rewrite of the item's text was removed in a stored one is
- * dropped by `migrateRemovedSteps`.)
- */
-export interface Proposal {
-  reason: string;
-  parts: ProposedPart[];
-  /** With `parts`: the answers on the item when the split was proposed, carried over into each part. */
-  carried?: string;
-  /** With `parts`: the children made so far, each with its part and whether it is linked. Kept so a retry after a failure, or a second press, creates no duplicates. */
-  created?: CreatedPart[];
-}
+/** A proposed restructuring (decision 94): a person accepts, edits or rejects it on the item page. */
+export type Proposal = Restructuring;
 
 /**
  * The triage's answer. The prompt asks for `questions`; `hidesDecision` is true when there is at least one, and the
@@ -112,8 +101,8 @@ export interface TriageAnswer {
   decision?: Decision;
   /** Every open decision triage found, in the order it gave them. */
   decisions?: Decision[];
-  /** With size "large": the parts triage proposes to split the item into. */
-  parts?: ProposedPart[];
+  /** A restructuring triage proposes: where each part goes and what becomes of the Item, with why. */
+  restructure?: { reason: string; original: OriginalFate; parts: ProposedPart[] };
   /** The description rewritten as if a person takes every recommendation. Absent in answers from earlier. */
   draft?: string;
   /** Typed links to other Items. */
@@ -215,7 +204,7 @@ export interface Job {
   reusedAnswers?: number;
   /** The question the job is parked on, when an implementer or fixer asked it (a triage question is in `triage.decision`). */
   decision?: Decision;
-  /** The split triage proposed; the job parked until a person decides. */
+  /** The restructuring triage proposed; the job parked until a person decides. */
   proposal?: Proposal;
   /** The triage's draft description and its questions, parked for a person, or settled and about to go on. */
   refine?: Refinement;
@@ -377,7 +366,7 @@ export function saveJobs(store: Store, jobs: Jobs): void {
 
 /**
  * Whether an answer to this parked job goes on with the step that asked (an implement step that asked a question
- * or escalated), keeping the review round, findings and branch. An Item parked at triage, a proposed split and a
+ * or escalated), keeping the review round, findings and branch. An Item parked at triage, a proposed restructuring and a
  * rest of any other step start the item over instead.
  */
 export function resumesStep(job: Job): boolean {
@@ -701,9 +690,10 @@ export function asTriage(value: unknown): TriageAnswer | null {
     answer.decision = decisions[0];
     answer.decisions = decisions;
   }
-  // Parts mean something only for an item too large for one change.
-  const parts = answer.size === "large" ? asParts(value.parts) : [];
-  if (parts.length > 0) answer.parts = parts;
+  // A restructuring that does not hold together (a part dropped, a fate that does not fit its parts) is left out.
+  const restructure = asRestructuring(value.restructure);
+  const why = typeof value.restructure === "object" && value.restructure !== null ? (value.restructure as Record<string, unknown>).reason : undefined;
+  if (restructure) answer.restructure = { reason: typeof why === "string" ? why.trim() : "", ...restructure };
   if (typeof value.draft === "string") answer.draft = value.draft;
   const links = asLinks(value.links);
   if (links.length > 0) answer.links = links;
