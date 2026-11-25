@@ -53,6 +53,13 @@ export interface ThemeWords {
   /** A small glyph before a lane's name; "" for none. */
   laneIcons: Readonly<Record<LaneKey, string>>;
   abandonedIcon: string;
+  /** The Item page's last row: the button that abandons, what it does, its confirmation ("{id}" is the item) and yes; and the button that reopens, with what it does. */
+  abandonButton: string;
+  abandonAbout: string;
+  abandonAsk: string;
+  abandonYes: string;
+  reopenButton: string;
+  reopenAbout: string;
 }
 
 export const LANE_KEYS = ["blocked", "backlog", "in-progress", "in-review", "queued", "checking", "done"] as const;
@@ -62,7 +69,7 @@ const NO_ICONS: Readonly<Record<LaneKey, string>> = { blocked: "", backlog: "", 
 const STANDARD_LANES: Readonly<Record<LaneKey, string>> = { blocked: "Blocked", backlog: "Backlog", "in-progress": "In progress", "in-review": "In review", queued: "Queued", checking: "Checking", done: "Done" };
 
 /** The words every theme but a themed one shares. */
-const STANDARD_WORDS = { turnYours: "your turn", turnOf: "{name}'s turn", emptyLane: "Nothing here.", doneBadge: "", sessionBadge: "", staleBadge: "", logoHover: "", itemOne: "item", itemMany: "items", summaryTitle: "Overnight summary", lanes: STANDARD_LANES, abandoned: "Abandoned", mergeLane: "Merge queue", mergeLaneIcon: "", laneIcons: NO_ICONS, abandonedIcon: "" } as const;
+const STANDARD_WORDS = { turnYours: "your turn", turnOf: "{name}'s turn", emptyLane: "Nothing here.", doneBadge: "", sessionBadge: "", staleBadge: "", logoHover: "", itemOne: "item", itemMany: "items", summaryTitle: "Overnight summary", lanes: STANDARD_LANES, abandoned: "Abandoned", mergeLane: "Merge queue", mergeLaneIcon: "", laneIcons: NO_ICONS, abandonedIcon: "", abandonButton: "Abandon", abandonAbout: "Stops the work and takes it off the board.", abandonAsk: "Abandon {id}? Scope Soup stops working on it and it leaves the board's lanes.", abandonYes: "Yes, abandon", reopenButton: "Reopen", reopenAbout: "Back to the backlog." } as const;
 
 /** The custom properties that make up a look; each theme gives all of them, for light and for dark. */
 export const COLOUR_VARS = [
@@ -202,6 +209,12 @@ export const THEMES: Readonly<Record<ThemeId, Theme>> = {
       mergeLaneIcon: "🧪",
       laneIcons: { blocked: "🔭", backlog: "🕵", "in-progress": "🔍", "in-review": "⚖", queued: "🧬", checking: "🩺", done: "🪦" },
       abandonedIcon: "❄",
+      abandonButton: "Murder",
+      abandonAbout: "The night crew drops the case for good.",
+      abandonAsk: "Murder {id}? The night crew stops working on it and it leaves the lanes.",
+      abandonYes: "Yes, murder it",
+      reopenButton: "Resurrect",
+      reopenAbout: "Back to the cases at large.",
     },
     light: {
       "use-implement": "#3a6fc0", "use-review": "#d07a2a", "use-triage": "#9a4f9e", "use-outside": "#8a8f98",

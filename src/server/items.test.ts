@@ -87,6 +87,17 @@ test("an edit shows on the item page and in its log; an edit that changes nothin
   assert.equal(repo.git(["rev-parse", "refs/scopesoup/meta"]), before);
 });
 
+test("the Item page's Abandon and Reopen send only the state, and the log says so", async () => {
+  const ref = "metaBranch:work:A-2";
+  assert.equal((await post("/api/item/edit", { ref, state: "abandoned" })).status, 200);
+  const abandoned = await getJson<ItemPage>(`/api/item?ref=${ref}`);
+  assert.equal(abandoned.item.state, "abandoned");
+  assert.equal(abandoned.item.title, "Buy paint");
+  assert.equal(abandoned.history.at(-1)?.text, "Changed state.");
+  assert.equal((await post("/api/item/edit", { ref, state: "todo" })).status, 200);
+  assert.equal((await getJson<ItemPage>(`/api/item?ref=${ref}`)).item.state, "todo");
+});
+
 test("bad input, another origin and a read-only host are refused", async () => {
   assert.equal((await post("/api/items", { title: "  " })).status, 400);
   assert.equal((await post("/api/items", { title: "Odd", blockedBy: ["../x"] })).status, 400);

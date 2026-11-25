@@ -6,7 +6,7 @@ import type { BoardView, DiffFile, DiffView, ItemPage, RoundRow, SessionDetailsV
 import { Fragment } from "preact";
 import type { ComponentChildren } from "preact";
 import { useEffect, useId, useState } from "preact/hooks";
-import { fetchChat, fetchDiff, fetchItem, fetchItemBranch, fetchSession, postAnswers, postChat, postRewrite, postEdit, postHandBack, postOpenDiff, postProposal, postRelease, postResolve, postStartOver, postClaim, postMediaDelete, useNow, usePerson, useView } from "./api.ts";
+import { fetchChat, fetchDiff, fetchItem, fetchItemBranch, fetchSession, postAnswers, postChat, postRewrite, postEdit, postState, postHandBack, postOpenDiff, postProposal, postRelease, postResolve, postStartOver, postClaim, postMediaDelete, useNow, usePerson, useView } from "./api.ts";
 import { actorClass, actorWords, Mention, VoteButtons } from "./Card.tsx";
 import { placeText, statusText } from "./cardText.ts";
 import { ItemForm } from "./ItemForm.tsx";
@@ -17,7 +17,7 @@ import type { MediaView } from "./Markdown.tsx";
 import { BatchBox } from "./Batch.tsx";
 import type { ChatSessionView } from "../../src/core/views.ts";
 import { hostDiffers } from "../../src/core/lanes.ts";
-import { itemNoun } from "./theme.ts";
+import { fill, itemNoun, words } from "./theme.ts";
 import { ago, fromWords, laneWord, optionRows, span, stateFacts, unmatchedRecommendation } from "./format.ts";
 import { ProgressBar } from "./Progress.tsx";
 import { collapse, diffLines, hasChanges, hunkParts } from "./textDiff.ts";
@@ -1563,8 +1563,56 @@ function Body({ page, reload, resources }: { page: ItemPage; reload: () => void;
           </ol>
         </section>
       )}
+
+      {page.canEdit && !editing && item.state !== "done" && <AbandonRow page={page} reload={reload} />}
     </article>
     </MediaContext.Provider>
+  );
+}
+
+/** The last thing on the page, outside Edit: Abandon (asks first) and, for an abandoned Item, Reopen. Edit's state change, nothing more. */
+function AbandonRow({ page, reload }: { page: ItemPage; reload: () => void }) {
+  const [asking, setAsking] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const abandoned = page.item.state === "abandoned";
+  const theme = words();
+  const set = (state: string) => {
+    setBusy(true);
+    setError(null);
+    postState(page.item.key, state).then(
+      () => {
+        setAsking(false);
+        setBusy(false);
+        reload();
+      },
+      (problem: unknown) => {
+        setError(problem instanceof Error ? problem.message : String(problem));
+        setBusy(false);
+      },
+    );
+  };
+  return (
+    <section class="danger-row">
+      {abandoned ? (
+        <>
+          <button type="button" disabled={busy} onClick={() => set("todo")}>{theme.reopenButton}</button>
+          <span class="muted">{theme.reopenAbout}</span>
+        </>
+      ) : asking ? (
+        <>
+          <span>{fill(theme.abandonAsk, { id: page.item.label })}</span>
+          <button type="button" class="danger" disabled={busy} onClick={() => set("abandoned")}>{theme.abandonYes}</button>
+          <button type="button" disabled={busy} onClick={() => setAsking(false)}>No</button>
+        </>
+      ) : (
+        <>
+          <button type="button" class="danger" onClick={() => setAsking(true)}>{theme.abandonButton}</button>
+          <span class="muted">{theme.abandonAbout}</span>
+        </>
+      )}
+      {error && <p class="error">{error}</p>}
+    </section>
   );
 }
 

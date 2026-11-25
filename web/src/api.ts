@@ -221,6 +221,8 @@ export const postItemDraft = (id: string, action: "approve" | "deny", text: { ti
 /** Creates an item. Resolves with its ref key. */
 export const postItem = (fields: ItemFields) => postJson("/api/items", fields);
 /** Changes an item's fields. */
+/** Sets only the state, through the same endpoint the Edit form saves to. */
+export const postState = (ref: string, state: string) => postJson("/api/item/edit", { ref, state });
 export const postEdit = (ref: string, fields: ItemFields) => postJson("/api/item/edit", { ref, ...fields });
 
 /** Moves the Item one place (the server sets the vote); the views are loaded again at once, so the new position shows. */
