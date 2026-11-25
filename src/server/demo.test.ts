@@ -64,16 +64,19 @@ test("the demo's usage on the 30-day span has several 5-hour resets, a weekly re
   store.close();
 });
 
-test("the demo's Copilot section adds up the month's premium requests of the triage role against the allowance", () => {
+test("the demo's allowance section adds up the month's premium requests of the triage role against the allowance", () => {
   const store = openStore(":memory:");
   const now = new Date(T0);
   seedDemo(store, now);
   const span = { span: "7d", ms: 7 * 24 * 3600_000 };
-  assert.equal(buildUsageView(store, loadSnapshot(store), span, now).copilot, undefined);
-  const copilot = buildUsageView(store, loadSnapshot(store), span, now, undefined, { allowance: 150, resetDay: 15, reserve: 0.1 }).copilot!;
+  assert.equal(buildUsageView(store, loadSnapshot(store), span, now).allowances, undefined);
+  const plan = { provider: "copilot", label: "Copilot", unit: "premium requests", setting: "copilot.monthlyRequests", allowance: 150, resetDay: 15, reserve: 0.1 };
+  const views = buildUsageView(store, loadSnapshot(store), span, now, undefined, [plan]).allowances!;
+  assert.equal(views.length, 1);
+  const copilot = views[0]!;
   assert.equal(copilot.allowance, 150);
-  assert.ok(copilot.requests >= 20 && copilot.requests < 150, `${copilot.requests} requests`);
-  assert.equal(copilot.requests, copilot.byRole.triage.requests);
+  assert.ok(copilot.used >= 20 && copilot.used < 150, `${copilot.used} requests`);
+  assert.equal(copilot.used, copilot.byRole.triage.used);
   assert.equal(copilot.byRole.implement.sessions, 0);
   store.close();
 });

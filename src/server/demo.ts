@@ -31,8 +31,10 @@ import { chatKey, createChat } from "../orchestrator/chat.ts";
 import type { Decision, Job, Jobs } from "../orchestrator/jobs.ts";
 import { loadJobs, saveJobs } from "../orchestrator/jobs.ts";
 import { workspaceKey } from "../orchestrator/paths.ts";
-import { copilotPlan, usageReserve } from "../orchestrator/tick.ts";
+import { allowancePlans } from "../orchestrator/allowance.ts";
+import { usageReserve } from "../orchestrator/tick.ts";
 import { demoUsage } from "./demoUsage.ts";
+import { allowanceDemo } from "../orchestrator/providers/index.ts";
 import { sessionResultKey } from "../orchestrator/runner.ts";
 import { applyControl } from "../store/control.ts";
 import type { Store } from "../store/store.ts";
@@ -452,10 +454,10 @@ export function seedDemo(store: Store, now: Date, dir?: string): void {
   store.tx(() => {
     for (const each of usage.sessions) store.put(each, "demo", each.finishedAt ?? base);
     for (const sample of usage.samples) store.addUsageSample(sample);
-    // The triage role runs on Copilot: its sessions and the premium requests and AI credits their results record.
-    for (const each of usage.copilot) {
+    // One role runs on a provider with a monthly allowance: its sessions and the results they recorded.
+    for (const each of allowanceDemo.sessions(now)) {
       store.put(each.session, "demo", each.session.finishedAt ?? base);
-      store.setValue(sessionResultKey(each.session.ref.id), JSON.stringify({ premiumRequests: each.premiumRequests, aiCredits: each.aiCredits }));
+      store.setValue(sessionResultKey(each.session.ref.id), JSON.stringify(each.result));
     }
   });
   // Who created the Items, a draft accepted, merges, switches and an upgrade, for History.
@@ -492,8 +494,8 @@ export async function writeDemoConfig(dir: string, settings: MetaSettings = meta
       maxParallelSessions: { value: 2, reason: "Two sessions at a time on the demo machine." },
       budgetReserve: { value: 2, reason: "The demo shares the usage window with nobody." },
     },
-    // Copilot's plan allows 150 premium requests a month, reset on a day about twelve days ago.
-    copilot: { monthlyRequests: 150, resetDay: Math.min(28, new Date(Date.now() - 12 * 24 * 3600_000).getUTCDate()) },
+    // The plan's monthly allowance of the provider that triage runs on.
+    ...allowanceDemo.machine(new Date()),
     // This machine's one emulator, its own port for whoever holds it.
     resources: [{ name: "emulator", units: 1, neededBy: ["implement", "check"], env: { ANDROID_SERIAL: "emulator-555{{unit}}" } }],
   };
@@ -501,8 +503,7 @@ export async function writeDemoConfig(dir: string, settings: MetaSettings = meta
     project: "tidepool",
     level: 4,
     bugLabels: ["bug"],
-    // Triage runs on Copilot; the other roles stay on Claude.
-    roles: { triage: { provider: "copilot" } },
+    roles: allowanceDemo.roles,
     checkCommand: ["pnpm", "run", "check"],
     setupCommand: ["node", ".scopesoup/scopesoup-setup.mjs", "--from-clone", "{{ownClone}}"],
     setupWatch: ["pnpm-lock.yaml"],
@@ -867,7 +868,7 @@ async function main(): Promise<void> {
     },
     planning: () => {
       const loaded = loader.load().config;
-      return loaded ? { bugLabels: loaded.bugLabels, plannedSessions: loaded.settings.maxParallelSessions.value, reserve: usageReserve(loaded), ...(copilotPlan(loaded) ? { copilot: copilotPlan(loaded)! } : {}), level: loaded.level, ...(loaded.resources ? { resources: loaded.resources } : {}) } : { bugLabels: ["bug"] };
+      return loaded ? { bugLabels: loaded.bugLabels, plannedSessions: loaded.settings.maxParallelSessions.value, reserve: usageReserve(loaded), allowances: allowancePlans(loaded, usageReserve(loaded).seven_day), level: loaded.level, ...(loaded.resources ? { resources: loaded.resources } : {}) } : { bugLabels: ["bug"] };
     },
     chat: createDemoChat(store, configFile, dir, undefined, settings),
     assumptions: [demoAssumptionHost(store)],

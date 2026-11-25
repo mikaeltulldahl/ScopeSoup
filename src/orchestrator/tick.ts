@@ -4,8 +4,6 @@
 // Every decision is an `orchestrator.*` event with its reason, including "nothing to do because".
 
 import { budgetReserve } from "../config/budgetReserve.ts";
-import { copilotCheck, copilotPeriod, copilotUse } from "../core/copilotBudget.ts";
-import type { CopilotSessionUse } from "../core/copilotBudget.ts";
 import { clearWithoutTriage } from "../core/statedSize.ts";
 import { answersText, knownAnswers } from "../store/answers.ts";
 import { mergeQueueOn, ROLES, SWITCH_WORDS, switchState } from "../store/control.ts";
@@ -27,7 +25,7 @@ import { createLog, errorText } from "./context.ts";
 import { afterRefine, backToImplement, emptyBranch, followDraft, followQuestions, overturnsBack, park, retryHandOver, retryPost, reviewOffAtLevel2, settle, writeAboutOthers } from "./cycle.ts";
 import { loadOwnBlockers, withOwnBlockers } from "../store/blockers.ts";
 import { decide } from "./usageCheck.ts";
-import { roleProvider } from "../config/defaults.ts";
+import { allowanceDecision } from "./allowance.ts";
 import type { Store } from "../store/store.ts";
 import type { UsageCheckDecision } from "./usageCheck.ts";
 import type { Job, Jobs } from "./jobs.ts";
@@ -84,31 +82,13 @@ export function usageReserve(config: ProjectConfig): Record<UsageWindowKind, num
   };
 }
 
-/** The Copilot budget for the Usage page; absent when no role runs on Copilot. */
-export function copilotPlan(config: ProjectConfig): { allowance?: number; resetDay: number; reserve: number } | undefined {
-  if (!Object.values(config.roles).some((role) => roleProvider(role) === "copilot")) return undefined;
-  return { ...(config.copilot?.monthlyRequests !== undefined ? { allowance: config.copilot.monthlyRequests } : {}), resetDay: config.copilot?.resetDay ?? 1, reserve: usageReserve(config).seven_day };
-}
-
-/** The Copilot sessions' use as their results recorded it (premium requests and AI credits), for the month's budget. */
-export function copilotSessionUse(store: Store): CopilotSessionUse[] {
-  return store.list<Session>("session").filter((session) => session.provider === "copilot").map((session) => {
-    const result = readSessionResult(store, session.ref.id);
-    return { role: session.role, startedAt: session.startedAt, ...(result.premiumRequests !== undefined ? { premiumRequests: result.premiumRequests } : {}), ...(result.aiCredits !== undefined ? { aiCredits: result.aiCredits } : {}) };
-  });
-}
-
 /**
- * The usage check for a session of `role`: a role on Copilot is paced by the Copilot budget (the month's premium requests against
- * the allowance minus the reserve), every other role by Claude's windows.
+ * The usage check for a session of `role`: a role on a provider that counts a monthly allowance is paced by it (`allowance.ts`),
+ * every other role by Claude's windows.
  */
 export function usageDecision(store: Store, config: ProjectConfig, role: SessionRole, at: string, running: number): UsageCheckDecision {
   const reserve = usageReserve(config);
-  if (roleProvider(config.roles[role] ?? {}) === "copilot") {
-    const period = copilotPeriod(Date.parse(at), config.copilot?.resetDay ?? 1);
-    return copilotCheck({ ...(config.copilot?.monthlyRequests !== undefined ? { allowance: config.copilot.monthlyRequests } : {}), used: copilotUse(copilotSessionUse(store), period).requests, reserve: reserve.seven_day, period });
-  }
-  return decide({ sample: store.latestUsageSample(), now: at, reserve, runningSessions: running });
+  return allowanceDecision(store, config, role, at, reserve.seven_day) ?? decide({ sample: store.latestUsageSample(), now: at, reserve, runningSessions: running });
 }
 
 /** Writes an event for each number changed since the last tick, and for a change of level. */

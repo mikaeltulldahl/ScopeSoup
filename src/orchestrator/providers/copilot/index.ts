@@ -61,7 +61,18 @@ export const copilotProvider: AgentProvider = {
   commandsText: copilotCommandsText,
   refusedProgram,
 
-  // No `readUsage`: Copilot says nothing about the plan's windows. Premium requests and AI credits come with each result.
+  // No `readUsage`: Copilot says nothing about the plan's windows. Premium requests and AI credits come with each result, and the
+  // plan's budget is the monthly allowance of premium requests the person sets (`copilot.monthlyRequests`, `copilot.resetDay`).
+  allowance: {
+    label: "Copilot",
+    unit: "premium requests",
+    setting: "copilot.monthlyRequests",
+    budget: (config) => {
+      const section = copilotConfig(config);
+      return { ...(section.monthlyRequests !== undefined ? { allowance: section.monthlyRequests } : {}), resetDay: section.resetDay ?? 1 };
+    },
+    used: (result) => (result as { premiumRequests?: number }).premiumRequests,
+  },
 
   replyIn,
   toolCallsIn,

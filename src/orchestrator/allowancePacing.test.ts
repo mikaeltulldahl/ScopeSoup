@@ -6,7 +6,8 @@ import { ref, session } from "../core/testing.ts";
 import type { UsageSample } from "../model/types.ts";
 import { openStore } from "../store/store.ts";
 import { sessionResultKey } from "./runner.ts";
-import { copilotPlan, usageDecision } from "./tick.ts";
+import { allowancePlans } from "./allowance.ts";
+import { usageDecision } from "./tick.ts";
 
 const NOW = "2026-11-25T12:00:00.000Z";
 
@@ -51,10 +52,11 @@ test("Copilot use does not pace a Claude role, and without an allowance Copilot 
   store.close();
 });
 
-test("the Copilot plan is there only when a role runs on Copilot, and the settings are checked", () => {
-  assert.equal(copilotPlan(config()), undefined);
-  assert.deepEqual(copilotPlan(config({ roles: { review: { provider: "copilot" } }, copilot: { monthlyRequests: 300, resetDay: 9 } })), { allowance: 300, resetDay: 9, reserve: 0.2 });
-  assert.deepEqual(copilotPlan(config({ roles: { review: { provider: "copilot" } } })), { resetDay: 1, reserve: 0.2 });
+test("the allowance plan is there only when a role runs on Copilot, and the settings are checked", () => {
+  assert.deepEqual(allowancePlans(config(), 0.2), []);
+  const words = { provider: "copilot", label: "Copilot", unit: "premium requests", setting: "copilot.monthlyRequests" };
+  assert.deepEqual(allowancePlans(config({ roles: { review: { provider: "copilot" } }, copilot: { monthlyRequests: 300, resetDay: 9 } }), 0.2), [{ ...words, allowance: 300, resetDay: 9, reserve: 0.2 }]);
+  assert.deepEqual(allowancePlans(config({ roles: { review: { provider: "copilot" } } }), 0.2), [{ ...words, resetDay: 1, reserve: 0.2 }]);
   for (const bad of [{ monthlyRequests: 0 }, { monthlyRequests: 1.5 }, { resetDay: 29 }, { resetDay: 0 }, { other: 1 }]) {
     assert.equal(validateConfig({ project: "synthetic", machineName: "laptop-a", repoPath: "/srv/clone", level: 2, copilot: bad }, "/srv/scopesoup").ok, false, JSON.stringify(bad));
   }
