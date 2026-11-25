@@ -15,6 +15,12 @@ test("the history line of a question shows options as label: description, and pl
   assert.equal(text, "Asked: Which? Options: Keep: less work; Drop it; Wait Recommended: Keep");
 });
 
+test("a moved line says where the Item went, or where it came from with the comments there (#134)", () => {
+  const line = (data: Record<string, unknown>) => describeLine({ line: 1, at: "2026-11-18T09:00:00.000Z", by: { ...robin, agent: false }, kind: "moved", data: { kind: "moved", ...data }, key: "k" });
+  assert.equal(line({ to: "#12", host: "github" }), "Moved to #12 on GitHub.");
+  assert.equal(line({ from: "#12", host: "github", history: "- 2026-11-18 09:00 @robin: Weekly?" }), "Moved here from #12 on GitHub. Comments there:\n- 2026-11-18 09:00 @robin: Weekly?");
+});
+
 test("a merged newest revision makes the item done, whatever its header says", () => {
   const log = jsonl(
     { at: "2026-11-18T09:00:00Z", by: agent, kind: "revision", sha: SHA1, branch: "scopesoup/A-1" },

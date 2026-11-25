@@ -1,14 +1,16 @@
-// Settings' "Connect to GitHub Issues" and "Connect to Jira" (#127, decision 98): a dialog that asks what the host needs, lets the
-// server check it (the configuration, the token from the environment, one look at the host, no agent session running anywhere) and
-// say what connecting would do, and only then connects. From the meta branch it lists the open Items; the ticked ones move.
-// In join mode ("Set up this machine") the host is the project's, shown and not changed: only this machine's part is asked for.
-// The token is never asked for here: the server says which variable to set when it is missing.
+// Settings' "Connect to GitHub Issues" and "Connect to Jira" (#127, decision 98) and "Move back to the meta branch" (#134, decision
+// 99): a dialog that asks what the host needs, lets the server check it (the configuration, the token from the environment, one look
+// at the host, no agent session running anywhere) and say what it would do, and only then connects. The host the Items are on now
+// lists its open Items (or issues); the ticked ones move. In join mode ("Set up this machine") the host is the project's, shown and
+// not changed: only this machine's part is asked for. The token is never asked for here: the server says which variable to set.
 
 import { useEffect, useState } from "preact/hooks";
 import { Dialog } from "./Dialog.tsx";
 import { type ConfigView, fetchMachineSetup, type MachineSetupView, type MovableItem, postConnect } from "./api.ts";
 
 export type ConnectKind = "github" | "jira";
+/** What a dialog goes to: GitHub or Jira, or back to the meta branch. */
+export type DialogKind = ConnectKind | "metaBranch";
 
 interface Fields {
   repo: string;
@@ -19,14 +21,22 @@ interface Fields {
   filter: string;
   components: string;
   write: boolean;
+  /** This machine's meta branch part. */
+  authorName: string;
+  authorEmail: string;
+  prefix: string;
+  /** Moving back: close the old issues (true) or leave them open. */
+  close: boolean;
 }
 
-const EMPTY: Fields = { repo: "", site: "", project: "", deployment: "cloud", email: "", filter: "", components: "", write: true };
+const EMPTY: Fields = { repo: "", site: "", project: "", deployment: "cloud", email: "", filter: "", components: "", write: true, authorName: "", authorEmail: "", prefix: "", close: false };
 
-export const HOST_NAMES: Record<ConnectKind, string> = { github: "GitHub Issues", jira: "Jira" };
+export const HOST_NAMES: Record<DialogKind, string> = { github: "GitHub Issues", jira: "Jira", metaBranch: "the meta branch" };
 
-function bodyOf(kind: ConnectKind, fields: Fields, join: boolean, move: string[]): Record<string, unknown> {
-  if (join) return { mode: "join", ...(kind === "jira" && fields.deployment === "cloud" ? { email: fields.email } : {}) };
+function bodyOf(kind: DialogKind, fields: Fields, join: boolean, move: string[]): Record<string, unknown> {
+  const part = { authorName: fields.authorName, authorEmail: fields.authorEmail, prefix: fields.prefix };
+  if (join) return { mode: "join", ...(kind === "jira" && fields.deployment === "cloud" ? { email: fields.email } : {}), ...(kind === "metaBranch" ? part : {}) };
+  if (kind === "metaBranch") return { kind, ...part, move, close: fields.close };
   if (kind === "github") return { kind, repo: fields.repo, write: fields.write, move };
   return {
     kind, site: fields.site, project: fields.project, deployment: fields.deployment, write: fields.write,
@@ -53,8 +63,10 @@ function whereText(kind: ConnectKind, fields: Fields): string {
   }
 }
 
-export function ConnectDialog({ kind, join = false, host, onClose, onConnected }: {
-  kind: ConnectKind;
+export function ConnectDialog({ kind, from, join = false, host, onClose, onConnected }: {
+  kind: DialogKind;
+  /** Moving back: the host the Items are on now. */
+  from?: ConnectKind;
   /** Set up this machine for the project's host (`host`, shown, not changed). */
   join?: boolean;
   host?: MachineSetupView["host"];
@@ -65,11 +77,20 @@ export function ConnectDialog({ kind, join = false, host, onClose, onConnected }
   const [busy, setBusy] = useState(false);
   // What the server said about these fields: the plan, and what stands in the way. Cleared by any edit.
   const [plan, setPlan] = useState<{ lines: string[]; problems: string[] } | null>(null);
-  // The meta branch's open Items, from the last check; kept while ticks change.
+  // The open Items (or issues) of the host the Items are on now, from the last check; kept while ticks change.
   const [items, setItems] = useState<MovableItem[] | null>(null);
   const [move, setMove] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const title = join ? `Set up this machine for ${HOST_NAMES[kind]}` : `Connect to ${HOST_NAMES[kind]}`;
+  const back = kind === "metaBranch";
+  // This machine's meta branch part as its file has it (kept beside the other hosts' parts), filled in for the person.
+  useEffect(() => {
+    if (!back) return;
+    fetchMachineSetup().then((view) => {
+      const meta = view.meta ?? {};
+      setFields((now) => ({ ...now, authorName: now.authorName || meta.authorName || "", authorEmail: now.authorEmail || meta.authorEmail || "", prefix: now.prefix || meta.prefix || "" }));
+    }, () => undefined);
+  }, [back]);
+  const title = join ? `Set up this machine for ${HOST_NAMES[kind]}` : back ? "Move back to the meta branch" : `Connect to ${HOST_NAMES[kind]}`;
   const set = (patch: Partial<Fields>) => {
     setFields({ ...fields, ...patch });
     setPlan(null);
@@ -95,14 +116,24 @@ export function ConnectDialog({ kind, join = false, host, onClose, onConnected }
       },
     );
   };
-  const input = (name: "repo" | "site" | "project" | "email" | "filter" | "components", label: string, placeholder: string, note?: string) => (
+  const input = (name: "repo" | "site" | "project" | "email" | "filter" | "components" | "authorName" | "authorEmail" | "prefix", label: string, placeholder: string, note?: string) => (
     <label>
       <b>{label}</b>
       <input type="text" value={fields[name]} placeholder={placeholder} disabled={busy} onInput={(event) => set({ [name]: (event.target as HTMLInputElement).value })} />
       {note && <span class="muted">{note}</span>}
     </label>
   );
+  const metaPart = (
+    <>
+      {input("authorName", "Your name", "Robin Example", "This machine's meta commits are made as you.")}
+      {input("authorEmail", "Your email", "robin@example.test")}
+      {input("prefix", "This machine's id prefix", "B", "A letter, then up to 15 letters or digits: B gives Items B-1, B-2, ... Each machine has its own. Kept in this machine's scopesoup.config.json.")}
+    </>
+  );
   const variable = kind === "github" ? "SCOPESOUP_GITHUB_TOKEN" : "SCOPESOUP_JIRA_TOKEN";
+  const fromName = from ? HOST_NAMES[from] : "the old host";
+  const verb = join ? "setting up" : back ? "moving back" : "connecting";
+  const Verb = verb.charAt(0).toUpperCase() + verb.slice(1);
   return (
     <Dialog label={title} onClose={onClose} focusSelector="input, button.primary" keepOnOutsideClick>
       <h3 class="dialog-title">{title}</h3>
@@ -113,10 +144,20 @@ export function ConnectDialog({ kind, join = false, host, onClose, onConnected }
           send(false);
         }}
       >
-        {join ? (
+        {join && back ? (
+          <>
+            <p class="muted">The project's Items are on its meta branch (refs/scopesoup/meta). This machine needs its own part before it writes them or starts agents.</p>
+            {metaPart}
+          </>
+        ) : join ? (
           <>
             <p class="muted">The project's Items are on {kind === "github" ? `GitHub Issues: ${fields.repo}` : `Jira: project ${fields.project} on ${fields.site}`}. This machine needs its own access before it reads them or starts agents. The token is read from <code>{variable}</code> in the environment Scope Soup runs in; it is not asked for here.</p>
             {kind === "jira" && fields.deployment === "cloud" && input("email", "Your Jira account's email", "you@example.com", "This machine's own: kept in its scopesoup.config.json, not in the shared settings.")}
+          </>
+        ) : back ? (
+          <>
+            <p class="muted">The project's Items go back to its meta branch (refs/scopesoup/meta), for every machine. The issues you tick move there from {fromName}; the others stay where they are.</p>
+            {metaPart}
           </>
         ) : kind === "github" ? (
           <>
@@ -138,8 +179,8 @@ export function ConnectDialog({ kind, join = false, host, onClose, onConnected }
             {input("components", "Components of new Items (optional)", "Board", "Comma separated. Empty: none.")}
           </>
         )}
-        {!join && <p class="connect-where" role="status">{whereText(kind, fields)}</p>}
-        {!join && (
+        {!join && !back && <p class="connect-where" role="status">{whereText(kind, fields)}</p>}
+        {!join && !back && (
           <label class="resource-check">
             <input type="checkbox" checked={fields.write} disabled={busy} onChange={(event) => set({ write: (event.target as HTMLInputElement).checked })} />
             {" "}Let Scope Soup write ({kind === "github" ? "issues, labels and comments" : "issues, comments, labels and properties"}); off: it only shows them, and the level must be 0 (Watch)
@@ -147,7 +188,7 @@ export function ConnectDialog({ kind, join = false, host, onClose, onConnected }
         )}
         {items && items.length > 0 && (
           <fieldset class="connect-items" disabled={busy}>
-            <legend><b>Move these Items to {HOST_NAMES[kind]}</b> (the others stay on the meta branch)</legend>
+            <legend>{back ? <><b>Move these issues to the meta branch</b> (the others stay on {fromName})</> : <><b>Move these Items to {HOST_NAMES[kind]}</b> (the others stay on the meta branch)</>}</legend>
             <label class="resource-check">
               <input type="checkbox" checked={move.length === items.length} onChange={(event) => { setMove((event.target as HTMLInputElement).checked ? items.map((item) => item.id) : []); setPlan(null); }} />
               <i>All {items.length}</i>
@@ -160,22 +201,31 @@ export function ConnectDialog({ kind, join = false, host, onClose, onConnected }
             ))}
           </fieldset>
         )}
+        {back && move.length > 0 && (
+          <fieldset class="connect-deployment" disabled={busy}>
+            <legend><b>On {fromName}, each moved issue gets a comment naming its new Item, and is</b></legend>
+            <label class="resource-check"><input type="radio" name="close" checked={!fields.close} onChange={() => set({ close: false })} /> left open{from === "github" ? " (labelled moved-to-scopesoup)" : ""}</label>
+            <label class="resource-check"><input type="radio" name="close" checked={fields.close} onChange={() => set({ close: true })} /> closed{from === "github" ? " as not planned" : ""}</label>
+          </fieldset>
+        )}
         {plan && plan.problems.length > 0 && (
           <div class="notice notice-bad" role="alert">
-            <b>{join ? "Not set up:" : "Not connected:"}</b>
+            <b>{join ? "Not set up:" : back ? "Not moved back:" : "Not connected:"}</b>
             <ul>{plan.problems.map((each) => <li key={each}>{each}</li>)}</ul>
           </div>
         )}
         {plan && plan.lines.length > 0 && (
           <div class="notice connect-plan" role="status">
-            <b>{plan.problems.length > 0 ? "Once that is settled, " : ""}{join ? (plan.problems.length > 0 ? "setting up would:" : "Setting up would:") : plan.problems.length > 0 ? "connecting would:" : "Connecting would:"}</b>
+            <b>{plan.problems.length > 0 ? `Once that is settled, ${verb} would:` : `${Verb} would:`}</b>
             <ul>{plan.lines.map((each) => <li key={each}>{each}</li>)}</ul>
           </div>
         )}
         {error && <pre class="notice notice-bad settings-errors" role="alert">{error}</pre>}
         <div class="form-actions">
           {plan && plan.problems.length === 0 ? (
-            <button type="button" class="primary" disabled={busy} onClick={() => send(true)}>{busy ? (move.length > 0 ? "Moving…" : "Saving…") : join ? "Set up" : move.length > 0 ? `Move ${move.length} and connect` : "Connect"}</button>
+            <button type="button" class="primary" disabled={busy} onClick={() => send(true)}>
+              {busy ? (move.length > 0 ? "Moving…" : "Saving…") : join ? "Set up" : back ? (move.length > 0 ? `Move ${move.length} and switch` : "Switch to the meta branch") : move.length > 0 ? `Move ${move.length} and connect` : "Connect"}
+            </button>
           ) : (
             <button type="submit" class="primary" disabled={busy}>{busy ? "Checking…" : "Check"}</button>
           )}

@@ -58,7 +58,8 @@ import { createMergeQueue } from "./orchestrator/mergeQueue.ts";
 import { createResources, unitRef } from "./orchestrator/resources.ts";
 import type { Resources } from "./orchestrator/resources.ts";
 import type { MergeQueue } from "./orchestrator/mergeQueue.ts";
-import type { MetaBranchHost } from "./hosts/metaBranch/index.ts";
+import { createMetaBranchHost, type MetaBranchHost } from "./hosts/metaBranch/index.ts";
+import type { MetaPart } from "./config/edit.ts";
 import { describeMigration, migrateMetaFormat } from "./hosts/metaBranch/migrate.ts";
 import { createHostActions } from "./orchestrator/hostActions.ts";
 import { createLoop } from "./orchestrator/loop.ts";
@@ -162,7 +163,8 @@ async function main(): Promise<void> {
   if (setup) {
     delete hostSet.github;
     delete hostSet.jira;
-    console.log(`This machine is not set up for the project's ${setup.kind === "jira" ? "Jira" : "GitHub"} host: ${setup.missing.join(" and ")} missing. The board asks for it; no agent starts until it is there and Scope Soup is started again.`);
+    delete hostSet.meta;
+    console.log(`This machine is not set up for the project's ${setup.kind === "jira" ? "Jira" : setup.kind === "github" ? "GitHub" : "meta branch"} host: ${setup.missing.join(" and ")} missing. The board asks for it; no agent starts until it is there and Scope Soup is started again.`);
   }
   // Singleplayer or multiplayer as the file says now: a switch on the Settings page holds from the next sharing round.
   const multiplayer = (): boolean => config?.load().config?.multiplayer ?? first?.config?.multiplayer ?? true;
@@ -495,6 +497,19 @@ async function main(): Promise<void> {
           settingsLog: () => {
             const loaded = config.load().config;
             return loaded ? shared.log(loaded.repoPath) : [];
+          },
+          // "Move back to the meta branch" (#134): the meta branch of this clone, written with this machine's part, for the move only.
+          metaBranch: (part: MetaPart) => {
+            const loaded = config.load().config;
+            if (!loaded) throw new Error("no project configuration");
+            const host = createMetaBranchHost({
+              repoDir: loaded.repoPath, allowWrites: true, person: { name: part.authorName, email: part.authorEmail }, machine: loaded.machineName,
+              remote: loaded.remote, shares: multiplayer, idPrefix: part.prefix,
+            });
+            const writer = host.writer;
+            if (!writer || !host.write?.editWork) throw new Error("the meta branch cannot be written here");
+            const edit = host.write.editWork;
+            return { createItems: (batch, options) => writer.createItems(batch, options), listWork: async () => (await host.work.listWork()).items, editWork: (ref, patch) => edit(ref, patch), stop: () => host.stop() };
           },
           // The Settings page's "Stop using Scope Soup": the offboarding plan, read only.
           offboard: async () => {

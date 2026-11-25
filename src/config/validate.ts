@@ -676,9 +676,8 @@ function hostOf(value: unknown, repoPath: string, remote: string, err: (message:
     if (typeof given !== "number" || !Number.isInteger(given) || given < 0 || given > 86400) err("host.fetchSeconds must be a whole number from 0 to 86400.");
     else fetchSeconds = given;
   }
-  if (write && (authorName === undefined || authorEmail === undefined)) {
-    err("host.write is true, so host.authorName and host.authorEmail are required: meta commits are made as that person. Each machine sets them in its own scopesoup.config.json as meta.authorName and meta.authorEmail.");
-  }
+  // Without this machine's author (meta.authorName, meta.authorEmail) or prefix the host is valid: the machine is not set up for it
+  // yet (`machineSetup`), reads no Items and starts no agent, and its board asks "Set up this machine" (#134, decision 99).
   return {
     kind: "metaBranch",
     repoPath,

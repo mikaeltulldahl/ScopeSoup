@@ -168,7 +168,7 @@ const cleanBody = (text: string): string => text.replace(LONE, "\uFFFD").replace
 export const cleanLabel = (label: string): string => oneLine(label.replace(/[,[\]]/g, " "));
 
 /** Labels that mean something on GitHub only: Scope Soup's own conventions there, and `priority:*`, which becomes the priority. */
-const githubOnly = (label: string): boolean => /^priority:/i.test(label.trim()) || /^scopesoup:/i.test(label.trim());
+export const githubOnly = (label: string): boolean => /^priority:/i.test(label.trim()) || /^scopesoup:/i.test(label.trim());
 
 const escape = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 

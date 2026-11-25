@@ -409,8 +409,10 @@ export async function postConnect(body: Record<string, unknown>): Promise<Connec
 
 /** What this machine lacks for the project's host (decision 98), and the host as the shared settings name it. */
 export interface MachineSetupView {
-  setup: { kind: "github" | "jira"; missing: string[] } | null;
-  host?: { kind: "github" | "jira"; repo?: string; site?: string; project?: string; deployment?: "cloud" | "datacenter"; write?: boolean };
+  setup: { kind: "github" | "jira" | "metaBranch"; missing: string[] } | null;
+  host?: { kind: "github" | "jira" | "metaBranch"; repo?: string; site?: string; project?: string; deployment?: "cloud" | "datacenter"; write?: boolean };
+  /** This machine's meta branch part as its file has it (kept while another host is in use), for the meta branch's dialogs. */
+  meta?: { authorName?: string; authorEmail?: string; prefix?: string };
 }
 
 export const fetchMachineSetup = () => getJson<MachineSetupView>("/api/machine-setup");

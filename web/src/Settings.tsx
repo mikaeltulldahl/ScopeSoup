@@ -20,7 +20,7 @@ import type { Sliders } from "../../src/config/sliders.ts";
 import { commandText, commandWords } from "../../src/config/commandLine.ts";
 import { fetchConfig, PlayersDiffer, postConfig } from "./api.ts";
 import { EFFORT_LEVELS } from "../../src/config/types.ts";
-import { ConnectDialog, type ConnectKind, HOST_NAMES } from "./Connect.tsx";
+import { ConnectDialog, type DialogKind, HOST_NAMES } from "./Connect.tsx";
 
 const ONBOARDING = "https://github.com/mikaeltulldahl/scopesoup/blob/main/docs/ONBOARDING.md";
 
@@ -197,7 +197,7 @@ export function Settings({ project, openHistory = false }: { project?: ProjectVi
   // What a save of a project setting did: saved for every machine, by whom.
   const [committed, setCommitted] = useState<string | null>(null);
   // The connect dialog open, if one is (#127).
-  const [connecting, setConnecting] = useState<ConnectKind | null>(null);
+  const [connecting, setConnecting] = useState<DialogKind | null>(null);
   // A switch to multiplayer refused because the remote's shared settings name another project or host: both sides, and the change.
   const [players, setPlayers] = useState<(PlayersDiffer["players"] & { change: Record<string, unknown> }) | null>(null);
 
@@ -493,15 +493,18 @@ export function Settings({ project, openHistory = false }: { project?: ProjectVi
         <h4 id="host">Where the Items are</h4>
         <p class="muted">
           {view.config.host?.kind === "github" ? `GitHub Issues: ${view.config.host.repo}.` : view.config.host?.kind === "jira" ? `Jira: project ${view.config.host.project} on ${view.config.host.site}.` : view.config.host?.kind === "metaBranch" ? "The project's meta branch (refs/scopesoup/meta)." : "Set by the environment (SCOPESOUP_GITHUB_* or SCOPESOUP_META_*)."}
-          {" "}A project setting: connecting changes it for every machine, and takes effect when Scope Soup starts again. From the meta branch you pick which open Items move; the others stay there.
+          {" "}A project setting: connecting changes it for every machine, and takes effect when Scope Soup starts again. You pick which open Items move; the others stay where they are. Between GitHub and Jira, go through the meta branch: move back to it first, then connect.
         </p>
         <div class="form-actions">
           {(["github", "jira"] as const).map((kind) => {
-            // GitHub and Jira are connected only from the meta branch (or no host): going between them, or back, is not supported yet.
+            // GitHub and Jira are connected only from the meta branch (or no host): between them, the way is back to the meta branch first.
             const across = (hostKind === "github" || hostKind === "jira") && hostKind !== kind;
-            const why = dirty ? "Save or undo your changes first" : across ? "Going between GitHub and Jira goes through the meta branch, and going back to it is not supported yet." : "";
+            const why = dirty ? "Save or undo your changes first" : across ? `Going between GitHub and Jira goes through the meta branch: "Move back to the meta branch" first.` : "";
             return <button key={kind} type="button" disabled={busy || dirty || across} title={why} onClick={() => setConnecting(kind)}>Connect to {HOST_NAMES[kind]}</button>;
           })}
+          {(hostKind === "github" || hostKind === "jira") && (
+            <button type="button" disabled={busy || dirty} title={dirty ? "Save or undo your changes first" : ""} onClick={() => setConnecting("metaBranch")}>Move back to the meta branch</button>
+          )}
         </div>
 
         {view.config?.host?.kind === "jira" && (
@@ -620,6 +623,7 @@ export function Settings({ project, openHistory = false }: { project?: ProjectVi
       {connecting && (
         <ConnectDialog
           kind={connecting}
+          {...(hostKind === "github" || hostKind === "jira" ? { from: hostKind } : {})}
           onClose={() => setConnecting(null)}
           onConnected={(next, shared, moved) => {
             setConnecting(null);

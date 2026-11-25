@@ -59,7 +59,7 @@ Ports are split by capability (`src/ports/host.ts`), so a deployment can combine
 
 ### Hosts and players: the switches
 
-What Scope Soup does when a project changes its host (Settings' Connect, decision 98) or a machine switches between singleplayer and multiplayer (Settings' Players, decisions 93 and 98).
+What Scope Soup does when a project changes its host (Settings' Connect, decision 98, and Move back, decision 99) or a machine switches between singleplayer and multiplayer (Settings' Players, decisions 93 and 98).
 
 | Situation | What happens |
 |---|---|
@@ -71,7 +71,8 @@ What Scope Soup does when a project changes its host (Settings' Connect, decisio
 | 6. Singleplayer on the meta branch, switch to multiplayer, the same host and project on the remote | The switch needs no question, and the meta writer puts this clone's own commits on top of the remote's: Items merge and an id taken on both sides is renumbered. |
 | 7. A new machine joins | Onboarding writes its private file; when it lacks what the project's GitHub or Jira host needs, its board shows the same "Set up this machine" dialog with the host filled in from the shared settings. |
 | 8. Multiplayer to singleplayer and back | Switching off shares nothing more; switching on runs scenario 5's check again, and asks only if the remote's settings now name another host or project. |
-| 9. Jira to GitHub, or either back | It goes through the meta branch: first back to the meta branch (not supported yet, issue #134), then Connect; Connect itself refuses to go from one to the other directly. |
+| 9. Jira to GitHub, or either back | Two steps through the meta branch: "Move back to the meta branch", then Connect; Connect itself refuses to go from one to the other directly. |
+| 10. GitHub or Jira, Move back to the meta branch | The dialog asks this machine's meta part (name, email, id prefix), lists the host's open issues to tick and whether they are closed or left open there; the ticked ones become Items in one meta commit (references between them rewritten, their comments as one log line, found again by `importedFrom` on a retry), then each old issue gets a comment naming its Item and is closed or left open; only then the shared `host` becomes the meta branch. Other machines without a meta part show "Set up this machine for the meta branch". |
 
 ## Items on a meta branch
 
