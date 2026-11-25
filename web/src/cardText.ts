@@ -6,7 +6,7 @@ import type { CardView, SessionView } from "../../src/core/views.ts";
 export type CardText = { kind: "none" } | { kind: "text"; text: string } | { kind: "held"; name: string; mine: boolean };
 
 /**
- * - A person's turn (theirs or anyone's): what waits, as in Your turn ("2 questions", "a draft to accept").
+ * - A person's turn (theirs or anyone's): what waits, as in Your turn ("2 questions", "a rewrite to accept").
  * - Held by a person: "held by @name", the name as a mention, marked when it is the person viewing (`viewer`).
  * - Queued, waiting its turn: nothing (the lane says it). A blocked queued card ("cannot merge") keeps its reason.
  * - Done: nothing, unless the item is not closed on the host yet.

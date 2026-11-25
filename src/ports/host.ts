@@ -155,11 +155,6 @@ export interface NewWork {
   log?: LogLineInput[];
   /** Logins the item is assigned to when it is created (GitHub): a person who files an item and takes it in one call. */
   assignees?: string[];
-  /**
-   * A follow-up Item: the Item it came from (its ref key) and the reviewed head. Hosts that keep it apart from the text (Jira: a
-   * link and an issue property) take it from here; the others find the mark at the end of `body`.
-   */
-  followUpOf?: { item: string; sha: string };
 }
 
 /** What to change in an item: a field left out stays as it is; null clears it. */

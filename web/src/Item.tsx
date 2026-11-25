@@ -863,9 +863,9 @@ function DiffLine({ row }: { row: DiffRow }) {
 function DraftDiff({ before, after }: { before: string; after: string }) {
   const [opened, setOpened] = useState<Record<number, boolean>>({});
   const rows = diffLines(before, after);
-  if (!hasChanges(rows)) return <p class="muted">The draft keeps the description as it is.</p>;
+  if (!hasChanges(rows)) return <p class="muted">The rewrite keeps the description as it is.</p>;
   return (
-    <div class="diff-unified" role="group" aria-label="Description changed to the draft">
+    <div class="diff-unified" role="group" aria-label="Description changed to the rewrite">
       {collapse(rows).map((entry, index) =>
         "row" in entry ? <DiffLine key={index} row={entry.row} /> : opened[index]
           ? entry.skipped.map((row, at) => <DiffLine key={`${index}.${at}`} row={row} />)
@@ -876,7 +876,7 @@ function DraftDiff({ before, after }: { before: string; after: string }) {
 }
 
 /**
- * The triage's draft of the description, next to the description as it stands, with its questions (each
+ * The triage's rewrite of the description, next to the description as it stands, with its questions (each
  * recommendation picked to begin with). Keeping every recommendation, one press accepts the draft (or Edit, Reject); any
  * other answer sends the answers and the triage runs again with them, with no limit on the rounds. The questions
  * are answered as in the questions panel, the picks are kept in this browser until a button sends them, and each button
@@ -912,17 +912,17 @@ function DraftPanel({ page, draft, reload, primary }: { page: ItemPage; draft: P
     }));
   return (
     <section class="panel panel-yours">
-      <h3>Triage: draft of the description{draft.round > 1 ? ` (round ${draft.round})` : ""}</h3>
-      {draft.questions.length > 0 && <p class="question">The draft is written as if you take every recommendation. Pick another answer and the triage runs again with it.</p>}
+      <h3>Triage: rewrite of the description{draft.round > 1 ? ` (round ${draft.round})` : ""}</h3>
+      {draft.questions.length > 0 && <p class="question">The rewrite is written as if you take every recommendation. Pick another answer and the triage runs again with it.</p>}
       {questions.length > 0 && <QuestionSteps questions={questions} held={held} send="label" canAnswer={true} busy={busy} change={change} />}
       <div class="draft-compare">
         <div class="version">
-          <p class="muted num">Change to the description (before, then the draft)</p>
+          <p class="muted num">Change to the description (before, then the rewrite)</p>
           <DraftDiff before={draft.original} after={draft.draft} />
         </div>
         {changed && (
           <div class="version">
-            <p class="muted num">Now (changed since the draft was written)</p>
+            <p class="muted num">Now (changed since the rewrite was written)</p>
             <pre class="version-text">{page.item.body?.trim() || "(no description)"}</pre>
           </div>
         )}
@@ -943,7 +943,7 @@ function DraftPanel({ page, draft, reload, primary }: { page: ItemPage; draft: P
       )}
       {!editing && keeps && (
         <p>
-          <button type="button" class={main} onClick={() => decide("accept")} disabled={busy || !filled}>{busy ? "Working…" : "Accept the draft"}</button>{" "}
+          <button type="button" class={main} onClick={() => decide("accept")} disabled={busy || !filled}>{busy ? "Working…" : "Accept the rewrite"}</button>{" "}
           <button type="button" onClick={() => setEditing(true)} disabled={busy}>Edit</button>{" "}
           <button type="button" onClick={() => decide("reject")} disabled={busy || !filled}>Reject</button>
         </p>
@@ -955,8 +955,8 @@ function DraftPanel({ page, draft, reload, primary }: { page: ItemPage; draft: P
       )}
       <p class="muted">
         {keeps
-          ? `${page.canEdit ? "Accept writes the draft as the item's description; the old text stays in the item's history." : "This host's items are edited on the host: accepting gives the draft to the agents in place of the host's text."}${draft.labels ? " The label changes go with it; a label someone changed since stays as they set it." : ""} Reject keeps the description${draft.labels ? " and the labels" : ""} as they are. Either way the work can then start.`
-          : "Your answers go to a new triage, which writes a new draft. Nothing starts until you accept or reject a draft."}
+          ? `${page.canEdit ? "Accept writes the rewrite as the item's description; the old text stays in the item's history." : "This host's items are edited on the host: accepting gives the rewrite to the agents in place of the host's text."}${draft.labels ? " The label changes go with it; a label someone changed since stays as they set it." : ""} Reject keeps the description${draft.labels ? " and the labels" : ""} as they are. Either way the work can then start.`
+          : "Your answers go to a new triage, which writes a new rewrite. Nothing starts until you accept or reject a rewrite."}
       </p>
       {error && <p class="error">{error}</p>}
     </section>
@@ -1445,7 +1445,7 @@ function Body({ page, reload, resources }: { page: ItemPage; reload: () => void;
               <li class="row" key={change.label}>
                 <div class="row-head">
                   <span class="row-title">{change.title}</span>
-                  <span class="tag">{change.draft ? "draft" : change.state}</span>
+                  <span class="tag">{change.draft ? "draft PR" : change.state}</span>
                   {change.url ? (
                     <a class="tag tag-link" href={change.url} rel="noreferrer">
                       diff {change.label}

@@ -100,7 +100,7 @@ describe("a triage draft on a GitHub Item", () => {
     assert.deepEqual([answered.body.settled, answered.body.written], ["accepted", true]);
     assert.deepEqual(sent("11"), [{ method: "PATCH", path: "/repos/harbour/tides/issues/11", body: { body: "Show the tide table in metres.\n\n## Verification\n\nThe table shows metres." } }]);
     const shown = await page(key);
-    assert.match(shown.answers.at(-1)!.answer, /^Accepted the triage's draft: the description above is the new text\.$/);
+    assert.match(shown.answers.at(-1)!.answer, /^Accepted the triage's rewrite: the description above is the new text\.$/);
   });
 
   test("Edit sends a person's text, made inert like other host text", async () => {
@@ -140,7 +140,7 @@ describe("a triage draft on a GitHub Item", () => {
     assert.equal(sent("15").length, 1);
     const shown = await page(key);
     const last = shown.answers.at(-1)!;
-    assert.equal(last.question, "Triage draft, round 1");
+    assert.equal(last.question, "Triage rewrite, round 1");
     assert.match(last.answer, /could not write it to the issue \(.*403.*\)/);
     assert.match(last.answer, /Use this description instead of the one written above:\nShow the tide table in metres\.$/);
     assert.equal(loadJobs(store)[key]?.refine?.settled, "accepted");

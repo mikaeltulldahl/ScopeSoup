@@ -124,6 +124,10 @@ export function settingsWords(changes: readonly SettingChangeLike[]): string[] {
       else out.push(fromTo("Images", change));
       continue;
     }
+    if (top === "review" && second === "shouldFindings" && parts.length === 2) {
+      out.push(change.to === "draft" ? "A review's should findings: merged, then a draft" : "A review's should findings: fixed before the merge");
+      continue;
+    }
     if (top === "host") {
       out.push(fromTo(second ? `Host ${spaced(parts.slice(1).join(" "))}` : "Host", change));
       continue;

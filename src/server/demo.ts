@@ -30,6 +30,7 @@ import type { Chat, ChatRunner, ChatTurn } from "../orchestrator/chat.ts";
 import { chatKey, createChat } from "../orchestrator/chat.ts";
 import type { Decision, Job, Jobs } from "../orchestrator/jobs.ts";
 import { loadJobs, saveJobs } from "../orchestrator/jobs.ts";
+import { fileDrafts } from "../orchestrator/drafts.ts";
 import { workspaceKey } from "../orchestrator/paths.ts";
 import { allowancePlans } from "../orchestrator/allowance.ts";
 import { usageReserve } from "../orchestrator/tick.ts";
@@ -284,7 +285,7 @@ export function seedDemo(store: Store, now: Date, dir?: string): void {
       triage: { ready: true, size: "small", paths: ["src/week"], hidesDecision: true, decision: DRAFT_QUESTION, decisions: [DRAFT_QUESTION], draft: DRAFT_TEXT },
       refine: { original: DRAFT_ORIGINAL, draft: DRAFT_TEXT, questions: [DRAFT_QUESTION], round: 1 },
       refineRounds: 1,
-      parked: { as: "needs-decision", reason: `Triage, round 1: a draft description and 1 question wait for an answer: 1. ${DRAFT_QUESTION.question}`, at: at(-36) },
+      parked: { as: "needs-decision", reason: `Triage, round 1: a rewrite of the description and 1 question wait for an answer: 1. ${DRAFT_QUESTION.question}`, at: at(-36) },
     });
     item(52, "Chart datum and the first test harbours", {
       body: "Harbours publish heights against different datums, and the first data set needs a few harbours to test against.",
@@ -411,6 +412,18 @@ export function seedDemo(store: Store, now: Date, dir?: string): void {
     put(session("s-36", ref("work", 36), { status: "succeeded", model: "sonnet", agentSessionId: "agent-s-36", startedAt: at(-775), finishedAt: at(-760), endReason: "succeeded", attempt: 2 }));
 
     saveJobs(store, jobs);
+
+    // Two Item drafts wait in Your turn (decision 95): a review's should finding of item 66, and something item 63's implementor noticed.
+    fileDrafts(store, ref("work", 66), "reviewer", [{
+      title: "After #66: show the sunrise row in the harbour's own time zone",
+      description: "The review of #66 approved its change and said this finding should still change:\n\n- `src/day/sun.ts`: the times use the phone's time zone, not the harbour's.",
+      verification: "A harbour two time zones away shows its own sunrise time.",
+    }], "orchestrator", at(-14));
+    fileDrafts(store, ref("work", 63), "implementor", [{
+      title: "Harbour names with accents sort after Z",
+      description: "While making search forgive typos, the list of harbours sorted names with accents (Ålesund, Évian) after Z. A collation by locale would fix it.",
+      verification: "Ålesund sorts with the A names in the harbour list.",
+    }], "orchestrator", at(-6));
 
     // History for the estimate: ten green suites of about six and a half minutes.
     for (let i = 0; i < 10; i++) {
@@ -897,6 +910,8 @@ async function main(): Promise<void> {
     chat: createDemoChat(store, configFile, dir, undefined, settings),
     assumptions: [demoAssumptionHost(store)],
     items: demoItemsHost(store),
+    // Approve on a draft makes its Item here (`src/server/drafts.ts`).
+    restructure: [demoItemsHost(store)],
     branches: demoBranches(store),
     diff: async (item) => demoDiff(store, item, new Date()),
     // A synthetic commit history: the demo has no repository of the project.

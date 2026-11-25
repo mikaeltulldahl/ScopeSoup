@@ -2,7 +2,6 @@
 
 import type { LabelChange, Ref, RepoLabel, Session, SessionRole } from "../model/types.ts";
 import type { AnswerWrite, DraftWrite, QuestionWrite, WorkPatch } from "../ports/host.ts";
-import type { FollowUpItem } from "./followUp.ts";
 import type { AssumptionOutcome, AssumptionPick } from "./assumptions.ts";
 
 export interface SessionRequest {
@@ -132,7 +131,7 @@ export interface Actions {
    */
   addBlockers?(item: Ref, blockers: Ref[]): Promise<void>;
   /**
-   * Replaces the item's description on its host with text a person accepted from the triage's draft, on a host whose
+   * Replaces the item's description on its host with text a person accepted from the triage's rewrite, on a host whose
    * items are issues (GitHub, with writes on). Only the body changes. Throws when the host refuses; false when the item is not on
    * this host. Absent where the host cannot do it.
    */
@@ -207,12 +206,6 @@ export interface Actions {
    * item is not this host's.
    */
   reworkOverturn?(item: Ref, id: string, answer: string, by: string): Promise<Ref | null>;
-  /**
-   * Files a follow-up Item on the item's host for the `should` findings of its approved change: a new Item with `work`'s
-   * text (made inert) ending in its mark, into the store at once. One the store already has with that mark is returned instead.
-   * Throws when the host refuses; null when the item is not this host's. Absent where the host cannot create Items.
-   */
-  fileFollowUp?(item: Ref, work: FollowUpItem): Promise<Ref | null>;
 }
 
 /** `won`: this machine holds the item. Otherwise `why` says who does, or why the claim did not stand. */

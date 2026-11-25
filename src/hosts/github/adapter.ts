@@ -80,7 +80,7 @@ async function pool<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>
 
 /** The labels Scope Soup creates on first use (docs/github-mapping.md, section 3). An existing label is never recoloured. */
 const LABEL_LOOKS: Record<string, { color: string; description: string }> = {
-  [NEEDS_DECISION_LABEL]: { color: "d93f0b", description: "A Scope Soup question or draft waits for an answer" },
+  [NEEDS_DECISION_LABEL]: { color: "d93f0b", description: "A Scope Soup question or rewrite waits for an answer" },
   [CLAIMED_LABEL]: { color: "0e8a16", description: "Held by a Scope Soup agent (see the claim comment)" },
   [ASSUMPTION_LABEL]: { color: "fef2c0", description: "A Scope Soup agent decided something itself: accept or overturn it on the board" },
   "priority:blocker": { color: "b60205", description: "Priority, read by Scope Soup" },
@@ -665,7 +665,7 @@ export function createGitHubHost(config: GitHubConfig): GitHubHost {
       try {
         const bodySha = sha256((await reread(subject)).body ?? "");
         const body = draftBody(draft.round, draft.draft, bodySha, draft.labels);
-        if (body.length > COMMENT_LIMIT) throw new TooLarge(`The draft for #${subject.id} is over ${COMMENT_LIMIT} characters.`);
+        if (body.length > COMMENT_LIMIT) throw new TooLarge(`The rewrite for #${subject.id} is over ${COMMENT_LIMIT} characters.`);
         await addNeedsDecision(subject);
         const same = (await threadOf(subject)).thread.drafts.find((each) => !each.answered && each.round === draft.round && each.bodySha === bodySha && each.text === draft.draft.trim() && changeText(each.labels) === changeText(draft.labels));
         if (same) return { id: same.id, at: same.at };
@@ -681,8 +681,8 @@ export function createGitHubHost(config: GitHubConfig): GitHubHost {
       const { thread } = await threadOf(subject);
       const draft = thread.drafts.find((each) => each.id === id);
       if (!draft) throw new Error(`The draft comment ${id} on #${subject.id} is gone (it may have been deleted).`);
-      if (draft.answered) throw new AlreadyAnswered(`The draft of round ${draft.round} on #${subject.id} has an answer already.`);
-      if (sha256((await reread(subject)).body ?? "") !== draft.bodySha) throw new BodyChanged(`The description of #${subject.id} changed on GitHub since the draft of round ${draft.round} was written.`);
+      if (draft.answered) throw new AlreadyAnswered(`The rewrite of round ${draft.round} on #${subject.id} has an answer already.`);
+      if (sha256((await reread(subject)).body ?? "") !== draft.bodySha) throw new BodyChanged(`The description of #${subject.id} changed on GitHub since the rewrite of round ${draft.round} was written.`);
     },
     /**
      * One line more in Scope Soup's log comment on the issue: posted with the first line, then edited in place (an edit
