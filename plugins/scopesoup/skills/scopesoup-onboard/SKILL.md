@@ -1,6 +1,6 @@
 ---
 name: scopesoup-onboard
-description: Put the current project under Scope Soup. Finds the Scope Soup install (a release folder in Scope Soup's home, with the `scopesoup` launcher) on this machine, asks where the project's clone is, where its backlog is today and where to keep it from now on (Scope Soup's own Items or GitHub Issues, offering a one-time import of GitHub Issues into Items) and this machine's prefix, proposes the setup of a fresh clone, writes this machine's short scopesoup.config.json outside the project's repository, checks it with Scope Soup's own validator, and on a new project writes the shared settings (level 0) to the project's meta ref and pushes the setup script on a branch for the person to merge. On a project Scope Soup already runs it writes only this machine's private file. Use when the person asks to set up, onboard or configure Scope Soup for a project.
+description: Put the current project under Scope Soup. Finds the Scope Soup install (a release folder in Scope Soup's home, with the `scopesoup` launcher) on this machine, asks where the project's clone is, where its backlog is today and where to keep it from now on (Scope Soup's own Items, GitHub Issues or Jira, offering a one-time import of GitHub Issues into Items) and this machine's prefix, proposes the setup of a fresh clone, writes this machine's short scopesoup.config.json outside the project's repository, checks it with Scope Soup's own validator, and on a new project writes the shared settings (level 0) to the project's meta ref and pushes the setup script on a branch for the person to merge. On a project Scope Soup already runs it writes only this machine's private file. Use when the person asks to set up, onboard or configure Scope Soup for a project.
 disable-model-invocation: true
 argument-hint: "[path to the project's clone]"
 ---
@@ -56,12 +56,13 @@ The current working directory, or `$ARGUMENTS`, is the likely answer: confirm it
 
 The backlog question has two parts, asked together in one message (decided): where the backlog is today, and where to keep it from now on. It is still one of the three questions: the second part decides the `host`, the first part decides what happens to the backlog that exists. Ask:
 
-"Two parts about the backlog. (a) Where is it today, if anywhere: GitHub Issues, another tracker (which one), a text file, or nowhere yet? (b) Where do you want to keep it from now on: Scope Soup's own Items in the project's repository, or GitHub Issues?"
+"Two parts about the backlog. (a) Where is it today, if anywhere: GitHub Issues, another tracker (which one), a text file, or nowhere yet? (b) Where do you want to keep it from now on: Scope Soup's own Items in the project's repository, GitHub Issues, or Jira?"
 
-Offer "GitHub Issues" in (b) only when the remote is on GitHub. What each answer to (b) means, in plain words, for the person:
+Offer "GitHub Issues" in (b) only when the remote is on GitHub. One question, three choices; "Jira" asks its details after (3d). What each answer to (b) means, in plain words, for the person:
 
 - **Items**: the backlog lives in the project's own repository, on a ref of its own (`refs/scopesoup/meta`, next to the shared settings) that git fetches and pushes like a branch. Everyone who uses Scope Soup on the project shares it; it needs no token and no website, and it reads as plain files without Scope Soup. The board is where you read and change it. Config: `"host": { "kind": "metaBranch", "write": true }` in the shared settings, and this machine's `"meta": { "authorName": "...", "authorEmail": "...", "prefix": "A" }` in the private file, with `authorName` and `authorEmail` from `git config user.name` and `user.email` in the project clone, shown in the summary. Question 3 (the prefix) follows.
 - **GitHub Issues**: the issues on GitHub stay the backlog, and Scope Soup reads them live (`docs/github-mapping.md`: GitHub is the source of truth). Nothing moves. It needs a token in the `SCOPESOUP_GITHUB_TOKEN` environment variable, never in the file. Config (shared settings): `"host": { "kind": "github", "repo": "owner/name", "write": false }`, with `owner/name` read from the remote's URL. No question 3.
+- **Jira**: the Jira project is the backlog, read live; step 3d. It needs a token in `SCOPESOUP_JIRA_TOKEN`, never in a file. No question 3.
 
 What the two answers lead to:
 
@@ -71,10 +72,20 @@ What the two answers lead to:
 | GitHub Issues | Items | The meta branch host, and the import (below): one more part to the backlog question, what to do with the issues on GitHub. |
 | Nowhere, or a text file | Items | The meta branch host, starting empty. Offer, as an optional step in the summary, to write the first Items (or file them from the text file, one Item per entry, each shown by title in the summary). |
 | Nowhere, or a text file | GitHub Issues | The github host. A text file can be filed as issues by the person; the skill does not write to GitHub. |
-| Jira | Items | Start with Items (the skill does not set up a Jira host); "Connect to Jira" on the Settings page reads the project live later. |
-| Another tracker (Trello, ...) | Items or GitHub Issues | That host. Say plainly: "Importing from <tracker> is not supported yet, so the backlog there stays where it is and Scope Soup starts without it." |
+| Anything | Jira | The Jira host (3d). Nothing is imported or moved. |
+| Another tracker (Trello, ...) | Items, GitHub Issues or Jira | That host. Say plainly: "Importing from <tracker> is not supported yet, so the backlog there stays where it is and Scope Soup starts without it." |
 
 Not sure yet? Items is a safe start: the Settings page's "Connect to GitHub Issues" and "Connect to Jira" switch the host later, moving the Items the person ticks. On a project whose host is GitHub or Jira, a machine without its token (or Jira Cloud email) is asked on its board to "Set up this machine".
+
+### 3d. From now on Jira
+
+Ask in one message what the host needs: the site (`https://...`, https only), the project key, Jira Cloud or Data Center, for Cloud the email of the account the token belongs to, and optionally a JQL filter and component names for new Items. Never ask for the token. Then run:
+
+```
+pnpm --silent --dir "SCOPESOUP" config:host jira --site <site> --project <KEY> [--deployment datacenter] [--email <email>] [--filter "<JQL>"] [--component <name>]... [--read-only] --look
+```
+
+It uses Settings' "Connect to Jira" checks and prints the `host` for the shared settings and `jira.email` for this machine's private file; copy both as printed. Exit 1: show the problems and ask again. Exit 3: the host is valid but could not be read; it names what is missing (usually `SCOPESOUP_JIRA_TOKEN` not set in this session): say so in the summary, the person sets it before starting Scope Soup. Exit 0: show how many open issues would be the Items.
 
 ### 3b. Today GitHub Issues, from now on Items: the import
 
@@ -168,7 +179,7 @@ Show, in plain words:
 
 - The import, when the backlog moves from GitHub Issues to Items (step 3b): the command in full, that it imports the open issues (and the closed ones only if asked), and what happens on GitHub in plain words (left as it is, labelled, or labelled and closed). The person's yes to the summary is the yes to that step on GitHub; it is never done without it.
 - The first Items to write, when the person picked that optional step (step 3), by title.
-- What the person does themselves: set `SCOPESOUP_GITHUB_TOKEN` for a github host, or for the import.
+- What the person does themselves: set `SCOPESOUP_GITHUB_TOKEN` for a github host, or for the import; `SCOPESOUP_JIRA_TOKEN` for a Jira host (the variable is named, its value never asked for).
 - A recommendation, when the remote is on GitHub (only said, never done by you): protect the main branch in the repository's settings on GitHub (no force pushes, and required status checks if the project has CI). It is the one guard that holds on the remote whatever an agent CLI can or cannot refuse: a role on GitHub Copilot CLI cannot be refused a flag such as `--no-verify` or `--force`. The board shows one dismissable warning when a GitHub remote's main branch has no protection.
 - On Windows, an optional shortcut (step 6c), offered as: "A Start menu shortcut 'Scope Soup – <project>' that starts Scope Soup and opens the board (also on the desktop? start at login?)". Say it needs no admin rights and no PATH change, goes in the person's own folders, and is removed by offboarding. Not offered elsewhere (`scopesoup open` still works there).
 - Two optional steps, each only if the person picks it: the plugin in the project's `.claude/settings.json` (step 8), and the Scope Soup section in the project's `CLAUDE.md` (step 9).
@@ -253,7 +264,7 @@ $env:SCOPESOUP_DATA = "<config folder>\data"
 & "HOME\bin\scopesoup.cmd" start
 ```
 
-Git Bash: `SCOPESOUP_CONFIG=... SCOPESOUP_DATA=... "HOME/bin/scopesoup" start`. Add `SCOPESOUP_GITHUB_TOKEN` for a github host. The board is on http://127.0.0.1:4310. Start it with the launcher (`scopesoup start` once `HOME/bin` is on the PATH): the Settings page's Upgrade then restarts it on a new version by itself. It fills and nothing runs. The overview then says how many Items have no triage; for triages the person sets level 1 on the Settings page and presses Start agents.
+Git Bash: `SCOPESOUP_CONFIG=... SCOPESOUP_DATA=... "HOME/bin/scopesoup" start`. Add `SCOPESOUP_GITHUB_TOKEN` for a github host, `SCOPESOUP_JIRA_TOKEN` for a Jira host. The board is on http://127.0.0.1:4310. Start it with the launcher (`scopesoup start` once `HOME/bin` is on the PATH): the Settings page's Upgrade then restarts it on a new version by itself. It fills and nothing runs. The overview then says how many Items have no triage; for triages the person sets level 1 on the Settings page and presses Start agents.
 
 ## 8. Optional: suggest the plugin to teammates
 

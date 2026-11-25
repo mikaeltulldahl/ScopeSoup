@@ -636,6 +636,14 @@ pnpm settings:init <settings.json> --as <your name> [--config <this machine's sc
 
 The first person on a project writes its shared settings to the meta ref: the file is checked with this machine's private file, the meta ref is fetched from `remote`, and when the project has no shared settings yet they are written as one commit named after you and pushed. When it has them already, nothing is written: you are joining (above). The exit code is 0 when written, 1 when refused.
 
+### Building a Jira host for onboarding
+
+```
+pnpm config:host jira --site <https address> --project <KEY> [--deployment cloud|datacenter] [--email <email>] [--filter <JQL>] [--component <name>]... [--read-only] [--look]
+```
+
+Builds the `host` the same way Settings' "Connect to Jira" does and checks it with the configuration's own validation (https only, project key, filter, components, Cloud email), then prints the shared `host` and this machine's `jira.email` as JSON. With `--look` it reads the project once with `SCOPESOUP_JIRA_TOKEN` from the environment and counts the open issues (exit 3 when it could not, naming the variable if it is not set). The token is never asked for or printed.
+
 ### Checking a configuration file
 
 ```
