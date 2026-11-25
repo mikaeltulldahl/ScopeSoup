@@ -7,7 +7,8 @@
 // `config/levels.ts`. What needs Node (finding copilot.exe, reading files) is in `driver.ts` or passed in by the caller.
 
 import { COPILOT_DEFAULT_AUTO_TIER } from "../../../config/defaults.ts";
-import type { CopilotConfig, ProjectConfig } from "../../../config/types.ts";
+import { MCP_TOOL_PREFIX } from "../../../config/types.ts";
+import type { CopilotConfig, McpServer, ProjectConfig } from "../../../config/types.ts";
 import type { SessionRole } from "../../../model/types.ts";
 import type { Env, Launch, ProgramAdvice } from "../../agent.ts";
 import { answerInstruction } from "./answer.ts";
@@ -76,6 +77,11 @@ export function copilotRules(allowedTools: readonly string[], level = 0): Copilo
       add("write");
       continue;
     }
+    // `mcp__<server>`: every tool of one of the role's MCP servers; Copilot's rule for it is the server's name.
+    if (name.startsWith(MCP_TOOL_PREFIX)) {
+      add(name.slice(MCP_TOOL_PREFIX.length));
+      continue;
+    }
     const rule = shellRule(name);
     if (rule) add(rule);
     else left.push(name);
@@ -136,6 +142,26 @@ export interface CopilotLaunchRequest {
   nodePath?: string;
 }
 
+/**
+ * `--additional-mcp-config`'s JSON for a role's servers, or null for none. `env` carries `${NAME}` for the CLI to fill from the
+ * environment, so no value is in the command line or any file (not verified against the real CLI: docs/DECISIONS.md).
+ */
+export function mcpConfigJson(servers: Record<string, McpServer> | undefined): string | null {
+  const entries = Object.entries(servers ?? {});
+  if (entries.length === 0) return null;
+  const mcpServers: Record<string, unknown> = {};
+  for (const [name, server] of entries) {
+    mcpServers[name] = {
+      type: "local",
+      command: server.command,
+      args: server.args ?? [],
+      tools: ["*"],
+      ...(server.env ? { env: Object.fromEntries(server.env.map((variable) => [variable, `\${${variable}}`])) } : {}),
+    };
+  }
+  return JSON.stringify({ mcpServers });
+}
+
 /** The CLI's own arguments for one session of a role (the prompt and `--resume` are the driver's). */
 export function copilotArgs(config: ProjectConfig, role: SessionRole, streamPath?: string): string[] {
   const copilot = copilotConfig(config);
@@ -148,6 +174,8 @@ export function copilotArgs(config: ProjectConfig, role: SessionRole, streamPath
   const rules = copilotRules(spec.allowedTools, config.level);
   for (const rule of rules.allow) args.push(`--allow-tool=${rule}`);
   for (const rule of rules.deny) args.push(`--deny-tool=${rule}`);
+  const mcp = mcpConfigJson(spec.mcpServers);
+  if (mcp) args.push("--additional-mcp-config", mcp);
   // The sign-in token stays out of the commands the agent runs.
   args.push(`--secret-env-vars=${TOKEN_ENV.join(",")}`);
   if (streamPath) args.push("--usage-output-file", usageFile(streamPath));

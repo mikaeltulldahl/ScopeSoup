@@ -59,6 +59,21 @@ export interface RoleConfig {
   /** Permission rules passed as `--allowedTools`. */
   allowedTools: string[];
   permissionMode: string;
+  /** MCP servers the role's sessions get, by name (`mcpServers`, docs/RUNNING.md). Their tools are added to `allowedTools` when the file is read. */
+  mcpServers?: Record<string, McpServer>;
+}
+
+/** One MCP server of a role. Values never sit in the file: `env` names variables whose values come from the environment. */
+export interface McpServer {
+  command: string;
+  args?: string[];
+  env?: string[];
+}
+
+/** The `allowedTools` entry that allows every tool of an MCP server (Claude Code's own form, `mcp__<server>`). */
+export const MCP_TOOL_PREFIX = "mcp__";
+export function mcpToolEntry(server: string): string {
+  return `${MCP_TOOL_PREFIX}${server}`;
 }
 
 export interface ClaudeConfig {

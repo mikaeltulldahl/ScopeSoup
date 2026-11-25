@@ -456,6 +456,17 @@ export function Settings({ project, openHistory = false }: { project?: ProjectVi
           );
         })}
 
+        <h4>MCP servers</h4>
+        <p class="muted">Extra tools per role (a browser, an image tool), from <code>roles.&lt;role&gt;.mcpServers</code>. Edit them in the configuration file for now; a variable named under <code>env</code> takes its value from the environment, never from the file.</p>
+        {ROLES.map(([name, label]) => {
+          const servers = Object.entries((view.config?.roles[name as "implement"] as { mcpServers?: Record<string, { command: string; args?: string[]; env?: string[] }> } | undefined)?.mcpServers ?? {});
+          return (
+            <p key={name}>
+              <b>{label}</b>: {servers.length > 0 ? servers.map(([server, spec]) => <span key={server}><code>{server}</code> ({[spec.command, ...(spec.args ?? [])].join(" ")}{spec.env ? `; env ${spec.env.join(", ")}` : ""}){" "}</span>) : "none"}
+            </p>
+          );
+        })}
+
         <div class="form-actions">
           <button type="submit" class="primary" disabled={busy || !dirty}>{busy ? "Saving…" : "Save"}</button>
           <button type="button" disabled={busy || !dirty} onClick={() => set(base)}>Undo changes</button>

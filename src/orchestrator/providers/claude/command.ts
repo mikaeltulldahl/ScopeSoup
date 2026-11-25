@@ -1,6 +1,6 @@
 // The `claude -p` command line for one session: start, resume, command limits and the answer's schema.
 
-import type { ProjectConfig } from "../../../config/types.ts";
+import type { McpServer, ProjectConfig } from "../../../config/types.ts";
 import type { SessionRole } from "../../../model/types.ts";
 
 export interface BuiltCommand {
@@ -19,6 +19,25 @@ export function disallowedTools(level: number): string[] {
   return level >= 4 ? [...always, "Bash(git push*)"] : always;
 }
 
+/**
+ * `--mcp-config`'s JSON for a role's servers, or null for none. `env` carries `${NAME}`: Claude Code reads the value from the
+ * environment when it starts the server, so no value is in the command line or any file.
+ */
+export function mcpConfigJson(servers: Record<string, McpServer> | undefined): string | null {
+  const entries = Object.entries(servers ?? {});
+  if (entries.length === 0) return null;
+  const mcpServers: Record<string, unknown> = {};
+  for (const [name, server] of entries) {
+    mcpServers[name] = {
+      type: "stdio",
+      command: server.command,
+      args: server.args ?? [],
+      ...(server.env ? { env: Object.fromEntries(server.env.map((variable) => [variable, `\${${variable}}`])) } : {}),
+    };
+  }
+  return JSON.stringify({ mcpServers });
+}
+
 /** The `claude -p` command line for one session. `partial`: the reply streams as it is written (a chat turn). */
 export function buildCommand(config: ProjectConfig, spec: { role: SessionRole; schema?: string }, prompt: string, resume?: string, partial = false): BuiltCommand {
   const role = config.roles[spec.role];
@@ -30,6 +49,8 @@ export function buildCommand(config: ProjectConfig, spec: { role: SessionRole; s
   args.push("--model", role.model, "--max-turns", String(role.maxTurns), "--permission-mode", role.permissionMode);
   if (role.allowedTools.length > 0) args.push("--allowedTools", role.allowedTools.join(","));
   args.push("--disallowedTools", disallowedTools(config.level).join(","));
+  const mcp = mcpConfigJson(role.mcpServers);
+  if (mcp) args.push("--mcp-config", mcp);
   if (spec.schema) args.push("--json-schema", spec.schema);
   if (resume) args.push("--resume", resume);
   args.push(...config.claude.extraArgs);
