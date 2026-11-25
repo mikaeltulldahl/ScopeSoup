@@ -215,9 +215,9 @@ test("a switch of Players answers with a line of what it did (#157)", async () =
   const other = await settings.save({ repoPath: repo, remote: "origin", machine: "laptop-b", by: "Bo", multiplayer: false, update: (current) => ({ ...current, bugLabels: ["bug"] }) });
   assert.ok(other.ok);
   const again = (await (await post({ multiplayer: true })).json()) as { playersNote?: string };
-  assert.match(again.playersNote ?? "", /^Shared: \d+ new commits? pushed\.$/);
+  assert.match(again.playersNote ?? "", /^Shared: your Items and settings are pushed to the remote\.$/);
   const none = (await (await post({ multiplayer: false })).json()) as { playersNote?: string };
-  assert.match(none.playersNote ?? "", /Other machines \(laptop-b\) still use the remote's copy\./);
+  assert.match(none.playersNote ?? "", /Other machines have used this project \(laptop-b\); if they still use this remote, they keep its copy\./);
   const second = (await (await post({ multiplayer: true })).json()) as { playersNote?: string };
   assert.equal(second.playersNote, "Nothing new to share: the remote is up to date.");
 });

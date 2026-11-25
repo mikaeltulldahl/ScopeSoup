@@ -167,8 +167,8 @@ export interface SharedSettings {
   save?(request: SaveRequest): Promise<SaveResult>;
   /** The settings' log, newest first. */
   log?(repoPath: string): SettingsLogEntry[];
-  /** Shares what waits on the meta ref now (the switch to multiplayer): how many commits the remote did not have, and how it went. */
-  share?(repoPath: string, remote: string, machine: string): Promise<{ commits: number; state: "local" | "shared" | "pending"; problem?: string }>;
+  /** Shares what waits on the meta ref now (the switch to multiplayer): whether anything was pushed, and how it went. */
+  share?(repoPath: string, remote: string, machine: string): Promise<{ pushed: boolean; state: "local" | "shared" | "pending"; problem?: string }>;
   /**
    * The remote's shared settings, fetched without touching this clone's meta ref: what a switch to multiplayer would join (decision
    * 95). `raw` null: the remote has no meta ref (or no settings on it).

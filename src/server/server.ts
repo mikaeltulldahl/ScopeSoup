@@ -1801,7 +1801,7 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
       if (result.shared) saved = sharedSavedText(result.shared, by);
       options.onConfigChanged?.();
     }
-    const playersNote = result.changed && typeof change.multiplayer === "boolean" ? await playersNoteOf(change.multiplayer) : undefined;
+    const playersNote = result.changed && typeof change.multiplayer === "boolean" ? await playersNoteOf(change.multiplayer).catch((error: unknown) => (change.multiplayer ? `Multiplayer is on, but sharing failed: ${error instanceof Error ? error.message : String(error)}` : "Singleplayer is on.")) : undefined;
     return sendJson(response, 200, { changed: result.changed, ...(saved ? { shared: saved } : {}), ...(playersNote ? { playersNote } : {}), ...readConfigView(options.configFile, configOptions) });
   }
 
@@ -1814,15 +1814,15 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
       if (!options.sharedSettings?.share) return undefined;
       const done = await options.sharedSettings.share(config.repoPath, config.remote, config.machineName);
       if (done.state === "local") return "Multiplayer: the repository has no remote, so nothing is shared yet.";
-      if (done.state === "pending") return `Multiplayer: ${done.commits} new commit${done.commits === 1 ? "" : "s"} not pushed yet: ${done.problem ?? "it goes with the next push"}`;
-      return done.commits > 0 ? `Shared: ${done.commits} new commit${done.commits === 1 ? "" : "s"} pushed.` : "Nothing new to share: the remote is up to date.";
+      if (done.state === "pending") return `Multiplayer: not pushed yet: ${done.problem ?? "it goes with the next push"}`;
+      return done.pushed ? "Shared: your Items and settings are pushed to the remote." : "Nothing new to share: the remote is up to date.";
     }
-    // Other machines, as far as the code can tell cheaply: agents' claims and the machines that saved settings.
+    // Other machines, as far as the code can tell cheaply: agents' claims and the machines that ever saved settings (hedged: one may be retired).
     const snapshot = loadSnapshot(store);
     const here = options.machine ?? config.machineName;
     const others = new Set(busyMachines(snapshot.works, snapshot.sessions, options.machine, now()).filter((name) => name !== here && name !== "this machine"));
     for (const entry of options.settingsLog?.() ?? []) if (entry.machine && entry.machine !== here && entry.machine !== config.machineName) others.add(entry.machine);
-    const warning = others.size > 0 ? ` Other machines (${[...others].sort().join(", ")}) still use the remote's copy.` : "";
+    const warning = others.size > 0 ? ` Other machines have used this project (${[...others].sort().join(", ")}); if they still use this remote, they keep its copy.` : "";
     return `Singleplayer: Items and settings stay on this machine from now on. What is already on the remote stays there.${warning}`;
   }
 

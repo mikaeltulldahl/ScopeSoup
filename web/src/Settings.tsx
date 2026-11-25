@@ -23,7 +23,7 @@ import type { Sliders } from "../../src/config/sliders.ts";
 import { commandText, commandWords } from "../../src/config/commandLine.ts";
 import { fetchConfig, FilterWidens, PlayersDiffer, postConfig } from "./api.ts";
 import { EFFORT_LEVELS } from "../../src/config/types.ts";
-import { commandChange, keepDaysChange, levelFourFilled, pendingFourText, resourcesReady, serialQueue, wholeNumber } from "./settingsSave.ts";
+import { commandChange, levelFourFilled, pendingFourText, resourcesReady, serialQueue, wholeNumber } from "./settingsSave.ts";
 import { ConnectDialog, type DialogKind, HOST_NAMES } from "./Connect.tsx";
 
 const ONBOARDING = "https://github.com/mikaeltulldahl/scopesoup/blob/main/docs/ONBOARDING.md";
@@ -65,8 +65,8 @@ interface Draft {
   setup: { command: string; watch: string };
   /** The limited resources, as the form holds them. */
   resources: ResourceDraft[];
-  /** Agents' images: pushed to the remote or not, and the days a closed Item's are kept ("" keeps them). */
-  media: { push: boolean; keepDays: string };
+  /** Agents' images: pushed to the remote or not, and how long a closed Item's are kept: Never, or After `keepDays` (the mode is set only by the select). */
+  media: { push: boolean; keepDays: string; keepMode: "never" | "after" };
   /** Multiplayer (refs/scopesoup/* shared on the remote) or singleplayer (they stay in this clone): this machine's. */
   multiplayer: boolean;
   /** What a reviewer's `should` findings on an approved change do (decision 95). */
@@ -130,7 +130,7 @@ function draftOf(config: ProjectConfig, raw: unknown, mergeQueue: { remoteUrl?: 
   // The command as the shared file holds it, with {{ownClone}} unexpanded (the configuration in use has this machine's path in it).
   const command = (raw as { setupCommand?: unknown } | null)?.setupCommand;
   const setup = { command: Array.isArray(command) ? commandText(command as string[]) : config.setupCommand ? commandText(config.setupCommand) : "", watch: (config.setupWatch ?? []).join("\n") };
-  return { level: config.level, settings: { maxParallelSessions: setting("maxParallelSessions"), budgetReserve: setting("budgetReserve"), triageMaxAgeDays: setting("triageMaxAgeDays") }, roles, mergeQueue: asked, setup, resources: resourceDrafts(config), media: { push: config.media?.push ?? false, keepDays: config.media?.keepDaysAfterClose === null || config.media?.keepDaysAfterClose === undefined ? "" : String(config.media.keepDaysAfterClose) }, multiplayer: config.multiplayer, shouldFindings: config.review?.shouldFindings ?? "fix", aiLabel: config.labels?.aiGenerated || "", jira: { filter: config.host?.kind === "jira" ? config.host.filter ?? "" : "", components: config.host?.kind === "jira" ? (config.host.components ?? []).join(", ") : "" } };
+  return { level: config.level, settings: { maxParallelSessions: setting("maxParallelSessions"), budgetReserve: setting("budgetReserve"), triageMaxAgeDays: setting("triageMaxAgeDays") }, roles, mergeQueue: asked, setup, resources: resourceDrafts(config), media: { push: config.media?.push ?? false, keepDays: config.media?.keepDaysAfterClose === null || config.media?.keepDaysAfterClose === undefined ? "" : String(config.media.keepDaysAfterClose), keepMode: config.media?.keepDaysAfterClose === null || config.media?.keepDaysAfterClose === undefined ? "never" : "after" }, multiplayer: config.multiplayer, shouldFindings: config.review?.shouldFindings ?? "fix", aiLabel: config.labels?.aiGenerated || "", jira: { filter: config.host?.kind === "jira" ? config.host.filter ?? "" : "", components: config.host?.kind === "jira" ? (config.host.components ?? []).join(", ") : "" } };
 }
 
 /** Component names as typed: comma separated, blanks dropped. */
@@ -161,6 +161,8 @@ function Folders({ project }: { project: ProjectView | undefined }) {
 interface Mark {
   text: string;
   bad: boolean;
+  /** Stays until the save answers (does not fade). */
+  keep?: boolean;
 }
 
 /** A save: what to send, the control it came from, and what the control goes back to when the server refuses it. */
@@ -169,6 +171,8 @@ interface Saving {
   change: Record<string, unknown>;
   /** The draft's part to restore from the configuration in use when refused (a pick); a text field keeps what was typed. */
   undo?: (base: Draft) => Partial<Draft>;
+  /** Shown beside the control while the save is in flight (a switch to multiplayer pushes). */
+  working?: string;
 }
 
 /** The delay of a slider's save: one save when the thumb has rested, not one per step. */
@@ -195,6 +199,8 @@ export function Settings({ project, openHistory = false }: { project?: ProjectVi
   const queue = useRef(serialQueue());
   const timers = useRef<Record<string, number>>({});
   const lastSent = useRef<Record<string, string>>({});
+  const slides = useRef<Record<string, Saving>>({});
+  const submitRef = useRef<((saving: Saving) => void) | null>(null);
 
   const show = (next: ConfigView) => {
     setView(next);
@@ -204,7 +210,11 @@ export function Settings({ project, openHistory = false }: { project?: ProjectVi
   };
   useEffect(() => {
     fetchConfig().then(show, (problem: unknown) => setLoadError(problem instanceof Error ? problem.message : String(problem)));
-    return () => Object.values(timers.current).forEach((timer) => window.clearTimeout(timer));
+    // Leaving the page saves a slider change that has not rested yet.
+    return () => {
+      Object.values(timers.current).forEach((timer) => window.clearTimeout(timer));
+      for (const saving of Object.values(slides.current)) submitRef.current?.(saving);
+    };
   }, []);
 
   const mark = (key: string, next: Mark | null) => {
@@ -213,7 +223,7 @@ export function Settings({ project, openHistory = false }: { project?: ProjectVi
       return next ? { ...rest, [key]: next } : rest;
     });
     window.clearTimeout(timers.current[`mark:${key}`]);
-    if (next && !next.bad) timers.current[`mark:${key}`] = window.setTimeout(() => setMarks((all) => { const { [key]: _gone, ...rest } = all; return rest; }), SAVED_SHOWN_MS);
+    if (next && !next.bad && !next.keep) timers.current[`mark:${key}`] = window.setTimeout(() => setMarks((all) => { const { [key]: _gone, ...rest } = all; return rest; }), SAVED_SHOWN_MS);
   };
   /** The draft's changes, at once (the render after may be later than the next event). */
   const update = (patch: Partial<Draft>) => {
@@ -268,11 +278,11 @@ export function Settings({ project, openHistory = false }: { project?: ProjectVi
   const inLevels = pendingFour || (base.level === 4 && hasCheck);
 
   /** Sends a save after the ones before it; its answer goes next to the control it came from. */
-  const submit = ({ key, change, undo }: Saving, after?: (next: ConfigView) => void) => {
+  const submit = ({ key, change, undo, working }: Saving, after?: (next: ConfigView) => void) => {
     const text = JSON.stringify(change);
     if (lastSent.current[key] === text) return;
     lastSent.current[key] = text;
-    mark(key, null);
+    mark(key, working ? { text: working, bad: false, keep: true } : null);
     void queue.current(() => postConfig(change)).then(
       (next) => {
         setView(next);
@@ -290,11 +300,13 @@ export function Settings({ project, openHistory = false }: { project?: ProjectVi
       },
     );
   };
+  submitRef.current = (saving) => submit(saving);
   /** A slider: the draft follows the thumb, and one save follows when it has rested. */
   const slide = (key: string, patch: Partial<Draft>, saving: Saving) => {
     update(patch);
     window.clearTimeout(timers.current[key]);
-    timers.current[key] = window.setTimeout(() => submit(saving), SLIDER_DELAY_MS);
+    slides.current[key] = saving;
+    timers.current[key] = window.setTimeout(() => { delete slides.current[key]; submit(saving); }, SLIDER_DELAY_MS);
   };
   /** A text field saves when it is left, or on Enter (which leaves it). */
   const leave = (event: KeyboardEvent) => {
@@ -315,7 +327,7 @@ export function Settings({ project, openHistory = false }: { project?: ProjectVi
   const setAsked = (name: AskedField, value: string) => update({ mergeQueue: { ...draftRef.current!.mergeQueue, [name]: value } });
   const sliderSetting = (name: SettingName, value: string) => {
     const current = draftRef.current!;
-    slide(name, { settings: { ...current.settings, [name]: value } }, { key: name, change: { settings: { [name]: { value: Number(value) } } } });
+    slide(name, { settings: { ...current.settings, [name]: value } }, { key: name, change: { settings: { [name]: { value: Number(value) } } }, undo: (b) => ({ settings: { ...draftRef.current!.settings, [name]: b.settings[name] } }) });
   };
 
   const pickLevel = (level: number) => {
@@ -351,12 +363,18 @@ export function Settings({ project, openHistory = false }: { project?: ProjectVi
     else if (text.trim() !== base.mergeQueue.checkCommand.trim()) submit({ key: "check", change: { checkCommand: commandChange(text) } });
   };
 
-  const saveMedia = (patch: Partial<Draft["media"]>) => {
+  /** Only the changed field is sent, so another machine's newer value of the other is kept. */
+  const savePush = (push: boolean) => {
+    update({ media: { ...draftRef.current!.media, push } });
+    submit({ key: "push", change: { media: { push } }, undo: (b) => ({ media: { ...draftRef.current!.media, push: b.media.push } }) });
+  };
+  const saveKeep = (patch: Partial<Draft["media"]>) => {
     const media = { ...draftRef.current!.media, ...patch };
     update({ media });
-    const days = keepDaysChange(media.keepDays);
+    // "After" with nothing typed is allowed on the page; the save waits and says why.
+    const days = media.keepMode === "never" ? { ok: true as const, value: null } : wholeNumber(media.keepDays, 0, 3650);
     if (!days.ok) return void mark("keepDays", { text: days.reason, bad: true });
-    submit({ key: patch.push !== undefined ? "push" : "keepDays", change: { media: { push: media.push, keepDaysAfterClose: days.value } }, undo: (b) => ({ media: b.media }) });
+    submit({ key: "keepDays", change: { media: { keepDaysAfterClose: days.value } }, undo: (b) => ({ media: { ...draftRef.current!.media, keepMode: b.media.keepMode, keepDays: b.media.keepDays } }) });
   };
   const saveResources = (resources: ResourceDraft[], key: string) => {
     update({ resources });
@@ -396,7 +414,7 @@ export function Settings({ project, openHistory = false }: { project?: ProjectVi
           <legend><b>Players</b>: this machine's choice <Marked k="players" /></legend>
           {PLAYERS.map(([multiplayer, name, text]) => (
             <label key={name} class={`level-row${draft.multiplayer === multiplayer ? " level-on" : ""}`}>
-              <input type="radio" name="players" checked={draft.multiplayer === multiplayer} onChange={() => { update({ multiplayer }); submit({ key: "players", change: { multiplayer }, undo: (b) => ({ multiplayer: b.multiplayer }) }); }} />
+              <input type="radio" name="players" checked={draft.multiplayer === multiplayer} onChange={() => { update({ multiplayer }); submit({ key: "players", change: { multiplayer }, undo: (b) => ({ multiplayer: b.multiplayer }), ...(multiplayer ? { working: "Sharing…" } : {}) }); }} />
               <span>
                 <b>{name}</b>
                 <span class="level-text">{text}</span>
@@ -664,7 +682,7 @@ export function Settings({ project, openHistory = false }: { project?: ProjectVi
             <b>Push images to the remote</b>
             {draft.multiplayer ? (
               <span class="check-line">
-                <input type="checkbox" checked={draft.media.push} onChange={(event) => saveMedia({ push: (event.target as HTMLInputElement).checked })} />
+                <input type="checkbox" checked={draft.media.push} onChange={(event) => savePush((event.target as HTMLInputElement).checked)} />
                 {" "}Everyone with the repository sees them
               </span>
             ) : <span class="muted">Singleplayer: images stay on this machine.</span>}
@@ -674,13 +692,13 @@ export function Settings({ project, openHistory = false }: { project?: ProjectVi
           <label>
             <b>Delete a closed Item's images</b>
             <span class="check-line">
-              <select value={draft.media.keepDays === "" ? "never" : "after"} onChange={(event) => saveMedia({ keepDays: (event.target as HTMLSelectElement).value === "never" ? "" : draftRef.current!.media.keepDays || "30" })}>
+              <select value={draft.media.keepMode} onChange={(event) => { const never = (event.target as HTMLSelectElement).value === "never"; saveKeep(never ? { keepMode: "never" } : { keepMode: "after", keepDays: draftRef.current!.media.keepDays || "30" }); }}>
                 <option value="never">Never</option>
                 <option value="after">After a number of days</option>
               </select>
-              {draft.media.keepDays !== "" && (
+              {draft.media.keepMode === "after" && (
                 <>
-                  <input type="number" min={0} max={3650} step={1} value={draft.media.keepDays} onInput={(event) => update({ media: { ...draftRef.current!.media, keepDays: (event.target as HTMLInputElement).value } })} onBlur={() => saveMedia({})} onKeyDown={leave} />
+                  <input type="number" min={0} max={3650} step={1} value={draft.media.keepDays} onInput={(event) => update({ media: { ...draftRef.current!.media, keepDays: (event.target as HTMLInputElement).value } })} onBlur={() => saveKeep({})} onKeyDown={leave} />
                   {" "}days
                 </>
               )}
