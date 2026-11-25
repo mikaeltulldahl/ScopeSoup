@@ -731,3 +731,24 @@ button.decision-choice:hover:not(:disabled) { background: var(--accent-soft); fi
 .list-filters .act-nosessions input { width: auto; min-height: 0; }
 .act-fold { margin-left: 6px; padding: 0 8px; font-size: 0.78rem; }
 .act-folded { margin-top: 4px; }
+
+/* The Item page's State menu (#154): a button with the columns under it; an option that cannot be picked says why. */
+.state-menu { position: relative; display: inline-block; }
+.state-button { padding: 2px 8px; font-size: 0.86rem; }
+.state-list { position: absolute; z-index: 20; top: calc(100% + 4px); left: 0; min-width: 240px; margin: 0; padding: 4px; list-style: none; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18); }
+.state-list button { display: flex; flex-direction: column; align-items: flex-start; width: 100%; padding: 5px 8px; border: 0; background: none; text-align: left; border-radius: 5px; }
+.state-list button:hover:not(:disabled) { background: var(--accent-soft); }
+.state-list button:disabled { color: var(--muted); cursor: default; opacity: 1; }
+.state-list button small { font-size: 0.78rem; color: var(--muted); }
+.state-list .state-current { font-weight: 600; }
+.blocker-picker { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; padding: 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--sunken); max-width: 420px; }
+.blocker-picker ul { list-style: none; margin: 0; padding: 0; }
+.blocker-picker li button { width: 100%; text-align: left; border: 0; background: none; padding: 4px 6px; border-radius: 5px; }
+.blocker-picker li button:hover { background: var(--accent-soft); }
+.blocker-picker > button { align-self: flex-start; }
+
+/* The Undo toasts, at the foot of the window over every view. */
+.toasts { position: fixed; z-index: 100; left: 50%; bottom: 16px; transform: translateX(-50%); display: flex; flex-direction: column; gap: 8px; max-width: calc(100vw - 32px); }
+.toast { display: flex; align-items: center; gap: 12px; padding: 8px 12px; border-radius: 8px; background: var(--bar); color: var(--bar-text); box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25); font-size: 0.9rem; }
+.toast button { background: none; border: 1px solid var(--bar-line); color: var(--brand); font-weight: 600; }
+.toast-bad { background: var(--blocked); color: #fff; }

@@ -17,6 +17,7 @@ import { BranchProtectionNote, UpgradeNote, VersionFooter } from "./Version.tsx"
 import { MachineSetupNote } from "./Connect.tsx";
 import { useRoute } from "./route.ts";
 import { StatusLine } from "./StatusLine.tsx";
+import { Toasts } from "./Pending.tsx";
 import { allPaused, switchesAt } from "./switches.ts";
 import { THEMES, taglineAt } from "./theme.ts";
 import { startThemes, useThemeId } from "./useTheme.ts";
@@ -131,6 +132,8 @@ function App() {
           <Item key={current.key} refKey={current.key} resources={board?.resources} />
         </ItemDialog>
       )}
+      {/* The State menu's Undo toasts live here, so closing the Item or changing view keeps their timers. */}
+      <Toasts />
     </>
   );
 }

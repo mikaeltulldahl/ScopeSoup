@@ -1,0 +1,108 @@
+// The Item page's State menu (web/src/stateMenu.ts, #154): which options there are per situation, what each sends, why one is
+// off, the toast's words in each theme, and the Undo wait.
+
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import { THEMES } from "../web/src/theme.ts";
+import type { MenuPage, Pending, StateKey } from "../web/src/stateMenu.ts";
+import { addPending, cancelPending, currentState, duePending, effectNote, stateOptions, STATE_KEYS, toastText, UNDO_MS, withBlocker } from "../web/src/stateMenu.ts";
+
+const theme = THEMES.default.words;
+const page = (fields: Partial<MenuPage> = {}, item: Partial<MenuPage["item"]> = {}): MenuPage => ({
+  lane: "backlog",
+  canEdit: true,
+  hold: { claim: {} },
+  moves: { triage: { why: "in line for triage already" }, "in-review": { why: "nothing to review yet" }, "merge-queue": { why: "not reviewed yet" } },
+  sessions: { live: [] },
+  ...fields,
+  item: { state: "todo", label: "A-2", ...item },
+});
+const byKey = (menu: MenuPage) => Object.fromEntries(stateOptions(menu, theme).map((option) => [option.key, option])) as Record<StateKey, ReturnType<typeof stateOptions>[number]>;
+
+test("the options are the board's columns plus Triage and Abandoned, in that order, in the theme's words", () => {
+  assert.deepEqual(stateOptions(page(), theme).map((option) => option.label), ["Triage", "Blocked", "Backlog", "In progress", "In review", "Merge queue", "Done", "Abandoned"]);
+  assert.deepEqual(stateOptions(page(), THEMES.graveyard.words).map((option) => option.label), ["Line-up", "Stakeout", "At large", "On the case", "Cross-examination", "Crime lab", "Laid to rest", "Cold case"]);
+  assert.equal(STATE_KEYS.length, 8);
+});
+
+test("the current option: the lane under Your turn, the merge queue for Queued and Checking, Abandoned with no lane, Triage while one runs", () => {
+  assert.equal(currentState(page({ lane: "in-review" })), "in-review");
+  assert.equal(currentState(page({ lane: "checking" })), "merge-queue");
+  assert.equal(currentState(page({ lane: null }, { state: "abandoned" })), "abandoned");
+  assert.equal(currentState(page({ sessions: { live: [{ role: "triage" }] } })), "triage");
+  assert.equal(currentState(page({ sessions: { live: [{ role: "triage", chat: true }] } })), "backlog");
+});
+
+test("a waiting Item: claim for In progress, the state edit for Done and Abandoned, the server's why on the agents' moves", () => {
+  const menu = byKey(page());
+  assert.deepEqual(menu["in-progress"].steps, [{ kind: "claim" }]);
+  assert.deepEqual(menu.done.steps, [{ kind: "state", state: "done" }]);
+  assert.deepEqual(menu.abandoned.steps, [{ kind: "state", state: "abandoned" }]);
+  assert.deepEqual(menu.blocked.steps, [{ kind: "block" }]);
+  assert.equal(menu["in-review"].why, "nothing to review yet");
+  assert.equal(menu.triage.why, "in line for triage already");
+  assert.equal(menu.backlog.why, "in the backlog already");
+  // Without Scope Soup's agents on this server the moves are off, and a read-only host offers no edit.
+  const bare = byKey(page({ moves: undefined, canEdit: false, hold: undefined }));
+  assert.equal(bare.triage.why, "no agents run here");
+  assert.equal(bare.done.why, "can't be changed here");
+  assert.equal(bare["in-progress"].why, "can't be changed here");
+});
+
+test("work under way: Backlog drops it, In review starts the review, a running agent's claim rule says why", () => {
+  const menu = byKey(page({ lane: "in-progress", moves: { triage: {}, backlog: {}, "in-review": {}, "merge-queue": { why: "not reviewed yet" } } }));
+  assert.deepEqual(menu.backlog.steps, [{ kind: "move", to: "backlog" }]);
+  assert.deepEqual(menu["in-review"].steps, [{ kind: "move", to: "in-review" }]);
+  assert.deepEqual(menu.triage.steps, [{ kind: "move", to: "triage" }]);
+  const running = byKey(page({ hold: { claim: { why: "A-2 has its implement session running now." } }, sessions: { live: [{ role: "implement" }] } }));
+  assert.equal(running["in-progress"].why, "A-2 has its implement session running now.");
+});
+
+test("another person's hold: Backlog, Done and Abandoned release it first, In progress takes over (release, then claim)", () => {
+  const held = page({ hold: { claim: { why: "held by Ana" }, release: {} } }, { holder: { actor: { id: "ana", name: "Ana" } } });
+  const menu = byKey(held);
+  assert.deepEqual(menu.backlog.steps, [{ kind: "release" }]);
+  assert.deepEqual(menu.done.steps, [{ kind: "release" }, { kind: "state", state: "done" }]);
+  assert.deepEqual(menu["in-progress"].steps, [{ kind: "release" }, { kind: "claim" }]);
+  assert.equal(effectNote("in-progress", held, theme), "takes over from Ana");
+  assert.equal(effectNote("backlog", held, theme), "releases Ana's hold");
+  // The board's own person holds it: In progress is theirs already, Hand back is on the hold row.
+  assert.equal(byKey(page({ hold: { handBack: {}, release: {} } }, { holder: { actor: { id: "mira", name: "mira" } } }))["in-progress"].why, "yours already");
+});
+
+test("done or abandoned: Backlog reopens it with the state edit; the agents' moves wait for that", () => {
+  const menu = byKey(page({ lane: null, hold: undefined, moves: { triage: { why: "reopen it first" } } }, { state: "abandoned" }));
+  assert.deepEqual(menu.backlog.steps, [{ kind: "state", state: "todo" }]);
+  assert.equal(menu.blocked.why, "reopen it first");
+  assert.equal(menu["in-progress"].why, "reopen it first");
+});
+
+test("the toast: the theme's words, and what the pick does to work under way", () => {
+  assert.equal(toastText("A-2", "backlog", "", theme), "A-2 → Backlog");
+  assert.equal(toastText("A-2", "abandoned", "", THEMES.graveyard.words), "Murdered A-2");
+  const running = page({ sessions: { live: [{ role: "implement" }] } });
+  assert.equal(effectNote("abandoned", running, theme), "stops after the implementor");
+  assert.equal(effectNote("abandoned", running, THEMES.graveyard.words), "stops after the detective");
+  assert.equal(effectNote("blocked", running, theme), "the implementor goes on");
+  const elsewhere = page({}, { holder: { actor: { id: "scopesoup@laptop-b", name: "laptop-b", bot: true } } });
+  assert.equal(effectNote("done", elsewhere, theme), "stops after the agent on laptop-b");
+  assert.equal(effectNote("abandoned", page({ lane: "queued" }), theme), "leaves the merge queue");
+  assert.equal(toastText("A-2", "done", effectNote("done", page({ lane: "checking" }), theme), theme), "A-2 → Done · stops after the merge queue's check");
+  assert.equal(effectNote("done", page(), theme), "");
+});
+
+test("a new blocker is added to the ones there, as ids", () => {
+  assert.deepEqual(withBlocker(["metaBranch:work:A-1"], "metaBranch:work:A-3"), ["A-1", "A-3"]);
+  assert.deepEqual(withBlocker(["metaBranch:work:A-1"], "metaBranch:work:A-1"), ["A-1"]);
+});
+
+test("the Undo wait: due after about 5 s, Undo takes it out unsent, each pick on its own timer", () => {
+  let list = addPending<Pending>([], { id: 1, text: "A-2 → Done" }, 1000);
+  list = addPending(list, { id: 2, text: "A-3 → Backlog" }, 3000);
+  assert.equal(list[0]!.at, 1000 + UNDO_MS);
+  assert.deepEqual(duePending(list, 5999).due, []);
+  const first = duePending(list, 6000);
+  assert.deepEqual([first.due.map((each) => each.id), first.rest.map((each) => each.id)], [[1], [2]]);
+  list = cancelPending(first.rest, 2);
+  assert.deepEqual(duePending(list, 99_999).due, []);
+});

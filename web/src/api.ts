@@ -202,7 +202,6 @@ export interface ItemFields {
   blockedBy: string;
   /** blocker, critical, major or minor; empty for none. */
   priority: string;
-  state?: string;
 }
 
 async function postJson(path: string, body: unknown): Promise<{ ref: string; message?: string }> {
@@ -221,9 +220,22 @@ export const postItemDraft = (id: string, action: "approve" | "deny", text: { ti
 /** Creates an item. Resolves with its ref key. */
 export const postItem = (fields: ItemFields) => postJson("/api/items", fields);
 /** Changes an item's fields. */
-/** Sets only the state, through the same endpoint the Edit form saves to. */
-export const postState = (ref: string, state: string) => postJson("/api/item/edit", { ref, state });
 export const postEdit = (ref: string, fields: ItemFields) => postJson("/api/item/edit", { ref, ...fields });
+
+/**
+ * One call of the State menu (#154), after its Undo wait: `path` with `body` as JSON, as the board's person. `keepalive` lets it
+ * go out while the page unloads. Rejects with the server's reason.
+ */
+export async function postStep(path: string, body: Record<string, unknown>, keepalive = false): Promise<void> {
+  const response = await call(path, { method: "POST", keepalive, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  if (!response.ok) {
+    const answer = (await response.json().catch(() => null)) as { error?: { message?: string } } | null;
+    throw new Error(answer?.error?.message ?? `The server answered ${response.status}.`);
+  }
+}
+
+/** Loads the views again at once (after a change the board made itself). */
+export const reloadViews = (): void => listeners.forEach((listener) => listener());
 
 /** Moves the Item one place (the server sets the vote); the views are loaded again at once, so the new position shows. */
 export async function postVote(ref: string, direction: "up" | "down"): Promise<void> {

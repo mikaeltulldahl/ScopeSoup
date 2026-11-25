@@ -95,7 +95,14 @@ test("the Item page's Abandon and Reopen send only the state, and the log says s
   assert.equal(abandoned.item.title, "Buy paint");
   assert.equal(abandoned.history.at(-1)?.text, "Changed state.");
   assert.equal((await post("/api/item/edit", { ref, state: "todo" })).status, 200);
+  const reopened = await getJson<ItemPage>(`/api/item?ref=${ref}`);
+  assert.equal(reopened.item.state, "todo");
+  // The State menu sends what its page saw: an Item changed since is refused, not overwritten.
+  const stale = await post("/api/item/edit", { ref, state: "done", seen: abandoned.item.updatedAt });
+  assert.equal(stale.status, 409, JSON.stringify(stale.body));
   assert.equal((await getJson<ItemPage>(`/api/item?ref=${ref}`)).item.state, "todo");
+  assert.equal((await post("/api/item/edit", { ref, state: "done", seen: reopened.item.updatedAt })).status, 200);
+  assert.equal((await post("/api/item/edit", { ref, state: "todo" })).status, 200);
 });
 
 test("bad input, another origin and a read-only host are refused", async () => {
