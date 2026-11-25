@@ -49,7 +49,7 @@ You choose how much to hand over, one level at a time:
 | 3 | Review | Also reviews them. |
 | 4 | Autopilot | Also merges, through the batching queue. |
 
-The level limits only what Scope Soup does on its own: a person can still pick an Item's state at any level. At levels 2 and 3 the implementing agent merges the way your `CLAUDE.md` says, or opens a pull request. Nothing runs until you press Resume on the lanes of the overview (triage on Backlog, implementors on In progress, review on In review, the merge queue on Merge queue).
+The level limits only what Scope Soup does on its own; you can move an Item yourself at any level. At levels 2 and 3 the implementing agent merges the way your `CLAUDE.md` says, or opens a pull request. Scope Soup starts nothing of its own until you press Resume on the lanes of the overview (triage on Backlog, implementors on In progress, review on In review, the merge queue on Merge queue).
 
 ![The queue: one batch being bisected (made-up data)](docs/images/queue.png)
 
@@ -60,8 +60,7 @@ Items live in your repository (a text file and an append-only log per Item, on a
 Early, and changing fast. Runs for real are in [`docs/TRIALS.md`](docs/TRIALS.md).
 
 - **Built and run for real**, on a stand-in project: the triage, implement and review loop with questions answered on the Item page; merging after a check, including a failed check; the batching queue with flake rerun and bisect; Items in your repository; the Usage page and the History timeline; images agents attach to an Item; the Item's diff in your own diff tool; `scopesoup item` for people and Claude Code sessions; Windows sessions that start and stop cleanly.
-- **Built and tested, not yet run on a real project:** most of the board, GitHub Copilot CLI as an agent provider, GitHub Issues as the backlog, waiting for CI on GitHub, several people on one project, usage forecasting against your Claude subscription, the onboarding plugin, offboarding, releases and updates; triage's restructurings and agents' Item drafts; singleplayer; connecting to GitHub Issues or Jira later and moving back to the meta branch; Jira, Cloud and Data Center, reads and writes (untried on a real site).
-- **Also built and tested:** the Item page's State menu (a person's pick at any level, with Undo; picks for another machine's work go through the meta branch), Abandon and Reopen, Settings that saves at once, Implement anyway over triage's verdict, an implementor model per size, and "Open the board" in the onboarded repository's `CLAUDE.md` and `README.md`.
+- **Built and tested, not yet run on a real project:** most of the board, GitHub Copilot CLI as an agent provider, GitHub Issues as the backlog, waiting for CI on GitHub, several people on one project, usage forecasting against your Claude subscription, the onboarding plugin, offboarding, releases and updates; triage's restructurings and agents' Item drafts; singleplayer; connecting to GitHub Issues or Jira later and moving back to the meta branch; Jira, Cloud and Data Center, reads and writes (untried on a real site): the board and every level, with the changes on the project's git remote; moving an Item from its page at any level, with Undo, also on another machine; Abandon and Reopen; Settings that save at once; Implement anyway; a model per Item size; "Open the board" in onboarded repositories.
 - **Planned:** see the issues.
 
 <img src="docs/images/phone.png" alt="The board on a phone" width="300">

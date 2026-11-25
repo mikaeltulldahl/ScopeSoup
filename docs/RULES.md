@@ -20,7 +20,7 @@ Enforced on the command line: every session is refused `git push --force*`, `git
 
 ## Levels
 
-One setting, `level`, says how much Scope Soup does. Each level includes the ones below. The default is 0, and nothing runs until a switch is resumed on its lane. The details are in `docs/RUNNING.md`, "Levels".
+One setting, `level`, says how much Scope Soup does. Each level includes the ones below. The default is 0, and Scope Soup starts nothing of its own until a switch is resumed on its lane. The details are in `docs/RUNNING.md`, "Levels".
 
 | Level | Scope Soup does |
 |---|---|
