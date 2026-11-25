@@ -14,11 +14,17 @@ Claude has made writing code fast. What slows a project down now is what surroun
 2. **Your attention.** Reading what the agents did, answering their questions, deciding what comes next. Scope Soup brings you questions with what was tried, the options and a recommendation, and lists only what waits for you.
 3. **The check.** Changes now arrive faster than a check can test them one at a time. Scope Soup tests reviewed changes in batches on top of the newest main, and bisects a failed batch.
 
-## Next to Claude Code's own tools
+## Why not an existing tool
 
-Claude Code's `/ship` takes one change in your open session to a reviewed pull request, then keeps fixing its checks and answering comments. It does not merge on its own. The org-level Claude Ship products (Code Review, PR Steward) do much the same for each pull request on GitHub.
+We looked ([`docs/research/`](docs/research/)). Each of these does part of it well:
 
-Scope Soup works the backlog around them: triage, separate implementor and reviewer sessions, and a merge queue that batches. You can use them side by side. Scope Soup does not call them. See [`docs/research/ship-command.md`](docs/research/ship-command.md).
+| Tool | Does well | Leaves out |
+|---|---|---|
+| Claude Code's `/ship`, Claude Ship | One change to a reviewed pull request, then fixing its checks and comments | A backlog, triage, a merge queue; one pull request per session ([`ship-command.md`](docs/research/ship-command.md)) |
+| OpenAI Symphony | The orchestrator as a program, per-issue workspaces | Review, merging, a usage budget, a real board; built around one tracker |
+| Gas Town | A whole crew of agents with a merge step | AI sessions supervise and merge, which users report as fragile and costly |
+| Mergify, Trunk, Zuul | Batching queues with bisect and good queue views | Work items, agents, whose turn it is |
+| GitKraken Launchpad | One list across hosts | Batches, agents, anything that acts |
 
 ## How it works
 
