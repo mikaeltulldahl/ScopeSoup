@@ -1,0 +1,17 @@
+{"type":"session.start","data":{"sessionId":"00000000-0000-4000-8000-000000000003","version":1,"producer":"copilot-agent","copilotVersion":"1.0.115","selectedModel":"auto","autoTier":"balance","context":{"cwd":"C:\\work\\demo"}},"timestamp":"2026-11-20T10:00:01.000Z"}
+{"type":"session.mcp_server_status_changed","data":{"serverName":"github-mcp-server","status":"pending"},"ephemeral":true,"timestamp":"2026-11-20T10:00:02.000Z"}
+{"type":"session.auto_mode_resolved","data":{"chosenModel":"demo-model-flash","autoTier":"balance","fallback":false},"timestamp":"2026-11-20T10:00:02.000Z"}
+{"type":"user.message","data":{"content":"Run git tag demo-tag, then say whether it worked."},"timestamp":"2026-11-20T10:00:03.000Z"}
+{"type":"assistant.turn_start","data":{"turnId":"0"},"timestamp":"2026-11-20T10:00:03.000Z"}
+{"type":"assistant.message","data":{"messageId":"m-call-2","model":"demo-model-flash","content":"","toolRequests":[{"toolCallId":"call-2","name":"powershell","arguments":{"command":"git tag demo-tag","description":"Run a command"},"type":"function"}],"turnId":"0"},"timestamp":"2026-11-20T10:00:04.000Z"}
+{"type":"tool.execution_start","data":{"toolCallId":"call-2","toolName":"powershell","arguments":{"command":"git tag demo-tag","description":"Run a command"},"turnId":"0"},"timestamp":"2026-11-20T10:00:04.000Z"}
+{"type":"tool.execution_complete","data":{"toolCallId":"call-2","turnId":"0","success":false,"error":{"message":"Permission denied because no interactive user response was available.","code":"denied"}},"timestamp":"2026-11-20T10:00:05.000Z"}
+{"type":"assistant.turn_end","data":{"turnId":"0"},"timestamp":"2026-11-20T10:00:05.000Z"}
+{"type":"assistant.turn_start","data":{"turnId":"1"},"timestamp":"2026-11-20T10:00:06.000Z"}
+{"type":"assistant.message_start","data":{"messageId":"m-3","phase":"final_answer"},"ephemeral":true,"timestamp":"2026-11-20T10:00:07.000Z"}
+{"type":"assistant.message_delta","data":{"messageId":"m-3","deltaContent":"The command was not run because it requires interactive permission."},"ephemeral":true,"timestamp":"2026-11-20T10:00:07.000Z"}
+{"type":"assistant.message","data":{"messageId":"m-3","model":"demo-model-flash","content":"The command was not run because it requires interactive permission.","toolRequests":[],"turnId":"1","phase":"final_answer"},"timestamp":"2026-11-20T10:00:07.000Z"}
+{"type":"assistant.turn_end","data":{"turnId":"1"},"timestamp":"2026-11-20T10:00:08.000Z"}
+{"type":"session.usage_checkpoint","data":{"totalNanoAiu":50968000,"totalPremiumRequests":1},"timestamp":"2026-11-20T10:00:08.000Z"}
+{"type":"assistant.idle","data":{},"ephemeral":true,"timestamp":"2026-11-20T10:00:08.000Z"}
+{"type":"result","timestamp":"2026-11-20T10:00:08.000Z","sessionId":"00000000-0000-4000-8000-000000000003","exitCode":0,"usage":{"premiumRequests":1,"totalApiDurationMs":1300,"sessionDurationMs":6100,"codeChanges":{"linesAdded":0,"linesRemoved":0,"filesModified":[]}}}

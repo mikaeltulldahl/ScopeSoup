@@ -136,4 +136,15 @@ describe("setup", { concurrency: 4 }, () => {
     assert.match(setupPromptLine({ setupCommand: ["node", "s.mjs"], setupWatch: ["pnpm-lock.yaml"] }), /^Scope Soup ran the project's setup in this clone before your session \(`node s\.mjs`\), and runs it again when pnpm-lock\.yaml changes.*Do not install them or run the setup again yourself\.$/);
     assert.deepEqual(setupEnv({ PATH: "/bin", SCOPESOUP_GITHUB_TOKEN: "t", SCOPESOUP_CONFIG: "c", ANTHROPIC_API_KEY: "k", HOME: "/h" }), { PATH: "/bin", HOME: "/h" });
   });
+
+  test("GitHub tokens reach the setup unless a role runs on Copilot, which signs in with them", () => {
+    const env = { PATH: "/bin", GH_TOKEN: "g", GITHUB_TOKEN: "h", COPILOT_GITHUB_TOKEN: "c", ANTHROPIC_API_KEY: "k" };
+    const roles = (provider?: "copilot") => ({
+      triage: { model: "m", maxTurns: 1, allowedTools: [], permissionMode: "dontAsk", ...(provider ? { provider } : {}) },
+      implement: { model: "m", maxTurns: 1, allowedTools: [], permissionMode: "dontAsk" },
+      review: { model: "m", maxTurns: 1, allowedTools: [], permissionMode: "dontAsk" },
+    });
+    assert.deepEqual(setupEnv(env, { roles: roles() }), { PATH: "/bin", GH_TOKEN: "g", GITHUB_TOKEN: "h", COPILOT_GITHUB_TOKEN: "c" });
+    assert.deepEqual(setupEnv(env, { roles: roles("copilot") }), { PATH: "/bin" });
+  });
 });

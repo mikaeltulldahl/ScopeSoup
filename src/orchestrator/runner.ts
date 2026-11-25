@@ -23,9 +23,8 @@ import { providerFor } from "./providers/index.ts";
 import { loadRole, renderTemplate } from "./roles.ts";
 import { restoreWip, wipPatchPath } from "./wip.ts";
 import { baseRef, changedPaths, changeStat, commitsAhead, commitsTouching, deleteBranch, fetchMain, isAncestor, squashedOnMain } from "./worktree.ts";
-import { createCheckRunner } from "./checkRunner.ts";
 import type { RunCheck } from "./checkRunner.ts";
-import { ensureSetup, SETUP_ADVICE, setupEnv, setupPromptLine } from "./setup.ts";
+import { createSetupRunner, ensureSetup, setupPromptLine } from "./setup.ts";
 import { prepareSlot, releaseSlot } from "./slots.ts";
 import { cloneRepoForBranch, deleteBranchInPool, loadHoldings, NoFreeClone, poolRepoPath, prepareClone, releaseClone, takeClone } from "./workspaces.ts";
 import type { PoolDeps } from "./workspaces.ts";
@@ -52,7 +51,7 @@ export interface RunnerDeps {
   onFinished?: (session: Session) => void;
   /** The Session object is rewritten at most this often while events stream in. */
   storeWriteIntervalMs?: number;
-  /** Runs `setupCommand`. Default: a check runner over `processes` with `setupEnv` of `env`. */
+  /** Runs `setupCommand`. Default: a check runner over `processes` with `setupEnv` of `env` and the configuration. */
   runSetup?: RunCheck;
   /** True once a person pressed Stop and the role was not resumed since: a setup under way for its session is ended. */
   stopped?: (role: SessionRole) => boolean;
@@ -120,7 +119,7 @@ export function createRunner(deps: RunnerDeps): Runner {
   const preparing = new Map<string, number>();
   const finishedSessions = new Map<string, Promise<Session>>();
 
-  const runSetup = deps.runSetup ?? createCheckRunner(processes, setupEnv(deps.env ?? process.env), now, SETUP_ADVICE);
+  const runSetup = deps.runSetup ?? createSetupRunner(processes, deps.env ?? process.env, deps.config, now);
   /** Raised by every Stop: a setup under way ends when it changes. */
   /** Counts the stops per role, so a setup under way sees one that happened meanwhile. */
   const stops: Record<SessionRole, number> = { triage: 0, implement: 0, review: 0 };
@@ -186,6 +185,8 @@ export function createRunner(deps: RunnerDeps): Runner {
     if (summary.result?.turns !== undefined) record.turns = summary.result.turns;
     if (summary.result?.subtype !== undefined) record.subtype = summary.result.subtype;
     if (summary.result?.denied) record.denied = summary.result.denied;
+    if (summary.result?.premiumRequests !== undefined) record.premiumRequests = summary.result.premiumRequests;
+    if (summary.result?.aiCredits !== undefined) record.aiCredits = summary.result.aiCredits;
 
     let status: SessionStatus;
     let endReason: string;
@@ -347,15 +348,21 @@ export function createRunner(deps: RunnerDeps): Runner {
     if (provider.commandLimit !== "allowlist") {
       return stillborn(request, `Refused: the agent provider ${provider.name} cannot hold a session to the role's allowedTools (it limits commands with a ${provider.commandLimit} only), and whether that is enough is a person's decision.`);
     }
+    const refusal = provider.refuses?.(config, request.role);
+    if (refusal) return stillborn(request, refusal);
+    const id = newId();
+    const streamPath = join(config.streamsDir, `${id}.ndjson`);
     let cwd: string;
     let command: Launch;
     let hasSchema: boolean;
+    let schema: string | undefined;
     try {
       if (request.chat && !(request.resume && request.message)) throw new Error("a chat turn needs the session to resume and a person's message");
       const role = loadRole(config.promptsDir, request.role);
       // A chat turn keeps the role's model, permission mode and tools but not its answer schema: the reply is free text.
       const spec = request.chat ? { role: role.role, template: role.template } : role;
       hasSchema = spec.schema !== undefined;
+      schema = spec.schema;
       cwd = await prepareWorkspace(config, request.subject, request.workspace, request.branch);
       const base = await freshBase(config, cwd);
       // A fresh worktree gets back the edits the item's last session left uncommitted; the session is told.
@@ -374,7 +381,7 @@ export function createRunner(deps: RunnerDeps): Runner {
       const rendered = request.resume && request.message ? request.message : renderTemplate(spec.template, { setup: setupPromptLine(config), decisions: NO_DECISIONS, recheck: "", ...request.vars, base });
       const prompt = request.message && rendered !== request.message ? `${rendered}\n\n${request.message}` : rendered;
       command = provider.launch({
-        config, role: spec.role, prompt: restored ? `${prompt}\n\n${restored}\n` : prompt, partial: request.chat === true, env: { ...(deps.env ?? process.env) },
+        config, role: spec.role, prompt: restored ? `${prompt}\n\n${restored}\n` : prompt, partial: request.chat === true, env: { ...(deps.env ?? process.env) }, streamPath, nodePath: process.execPath,
         ...(spec.schema ? { schema: spec.schema } : {}), ...(request.resume ? { resume: request.resume } : {}),
       });
       mkdirSync(config.streamsDir, { recursive: true });
@@ -383,9 +390,7 @@ export function createRunner(deps: RunnerDeps): Runner {
       return stillborn(request, error instanceof PathRefused ? `Refused: ${message}` : error instanceof NoFreeClone ? message : `Could not prepare the session: ${message}`);
     }
 
-    const id = newId();
     const startedMs = now();
-    const streamPath = join(config.streamsDir, `${id}.ndjson`);
     const session: Session = {
       ref: { host: SESSION_HOST, kind: "session", id },
       role: request.role,
@@ -421,7 +426,7 @@ export function createRunner(deps: RunnerDeps): Runner {
 
     const entry: Live = {
       session, child, provider, env, workspace: request.workspace, hasSchema, startedMs,
-      parser: provider.reader(() => iso(now()), cwd),
+      parser: provider.reader(() => iso(now()), cwd, schema),
       file: createWriteStream(streamPath, { flags: "a" }),
       lastEventMs: startedMs, lastWriteMs: 0, stderrTail: "", over: false, done, settle,
     };

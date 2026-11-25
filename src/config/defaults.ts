@@ -1,7 +1,7 @@
 // What a blank project gets: the core only, at level 0.
 
 import type { SessionRole } from "../model/types.ts";
-import type { ClaudeConfig, RoleConfig, Settings } from "./types.ts";
+import type { ClaudeConfig, CopilotConfig, ProviderName, RoleConfig, Settings } from "./types.ts";
 
 /** What `machineName` may be: letters, digits, `-`, `_` and `.`, 1 to 40 of them. */
 export const MACHINE_NAME = /^[A-Za-z0-9._-]{1,40}$/;
@@ -32,6 +32,11 @@ const WRITING = ["Read", "Glob", "Grep", "Edit", "Write", "Bash(git *)"];
  * in, filled in when the configuration is read (`expandScopesoup`); a role's own list in the file may use it too.
  */
 export const ITEM_READING = ["Bash(pnpm --dir {{scopesoup}} item list*)", "Bash(pnpm --dir {{scopesoup}} item show*)"];
+
+/** The model a Copilot role runs on when the file names none: Copilot Fusion, which picks among the models the plan has. */
+export const COPILOT_DEFAULT_MODEL = "fusion";
+/** The Auto routing profile a Copilot role on Fusion uses when the file names none. */
+export const COPILOT_DEFAULT_AUTO_TIER = "balance";
 
 /** The model of each role when the file names none: a strong triage and review. */
 export const DEFAULT_MODELS: Readonly<Record<SessionRole, string>> = { triage: "opus", implement: "sonnet", review: "opus" };
@@ -66,4 +71,13 @@ export const DEFAULT_SETUP_WATCH: readonly string[] = [
 
 export function defaultClaude(): ClaudeConfig {
   return { path: "claude", prefixArgs: [], extraArgs: [], promptVia: "stdin", dropApiKeyEnv: true };
+}
+
+export function defaultCopilot(): CopilotConfig {
+  return { path: "copilot", prefixArgs: [], extraArgs: [] };
+}
+
+/** The provider a role runs on: the one it names, else Claude. */
+export function roleProvider(role: Pick<RoleConfig, "provider">): ProviderName {
+  return role.provider ?? "claude";
 }

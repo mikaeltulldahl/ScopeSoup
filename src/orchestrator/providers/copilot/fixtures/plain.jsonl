@@ -1,0 +1,12 @@
+{"type":"session.start","data":{"sessionId":"00000000-0000-4000-8000-000000000001","version":1,"producer":"copilot-agent","copilotVersion":"1.0.115","selectedModel":"auto","autoTier":"balance","context":{"cwd":"C:\\work\\demo"}},"timestamp":"2026-11-20T10:00:01.000Z"}
+{"type":"session.mcp_server_status_changed","data":{"serverName":"github-mcp-server","status":"pending"},"ephemeral":true,"timestamp":"2026-11-20T10:00:02.000Z"}
+{"type":"session.auto_mode_resolved","data":{"chosenModel":"demo-model-flash","autoTier":"balance","fallback":false},"timestamp":"2026-11-20T10:00:02.000Z"}
+{"type":"user.message","data":{"content":"Reply with exactly the word: ok"},"timestamp":"2026-11-20T10:00:03.000Z"}
+{"type":"assistant.turn_start","data":{"turnId":"0"},"timestamp":"2026-11-20T10:00:03.000Z"}
+{"type":"assistant.message_start","data":{"messageId":"m-1","phase":"final_answer"},"ephemeral":true,"timestamp":"2026-11-20T10:00:04.000Z"}
+{"type":"assistant.message_delta","data":{"messageId":"m-1","deltaContent":"ok"},"ephemeral":true,"timestamp":"2026-11-20T10:00:04.000Z"}
+{"type":"assistant.message","data":{"messageId":"m-1","model":"demo-model-flash","content":"ok","toolRequests":[],"turnId":"1","phase":"final_answer"},"timestamp":"2026-11-20T10:00:04.000Z"}
+{"type":"assistant.turn_end","data":{"turnId":"1"},"timestamp":"2026-11-20T10:00:05.000Z"}
+{"type":"session.usage_checkpoint","data":{"totalNanoAiu":83000000,"totalPremiumRequests":1},"timestamp":"2026-11-20T10:00:05.000Z"}
+{"type":"assistant.idle","data":{},"ephemeral":true,"timestamp":"2026-11-20T10:00:05.000Z"}
+{"type":"result","timestamp":"2026-11-20T10:00:05.000Z","sessionId":"00000000-0000-4000-8000-000000000001","exitCode":0,"usage":{"premiumRequests":1,"totalApiDurationMs":1300,"sessionDurationMs":6100,"codeChanges":{"linesAdded":0,"linesRemoved":0,"filesModified":[]}}}

@@ -1,0 +1,22 @@
+{
+  "totalPremiumRequestCost": 1,
+  "totalUserRequests": 1,
+  "totalNanoAiu": 50848000,
+  "aiCreditsStatus": "complete",
+  "tokenDetails": {
+    "input": { "tokenCount": 1448 },
+    "cache_read": { "tokenCount": 32768 },
+    "cache_write": { "tokenCount": 0 },
+    "output": { "tokenCount": 72 }
+  },
+  "totalApiDurationMs": 2944,
+  "sessionStartTime": "2026-11-20T10:00:01.000Z",
+  "modelMetrics": {
+    "demo-model-flash": {
+      "requests": { "count": 2, "cost": 1 },
+      "usage": { "inputTokens": 34216, "outputTokens": 72, "cacheReadTokens": 32768, "cacheWriteTokens": 0, "reasoningTokens": 0 },
+      "totalNanoAiu": 50848000
+    }
+  },
+  "currentModel": "demo-model-flash"
+}
