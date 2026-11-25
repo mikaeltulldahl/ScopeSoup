@@ -25,6 +25,7 @@
     "config:check": "node --disable-warning=ExperimentalWarning src/config/check.ts",
     "config:register": "node --disable-warning=ExperimentalWarning src/config/register.ts",
     "settings:init": "node --disable-warning=ExperimentalWarning src/config/settingsInit.ts",
+    "config:host": "node --disable-warning=ExperimentalWarning src/hostPart.ts",
     "config:setup": "node --disable-warning=ExperimentalWarning src/config/setupScript.ts",
     "meta:accept": "node --disable-warning=ExperimentalWarning src/hosts/metaBranch/accept.ts",
     "web:build": "pnpm --dir web install --frozen-lockfile && pnpm --dir web build"
