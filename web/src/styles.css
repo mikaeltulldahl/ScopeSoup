@@ -80,7 +80,12 @@ a.project-repo:hover { color: var(--bar-text); text-decoration: underline; }
 button { font: inherit; font-size: 0.87rem; font-weight: 550; padding: 6px 11px; min-height: 34px; border-radius: 6px; border: 1px solid var(--line); background: var(--surface); color: var(--text); cursor: pointer; }
 button:hover:not(:disabled) { background: var(--sunken); }
 button:disabled { opacity: 0.55; cursor: default; }
-button.stop { border-color: var(--blocked); color: var(--blocked); }
+button.stop, button.danger { border-color: var(--blocked); color: var(--blocked); }
+.danger-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 8px; padding-top: 12px; border-top: 1px solid var(--line); font-size: 0.9rem; }
+/* The Graveyard Shift's version is not light. */
+:root[data-theme="graveyard"] button.danger { background: #a3121f; border-color: #6e0a14; color: #fff; text-transform: uppercase; letter-spacing: 0.08em; font-weight: 700; box-shadow: 0 0 10px rgba(163, 18, 31, 0.5); }
+:root[data-theme="graveyard"] button.danger:hover:not(:disabled) { background: #c01626; }
+.danger-row .error { flex-basis: 100%; margin: 0; }
 button.primary { background: var(--accent); border-color: var(--accent); color: var(--surface); }
 button.primary:hover:not(:disabled) { background: var(--accent); filter: brightness(1.1); }
 .top button { background: transparent; border-color: var(--bar-line); color: var(--bar-text); }
