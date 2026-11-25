@@ -2,8 +2,8 @@
 // Comment markers, the trust rule, and Qn:/An: replies. Nothing here writes to GitHub; the adapter posts the bodies built here.
 
 import { asLabelChange, changeText, isEmptyChange } from "../../model/labels.ts";
-import type { Actor, Assumption, AssumptionSettled, DecisionOption, HostDraft, LabelChange, HostRecord, LogRecord, OpenQuestion, RecordedAnswer, ProposedPart, Ref, WorkItem } from "../../model/types.ts";
-import { asOptions, asParts, optionText } from "../../model/types.ts";
+import type { Actor, Assumption, AssumptionSettled, DecisionOption, HostDraft, LabelChange, HostRecord, LogRecord, OpenQuestion, OriginalFate, PartGoes, RecordedAnswer, ProposedPart, Ref, WorkItem } from "../../model/types.ts";
+import { asOptions, asRestructuring, optionText } from "../../model/types.ts";
 import type { WorkPort } from "../../ports/host.ts";
 import { COMMENT_LIMIT, WorkGone } from "../../ports/host.ts";
 import type { Client } from "./client.ts";
@@ -203,7 +203,8 @@ export function readThread(subject: Ref, comments: RestComment[], self: string |
         if (typeof data.proposal === "object" && data.proposal !== null && !Array.isArray(data.proposal)) {
           const proposal = data.proposal as Record<string, unknown>;
           const carried = str(proposal.carried);
-          question.proposal = { reason: str(proposal.reason), parts: asParts(proposal.parts), ...(carried ? { carried } : {}) };
+          const restructuring = asRestructuring(proposal);
+          if (restructuring) question.proposal = { reason: str(proposal.reason), ...restructuring, ...(carried ? { carried } : {}) };
         }
         const n = typeof data.n === "number" && Number.isInteger(data.n) && data.n > 0 ? data.n : undefined;
         const draft = typeof data.draft === "number" ? data.draft : undefined;
@@ -542,7 +543,7 @@ export function questionNumber(comment: RestComment | undefined): number | undef
 }
 
 /** What a question comment says: `**Qn: question**`, the context, the options, how to answer; then its marker. The text is inert already. */
-export function questionBody(n: number, ask: { question: string; options: DecisionOption[]; recommendation?: string; context?: string; multiSelect?: true; parked: string; step: string; draft?: string; proposal?: { reason: string; parts: ProposedPart[]; carried?: string } }): string {
+export function questionBody(n: number, ask: { question: string; options: DecisionOption[]; recommendation?: string; context?: string; multiSelect?: true; parked: string; step: string; draft?: string; proposal?: { reason: string; original: OriginalFate; parts: ProposedPart[]; carried?: string } }): string {
   const option = (each: DecisionOption): string => {
     const label = typeof each === "string" ? each : each.label;
     const description = typeof each === "string" ? "" : each.description;
@@ -553,18 +554,23 @@ export function questionBody(n: number, ask: { question: string; options: Decisi
     `**Q${n}: ${ask.question.trim()}**`,
     ...(ask.context?.trim() ? [ask.context.trim()] : []),
     ...(ask.options.length > 0 ? [`${ask.multiSelect ? "Pick one or more.\n\n" : ""}${ask.options.map(option).join("\n")}`] : []),
-    // A proposed split lists its parts; it is decided on Scope Soup's board.
-    ...(ask.proposal ? [ask.proposal.parts.map((part, index) => `${index + 1}. **${part.title.trim()}**${part.description.trim() ? `: ${part.description.trim()}` : ""}`).join("\n")] : []),
-    ask.proposal ? "Accept, edit or reject the split on Scope Soup's board." : `Answer on Scope Soup's board, or reply here with \`A${n}: <your answer>\`.`,
+    // A proposed restructuring lists its parts and where each goes; it is decided on Scope Soup's board.
+    ...(ask.proposal ? [ask.proposal.parts.map((part, index) => `${index + 1}. **${part.title.trim()}** (${GOES_WORDS[part.goes]}${part.goes === "into" ? ` #${part.into}` : ""})${part.description.trim() ? `: ${part.description.trim()}` : ""}`).join("\n"), `This Item ${FATE_WORDS[ask.proposal.original]}.`] : []),
+    ask.proposal ? "Accept, edit or reject the restructuring on Scope Soup's board." : `Answer on Scope Soup's board, or reply here with \`A${n}: <your answer>\`.`,
   ].join("\n\n");
   return withMarker(visible, "question", {
     n, question: ask.question.trim(), options: ask.options,
     ...(ask.recommendation ? { recommendation: ask.recommendation } : {}), ...(ask.context?.trim() ? { context: ask.context.trim() } : {}), ...(ask.multiSelect ? { multiSelect: true } : {}),
     parked: ask.parked, step: ask.step,
     ...(ask.draft ? { draft: Number(ask.draft) } : {}),
-    ...(ask.proposal ? { proposal: { reason: ask.proposal.reason, parts: ask.proposal.parts, ...(ask.proposal.carried ? { carried: ask.proposal.carried } : {}) } } : {}),
+    ...(ask.proposal ? { proposal: { reason: ask.proposal.reason, original: ask.proposal.original, parts: ask.proposal.parts, ...(ask.proposal.carried ? { carried: ask.proposal.carried } : {}) } } : {}),
   });
 }
+
+/** Where a part goes, as a question comment says it. */
+const GOES_WORDS: Record<PartGoes, string> = { original: "stays in this Item", child: "new sub-issue", related: "new related issue", unlinked: "new issue", into: "added to" };
+/** What becomes of the Item, as a question comment says it. */
+const FATE_WORDS: Record<OriginalFate, string> = { keeps: "keeps the part that stays in it", umbrella: "becomes an umbrella over its sub-issues", replaced: "is closed as replaced by the parts" };
 
 /** A question comment withdrawn by Scope Soup: one line saying so, then its marker with `withdrawn`, which keeps its number used. */
 export function withdrawnBody(data: Record<string, unknown>): string {

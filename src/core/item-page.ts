@@ -16,7 +16,7 @@ import type { ItemChangeView, ItemPage, RunView } from "./views.ts";
 /** Where the decision is. A host with a log (meta branch) has it on this page; another host has it at the item's link. */
 function decisionWords(item: WorkItem): string {
   if (!item.needsDecision) return "No decision is waiting.";
-  if ((item.openQuestions ?? []).some((question) => question.proposal)) return "This item waits for your decision on the proposed split below.";
+  if ((item.openQuestions ?? []).some((question) => question.proposal)) return "This item waits for your decision on the proposed restructuring below.";
   if ((item.openQuestions ?? []).length > 0) return "This item waits for your answer to the question below.";
   if (item.hostState.includes("conflict:")) return "The item's text was changed on two machines. Keep one version or write the result below.";
   if (!item.ref.url) return "This item waits for your decision.";
@@ -156,15 +156,16 @@ export function buildItemPage(snapshot: Snapshot, ref: Ref | string, now: Date, 
   const proposed = (item.openQuestions ?? []).filter((question) => question.proposal).pop();
   const proposal = proposed?.proposal ?? parked?.proposal;
   if (proposal) {
-    // The children made so far are only in Scope Soup's store (the rest), not in the log's question line; the parts are fixed once one exists.
+    // The parts made so far are only in Scope Soup's store (the rest), not in the log's question line; the parts are fixed once one exists.
     const created = parked?.proposal?.created ?? [];
-    // The stored parts are a person's edit (or fixed once a child exists); the log's line keeps triage's.
-    const parts = parked?.proposal?.parts ?? proposal.parts;
+    // The stored version is a person's edit (or fixed once a part exists); the log's line keeps triage's.
+    const chosen = parked?.proposal ?? proposal;
     page.proposal = {
       reason: proposal.reason,
-      parts,
+      original: chosen.original,
+      parts: chosen.parts,
       ...(proposal.carried ? { carried: proposal.carried } : {}),
-      ...(created.length > 0 ? { created: created.map((child) => itemLink(child.ref, index)) } : {}),
+      ...(created.length > 0 ? { created: created.map((made) => ({ part: made.part, ...itemLink(made.ref, index) })) } : {}),
       ...(proposed ? { at: proposed.at, by: proposed.by } : {}),
     };
   }

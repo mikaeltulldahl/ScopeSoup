@@ -4,8 +4,8 @@
 // Nothing here is fatal: a line that cannot be read, or a known kind with fields that do not fit,
 // is kept with its problem and counted; a kind Scope Soup does not know is kept and counted.
 
-import { asOptions, asParts } from "../../model/types.ts";
-import type { DecisionOption, ProposedPart } from "../../model/types.ts";
+import { asOptions, asRestructuring } from "../../model/types.ts";
+import type { DecisionOption, OriginalFate, ProposedPart } from "../../model/types.ts";
 import { isBranchName, isFullSha } from "./ids.ts";
 
 /** Who wrote a line: a person or an agent, and on which machine. */
@@ -157,8 +157,8 @@ export interface QuestionLine {
   context?: string;
   /** Several options may be picked. */
   multiSelect?: true;
-  /** A proposed split: `parts` (and `carried`), and `reason`. */
-  proposal?: { reason: string; parts: ProposedPart[]; carried?: string };
+  /** A proposed restructuring: `original`, `parts` (and `carried`), and `reason`. */
+  proposal?: { reason: string; original: OriginalFate; parts: ProposedPart[]; carried?: string };
 }
 
 /** An item's current picture, as far as its log tells it. */
@@ -315,9 +315,9 @@ export function foldLog(log: ParsedLog): LogPicture {
         if (typeof proposed === "object" && proposed !== null && !Array.isArray(proposed)) {
           const fields = proposed as Record<string, unknown>;
           const reason = text(fields.reason);
-          const parts = asParts(fields.parts);
+          const restructuring = asRestructuring(fields);
           const carried = text(fields.carried);
-          if (reason && parts.length > 0) line.proposal = { reason, parts, ...(carried ? { carried } : {}) };
+          if (reason && restructuring) line.proposal = { reason, ...restructuring, ...(carried ? { carried } : {}) };
           // A proposed rewrite of the item's text (removed): the line stays in the log and the history, but nothing
           // answers it any more, so it is not an open question and the item is not held by it.
           else if (reason && (text(fields.description) || text(fields.verification))) break;

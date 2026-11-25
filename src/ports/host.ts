@@ -2,7 +2,7 @@
 // (one for work items, one for changes, one for CI), and a host that lacks a capability
 // does not implement that port.
 
-import type { Actor, AssumptionSettled, Batch, LabelChange, RepoLabel, Change, ConflictVersions, DecisionOption, Priority, ProposedPart, Ref, Run, Runner, Turn, VerdictValue, WorkItem, WorkState } from "../model/types.ts";
+import type { Actor, AssumptionSettled, Batch, LabelChange, RepoLabel, Change, ConflictVersions, DecisionOption, OriginalFate, Priority, ProposedPart, Ref, Run, Runner, Turn, VerdictValue, WorkItem, WorkState } from "../model/types.ts";
 
 export type Capability = "work" | "changes" | "ci" | "runners" | "batches" | "turn" | "write";
 
@@ -146,6 +146,8 @@ export interface NewWork {
   state?: WorkState;
   labels?: string[];
   parent?: Ref;
+  /** A related Item of a restructuring: hosts that keep links apart from the text (Jira: "relates to") link it; the others find the Item named in `body`. */
+  relatedTo?: Ref;
   blockedBy?: Ref[];
   verification?: string;
   priority?: Priority;
@@ -224,8 +226,8 @@ export interface QuestionWrite {
   step: string;
   /** The draft comment of the triage round this question belongs to. */
   draft?: string;
-  /** A proposed split: the question is a person's decision on it (`POST /api/proposal`). */
-  proposal?: { reason: string; parts: ProposedPart[]; carried?: string };
+  /** A proposed restructuring: the question is a person's decision on it (`POST /api/proposal`). */
+  proposal?: { reason: string; original: OriginalFate; parts: ProposedPart[]; carried?: string };
 }
 
 /** One triage round's draft of the description, posted on the item's host (GitHub: a draft comment). Its text is already inert. */
@@ -248,7 +250,7 @@ export interface AnswerWrite {
   options?: string[];
   /** `itemTextHash` of the item when the answer was given, for answer reuse. */
   textHash?: string;
-  /** A person's decision on a triage draft or a proposed split. */
+  /** A person's decision on a triage draft or a proposed restructuring. */
   proposal?: "accepted" | "edited" | "rejected";
   /** Who answered: the board's picked person. Without it the host names the account that writes. */
   by?: string;

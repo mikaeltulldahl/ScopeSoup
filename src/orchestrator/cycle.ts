@@ -7,14 +7,14 @@
 
 import type { LabelChange, Ref, RepoLabel, Session, WorkItem } from "../model/types.ts";
 import { changeText, isEmptyChange, keepProposal } from "../model/labels.ts";
-import { optionText, refKey } from "../model/types.ts";
+import { optionText, refKey, restructuringWords } from "../model/types.ts";
 import { reusableAnswer } from "../core/answerReuse.ts";
 import { blockersOnHost, loadOwnBlockers, setOwnBlockers } from "../store/blockers.ts";
 import { answersText, knownAnswers } from "../store/answers.ts";
 import { persistenceLimits } from "../config/persistence.ts";
 import type { Context } from "./context.ts";
 import { ACTOR, errorText } from "./context.ts";
-import type { AskedText, Decision, ItemLinkAnswer, Job, ParkedAs, Proposal, ReviewAnswer, TakenDecision, TriageAnswer } from "./jobs.ts";
+import type { AskedText, Decision, ItemLinkAnswer, Job, ParkedAs, ReviewAnswer, TakenDecision, TriageAnswer } from "./jobs.ts";
 import { ASK_PERSON, asImplement, asReview, asTriage, formatFindings, hasMarkup, recoverFields, keepsRecommendations, picks, questionsSettled, releaseIn, parkedDraft } from "./jobs.ts";
 import { providerFor } from "./providers/index.ts";
 import type { Actions, SessionResultRecord } from "./ports.ts";
@@ -89,7 +89,7 @@ async function tellPeople(ctx: Context, job: Job, as: ParkedAs, reason: string, 
   const key = refKey(job.item);
   const { actions } = ctx.deps;
   // In the item's log too (meta branch): the question stays open until the answer names it. `parked` and `retry` let a restart put the job back.
-  // A question from triage or the implementer, or a proposed split.
+  // A question from triage or the implementer, or a proposed restructuring.
   // A draft is one line naming the parked Item; its questions are answered with the draft on the item page.
   const refining = as === "needs-decision" && job.refine !== undefined;
   const asked = as === "needs-decision" && !refining ? job.decision ?? (job.step === "triage" ? job.triage?.decision : undefined) : undefined;
@@ -98,11 +98,11 @@ async function tellPeople(ctx: Context, job: Job, as: ParkedAs, reason: string, 
   // Triage found several decisions: each is its own question in the log.
   const all = as === "needs-decision" && !refining && !proposal && !job.decision && job.step === "triage" ? (job.triage?.decisions ?? []).filter((d) => d.question.trim()) : [];
   const questions = all.length > 1 ? all : [];
-  // On GitHub the questions are comments, which tell a person too. So are each triage round's draft and a proposed split.
+  // On GitHub the questions are comments, which tell a person too. So are each triage round's draft and a proposed restructuring.
   const posted = as === "needs-decision" && (refining
     ? actions.postDraft !== undefined && (await draftOnHost(ctx, job))
     : actions.askQuestions !== undefined && (await askOnHost(ctx, job, proposal
-      ? [{ question: `Proposed split: ${proposal.reason}`, options: [], recommendation: "", proposal: { reason: proposal.reason, parts: proposal.parts, ...(proposal.carried ? { carried: proposal.carried } : {}) } }]
+      ? [{ question: `Proposed restructuring: ${proposal.reason}`, options: [], recommendation: "", proposal: { reason: proposal.reason, original: proposal.original, parts: proposal.parts, ...(proposal.carried ? { carried: proposal.carried } : {}) } }]
       : questions.length > 0 ? questions : [decision ?? { question: reason, options: [], recommendation: "" }])));
   if (!posted) {
     await ctx.act("put the item on a person's list", key, () => actions.answerTurn(job.item, ask, reason));
@@ -110,9 +110,9 @@ async function tellPeople(ctx: Context, job: Job, as: ParkedAs, reason: string, 
       await ctx.act("write the question to the item's log", key, () =>
         actions.appendLog(job.item, "question", { question: each.question, options: each.options, ...(each.recommendation ? { recommendation: each.recommendation } : {}), ...(each.context ? { context: each.context } : {}), ...(each.multiSelect ? { multiSelect: true } : {}), parked: as }));
     }
-    // The children a split has made so far stay in the store: the log line keeps what a person decides on.
+    // The parts a restructuring has made so far stay in the store: the log line keeps what a person decides on.
     const fields: Record<string, unknown> = proposal
-      ? { question: reason, proposal: { reason: proposal.reason, parts: proposal.parts, ...(proposal.carried ? { carried: proposal.carried } : {}) } }
+      ? { question: reason, proposal: { reason: proposal.reason, original: proposal.original, parts: proposal.parts, ...(proposal.carried ? { carried: proposal.carried } : {}) } }
       : decision
         ? { question: decision.question, options: decision.options, ...(decision.recommendation ? { recommendation: decision.recommendation } : {}), ...(decision.context ? { context: decision.context } : {}), ...(decision.multiSelect ? { multiSelect: true } : {}) }
         : { question: reason };
@@ -150,7 +150,7 @@ async function askOnHost(ctx: Context, job: Job, questions: readonly (Decision &
   try {
     asked = await actions.askQuestions!(job.item, asking);
   } catch (error) {
-    // A split too large for a comment stays on Scope Soup's board, and the parked Item says so.
+    // A restructuring too large for a comment stays on Scope Soup's board, and the parked Item says so.
     if (error instanceof TooLarge) return keptLocal(ctx, job, "split", error.limit);
     await hostFailed(ctx, job, `the question${asking.length > 1 ? "s" : ""}`, error, `The question${asking.length > 1 ? "s were" : " was"}: ${asking.map((each) => each.question.trim()).join(" ")}`);
     return true;
@@ -370,16 +370,20 @@ async function ask(ctx: Context, job: Job, who: string, decision: Decision | und
 }
 
 /**
- * Triage found the item too large and named its parts: the item parked until a person accepts, edits or rejects the split.
- * The answers recorded on the item so far are carried over into each part.
+ * Triage proposes to restructure the item: parked until a person accepts, edits or rejects it. A part into an existing Item is
+ * named by that Item's id here when the store knows it. The answers recorded on the item so far are carried over into each new part.
  */
-function parkSplit(ctx: Context, job: Job, parts: Proposal["parts"], why: string | undefined): Promise<void> {
-  // A person's decisions, not their verdicts on earlier proposals (a rejected split or rewrite says nothing about a part).
-  const answers = knownAnswers(ctx.deps.store).filter((answer) => !/^Proposed (split|rewrite): /.test(answer.question ?? ""));
+function parkRestructure(ctx: Context, job: Job, proposed: NonNullable<TriageAnswer["restructure"]>, why: string | undefined): Promise<void> {
+  // A person's decisions, not their verdicts on earlier proposals (a rejected restructuring or rewrite says nothing about a part).
+  const answers = knownAnswers(ctx.deps.store).filter((answer) => !/^Proposed (split|rewrite|restructuring): /.test(answer.question ?? ""));
   const carried = answersText(answers, refKey(job.item));
-  const reason = `Triage: too large for one change; it proposes ${parts.length} parts.${why?.trim() ? ` ${why.trim()}` : ""}`;
-  job.proposal = { reason, parts, ...(carried ? { carried } : {}) };
-  return park(ctx, job, "needs-decision", `${reason} Accept, edit or reject the split on the item page.`, "decision");
+  const parts = proposed.parts.map((part) => {
+    const named = part.goes === "into" ? linkedItem(ctx, job.item, part.into!) : null;
+    return named ? { ...part, into: named.ref.id } : part;
+  });
+  const reason = `Triage proposes to restructure the Item: ${restructuringWords(proposed.original, parts)}.${proposed.reason ? ` ${proposed.reason}` : ""}${why?.trim() ? ` ${why.trim()}` : ""}`;
+  job.proposal = { reason, original: proposed.original, parts, ...(carried ? { carried } : {}) };
+  return park(ctx, job, "needs-decision", `${reason} Accept, edit or reject it on the item page.`, "decision");
 }
 
 /**
@@ -803,11 +807,12 @@ function triageWords(output: Record<string, unknown>): string {
   const size = typeof output.size === "string" ? `, ${output.size}` : "";
   const reason = typeof output.notReadyReason === "string" && output.notReadyReason.trim() ? ` ${output.notReadyReason.trim()}` : "";
   const asked = Array.isArray(output.decisions) ? output.decisions.length : output.decision ? 1 : 0;
-  const parts = Array.isArray(output.parts) ? output.parts.length : 0;
+  const restructure = typeof output.restructure === "object" && output.restructure !== null ? output.restructure as Record<string, unknown> : {};
+  const parts = Array.isArray(restructure.parts) ? restructure.parts.length : 0;
   return [
     output.ready ? `Ready${size}.` : `Not ready${size}.${reason}`,
     ...(asked > 0 ? [`${asked} question${asked === 1 ? "" : "s"} for a person.`] : []),
-    ...(parts > 0 ? [`Proposes a split into ${parts} parts.`] : []),
+    ...(parts > 0 ? [`Proposes a restructuring into ${parts} parts.`] : []),
   ].join(" ");
 }
 
@@ -1029,10 +1034,10 @@ async function recordDecisions(ctx: Context, job: Job, decisions: readonly Taken
     }));
 }
 
-/** Triage's verdicts once its questions (and its draft) are settled: a split, not ready, too large, or implement. */
+/** Triage's verdicts once its questions (and its draft) are settled: a restructuring, not ready, too large, or implement. */
 async function afterTriage(ctx: Context, job: Job, answer: TriageAnswer, settled = ""): Promise<void> {
-  // A split is proposed whatever `ready` says: the parts are what can be made ready.
-  if (answer.size === "large" && answer.parts && answer.parts.length > 0) return parkSplit(ctx, job, answer.parts, answer.ready ? undefined : answer.notReadyReason);
+  // A restructuring is proposed whatever `ready` says: the parts are what can be made ready.
+  if (answer.restructure) return parkRestructure(ctx, job, answer.restructure, answer.ready ? undefined : answer.notReadyReason);
   const blockers = answer.blockers?.length ? ` Blockers: ${answer.blockers.join("; ")}.` : "";
   if (!answer.ready) return park(ctx, job, "not-ready", `Triage: not ready. ${answer.notReadyReason ?? "No reason given."}${blockers}`, "not-ready");
   if (answer.size === "large") return park(ctx, job, "not-ready", "Triage: too large for one change. Split it into smaller items first.", "not-ready");

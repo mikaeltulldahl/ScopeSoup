@@ -292,7 +292,7 @@ function parkedTurn(parked: Parked, situation: Situation): Draft {
   const base = { ...(person ? { actor: "person" as const, person } : { actor: "anyone" as const }), tone: "yours" as const, since: parked.at };
   if (parked.as === "needs-decision") {
     const count = (n: number): string => `${n} question${n === 1 ? "" : "s"}`;
-    if (parked.proposal) return { ...base, waits: "a split to accept", reason: `Accept, edit or reject the proposed split: ${parked.proposal.reason}` };
+    if (parked.proposal) return { ...base, waits: "a restructuring to accept", reason: `Accept, edit or reject the proposed restructuring: ${parked.proposal.reason}` };
     const open = (parked.questions ?? []).filter((question) => question.answer === undefined);
     if ((parked.questions ?? []).length > 0) return { ...base, waits: open.length === 0 && parked.refine ? "a draft to accept" : count(open.length), reason: `Answer ${open.length} of ${parked.questions!.length} questions: ${(open[0] ?? parked.questions![0]!).question}` };
     if (parked.decision && parked.decision.options.length > 0) return { ...base, waits: "1 question", reason: `Pick an option: ${parked.decision.question}` };

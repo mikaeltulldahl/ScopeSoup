@@ -1,4 +1,4 @@
-// On a GitHub Item each triage round's draft is a comment, and a proposed split is a question comment. A person's
+// On a GitHub Item each triage round's draft is a comment, and a proposed restructuring is a question comment. A person's
 // Accept, Edit and Reject are answer comments, written through by the real adapter on a fake GitHub that keeps its issues,
 // comments, labels and sub-issues. Nothing reaches the network. All names are synthetic.
 
@@ -30,9 +30,9 @@ const key = (id: string): string => `github:work:${id}`;
 const QUESTION = { question: "Metric or imperial?", options: [{ label: "Metric", description: "Metres." }, { label: "Imperial", description: "Feet." }], recommendation: "Metric" };
 const DRAFT = "Show the tide table in metres.";
 const PARTS = [
-  { title: "Tide heights", description: "Read the heights.", verification: "Heights show." },
-  { title: "Tide times", description: "Read the times.", verification: "Times show." },
-  { title: "Tide chart", description: "Draw the chart.", verification: "The chart shows." },
+  { title: "Tide heights", description: "Read the heights.", verification: "Heights show.", goes: "child" as const },
+  { title: "Tide times", description: "Read the times.", verification: "Times show.", goes: "child" as const },
+  { title: "Tide chart", description: "Draw the chart.", verification: "The chart shows.", goes: "child" as const },
 ];
 const REASON = "Triage: too large for one change; it proposes 3 parts.";
 
@@ -56,7 +56,7 @@ function serverOn(into: Store, acts: ReturnType<typeof createHostActions>): Scop
     store: into, port: 0,
     questions: { host: "github", answer: acts.answerQuestion!, checkDraft: acts.checkDraft! },
     description: { host: "github", replace: acts.replaceDescription! },
-    split: [{ host: "github", write: host.write!, verificationInBody: true, issueNumbers: true }],
+    restructure: [{ host: "github", write: host.write!, verificationInBody: true, issueNumbers: true }],
     syncNow: () => syncInto(into),
   });
 }
@@ -94,7 +94,7 @@ const writes = (): string[] => fake.calls.filter((call) => !call.startsWith("GET
 const lastMarker = (id: string) => readMarker(fake.comments.get(id)!.at(-1)!.body)!;
 const errorCode = async (response: Response): Promise<string> => ((await response.json()) as { error: { code: string } }).error.code;
 
-describe("triage drafts and splits as comments", () => {
+describe("triage drafts and restructurings as comments", () => {
   test("Accept: the body is checked, then PATCHed, then an answer comment to the question and one to the draft with proposal accepted", async () => {
     const { draft, question } = await draftParked("1");
     fake.clear();
@@ -158,18 +158,18 @@ describe("triage drafts and splits as comments", () => {
     assert.equal(again.status, 409);
   });
 
-  test("a split too large for a comment posts nothing", async () => {
+  test("a restructuring too large for a comment posts nothing", async () => {
     fake.clear();
-    const huge = [{ title: "All of it", description: "Tides. ".repeat(9000), verification: "" }];
-    await assert.rejects(actions.askQuestions!(ref("5"), [{ question: `Proposed split: ${REASON}`, options: [], parked: "needs-decision", step: "triage", proposal: { reason: REASON, parts: huge } }]), TooLarge);
+    const huge = [{ title: "All of it", description: "Tides. ".repeat(9000), verification: "", goes: "child" as const }];
+    await assert.rejects(actions.askQuestions!(ref("5"), [{ question: `Proposed restructuring: ${REASON}`, options: [], parked: "needs-decision", step: "triage", proposal: { reason: REASON, original: "umbrella" as const, parts: huge } }]), TooLarge);
     assert.deepEqual(writes(), []);
   });
 
-  test("with the store deleted mid-split, the next Accept links the existing children and creates only the missing parts", async () => {
+  test("with the store deleted mid-restructuring, the next Accept links the existing children and creates only the missing parts", async () => {
     store.put((await host.work.getWork(ref("4")))!, "sync", at);
-    const asked = await actions.askQuestions!(ref("4"), [{ question: `Proposed split: ${REASON}`, options: [], parked: "needs-decision", step: "triage", proposal: { reason: REASON, parts: PARTS } }]);
-    assert.deepEqual(readMarker(fake.comments.get("4")!.at(-1)!.body)!.data.proposal, { reason: REASON, parts: PARTS });
-    saveJobs(store, { ...loadJobs(store), [key("4")]: jobOf("4", { proposal: { reason: REASON, parts: PARTS }, parked: { as: "needs-decision", reason: REASON, at, questions: asked!.ids, askedAt: asked!.at } }) });
+    const asked = await actions.askQuestions!(ref("4"), [{ question: `Proposed restructuring: ${REASON}`, options: [], parked: "needs-decision", step: "triage", proposal: { reason: REASON, original: "umbrella" as const, parts: PARTS } }]);
+    assert.deepEqual(readMarker(fake.comments.get("4")!.at(-1)!.body)!.data.proposal, { reason: REASON, original: "umbrella", parts: PARTS });
+    saveJobs(store, { ...loadJobs(store), [key("4")]: jobOf("4", { proposal: { reason: REASON, original: "umbrella" as const, parts: PARTS }, parked: { as: "needs-decision", reason: REASON, at, questions: asked!.ids, askedAt: asked!.at } }) });
 
     // Part 1 is created and linked; part 2 is created, but GitHub refuses its link.
     let links = 0;
@@ -180,15 +180,15 @@ describe("triage drafts and splits as comments", () => {
     fake.onCall = undefined;
     fake.refusesSubIssues = false;
     assert.equal(first.status, 502);
-    assert.equal(await errorCode(first), "SPLIT_INCOMPLETE");
+    assert.equal(await errorCode(first), "RESTRUCTURE_INCOMPLETE");
     assert.deepEqual([...fake.issues.keys()], ["1", "2", "3", "4", "5", "6", "7"]);
     // `created` is not stored: the children are the sub-issues with the part line.
     assert.equal(loadJobs(store)[key("4")]?.proposal?.created, undefined);
 
     // Part 1 was made before the line changed, naming the ref key: it is still found.
     const old = fake.issues.get("6")!;
-    assert.match(old.body ?? "", /Part 1 of the split of #4\.$/);
-    old.body = (old.body ?? "").replace("Part 1 of the split of #4.", "Part 1 of the split of github:work:4.");
+    assert.match(old.body ?? "", /Part 1 of the restructuring of #4\.$/);
+    old.body = (old.body ?? "").replace("Part 1 of the restructuring of #4.", "Part 1 of the restructuring of github:work:4.");
     old.updated_at = "2026-11-22T11:00:00Z";
     // The store is deleted: a new one is synced from GitHub, with no job.
     const fresh = openStore(":memory:");
@@ -207,22 +207,22 @@ describe("triage drafts and splits as comments", () => {
       assert.deepEqual([...fake.issues.keys()], ["1", "2", "3", "4", "5", "6", "7", "8"]);
       for (const [index, child] of ["6", "7", "8"].entries()) {
         assert.equal(fake.issues.get(child)!.parent_issue_url, `${ISSUES_API}${R}/4`);
-        assert.match(fake.issues.get(child)!.body ?? "", new RegExp(`Part ${index + 1} of the split of ${child === "6" ? "github:work:4" : "#4"}\\.$`));
+        assert.match(fake.issues.get(child)!.body ?? "", new RegExp(`Part ${index + 1} of the restructuring of ${child === "6" ? "github:work:4" : "#4"}\\.$`));
       }
       assert.deepEqual([lastMarker("4").data.to, lastMarker("4").data.proposal], [Number(asked!.ids[0]), "accepted"]);
       assert.equal(fresh.getValue("person.answers"), null);
-      assert.match(knownAnswers(fresh).find((each) => each.subject.id === "4")?.question ?? "", /^Proposed split: /);
+      assert.match(knownAnswers(fresh).find((each) => each.subject.id === "4")?.question ?? "", /^Proposed restructuring: /);
     } finally {
       await second.stop();
       fresh.close();
     }
   });
 
-  test("Reject of a split posts an answer comment with proposal rejected and un-parks the Item", async () => {
+  test("Reject of a restructuring posts an answer comment with proposal rejected and un-parks the Item", async () => {
     store.put((await host.work.getWork(ref("5")))!, "sync", at);
     const parts = PARTS.slice(0, 2).map((part) => ({ ...part, title: `${part.title} (5)` }));
-    const asked = await actions.askQuestions!(ref("5"), [{ question: `Proposed split: ${REASON}`, options: [], parked: "needs-decision", step: "triage", proposal: { reason: REASON, parts } }]);
-    saveJobs(store, { ...loadJobs(store), [key("5")]: jobOf("5", { proposal: { reason: REASON, parts }, parked: { as: "needs-decision", reason: REASON, at, questions: asked!.ids, askedAt: asked!.at } }) });
+    const asked = await actions.askQuestions!(ref("5"), [{ question: `Proposed restructuring: ${REASON}`, options: [], parked: "needs-decision", step: "triage", proposal: { reason: REASON, original: "umbrella" as const, parts } }]);
+    saveJobs(store, { ...loadJobs(store), [key("5")]: jobOf("5", { proposal: { reason: REASON, original: "umbrella" as const, parts }, parked: { as: "needs-decision", reason: REASON, at, questions: asked!.ids, askedAt: asked!.at } }) });
     const response = await post("/api/proposal", { ref: key("5"), action: "reject" });
     assert.equal(response.status, 200, await response.clone().text());
     assert.deepEqual(await response.json(), { recorded: true, released: true });

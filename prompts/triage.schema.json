@@ -50,9 +50,16 @@
         "draft": { "type": "string" }
       }
     } },
-    "parts": { "type": "array", "items": {
-      "type": "object", "additionalProperties": false, "required": ["title", "description", "verification"],
-      "properties": { "title": { "type": "string" }, "description": { "type": "string" }, "verification": { "type": "string" } }
-    } }
+    "restructure": {
+      "type": "object", "additionalProperties": false, "required": ["reason", "original", "parts"],
+      "properties": {
+        "reason": { "type": "string" },
+        "original": { "enum": ["keeps", "umbrella", "replaced"] },
+        "parts": { "type": "array", "items": {
+          "type": "object", "additionalProperties": false, "required": ["title", "description", "verification", "goes"],
+          "properties": { "title": { "type": "string" }, "description": { "type": "string" }, "verification": { "type": "string" }, "goes": { "enum": ["original", "child", "related", "unlinked", "into"] }, "into": { "type": "string" } }
+        } }
+      }
+    }
   }
 }

@@ -1,6 +1,6 @@
 // The shapes the server sends to the board. Types only: `web/` imports them with `import type`.
 
-import type { Actor, Assumption, BatchMemberState, DecisionOption, BatchStatus, ConflictVersions, HistoryLine, LinkType, LogWriter, OpenQuestion, Priority, ProposedPart, Ref, ParkedDraft, ParkedKind, ParkedQuestion, RunStatus, SessionRole, SessionStatus, TurnActor, UsageWindowKind, VerdictValue, WorkState } from "../model/types.ts";
+import type { Actor, Assumption, BatchMemberState, DecisionOption, BatchStatus, ConflictVersions, HistoryLine, LinkType, LogWriter, OpenQuestion, OriginalFate, Priority, ProposedPart, Ref, ParkedDraft, ParkedKind, ParkedQuestion, RunStatus, SessionRole, SessionStatus, TurnActor, UsageWindowKind, VerdictValue, WorkState } from "../model/types.ts";
 import type { BisectMark } from "./bisect.ts";
 import type { AllowanceUse, AllowanceWords } from "./allowanceBudget.ts";
 import type { ForecastPoint, UsageAttribution, UsagePlot } from "./usage.ts";
@@ -478,15 +478,15 @@ export interface ItemPage {
   /** Questions in the item's log with no answer yet, oldest first (meta branch). Answered with `to: at`. The text is data. */
   questions: OpenQuestion[];
   /**
-   * Triage's proposed split, waiting for a person (Accept, Edit, Reject). It comes from an open question line (meta branch; `at`
-   * and `by` name it) or from the orchestrator's parked state (GitHub, kept in Scope Soup's store): the parts, the answers carried
-   * over into each, and the children made so far (a failed accept made some). Accepting creates the rest as children when
-   * `canCreate` (set by the server: the host can be written here); otherwise the parts are for a person to create by hand, and
-   * accepting only records it. The text is data.
+   * Triage's proposed restructuring, waiting for a person (Accept, Edit, Reject). It comes from an open question line (meta branch;
+   * `at` and `by` name it) or from the orchestrator's parked state (GitHub, kept in Scope Soup's store): what becomes of the Item,
+   * the parts and where each goes, the answers carried over into each new one, and the parts made so far (a failed accept made
+   * some), each with its part's index. Accepting makes the rest when `canCreate` (set by the server: the host can be written here);
+   * otherwise it is for a person to carry out by hand, and accepting only records it. The text is data.
    */
   proposal?: {
     reason: string; at?: string; by?: LogWriter;
-    parts: ProposedPart[]; carried?: string; created?: ItemLink[]; canCreate?: boolean;
+    original: OriginalFate; parts: ProposedPart[]; carried?: string; created?: (ItemLink & { part: number })[]; canCreate?: boolean;
   };
   /** Set by the server when the item is in conflict: `item.md` as it stands and the versions put aside. The text is data. */
   conflict?: ConflictVersions;

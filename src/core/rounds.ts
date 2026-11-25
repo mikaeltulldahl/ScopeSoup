@@ -52,7 +52,7 @@ function triage(fields: Record<string, unknown>, pending: Pending): { found: str
   const parts: string[] = [];
   let tone: RoundRow["tone"] = "good";
   if (split) {
-    parts.push(`Too large: proposes a split into ${split.proposal} parts.`);
+    parts.push(`Proposes a restructuring into ${split.proposal} parts.`);
     tone = "wait";
   } else if (notReady || fields.ready === false) {
     parts.push(notReady ? notReady.question.replace(/^Triage: /, "") : `Not ready.${text(fields.summary) ? ` ${text(fields.summary)}` : ""}`);

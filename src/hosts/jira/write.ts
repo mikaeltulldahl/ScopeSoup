@@ -312,6 +312,7 @@ export function createJiraWrite(deps: JiraWriteDeps): WritePort {
       const assignee = input.assignees?.[0];
       if (assignee) await client.put(`${path(work)}/assignee`, deployment === "cloud" ? { accountId: assignee } : { name: assignee });
       if (input.blockedBy && input.blockedBy.length > 0) await setBlockers(work, input.blockedBy.filter((each) => each.host === scope.host), true);
+      if (input.relatedTo?.host === scope.host) await link(settings.relatesLink, work.id, input.relatedTo.id);
       if (followUp) {
         const [host, , id] = followUp.item.split(":");
         if (host === scope.host && id) await link(settings.relatesLink, work.id, id);
@@ -382,7 +383,7 @@ export function createJiraWrite(deps: JiraWriteDeps): WritePort {
       return { work: subject, shared: "shared", conflict: false };
     },
 
-    /** A split's child put under its parent: the parent field (hierarchy rules of the project apply). */
+    /** A restructuring's child put under its parent: the parent field (hierarchy rules of the project apply). */
     async linkChild(parent, child) {
       const issue = await issueOf(child);
       if (issue.fields.parent?.key === parent.id) return;

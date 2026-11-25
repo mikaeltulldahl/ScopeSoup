@@ -182,21 +182,44 @@ export function asOptions(value: unknown): DecisionOption[] {
   return out;
 }
 
-/** The parts of a proposed split: each needs a title; a part without one is dropped. Texts are trimmed. */
+/** An existing Item as a part names it (`#12`, `12`, `A-3`, `github:work:12`): its id, or undefined when it is not one. */
+export function intoId(name: unknown): string | undefined {
+  if (typeof name !== "string") return undefined;
+  const id = name.trim().replace(/^#/, "").replace(/^[\w.-]+:work:/, "");
+  return /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(id) ? id : undefined;
+}
+
+/**
+ * The parts of a proposed restructuring: each needs a title and where it goes (and, going into an existing Item, the Item's id); a
+ * part without them is dropped. Texts are trimmed.
+ */
 export function asParts(value: unknown): ProposedPart[] {
   if (!Array.isArray(value)) return [];
   const parts: ProposedPart[] = [];
   for (const entry of value as unknown[]) {
     if (typeof entry !== "object" || entry === null || Array.isArray(entry)) continue;
-    const { title, description, verification } = entry as Record<string, unknown>;
-    if (typeof title !== "string" || !title.trim()) continue;
+    const { title, description, verification, goes, into } = entry as Record<string, unknown>;
+    if (typeof title !== "string" || !title.trim() || !PART_GOES.includes(goes as PartGoes)) continue;
+    const id = goes === "into" ? intoId(into) : undefined;
+    if (goes === "into" && !id) continue;
     parts.push({
       title: title.trim(),
       description: typeof description === "string" ? description.trim() : "",
       verification: typeof verification === "string" ? verification.trim() : "",
+      goes: goes as PartGoes,
+      ...(id ? { into: id } : {}),
     });
   }
   return parts;
+}
+
+/** A restructuring's fate and parts as given (`{ original, parts }`), or undefined when a part was dropped or they do not make one. */
+export function asRestructuring(value: unknown): { original: OriginalFate; parts: ProposedPart[] } | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+  const { original, parts: given } = value as Record<string, unknown>;
+  const parts = asParts(given);
+  if (!ORIGINAL_FATES.includes(original as OriginalFate) || !Array.isArray(given) || parts.length !== given.length) return undefined;
+  return restructuringProblem(original as OriginalFate, parts) ? undefined : { original: original as OriginalFate, parts };
 }
 
 export interface OpenQuestion {
@@ -213,8 +236,8 @@ export interface OpenQuestion {
   context?: string;
   /** Several options may be picked. */
   multiSelect?: true;
-  /** Set when the question is a proposed split of the item. */
-  proposal?: TextProposal;
+  /** Set when the question is a proposed restructuring of the item. */
+  proposal?: Restructuring;
 }
 
 /** An item whose text was changed on two machines: what it says now and each version put aside (`id` names it in a resolution). */
@@ -430,8 +453,8 @@ export interface Parked {
   canStartOver?: boolean;
   /** For "needs-decision": the question as triage phrased it. */
   decision?: { question: string; options: DecisionOption[]; recommendation: string; context?: string; multiSelect?: true };
-  /** For "needs-decision": triage's proposed split of the item (a person accepts, edits or rejects it). */
-  proposal?: TextProposal;
+  /** For "needs-decision": triage's proposed restructuring of the item (a person accepts, edits or rejects it). */
+  proposal?: Restructuring;
   /**
    * For "needs-decision" on several questions from triage: every one, in order, with the answer once given. An answer
    * names its question by its place in this list (`question` in `POST /api/answer`); the item is picked up once all have one.
@@ -490,31 +513,76 @@ export interface ParkedQuestion {
 }
 
 /**
- * A proposed split, with the reason: triage found the item too large and names its parts. Accepting creates them as children of
- * the item (where the host can be written), and the item becomes an umbrella. Text from an agent: data. (A proposed rewrite of
- * the item's text was removed; an old one in a log is no longer an open question.)
+ * A proposed restructuring of an Item, with the reason: triage names parts, where each goes, and what becomes of the Item
+ * (decision 93). Nothing is made until a person accepts. Text from an agent: data. (A proposed rewrite of the item's text was
+ * removed; an old one in a log is no longer an open question.)
  */
-export interface TextProposal {
+export interface Restructuring {
   reason: string;
+  /** What becomes of the Item the restructuring is proposed on. */
+  original: OriginalFate;
   parts: ProposedPart[];
-  /** The answers recorded on the item when the split was proposed, carried over into each part's text. */
+  /** The answers recorded on the item when it was proposed, carried over into each new Item's text. */
   carried?: string;
-  /** The children made so far (Scope Soup's store only; also found on the host by their marker line). A retry links and creates the rest. */
+  /** The parts made so far (Scope Soup's store only; also found on the host by their marker line). A retry links and makes the rest. */
   created?: CreatedPart[];
 }
 
-/** A child made for part `part` (0-based) of a split. `linked` is false while it is not under its parent yet (a failed sub-issue link). */
+/**
+ * What becomes of the Item: `keeps` the part that goes "original" (its text narrowed to that part, and triaged again), becomes an
+ * `umbrella` over its child parts, or is `replaced` (closed, naming the Items that took its parts; a duplicate is replaced with
+ * only a part "into" an existing Item).
+ */
+export type OriginalFate = "keeps" | "umbrella" | "replaced";
+export const ORIGINAL_FATES: readonly OriginalFate[] = ["keeps", "umbrella", "replaced"];
+
+/**
+ * Where a part goes: `original` (the Item keeps it), a new `child` Item under it, a new `related` Item linked to it, a new
+ * `unlinked` Item, or `into` an existing Item (its text added there).
+ */
+export type PartGoes = "original" | "child" | "related" | "unlinked" | "into";
+export const PART_GOES: readonly PartGoes[] = ["original", "child", "related", "unlinked", "into"];
+
+/** A part that was made (or written into an existing Item), `part` 0-based. `linked` is false while a child is not under its parent yet (a failed sub-issue link). */
 export interface CreatedPart {
   part: number;
   ref: Ref;
   linked: boolean;
 }
 
-/** One part of a proposed split: a child item's title, description and verification. Text from an agent: data. */
+/** One part of a proposed restructuring: its title, description and verification, and where it goes. Text from an agent: data. */
 export interface ProposedPart {
   title: string;
   description: string;
   verification: string;
+  goes: PartGoes;
+  /** With `goes: "into"`: the existing Item, as the host names it (`12`, `A-3`). */
+  into?: string;
+}
+
+/**
+ * Why these parts and this fate do not make a restructuring, or undefined when they do. The Item keeps a part exactly when its fate is
+ * `keeps`, and then something else goes too; an umbrella has a child; a part into an existing Item names it.
+ */
+export function restructuringProblem(original: OriginalFate, parts: readonly ProposedPart[]): string | undefined {
+  if (parts.length === 0) return "A restructuring needs at least one part.";
+  const kept = parts.filter((part) => part.goes === "original").length;
+  if (original === "keeps" && kept !== 1) return "When the Item keeps a part, exactly one part goes to it.";
+  if (original === "keeps" && parts.length < 2) return "When the Item keeps a part, at least one other part goes elsewhere.";
+  if (original !== "keeps" && kept > 0) return "A part goes to the Item only when the Item keeps a part.";
+  if (original === "umbrella" && !parts.some((part) => part.goes === "child")) return "An umbrella needs at least one child part.";
+  const unnamed = parts.findIndex((part) => part.goes === "into" && !part.into);
+  if (unnamed >= 0) return `Part ${unnamed + 1} goes into an existing Item but names none.`;
+  return undefined;
+}
+
+/** The restructuring in a few words: "2 new child Items, 1 into #12; the Item becomes an umbrella". */
+export function restructuringWords(original: OriginalFate, parts: readonly ProposedPart[]): string {
+  const count = (goes: PartGoes): number => parts.filter((part) => part.goes === goes).length;
+  const made = (["child", "related", "unlinked"] as const).flatMap((goes) => (count(goes) > 0 ? [`${count(goes)} new ${goes} Item${count(goes) === 1 ? "" : "s"}`] : []));
+  const into = parts.filter((part) => part.goes === "into").map((part) => `1 into ${/^\d+$/.test(part.into ?? "") ? "#" : ""}${part.into}`);
+  const fate = original === "keeps" ? "the Item keeps one part" : original === "umbrella" ? "the Item becomes an umbrella" : "the Item is closed as replaced";
+  return `${[...made, ...into].join(", ") || "no other part"}; ${fate}`;
 }
 
 /** What a person answered on an item (`by` names who). Kept by Scope Soup; sessions on the item are given it. */

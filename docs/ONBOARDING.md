@@ -43,7 +43,7 @@ The level is a project setting, the same on every machine: saving it is one comm
 
 A typical order:
 
-1. **Level 1.** Read the triages: answer the questions, accept, edit or reject the drafts and splits.
+1. **Level 1.** Read the triages: answer the questions, accept, edit or reject the drafts and restructurings.
 2. **Level 2 or 3.** Small Items first. At level 2 the implementor merges as the project's `CLAUDE.md` says; at level 3 a reviewer reads each change first.
 3. **Level 4.** Scope Soup merges through its merge queue, on its own check command or the project's CI on GitHub.
 
