@@ -28,11 +28,10 @@ export interface Backend {
   who: string;
   /** The person as people read them, when `who` is an id (Jira's display name). */
   name?: string;
-  /**
-   * Jira: waits the claim's settle time after an assignee was set, then names the agent whose claim stands on the issue (one
-   * written before the assignee showed), or nothing.
-   */
-  afterClaim?: (ref: Ref) => Promise<string | undefined>;
+  /** Jira: the agent whose live claim stands on the issue (`scopesoup.claim`), whoever wrote it; nothing when none does. */
+  agentClaim?: (ref: Ref) => Promise<string | undefined>;
+  /** Jira: waits the agents' claim settle time, so a claim written just before an assignee showed can be seen. */
+  settle?: () => Promise<void>;
   work: WorkPort;
   write: WritePort;
   now: () => Date;
@@ -214,7 +213,8 @@ export async function claimItem(backend: Backend, name: string, options: ClaimOp
     if (isMe(backend, item)) return { ref, shared: "shared", message: `${wording(item)} is already yours.` };
     await backend.write.setAssignees(ref, [backend.who], []);
     // An agent's claim checks for an assignee before it writes; one written meanwhile stands, and the assignee is taken off again.
-    const agent = await backend.afterClaim?.(ref);
+    await backend.settle?.();
+    const agent = await backend.agentClaim?.(ref);
     if (agent) {
       await backend.write.setAssignees(ref, [], [backend.who]);
       throw new Refused(`${wording(item)} was taken by ${agent} first, an agent that is working on it. It is not yours.`);
@@ -323,7 +323,9 @@ export async function releaseItem(backend: Backend, name: string, note?: string)
     // Jira names people by account id: the comment names them as people read them, and the text goes out inert.
     const said = `Released by ${shown(backend)}${mine ? "" : `, held by ${jira ? holder.actor.name : holder.actor.id}`}${text ? `: ${text}` : "."}`;
     if ((text || !mine) && backend.write.comment) await backend.write.comment(ref, jira ? inertText(said) : said);
-    return { ref, shared: "shared", message: `${shown(backend)} released ${whose}${wording(item)} (unassigned). An agent may pick it up.` };
+    // Jira: an agent's claim may stand beside the assignee; then no agent picks it up, that one has it.
+    const agent = jira ? await backend.agentClaim?.(ref) : undefined;
+    return { ref, shared: "shared", message: `${shown(backend)} released ${whose}${wording(item)} (unassigned). ${agent ? `${agent}, an agent, holds a claim on it.` : "An agent may pick it up."}` };
   }
   if (!backend.write.appendLog) throw new Refused(`Items cannot be released on ${backend.host}: it is read-only here.`);
   const outcome = await backend.write.appendLog(ref, { kind: "released", by: byPerson(backend), fields: { reason: text || (mine ? "released by the person who held it" : `released by ${backend.who}, held by ${holder.actor.name}`), ...(mine ? {} : { of: holder.actor.id }) } });

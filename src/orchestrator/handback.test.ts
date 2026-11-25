@@ -11,6 +11,7 @@ import { validateConfig } from "../config/validate.ts";
 import type { Change, LogRecord, Ref, WorkItem } from "../model/types.ts";
 import { refKey } from "../model/types.ts";
 import { openStore } from "../store/store.ts";
+import { personOf } from "../core/turns.ts";
 import { findHandbacks } from "./handback.ts";
 import { loadJobs } from "./jobs.ts";
 import type { Actions, AgentRunner } from "./ports.ts";
@@ -43,6 +44,7 @@ function world(items: WorkItem[], changes: Change[] = [], cfg = config(), branch
   for (const each of items) store.put(each, "sync", T0);
   for (const each of changes) store.put(each, "sync", T0);
   const started: string[] = [];
+  const logged: string[] = [];
   const runner: AgentRunner = {
     async start(request) {
       started.push(`${request.role} ${request.subject.id}`);
@@ -76,10 +78,12 @@ function world(items: WorkItem[], changes: Change[] = [], cfg = config(), branch
     },
     async release() {},
     async answerTurn() {},
-    async appendLog() {},
+    async appendLog(item, kind, fields) {
+      logged.push(`${item.id} ${kind} ${JSON.stringify(fields)}`);
+    },
   };
   const run = (at = T0) => tick({ store, runner, config: fixedConfig(cfg), actions, now: () => at });
-  return { store, started, run, job: (id: string) => loadJobs(store)[refKey(ref(id))], events: (kind: string) => store.eventsAfter(0, 1000).filter((event) => event.kind === kind) };
+  return { store, started, logged, run, job: (id: string) => loadJobs(store)[refKey(ref(id))], events: (kind: string) => store.eventsAfter(0, 1000).filter((event) => event.kind === kind) };
 }
 
 test("a hand-back on metaBranch: a person's revision line marked handback, newest of the log, for an open item", () => {
@@ -165,4 +169,44 @@ test("an item a person holds is left alone, even with a job waiting for its next
   w.store.put(item("A-1", { log: [HANDBACK], holder: { actor: { id: "Bo@laptop-b", name: "Bo on laptop-b" } } }), "sync", T0);
   await w.run("2026-11-20T10:00:02.000Z");
   assert.deepEqual(w.started, []);
+});
+
+// Jira: a hand-back comment (`handedBack`), adopted once by its comment id, only on the Item's own branch at the sha it names.
+const jiraRef = (id: string): Ref => ({ host: "jira", kind: "work", id });
+const jiraJob = (store: ReturnType<typeof openStore>) => loadJobs(store)[refKey(jiraRef("DEMO-5"))];
+const jiraItem = (over: Partial<WorkItem> = {}): WorkItem =>
+  item("DEMO-5", { ref: jiraRef("DEMO-5"), handedBack: { id: "40007", sha: SHA, branch: "scopesoup/DEMO-5", by: { id: "robin", name: "Robin Example" }, at: T0, note: "colours" }, ...over });
+
+test("a hand-back on Jira: found by its comment, the person is Robin, and another branch is not one", () => {
+  const found = findHandbacks([jiraItem()], []);
+  assert.deepEqual(found.map((each) => [each.key, each.branch, each.sha, each.by, each.comment, each.note]), [["jira:work:DEMO-5@comment:40007", "scopesoup/DEMO-5", SHA, "Robin Example", "40007", "colours"]]);
+  assert.equal(personOf({ item: jiraItem() })?.name, "Robin Example");
+  assert.deepEqual(findHandbacks([jiraItem({ handedBack: { id: "40008", sha: SHA, branch: "scopesoup/DEMO-3", by: { id: "robin", name: "Robin Example" }, at: T0 } })], []), []);
+  assert.deepEqual(findHandbacks([jiraItem({ state: "done" })], []), []);
+});
+
+test("the tick takes a Jira hand-back on at the branch's head, writes the revision naming the comment, and never twice", async () => {
+  const w = world([jiraItem()]);
+  await w.run();
+  const job = jiraJob(w.store)!;
+  assert.equal(job.step, "review");
+  assert.equal(job.head, SHA);
+  assert.deepEqual(w.logged.filter((each) => each.includes("revision")), [`DEMO-5 revision ${JSON.stringify({ sha: SHA, branch: "scopesoup/DEMO-5", handback: "40007" })}`]);
+  await w.run("2026-11-20T10:00:05.000Z");
+  assert.equal(w.events("orchestrator.handback").length, 1);
+});
+
+test("a Jira hand-back whose sha is not the branch's head is refused, and one beside a standing job is not taken on", async () => {
+  const moved = world([jiraItem()], [], config(), NEWER);
+  await moved.run();
+  assert.equal(jiraJob(moved.store), undefined);
+  assert.deepEqual(moved.started, []);
+  assert.match((moved.events("orchestrator.handback_refused")[0]!.data as { reason: string }).reason, /names bbbbbbbbb, but scopesoup\/DEMO-5 is at ccccccccc here/);
+
+  // A job of the Item stands (a later hand-back, another comment): the new one is not taken on over it.
+  const w = world([jiraItem()]);
+  await w.run();
+  w.store.put(jiraItem({ handedBack: { id: "40009", sha: SHA, branch: "scopesoup/DEMO-5", by: { id: "robin", name: "Robin Example" }, at: T0 } }), "sync", T0);
+  await w.run("2026-11-20T10:00:05.000Z");
+  assert.equal(w.events("orchestrator.handback").length, 1);
 });

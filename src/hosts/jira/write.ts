@@ -589,6 +589,8 @@ ${note}` : ""}`;
      * a live claim of another machine wins without a write; else this machine's entry (a new one with its time and a nonce, or its
      * live one renewed, keeping its time) is written, and after `claimSettleMs` the property is read again. The earliest live entry
      * there wins (by time, then nonce); it must be this write's own nonce, else this entry is taken out and the claim is not won.
+     * A person's claim (`scopesoup item claim`) sets the assignee, waits as long and yields to a claim it then finds; this claim
+     * looks at the assignee again after its own wait and yields to a person who appeared. Both may yield; neither runs over the other.
      */
     async claim(subject, { until }) {
       const machine = deps.machine!;
@@ -606,8 +608,10 @@ ${note}` : ""}`;
       await deps.sleep(deps.claimSettleMs ?? 2000);
       const after = live((await deps.read(subject)).claims);
       const winner = after[0];
-      if (winner?.nonce === nonce) return { won: true };
+      const assignee = winner?.nonce === nonce ? (await issueOf(subject)).fields.assignee : null;
+      if (winner?.nonce === nonce && !assignee) return { won: true };
       if (after.some((each) => each.nonce === nonce)) await writeClaims(subject, after.filter((each) => each.nonce !== nonce));
+      if (assignee) return { won: false, why: `held by ${assignee.displayName ?? assignee.accountId ?? assignee.name}` };
       return { won: false, why: winner ? `scopesoup on ${winner.machine} claimed it first` : "the claim does not show on Jira" };
     },
 

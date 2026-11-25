@@ -11,7 +11,7 @@ import type { JiraScope } from "./map.ts";
 import { actorOf, DEFAULT_ABANDONED_RESOLUTIONS, DEFAULT_BLOCKS_LINK, DEFAULT_PRIORITIES, ISSUE_FIELDS, isoTime, issueToWork, jqlString, jqlTime, PROPERTY_PREFIX, projectOf, textOf, workRef } from "./map.ts";
 import type { JiraComment, JiraIssue, JiraProperty, JiraUser } from "./rest.ts";
 import type { JiraRead } from "./conventions.ts";
-import { applyJiraThread, readJiraThread } from "./conventions.ts";
+import { applyJiraThread, COMMENT_PROPERTY, HANDBACK_KIND, readJiraThread } from "./conventions.ts";
 import type { TransitionTarget } from "./write.ts";
 import { createJiraWrite, DEFAULT_CHILD_ISSUE_TYPE, DEFAULT_DUPLICATE_LINK, DEFAULT_ISSUE_TYPE, DEFAULT_RELATES_LINK, DEFAULT_RESOLUTIONS, DEFAULT_TRANSITIONS, descriptionSha, JIRA_COMMENT_LIMIT } from "./write.ts";
 
@@ -259,12 +259,50 @@ export function createJiraHost(config: JiraConfig): JiraHost {
     return new Set([...configured, ...(assignable?.ids ?? [])]);
   }
 
+  /**
+   * Who was the issue's assignee just before each moment, lower case ("" for nobody), from its changelog (`expand=changelog`;
+   * unconfirmed: the shape, and that Cloud names people by account id and Data Center by user name in `from` and `to`).
+   */
+  async function assigneeAt(ref: Ref): Promise<(at: string) => string> {
+    type History = { created?: string; items?: { field?: string; fieldId?: string; from?: string | null; to?: string | null }[] };
+    const issue = await client.get<JiraIssue & { changelog?: { histories?: History[] } }>(`${api}/issue/${encodeURIComponent(ref.id)}?fields=assignee&expand=changelog`);
+    const changes = (issue.changelog?.histories ?? []).flatMap((history) =>
+      (history.items ?? []).filter((item) => item.fieldId === "assignee" || item.field === "assignee").map((item) => ({ at: Date.parse(isoTime(history.created ?? "")), from: (item.from ?? "").toLowerCase(), to: (item.to ?? "").toLowerCase() })),
+    ).filter((change) => !Number.isNaN(change.at)).sort((a, b) => a.at - b.at);
+    const current = issue.fields.assignee ? actorOf(issue.fields.assignee).id.toLowerCase() : "";
+    return (at) => {
+      // A change at the very same moment counts as after it: a hand-back is posted before its author is unassigned.
+      const before = changes.filter((change) => change.at < Date.parse(at)).pop();
+      return before ? before.to : changes[0] ? changes[0].from : current;
+    };
+  }
+
+  const isHandback = (comment: JiraThreadComment): boolean => {
+    const property = comment.properties[COMMENT_PROPERTY] as { v?: unknown; kind?: unknown } | undefined;
+    return property?.v === 1 && property.kind === HANDBACK_KIND;
+  };
+
   /** One issue through the trust rule; the token's account is asked once per read (and kept once known, `myself`). */
   async function read(ref: Ref): Promise<JiraRead> {
     const self = await selfId();
     const jira = await threadAs(ref, self);
     const may = await answerers();
-    return readJiraThread(scope.host, ref, jira, self, (id) => may.has(id), now(), config.claimsOfAnyone === true);
+    // A person's hand-back counts from whoever was the assignee when it was posted, or one named in `answerers`. The changelog is
+    // read only for an issue that has one.
+    let handbackFrom = (_comment: JiraThreadComment): boolean => false;
+    if (jira.comments.some((comment) => isHandback(comment) && comment.author.id.toLowerCase() !== self)) {
+      let holderAt: (at: string) => string = () => "";
+      try {
+        holderAt = await assigneeAt(ref);
+      } catch (error) {
+        log(`Jira: could not read the changelog of ${ref.id}, so a person's hand-back there does not count this time: ${error instanceof Error ? error.message : String(error)}`);
+      }
+      handbackFrom = (comment) => {
+        const id = comment.author.id.toLowerCase();
+        return configured.has(id) || holderAt(comment.created) === id;
+      };
+    }
+    return readJiraThread(scope.host, ref, jira, self, (id) => may.has(id), now(), { claimsOfAnyone: config.claimsOfAnyone === true, handbackFrom });
   }
 
   /** Issues with an open question: read again each listing, so a deleted question comment is seen. */

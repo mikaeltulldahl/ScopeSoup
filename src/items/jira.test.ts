@@ -8,9 +8,11 @@ import { join } from "node:path";
 import { after, describe, test } from "node:test";
 import type { HostSettings } from "../hostSetup.ts";
 import type { JiraHost } from "../hosts/jira/index.ts";
+import type { JiraUser } from "../hosts/jira/rest.ts";
 import { CLAIM_PROPERTY, COMMENT_PROPERTY } from "../hosts/jira/conventions.ts";
 import type { Writable } from "../hosts/jira/testHost.ts";
 import { writable } from "../hosts/jira/testHost.ts";
+import { personOf } from "../core/turns.ts";
 import { findHandbacks } from "../orchestrator/handback.ts";
 import type { CliDeps } from "./cli.ts";
 import { runItemCli } from "./cli.ts";
@@ -28,14 +30,27 @@ const SHA = "b".repeat(40);
 const UNTIL = "2026-11-21T11:00:00.000Z";
 
 /** Robin's commands straight on her host, as `item` builds them on Jira. */
-async function robinBackend(w: Writable, afterClaim?: Backend["afterClaim"]): Promise<{ host: JiraHost; backend: Backend }> {
+async function robinBackend(w: Writable): Promise<{ host: JiraHost; backend: Backend }> {
   const host = w.robin();
   const me = await host.info.whoami();
   const backend: Backend = {
     kind: "jira", host: host.info.id, who: me.id, name: me.name, work: host.work, write: host.write!, now: () => new Date(w.clock.ms), mainBranch: "main",
-    branches: fixedBranches(() => ({ state: "ready", sha: SHA, ahead: 1 })), ...(afterClaim ? { afterClaim } : {}),
+    branches: fixedBranches(() => ({ state: "ready", sha: SHA, ahead: 1 })),
+    agentClaim: async (ref) => {
+      const live = (await host.read(ref)).claims.filter((each) => !each.released && Date.parse(each.until) > w.clock.ms);
+      return live[0] ? `scopesoup on ${live[0].machine}` : undefined;
+    },
   };
   return { host, backend };
+}
+
+/** The server's account id (Cloud) or user name (Data Center). */
+const serverId = (deployment: "cloud" | "datacenter"): string => (deployment === "cloud" ? "000000:scopesoup-0002" : "scopesoup");
+
+/** A hand-back comment written straight into the fake, as `author`, with its property. */
+function forgeHandback(w: Writable, deployment: "cloud" | "datacenter", id: string, author: JiraUser, fields: { sha?: string; branch?: string } = {}): void {
+  (w.fake.comments["DEMO-5"] ??= []).push({ id, author, created: new Date(w.clock.ms += 1000).toISOString().replace("Z", "+0000"), body: deployment === "cloud" ? { version: 1, type: "doc", content: [] } : "Handed back" });
+  w.fake.commentProperties[id] = { [COMMENT_PROPERTY]: { v: 1, kind: "handback", sha: fields.sha ?? SHA, branch: fields.branch ?? "scopesoup/DEMO-5" } };
 }
 
 /** A configuration file whose host is the fake Jira of `w`, and the command line with Robin's host in place of the real one. */
@@ -114,7 +129,7 @@ for (const deployment of ["cloud", "datacenter"] as const) {
 
     test("an agent's claim written while Robin's assignee settles stands: she is unassigned again", async () => {
       const w = writable(deployment);
-      const self = deployment === "cloud" ? "000000:scopesoup-0002" : "scopesoup";
+      const self = serverId(deployment);
       const c = cli(w, deployment, {
         // The agent's claim lands during the wait, as one written just before the assignee showed would.
         sleep: async () => void (w.fake.issueProperties["DEMO-5"] = { [CLAIM_PROPERTY]: { v: 1, by: self, claims: [{ machine: "desk", until: UNTIL, released: false, at: "2026-11-21T09:00:00.000Z", nonce: "n1" }] } }),
@@ -138,26 +153,81 @@ for (const deployment of ["cloud", "datacenter"] as const) {
       assert.deepEqual({ ...property, note: undefined }, { v: 1, kind: "handback", sha: SHA, branch: "scopesoup/DEMO-5", note: undefined });
       assert.ok(!String(property.note).includes("@kim") && !String(property.note).includes("Fixes"));
 
-      // Scope Soup's server host, with its own token, reads the hand-back from a person of the project and adopts it.
+      // Scope Soup's server host, with its own token, reads the hand-back: Robin was the assignee when she posted it (changelog).
       const item = (await w.host.work.getWork(w.ref("DEMO-5")))!;
+      assert.equal(item.handedBack?.id, comment.id);
       assert.equal(item.handedBack?.sha, SHA);
       assert.equal(item.handedBack?.branch, "scopesoup/DEMO-5");
       assert.equal(item.handedBack?.by.name, "Robin Example");
       const found = findHandbacks([item], []);
-      assert.deepEqual(found.map((each) => [each.key, each.branch, each.sha, each.by]), [[`jira:work:DEMO-5@${SHA}`, "scopesoup/DEMO-5", SHA, "Robin Example"]]);
+      assert.deepEqual(found.map((each) => [each.key, each.branch, each.sha, each.by, each.comment]), [[`jira:work:DEMO-5@comment:${comment.id}`, "scopesoup/DEMO-5", SHA, "Robin Example", comment.id]]);
+      assert.equal(personOf({ item })?.name, "Robin Example");
       assert.deepEqual((await listItems(backend, {})).filter((row) => row.id === "DEMO-5").map((row) => [row.free, row.inReview]), [[false, true]]);
 
-      // Scope Soup's own later revision supersedes it.
+      // A revision of Scope Soup's that names no hand-back does not supersede it, whatever its time; the one that adopts it does.
       await w.write.logLine!(w.ref("DEMO-5"), { kind: "revision", fields: { sha: "c".repeat(40), branch: "scopesoup/DEMO-5" } });
+      assert.equal((await w.host.work.getWork(w.ref("DEMO-5")))!.handedBack?.id, comment.id);
+      await w.write.logLine!(w.ref("DEMO-5"), { kind: "revision", fields: { sha: SHA, branch: "scopesoup/DEMO-5", handback: comment.id } });
       assert.equal((await w.host.work.getWork(w.ref("DEMO-5")))!.handedBack, undefined);
+      // A later hand-back (a higher comment id) counts again.
+      await claimItem(backend, "DEMO-5");
+      await handBackItem(backend, "DEMO-5");
+      assert.equal((await w.host.work.getWork(w.ref("DEMO-5")))!.handedBack?.id, w.fake.comments["DEMO-5"]!.at(-1)!.id);
     });
 
-    test("a hand-back comment by someone outside the project is a plain comment", async () => {
+    test("forged hand-backs do not count: another branch, not the assignee then, an app, or anyone outside answerers", async () => {
       const w = writable(deployment);
-      const stranger = deployment === "cloud" ? { accountId: "000000:stranger-0009", displayName: "Stranger" } : { name: "stranger", displayName: "Stranger" };
-      w.fake.comments["DEMO-5"] = [{ id: "39001", author: stranger, created: "2026-11-21T09:30:00.000+0000", body: deployment === "cloud" ? { version: 1, type: "doc", content: [] } : "" }];
-      w.fake.commentProperties["39001"] = { [COMMENT_PROPERTY]: { v: 1, kind: "handback", sha: SHA, branch: "scopesoup/DEMO-5" } };
+      const { backend } = await robinBackend(w);
+      // Robin's own command refuses to record another Item's branch: it does not read back as a hand-back.
+      await claimItem(backend, "DEMO-5");
+      await assert.rejects(w.robin().write!.recordHandback!(w.ref("DEMO-5"), { sha: SHA, branch: "scopesoup/DEMO-3" }), /does not show as one/);
       assert.equal((await w.host.work.getWork(w.ref("DEMO-5")))!.handedBack, undefined);
+      // Nor does a bad sha.
+      forgeHandback(w, deployment, "39000", w.person, { sha: "not-a-sha" });
+      assert.equal((await w.host.work.getWork(w.ref("DEMO-5")))!.handedBack, undefined);
+      await releaseItem(backend, "DEMO-5");
+
+      // Robin, no longer the assignee, and a stranger, never one: neither counts.
+      forgeHandback(w, deployment, "39001", w.person);
+      const stranger: JiraUser = deployment === "cloud" ? { accountId: "000000:stranger-0009", displayName: "Stranger" } : { name: "stranger", displayName: "Stranger" };
+      forgeHandback(w, deployment, "39002", stranger);
+      assert.equal((await w.host.work.getWork(w.ref("DEMO-5")))!.handedBack, undefined);
+      // Named in `answerers`, Robin's counts; an app's never does, named or not.
+      const app: JiraUser = deployment === "cloud" ? { accountId: "000000:app-0010", displayName: "Some App", accountType: "app" } : { name: "someapp", displayName: "Some App", accountType: "app" };
+      const robinId = deployment === "cloud" ? w.person.accountId! : w.person.name!;
+      const named = w.another("laptop-b", { answerers: [robinId, deployment === "cloud" ? app.accountId! : app.name!] });
+      assert.equal((await named.work.getWork(w.ref("DEMO-5")))!.handedBack?.id, "39001");
+      forgeHandback(w, deployment, "39003", app);
+      assert.equal((await named.work.getWork(w.ref("DEMO-5")))!.handedBack?.id, "39001");
+      // An answerer's hand-back of another Item's branch does not count either.
+      forgeHandback(w, deployment, "39004", w.person, { branch: "scopesoup/DEMO-3" });
+      assert.equal((await named.work.getWork(w.ref("DEMO-5")))!.handedBack?.id, "39001");
+    });
+
+    test("the server ignores a claim property written by a person's token; Robin's commands see it", async () => {
+      const w = writable(deployment);
+      assert.deepEqual(await w.robin().write!.claim!(w.ref("DEMO-3"), { until: UNTIL, shown: "robins-laptop" }), { won: true });
+      assert.equal(w.fake.issueProperties["DEMO-3"]?.[CLAIM_PROPERTY] !== undefined, true);
+      assert.equal((await w.host.work.getWork(w.ref("DEMO-3")))!.holder, undefined);
+      assert.equal((await w.robin().work.getWork(w.ref("DEMO-3")))!.holder?.actor.name, "scopesoup on robins-laptop");
+    });
+
+    test("an agent's claim yields to an assignee that appeared during its wait", async () => {
+      const w = writable(deployment);
+      const desk = w.another("desk", { sleep: async () => void (w.fake.issues.get("DEMO-5")!.fields.assignee = w.person) });
+      assert.deepEqual(await desk.write!.claim!(w.ref("DEMO-5"), { until: UNTIL, shown: "desk" }), { won: false, why: "held by Robin Example" });
+      assert.equal(w.fake.issueProperties["DEMO-5"]?.[CLAIM_PROPERTY], undefined);
+    });
+
+    test("releasing a person's hold beside an agent's claim says the agent holds a claim, not that an agent may pick it up", async () => {
+      const w = writable(deployment);
+      const { backend } = await robinBackend(w);
+      await claimItem(backend, "DEMO-5");
+      w.fake.issueProperties["DEMO-5"] = { [CLAIM_PROPERTY]: { v: 1, by: serverId(deployment), claims: [{ machine: "desk", until: UNTIL, released: false, at: "2026-11-21T09:00:00.000Z", nonce: "n1" }] } };
+      const released = await releaseItem(backend, "DEMO-5");
+      assert.match(released.message, /released DEMO-5 "Colour the cards" \(unassigned\)\. scopesoup on desk, an agent, holds a claim on it\.$/);
+      // The agent's claim itself is not released.
+      await assert.rejects(releaseItem(backend, "DEMO-5"), (error) => error instanceof Refused && /held by scopesoup on desk, an agent that is working on it/.test(error.message));
     });
 
     test("new without writes, and new and claim with nothing to write on, are refused", async () => {

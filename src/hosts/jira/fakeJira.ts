@@ -91,6 +91,7 @@ export function fakeJira(setup: FakeJiraSetup): FakeJira {
     people: [setup.user, ...(setup.people ?? [])], assignable: setup.assignable, commentLimit: setup.commentLimit ?? 32_767,
     now: setup.now ?? (() => (tick += 1000)),
     ids: { comment: 40_000, link: 50_000, issue: 60_000 },
+    changelog: {},
   };
   const calls: FakeJiraCall[] = [];
   const limits: { times: number; headers: Record<string, string> }[] = [];
@@ -155,7 +156,9 @@ export function fakeJira(setup: FakeJiraSetup): FakeJira {
       const key = decodeURIComponent(match[1]);
       const issue = issues.get(setup.moved?.[key] ?? key);
       if (!issue) return refuse(404, "Issue does not exist or you do not have permission to see it.");
-      return answer(200, withFields(issue, query.get("fields")?.split(",") ?? null));
+      const histories = writes.changelog[issue.key] ?? [];
+      const changelog = (query.get("expand") ?? "").split(",").includes("changelog") ? { changelog: { startAt: 0, maxResults: histories.length, total: histories.length, histories } } : {};
+      return answer(200, { ...withFields(issue, query.get("fields")?.split(",") ?? null), ...changelog });
     }
     match = /^\/issue\/([^/]+)\/comment$/.exec(rest);
     if (method === "GET" && match?.[1]) {

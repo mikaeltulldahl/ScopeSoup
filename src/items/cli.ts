@@ -225,10 +225,9 @@ interface Opened {
 /** How long a person's claim on Jira waits for an agent's claim written meanwhile: the agents' own settle time. */
 const JIRA_CLAIM_SETTLE_MS = 2000;
 
-/** Jira: after the settle time, the agent whose live claim stands on the issue, if any. */
-function jiraAfterClaim(host: JiraHost, sleep: (ms: number) => Promise<void>, now: () => Date) {
+/** Jira: the agent whose live claim stands on the issue, if any. */
+function jiraAgentClaim(host: JiraHost, now: () => Date) {
   return async (ref: Ref): Promise<string | undefined> => {
-    await sleep(JIRA_CLAIM_SETTLE_MS);
     const live = (await host.read(ref)).claims.filter((each) => !each.released && Date.parse(each.until) > now().getTime());
     return live[0] ? `scopesoup on ${live[0].machine}` : undefined;
   };
@@ -264,7 +263,7 @@ async function open(deps: CliDeps, setup: Setup, values: { as?: string; server?:
     const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((done) => setTimeout(done, ms)));
     const backend: Backend = {
       kind: "jira", host: host.info.id, who: me.id, name: me.name, work: host.work, write: host.write ?? {}, now, mainBranch: setup.mainBranch, branches: branchesOf(deps, setup),
-      afterClaim: jiraAfterClaim(host, sleep, now),
+      agentClaim: jiraAgentClaim(host, now), settle: () => sleep(JIRA_CLAIM_SETTLE_MS),
     };
     return { doer: hostDoer(backend, host), via: `Jira ${jira.project} as ${me.name}`, kind: "jira" };
   }
