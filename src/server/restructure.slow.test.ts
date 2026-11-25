@@ -28,7 +28,7 @@ test("on a meta branch host, accepting makes each part where it goes, closes the
   const host = createMetaBranchHost({ repoDir: repo.dir, allowWrites: true, remote: null, person: { name: "Test Person", email: "test.person@example.invalid" }, machine: "laptop-a", idPrefix: "A", now: clock });
   const store = openStore(":memory:");
   const sync = createSync({ store, hosts: [host], intervalMs: 60_000, useWatch: false });
-  const server = createServer({ store, port: 0, items: { host: "metaBranch", write: host.write! }, restructure: [{ host: "metaBranch", write: host.write! }], syncNow: () => sync.refreshNow(), planning: () => ({ bugLabels: [] }) });
+  const server = createServer({ store, port: 0, items: { host: "metaBranch", write: host.write! }, restructure: [{ host: "metaBranch", write: host.write!, read: (ref) => host.work.getWork(ref) }], syncNow: () => sync.refreshNow(), planning: () => ({ bugLabels: [] }) });
   const url = (await server.start()).url;
   try {
     const item: Ref = (await host.write!.createWork!({ title: "Change the file format", body: "Everything.", labels: ["scopesoup"] })).work;
@@ -36,7 +36,7 @@ test("on a meta branch host, accepting makes each part where it goes, closes the
     const parts = PARTS.map((part) => (part.goes === "into" ? { ...part, into: other.id } : part));
     const reason = "Triage proposes to restructure the Item.";
     // As park writes it.
-    const proposal = { reason, original: "keeps" as const, parts, carried: CARRIED };
+    const proposal = { id: "abc12345", reason, original: "keeps" as const, parts, carried: CARRIED };
     await host.write!.appendLog!(item, { kind: "question", by: { who: "scopesoup", agent: true }, fields: { question: reason, proposal, parked: "needs-decision" } });
     await sync.refreshNow();
     saveJobs(store, { [`metaBranch:work:${item.id}`]: { item, workspace: "w", branch: `scopesoup/${item.id}`, step: "triage", failures: 0, fixRounds: 0, startedAt: clock(), proposal, parked: { as: "needs-decision", reason, at: clock() } } });
@@ -54,11 +54,11 @@ test("on a meta branch host, accepting makes each part where it goes, closes the
     assert.deepEqual(children.map((child) => child.title), ["Write the new format"]);
     assert.ok(!children[0]!.labels.includes("scopesoup"), "no invite label");
     assert.equal(children[0]!.verification, "A test writes a sample.");
-    assert.match(children[0]!.body ?? "", /## Decisions carried over from A-1[^]*Keep the old one readable[^]*Part 2 of the restructuring of metaBranch:work:A-1\.$/);
+    assert.match(children[0]!.body ?? "", /## Decisions carried over from A-1[^]*Keep the old one readable[^]*Part 2 of restructuring abc12345 of metaBranch:work:A-1\.$/);
     const related = works.find((work) => work.title === "Document the format")!;
     assert.equal(related.parent, undefined);
-    assert.match(related.body ?? "", /Part 3 of the restructuring of metaBranch:work:A-1\.$/);
-    assert.match(works.find((work) => work.ref.id === other.id)!.body ?? "", /^Old files stay readable\.\n\n## Added from metaBranch:work:A-1: Old files readable\n\nOld files keep opening\.\n\nPart 4 of the restructuring of metaBranch:work:A-1\.$/);
+    assert.match(related.body ?? "", /Part 3 of restructuring abc12345 of metaBranch:work:A-1\.$/);
+    assert.match(works.find((work) => work.ref.id === other.id)!.body ?? "", /^Old files stay readable\.\n\n## Added from metaBranch:work:A-1: Old files readable\n\nOld files keep opening\.\n\nPart 4 of restructuring abc12345 of metaBranch:work:A-1\.$/);
     // The item is narrowed to the part it keeps, and released so triage looks at it again.
     const kept = works.find((work) => work.ref.id === item.id)!;
     assert.equal(kept.title, "Read the old format");

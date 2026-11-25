@@ -256,6 +256,7 @@ export function createHostActions(deps: HostActionsDeps): Actions {
               ? {
                 proposal: {
                   reason: inertText(each.proposal.reason),
+                  id: each.proposal.id,
                   original: each.proposal.original,
                   parts: each.proposal.parts.map((part) => ({ ...part, title: inertText(part.title), description: inertText(part.description), verification: inertText(part.verification) })),
                   ...(each.proposal.carried ? { carried: inertText(each.proposal.carried) } : {}),

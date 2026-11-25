@@ -146,8 +146,6 @@ export interface NewWork {
   state?: WorkState;
   labels?: string[];
   parent?: Ref;
-  /** A related Item of a restructuring: hosts that keep links apart from the text (Jira: "relates to") link it; the others find the Item named in `body`. */
-  relatedTo?: Ref;
   blockedBy?: Ref[];
   verification?: string;
   priority?: Priority;
@@ -227,7 +225,7 @@ export interface QuestionWrite {
   /** The draft comment of the triage round this question belongs to. */
   draft?: string;
   /** A proposed restructuring: the question is a person's decision on it (`POST /api/proposal`). */
-  proposal?: { reason: string; original: OriginalFate; parts: ProposedPart[]; carried?: string };
+  proposal?: { id: string; reason: string; original: OriginalFate; parts: ProposedPart[]; carried?: string };
 }
 
 /** One triage round's draft of the description, posted on the item's host (GitHub: a draft comment). Its text is already inert. */
@@ -327,6 +325,11 @@ export interface WritePort {
   resolveConflict?(work: Ref, text: string, supersedes: string[]): Promise<WriteOutcome>;
   /** Puts an existing item under a parent, where the link is a call of its own (GitHub sub-issues). Nothing when it is already there. */
   linkChild?(parent: Ref, child: Ref): Promise<void>;
+  /**
+   * Links two existing items as related, where the host keeps such links apart from the text (Jira: "relates to"). Nothing when the
+   * link is there already. Hosts without it name the item in the text (GitHub: `#N`).
+   */
+  linkRelated?(item: Ref, related: Ref): Promise<void>;
   /** Adds a line to an item's log. A log is append-only: lines are never changed or removed. */
   appendLog?(work: Ref, line: LogLineInput): Promise<WriteOutcome>;
   /** Several lines added to an item's log in one write (the answers of one Send). */

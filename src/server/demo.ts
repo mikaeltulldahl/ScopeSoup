@@ -83,6 +83,7 @@ export const DEMO_QUESTIONS: Decision[] = [
 
 /** The triage's proposed restructuring of item 53. */
 const DEMO_RESTRUCTURING: Restructuring = {
+  id: "5eed0053",
   reason: "Triage proposes to restructure the Item: 1 new child Item, 1 new related Item, 1 into #82; the Item keeps one part. Four changes that each merge on their own; sharing by link is already item 82.",
   original: "keeps",
   parts: [

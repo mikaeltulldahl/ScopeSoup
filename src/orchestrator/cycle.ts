@@ -31,6 +31,7 @@ import { dropOverturns, overturnMessage, overturnsFor } from "./overturns.ts";
 import type { ChangedFile } from "../core/fence.ts";
 import { FENCE_OUTSIDE_FILES, fenceBreach, proposedSplit } from "../core/fence.ts";
 import type { Finding } from "./jobs.ts";
+import { restructuringId } from "./restructure.ts";
 import { findingKey, followUpItem, isFollowUp, noProgress } from "./followUp.ts";
 import { busyWhy, isOpenItem, keepAboutOthers, linkedItem as namedItem, readWaitingAbouts, writeWaitingAbouts } from "./aboutOthers.ts";
 import { workBranch, workspaceKey } from "./paths.ts";
@@ -102,7 +103,7 @@ async function tellPeople(ctx: Context, job: Job, as: ParkedAs, reason: string, 
   const posted = as === "needs-decision" && (refining
     ? actions.postDraft !== undefined && (await draftOnHost(ctx, job))
     : actions.askQuestions !== undefined && (await askOnHost(ctx, job, proposal
-      ? [{ question: `Proposed restructuring: ${proposal.reason}`, options: [], recommendation: "", proposal: { reason: proposal.reason, original: proposal.original, parts: proposal.parts, ...(proposal.carried ? { carried: proposal.carried } : {}) } }]
+      ? [{ question: `Proposed restructuring: ${proposal.reason}`, options: [], recommendation: "", proposal: { id: proposal.id, reason: proposal.reason, original: proposal.original, parts: proposal.parts, ...(proposal.carried ? { carried: proposal.carried } : {}) } }]
       : questions.length > 0 ? questions : [decision ?? { question: reason, options: [], recommendation: "" }])));
   if (!posted) {
     await ctx.act("put the item on a person's list", key, () => actions.answerTurn(job.item, ask, reason));
@@ -112,7 +113,7 @@ async function tellPeople(ctx: Context, job: Job, as: ParkedAs, reason: string, 
     }
     // The parts a restructuring has made so far stay in the store: the log line keeps what a person decides on.
     const fields: Record<string, unknown> = proposal
-      ? { question: reason, proposal: { reason: proposal.reason, original: proposal.original, parts: proposal.parts, ...(proposal.carried ? { carried: proposal.carried } : {}) } }
+      ? { question: reason, proposal: { id: proposal.id, reason: proposal.reason, original: proposal.original, parts: proposal.parts, ...(proposal.carried ? { carried: proposal.carried } : {}) } }
       : decision
         ? { question: decision.question, options: decision.options, ...(decision.recommendation ? { recommendation: decision.recommendation } : {}), ...(decision.context ? { context: decision.context } : {}), ...(decision.multiSelect ? { multiSelect: true } : {}) }
         : { question: reason };
@@ -382,7 +383,7 @@ function parkRestructure(ctx: Context, job: Job, proposed: NonNullable<TriageAns
     return named ? { ...part, into: named.ref.id } : part;
   });
   const reason = `Triage proposes to restructure the Item: ${restructuringWords(proposed.original, parts)}.${proposed.reason ? ` ${proposed.reason}` : ""}${why?.trim() ? ` ${why.trim()}` : ""}`;
-  job.proposal = { reason, original: proposed.original, parts, ...(carried ? { carried } : {}) };
+  job.proposal = { id: restructuringId(job.item, ctx.at), reason, original: proposed.original, parts, ...(carried ? { carried } : {}) };
   return park(ctx, job, "needs-decision", `${reason} Accept, edit or reject it on the item page.`, "decision");
 }
 

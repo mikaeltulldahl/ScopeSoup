@@ -3,7 +3,7 @@
 
 import { asLabelChange, changeText, isEmptyChange } from "../../model/labels.ts";
 import type { Actor, Assumption, AssumptionSettled, DecisionOption, HostDraft, LabelChange, HostRecord, LogRecord, OpenQuestion, OriginalFate, PartGoes, RecordedAnswer, ProposedPart, Ref, WorkItem } from "../../model/types.ts";
-import { asOptions, asRestructuring, optionText } from "../../model/types.ts";
+import { asOptions, asRestructuringRecord, optionText } from "../../model/types.ts";
 import type { WorkPort } from "../../ports/host.ts";
 import { COMMENT_LIMIT, WorkGone } from "../../ports/host.ts";
 import type { Client } from "./client.ts";
@@ -203,7 +203,7 @@ export function readThread(subject: Ref, comments: RestComment[], self: string |
         if (typeof data.proposal === "object" && data.proposal !== null && !Array.isArray(data.proposal)) {
           const proposal = data.proposal as Record<string, unknown>;
           const carried = str(proposal.carried);
-          const restructuring = asRestructuring(proposal);
+          const restructuring = asRestructuringRecord(proposal);
           if (restructuring) question.proposal = { reason: str(proposal.reason), ...restructuring, ...(carried ? { carried } : {}) };
         }
         const n = typeof data.n === "number" && Number.isInteger(data.n) && data.n > 0 ? data.n : undefined;
@@ -543,7 +543,7 @@ export function questionNumber(comment: RestComment | undefined): number | undef
 }
 
 /** What a question comment says: `**Qn: question**`, the context, the options, how to answer; then its marker. The text is inert already. */
-export function questionBody(n: number, ask: { question: string; options: DecisionOption[]; recommendation?: string; context?: string; multiSelect?: true; parked: string; step: string; draft?: string; proposal?: { reason: string; original: OriginalFate; parts: ProposedPart[]; carried?: string } }): string {
+export function questionBody(n: number, ask: { question: string; options: DecisionOption[]; recommendation?: string; context?: string; multiSelect?: true; parked: string; step: string; draft?: string; proposal?: { id: string; reason: string; original: OriginalFate; parts: ProposedPart[]; carried?: string } }): string {
   const option = (each: DecisionOption): string => {
     const label = typeof each === "string" ? each : each.label;
     const description = typeof each === "string" ? "" : each.description;
@@ -563,7 +563,7 @@ export function questionBody(n: number, ask: { question: string; options: Decisi
     ...(ask.recommendation ? { recommendation: ask.recommendation } : {}), ...(ask.context?.trim() ? { context: ask.context.trim() } : {}), ...(ask.multiSelect ? { multiSelect: true } : {}),
     parked: ask.parked, step: ask.step,
     ...(ask.draft ? { draft: Number(ask.draft) } : {}),
-    ...(ask.proposal ? { proposal: { reason: ask.proposal.reason, original: ask.proposal.original, parts: ask.proposal.parts, ...(ask.proposal.carried ? { carried: ask.proposal.carried } : {}) } } : {}),
+    ...(ask.proposal ? { proposal: { id: ask.proposal.id, reason: ask.proposal.reason, original: ask.proposal.original, parts: ask.proposal.parts, ...(ask.proposal.carried ? { carried: ask.proposal.carried } : {}) } } : {}),
   });
 }
 

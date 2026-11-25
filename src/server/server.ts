@@ -18,7 +18,8 @@ import { readResourceState, resourcesView } from "../orchestrator/resources.ts";
 import type { Self } from "../core/holdings.ts";
 import { knownPeople, peopleNames, PERSON_HEADER, readPersonHeader } from "./person.ts";
 import { buildItemList, parseListQuery } from "../core/item-list.ts";
-import { buildItemPage } from "../core/item-page.ts";
+import { buildItemPage, busyWords } from "../core/item-page.ts";
+import { buildIndex } from "../core/snapshot.ts";
 import { toStatusView } from "../core/status.ts";
 import { PRIORITIES, isPriority } from "../model/priority.ts";
 import type { CommitView, DiffView, HistoryView, ItemBranchState, ItemPage } from "../core/views.ts";
@@ -37,7 +38,7 @@ import { workBranch } from "../orchestrator/paths.ts";
 import type { Media } from "../orchestrator/media.ts";
 import type { Chat } from "../orchestrator/chat.ts";
 import { requestQueueResume } from "../orchestrator/queueHealth.ts";
-import { acceptRestructuring, adoptFound, currentRestructuring, finishRestructuring, goesWords, intoBody, keptPatch, markedParts, partWork, recordPart, restructuringText } from "../orchestrator/restructure.ts";
+import { acceptRestructuring, adoptFound, currentRestructuring, finishRestructuring, goesWords, intoBody, intoWritten, keptPatch, markedParts, partWork, recordPart, restructuringText, stopRestructuring } from "../orchestrator/restructure.ts";
 import type { AnswerWrite, WorkPatch, WorkPort, WriteOutcome, WritePort } from "../ports/host.ts";
 import { AlreadyAnswered, BodyChanged } from "../ports/host.ts";
 import type { Backend } from "../items/service.ts";
@@ -235,6 +236,8 @@ class AnswerRefused extends Error {
 export interface RestructureHost {
   host: string;
   write: WritePort;
+  /** Reads an item from the host as it is now: an existing Item's description just before parts are added to it, and after. */
+  read?: (ref: Ref) => Promise<WorkItem | null>;
   verificationInBody?: boolean;
   /** Its items are numbered issues (GitHub): a part's line names the parent `#N`, which the host links. */
   issueNumbers?: boolean;
@@ -668,7 +671,7 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
 
   /**
    * A person decides on a proposed restructuring: `{ ref, action, parts?, original?, to? }` with `action` "accept", "edit" (a
-   * person's own `parts` and `original`) or "reject". See `restructureDecision`. (A proposed rewrite of the item's text was removed.)
+   * person's own `parts` and `original`), "reject", or "stop" (end it with the parts made so far). See `restructureDecision`. (A proposed rewrite of the item's text was removed.)
    */
   async function proposal(request: IncomingMessage, response: ServerResponse): Promise<void> {
     let body: Record<string, unknown>;
@@ -678,8 +681,8 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
       return sendError(response, 400, "BAD_BODY", error instanceof Error ? error.message : "The body is not JSON.");
     }
     const { ref, action, to } = body;
-    if (typeof ref !== "string" || (action !== "accept" && action !== "edit" && action !== "reject")) {
-      return sendError(response, 400, "BAD_FIELD", 'Give { "ref": "host:work:id", "action": "accept" | "edit" | "reject", "parts"?, "original"?, "to"? }.');
+    if (typeof ref !== "string" || (action !== "accept" && action !== "edit" && action !== "reject" && action !== "stop")) {
+      return sendError(response, 400, "BAD_FIELD", 'Give { "ref": "host:work:id", "action": "accept" | "edit" | "reject" | "stop", "parts"?, "original"?, "to"? }.');
     }
     if (to !== undefined && (typeof to !== "string" || Number.isNaN(Date.parse(to)))) return sendError(response, 400, "BAD_FIELD", "to must be the `at` of the open proposal.");
     const snapshot = loadSnapshot(store);
@@ -941,15 +944,16 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
 
   /**
    * A person decides on a proposed restructuring (decision 93). Edit gives a person's own `parts` (each with where it goes) and
-   * `original` (what becomes of the Item). Accept and edit make the parts on the host, in order: a new child, related or unlinked
-   * Item, or the part's text added to an existing Item; then the Item keeps its part (its text narrowed, and triaged again), is
-   * parked as an umbrella, or is closed as replaced. Each part is recorded as it is made, and its text ends with a marker line, so a
-   * retry after a failure (even on a store rebuilt from nothing) links what is not linked yet and makes only the rest. On a host
-   * Scope Soup cannot write, nothing is made: the decision is recorded with the restructuring as text, for a person to carry out.
-   * Reject starts the item over at triage, with the rejection passed on; once a part exists it is refused, since it would leave
-   * the parts without the decision.
+   * `original` (what becomes of the Item), only while nothing is made. Accept and edit make the parts on the host, in order: a new
+   * child, related or unlinked Item, or the parts' text added to an existing Item (once per Item, to its description as read just
+   * before); then the Item keeps its part (its text narrowed, and triaged again), is parked as an umbrella, or is closed as replaced.
+   * Each part is recorded as it is made, and its text ends with a marker line carrying the restructuring's id, so a retry after a
+   * failure (even on a store rebuilt from nothing) links what is not linked yet and makes only the rest. Stop here ends it with the
+   * parts made so far and records the rest as text on the Item. On a host Scope Soup cannot write, nothing is made: the decision is
+   * recorded with the restructuring as text, for a person to carry out. Reject starts the item over at triage, with the rejection
+   * passed on; once a part exists it is refused, since it would leave the parts without the decision.
    */
-  async function restructureDecision(response: ServerResponse, body: Record<string, unknown>, item: WorkItem, parked: Parked | undefined, asked: { at: string; by: LogWriter } | undefined, proposed: Restructuring, action: "accept" | "edit" | "reject", onHost?: string): Promise<void> {
+  async function restructureDecision(response: ServerResponse, body: Record<string, unknown>, item: WorkItem, parked: Parked | undefined, asked: { at: string; by: LogWriter } | undefined, proposed: Restructuring, action: "accept" | "edit" | "reject" | "stop", onHost?: string): Promise<void> {
     const subject = item.ref;
     const ref = refKey(subject);
     const question = `Proposed restructuring: ${proposed.reason}`;
@@ -971,9 +975,11 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
       }
     };
     const stored = currentRestructuring(store, subject);
+    const fixed = stored ?? proposed;
+    // The parts that exist: recorded in the store, or found on the host by their marker lines.
+    const existing = new Map([...(stored?.created ?? []).map((each) => [each.part, each.ref] as const), ...[...markedParts(loadSnapshot(store).works, subject, fixed)].map(([part, work]) => [part, work.ref] as const)]);
     if (action === "reject") {
-      const made = (stored?.created ?? []).length + markedParts(loadSnapshot(store).works, subject, stored?.parts ?? proposed.parts).size;
-      if (made > 0) return sendError(response, 409, "PARTS_CREATED", `Some parts of ${ref} exist already: accept the restructuring to finish it, or close those parts first.`);
+      if (existing.size > 0) return sendError(response, 409, "PARTS_CREATED", `Some parts of ${ref} exist already: accept the restructuring to finish it, Stop here to end it with what exists, or close those parts first.`);
       const text = `Rejected the proposed restructuring of the item (${restructuringWords(proposed.original, proposed.parts)}; it was proposed because: ${proposed.reason}). Do not propose it again.`;
       if (onHost) {
         if (!(await decideOnHost(text, "rejected"))) return;
@@ -988,8 +994,33 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
       });
       return logDecision(response, subject, text, "rejected", asked, { recorded: true, released });
     }
+    if (!isParked && !onHost) return sendError(response, 409, "NOT_PARKED", `${ref} is not parked on the proposed restructuring (any more): reload the item.`);
+    if (restructuring.has(ref)) return sendError(response, 409, "RESTRUCTURE_RUNNING", `The parts of ${ref} are being made now.`);
+    if (action === "stop") {
+      // Ends it with what exists: the rest, and the Item's own change, are for a person, as text on the Item.
+      if (existing.size === 0) return sendError(response, 409, "NOTHING_MADE", `No part of ${ref} exists yet: reject the restructuring instead.`);
+      const names = [...existing].sort((a, b) => a[0] - b[0]).map(([, made]) => made.id).join(", ");
+      const toMake = fixed.parts.filter((part) => part.goes !== "original").length;
+      const rest = restructuringText(subject, { ...fixed, ...(fixed.carried ?? proposed.carried ? { carried: fixed.carried ?? proposed.carried } : {}) }, new Set(existing.keys()));
+      const reason = `${by().who} stopped the restructuring with ${existing.size} of ${toMake} parts made (${names}): carry out the rest by hand.`;
+      const text = `Stopped the proposed restructuring with ${existing.size} of ${toMake} parts made (${names}). Scope Soup makes nothing more: carry out the rest by hand.\n\n${rest}`;
+      const at = now().toISOString();
+      if (onHost) {
+        if (!(await decideOnHost(text, "accepted"))) return;
+        stopRestructuring(store, subject, by().who, at, reason);
+        options.onRefresh?.();
+        return sendJson(response, 200, { recorded: true, stopped: true, text: rest });
+      }
+      store.tx(() => {
+        addAnswer(store, { subject, answer: text, by: by().who, at, question });
+        stopRestructuring(store, subject, by().who, at, reason);
+      });
+      return logDecision(response, subject, text, "accepted", asked, { recorded: true, stopped: true, text: rest });
+    }
     let edited: { original: OriginalFate; parts: ProposedPart[] } | undefined;
     if (action === "edit") {
+      // Once a part exists the restructuring is fixed: an edit would be silently set aside, so it is refused.
+      if (existing.size > 0) return sendError(response, 409, "PARTS_CREATED", `Some parts of ${ref} exist already, so it can no longer be edited: Accept finishes the same restructuring, or Stop here ends it with what exists.`);
       const original = body.original ?? proposed.original;
       edited = asRestructuring({ original, parts: body.parts });
       if (!edited) {
@@ -998,14 +1029,11 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
         return sendError(response, 400, "BAD_FIELD", (whole && restructuringProblem(original as OriginalFate, parts)) || 'parts must be a list of { title, description, verification, goes, into? } (goes: "original", "child", "related", "unlinked" or "into", into naming an Item), each with a title; original "keeps", "umbrella" or "replaced".');
       }
     }
-    // On GitHub an open restructuring question is enough, also with the store rebuilt from nothing.
-    if (!isParked && !onHost) return sendError(response, 409, "NOT_PARKED", `${ref} is not parked on the proposed restructuring (any more): reload the item.`);
-    if (restructuring.has(ref)) return sendError(response, 409, "RESTRUCTURE_RUNNING", `The parts of ${ref} are being made now.`);
     const decision = action === "edit" ? "edited" : "accepted";
     const writer = restructureHost(subject);
     if (!writer) {
-      const chosen = edited ?? proposed;
-      const listed = restructuringText(subject, chosen.original, chosen.parts, proposed.carried);
+      const chosen = { ...fixed, ...(edited ?? {}) };
+      const listed = restructuringText(subject, { ...chosen, ...(proposed.carried ? { carried: proposed.carried } : {}) });
       const reason = `${by().who} accepted the restructuring (${restructuringWords(chosen.original, chosen.parts)}). Scope Soup cannot write to this host: carry it out by hand.`;
       const text = `Accepted the proposed restructuring${action === "edit" ? " with changes" : ""}. Scope Soup made nothing (the host is read-only here): carry it out by hand.\n\n${listed}`;
       const at = now().toISOString();
@@ -1016,11 +1044,20 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
       return logDecision(response, subject, text, decision, asked, { recorded: true, created: [], byHand: true, text: listed });
     }
     // What is made follows a person's edit only while nothing exists; that version is checked before anything is written.
-    const planned = (stored?.created ?? []).length === 0 && edited ? edited : stored ?? proposed;
-    const works = loadSnapshot(store).works;
-    const target = (part: ProposedPart): WorkItem | undefined => works.find((work) => work.ref.host === subject.host && work.ref.id === part.into && work.ref.id !== subject.id);
+    const planned = edited ?? fixed;
+    const snapshot = loadSnapshot(store);
+    const index = buildIndex(snapshot);
+    const target = (part: ProposedPart): WorkItem | undefined => snapshot.works.find((work) => work.ref.host === subject.host && work.ref.id === part.into && work.ref.id !== subject.id);
     const unknown = planned.parts.findIndex((part) => part.goes === "into" && !target(part));
     if (unknown >= 0) return sendError(response, 400, "BAD_TARGET", `Part ${unknown + 1} goes into ${planned.parts[unknown]!.into}, which is not another Item on ${subject.host}: edit where it goes.`);
+    const closed = planned.parts.findIndex((part, at) => part.goes === "into" && !existing.has(at) && (target(part)!.state === "done" || target(part)!.state === "abandoned"));
+    if (closed >= 0) return sendError(response, 400, "TARGET_CLOSED", `Part ${closed + 1} goes into ${planned.parts[closed]!.into}, which is ${target(planned.parts[closed]!)!.state}: edit where it goes.`);
+    if (planned.original === "replaced") {
+      // Closing an Item that is being worked on would leave that work without its Item.
+      const job = loadJobs(store)[ref];
+      const busy = busyWords(index, ref) ?? (job && !job.parked ? "a job of Scope Soup's runs on it" : undefined);
+      if (busy) return sendError(response, 409, "ITEM_BUSY", `${ref} is not closed as replaced while ${busy}: wait for it, or edit the restructuring so the Item keeps a part or becomes an umbrella.`);
+    }
     const edits = planned.original !== "umbrella" || planned.parts.some((part) => part.goes === "into");
     if (edits && !writer.write.editWork) return sendError(response, 400, "WRITE_REFUSED", `Scope Soup cannot change Items on ${subject.host}: edit the restructuring to make only new Items under an umbrella, or reject it.`);
     restructuring.add(ref);
@@ -1033,73 +1070,116 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
         // edit counts while none exists; a job keeps it for a retry.
         const kept = currentRestructuring(store, subject);
         const base = kept ?? proposed;
-        const found = hostParts(store, subject, base.parts);
+        const found = hostParts(store, subject, base);
         const chosen = found.length === 0 && edited ? edited : { original: base.original, parts: base.parts };
         if (kept) acceptRestructuring(store, subject, found.length === 0 ? edited : undefined, by().who, now().toISOString());
         const carried = kept?.carried ?? proposed.carried;
-        plan = { reason: proposed.reason, ...chosen, ...(carried ? { carried } : {}), created: found };
+        plan = { id: base.id, reason: proposed.reason, ...chosen, ...(carried ? { carried } : {}), created: found };
       } else {
         adoptFound(store, subject, loadSnapshot(store).works, by().who, now().toISOString());
         plan = acceptRestructuring(store, subject, edited, by().who, now().toISOString());
       }
       if (!plan) return sendError(response, 409, "NOT_PARKED", `${ref} is not parked on the proposed restructuring (any more): reload the item.`);
       const parts = plan.parts;
+      const marks = { parent: subject, id: plan.id, ...(writer.issueNumbers ? { issueNumbers: true } : {}) };
       const toMake = parts.filter((part) => part.goes !== "original").length;
       const made = new Map((plan.created ?? []).map((each) => [each.part, each]));
       const record = (part: CreatedPart): void => {
         if (!onHost) recordPart(store, subject, part, by().who, now().toISOString());
       };
-      const incomplete = (index: number, problem: string): void => {
+      const incomplete = (at: number, problem: string): void => {
         options.onRefresh?.();
-        sendError(response, 502, "RESTRUCTURE_INCOMPLETE", `${made.size} of ${toMake} parts exist; part ${index + 1} failed: ${problem} Accept again to finish: a part already made is linked if it needs to be, and not made again.`);
+        sendError(response, 502, "RESTRUCTURE_INCOMPLETE", `${made.size} of ${toMake} parts exist; part ${at + 1} failed: ${problem} Accept again to finish (a part already made is linked if it needs to be, and not made again), or Stop here to end it with what exists.`);
+      };
+      /** Links a related part where the host keeps links; true when it is linked (or the host has none to make). */
+      const relate = async (at: number, work: Ref): Promise<boolean> => {
+        if (writer.write.linkRelated) {
+          try {
+            await writer.write.linkRelated(subject, work);
+          } catch (error) {
+            const unlinked = { part: at, ref: work, linked: false };
+            made.set(at, unlinked);
+            record(unlinked);
+            incomplete(at, `linking ${work.id} as related: ${error instanceof Error ? error.message : String(error)}`);
+            return false;
+          }
+        }
+        const linked = { part: at, ref: work, linked: true };
+        made.set(at, linked);
+        record(linked);
+        return true;
       };
       const fresh = loadSnapshot(store).works;
-      for (let index = 0; index < parts.length; index++) {
-        const part = parts[index]!;
+      for (let at = 0; at < parts.length; at++) {
+        const part = parts[at]!;
         if (part.goes === "original") continue;
-        const existing = made.get(index);
-        if (existing?.linked) continue;
-        if (existing) {
+        const before = made.get(at);
+        if (before?.linked) continue;
+        if (before && part.goes === "related") {
+          if (!(await relate(at, before.ref))) return;
+          continue;
+        }
+        if (before) {
           // Made, but not under the item yet: link it instead of making another.
-          if (!writer.write.linkChild) return incomplete(index, `${existing.ref.id} is not linked under ${subject.id} and this host cannot link it: link it by hand.`);
+          if (!writer.write.linkChild) return incomplete(at, `${before.ref.id} is not linked under ${subject.id} and this host cannot link it: link it by hand.`);
           try {
-            await writer.write.linkChild(subject, existing.ref);
+            await writer.write.linkChild(subject, before.ref);
           } catch (error) {
-            return incomplete(index, `linking ${existing.ref.id}: ${error instanceof Error ? error.message : String(error)}`);
+            return incomplete(at, `linking ${before.ref.id}: ${error instanceof Error ? error.message : String(error)}`);
           }
-          made.set(index, { ...existing, linked: true });
-          record({ ...existing, linked: true });
+          made.set(at, { ...before, linked: true });
+          record({ ...before, linked: true });
           continue;
         }
         if (part.goes === "into") {
-          // The part's text goes at the end of the existing Item's description, read again after the sync.
-          const into = fresh.find((work) => work.ref.host === subject.host && work.ref.id === part.into) ?? target(part);
-          if (!into) return incomplete(index, `${part.into} is not an Item on ${subject.host} any more.`);
+          // Every part into this Item at once, added to its description as read just before the write, so none overwrites another.
+          const group = parts.flatMap((each, other) => (each.goes === "into" && each.into === part.into && !made.has(other) ? [{ part: each, index: other }] : []));
+          const known = fresh.find((work) => work.ref.host === subject.host && work.ref.id === part.into) ?? target(part);
+          if (!known) return incomplete(at, `${part.into} is not an Item on ${subject.host} any more.`);
+          const into = known.ref;
           try {
-            await writer.write.editWork!(into.ref, { body: intoBody(into.body ?? "", part, index, { parent: subject, ...(writer.issueNumbers ? { issueNumbers: true } : {}) }) });
+            const current = writer.read ? await writer.read(into) : known;
+            if (!current) return incomplete(at, `${into.id} is not an Item on ${subject.host} any more.`);
+            const text = intoBody(current.body ?? "", group, marks);
+            if (text !== (current.body ?? "").trim()) await writer.write.editWork!(into, { body: text });
+            // The re-read must show every section: a description changed at the same moment loses none silently.
+            const after = writer.read ? await writer.read(into) : null;
+            if (after && !intoWritten(`${after.body ?? ""}\n${after.verification ?? ""}`, group.map((each) => each.index), marks)) {
+              return incomplete(at, `the description of ${into.id} does not show the added text; it may have been changed at the same moment.`);
+            }
           } catch (error) {
-            return incomplete(index, `adding it to ${into.ref.id}: ${error instanceof Error ? error.message : String(error)}`);
+            if (error instanceof BodyChanged) return incomplete(at, `the description of ${into.id} changed, or holds what Scope Soup cannot write back: ${error.message}`);
+            return incomplete(at, `adding it to ${into.id}: ${error instanceof Error ? error.message : String(error)}`);
           }
-          const added = { part: index, ref: into.ref, linked: true };
-          made.set(index, added);
-          record(added);
+          for (const each of group) {
+            const added = { part: each.index, ref: into, linked: true };
+            made.set(each.index, added);
+            record(added);
+          }
           continue;
         }
         let done: WriteOutcome;
         try {
-          done = await writer.write.createWork!(partWork(part, index, { parent: subject, ...(plan.carried ? { carried: plan.carried } : {}), ...(writer.verificationInBody ? { verificationInBody: true } : {}), ...(writer.issueNumbers ? { issueNumbers: true } : {}), by: by() }));
+          done = await writer.write.createWork!(partWork(part, at, { ...marks, ...(plan.carried ? { carried: plan.carried } : {}), ...(writer.verificationInBody ? { verificationInBody: true } : {}), by: by() }));
         } catch (error) {
-          return incomplete(index, error instanceof Error ? error.message : String(error));
+          return incomplete(at, error instanceof Error ? error.message : String(error));
+        }
+        if (part.goes === "related") {
+          // Recorded unlinked first, so a failed link is made again on a retry, not the Item.
+          made.set(at, { part: at, ref: done.work, linked: false });
+          record({ part: at, ref: done.work, linked: false });
+          if (!(await relate(at, done.work))) return;
+          continue;
         }
         // Recorded before anything else, linked or not, so it is never made twice.
-        const child = { part: index, ref: done.work, linked: done.linked !== false };
-        made.set(index, child);
+        const child = { part: at, ref: done.work, linked: done.linked !== false };
+        made.set(at, child);
         record(child);
-        if (!child.linked) return incomplete(index, done.problem ?? `${done.work.id} was made but not linked under ${subject.id}.`);
+        if (!child.linked) return incomplete(at, done.problem ?? `${done.work.id} was made but not linked under ${subject.id}.`);
       }
       // Then the Item itself, last, so a retry finds every part and only does this again (the same text, the same close).
-      const where = parts.flatMap((part, index) => (made.has(index) ? [`${made.get(index)!.ref.id} (${goesWords(part, subject)})`] : [])).join(", ");
-      const replacements = [...made.values()].sort((a, b) => a.part - b.part).map((each) => each.ref);
+      const where = parts.flatMap((part, at) => (made.has(at) ? [`${made.get(at)!.ref.id} (${goesWords(part, subject)})`] : [])).join(", ");
+      const replacements = [...new Map([...made.values()].sort((a, b) => a.part - b.part).map((each) => [refKey(each.ref), each.ref])).values()];
       const kept = parts.find((part) => part.goes === "original");
       try {
         if (plan.original === "keeps") await writer.write.editWork!(subject, keptPatch(kept!));
@@ -1110,7 +1190,7 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
         }
       } catch (error) {
         options.onRefresh?.();
-        return sendError(response, 502, "RESTRUCTURE_INCOMPLETE", `All ${toMake} parts exist; changing ${subject.id} failed: ${error instanceof Error ? error.message : String(error)} Accept again to finish.`);
+        return sendError(response, 502, "RESTRUCTURE_INCOMPLETE", `All ${toMake} parts exist; changing ${subject.id} failed: ${error instanceof Error ? error.message : String(error)} Accept again to finish, or Stop here to leave ${subject.id} as it is.`);
       }
       const names = replacements.map((each) => each.id).join(", ");
       const reason = plan.original === "keeps"
@@ -1128,7 +1208,7 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
       // The parts exist; the decision goes last, so pressing again after a failure only posts it.
       if (onHost && !(await decideOnHost(text, decision, " The parts exist: accept again to post the decision."))) return;
       await options.syncNow?.();
-      return logDecision(response, subject, text, decision, asked, { recorded: true, created: replacements.map((each) => refKey(each)) });
+      return logDecision(response, subject, text, decision, asked, { recorded: true, created: [...made.values()].sort((a, b) => a.part - b.part).map((each) => refKey(each.ref)) });
     } finally {
       restructuring.delete(ref);
     }

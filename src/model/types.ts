@@ -213,6 +213,13 @@ export function asParts(value: unknown): ProposedPart[] {
   return parts;
 }
 
+/** A restructuring as a question line or comment keeps it: its id, fate and parts, or undefined when one is missing or they do not make one. */
+export function asRestructuringRecord(value: unknown): { id: string; original: OriginalFate; parts: ProposedPart[] } | undefined {
+  const restructuring = asRestructuring(value);
+  const id = restructuring ? (value as Record<string, unknown>).id : undefined;
+  return restructuring && typeof id === "string" && /^[0-9a-f]{6,16}$/.test(id) ? { id, ...restructuring } : undefined;
+}
+
 /** A restructuring's fate and parts as given (`{ original, parts }`), or undefined when a part was dropped or they do not make one. */
 export function asRestructuring(value: unknown): { original: OriginalFate; parts: ProposedPart[] } | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
@@ -518,6 +525,8 @@ export interface ParkedQuestion {
  * removed; an old one in a log is no longer an open question.)
  */
 export interface Restructuring {
+  /** Its own id, in each part's marker line, so a later restructuring of the same Item never takes this one's parts. */
+  id: string;
   reason: string;
   /** What becomes of the Item the restructuring is proposed on. */
   original: OriginalFate;

@@ -487,6 +487,8 @@ export interface ItemPage {
   proposal?: {
     reason: string; at?: string; by?: LogWriter;
     original: OriginalFate; parts: ProposedPart[]; carried?: string; created?: (ItemLink & { part: number })[]; canCreate?: boolean;
+    /** Per part: the existing Item it goes into as it stands (`busy`: an open change or an agent on it), or null. */
+    targets?: ((ItemLink & { state: WorkState; busy?: string }) | null)[];
   };
   /** Set by the server when the item is in conflict: `item.md` as it stands and the versions put aside. The text is data. */
   conflict?: ConflictVersions;

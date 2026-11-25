@@ -2830,7 +2830,7 @@ test("a triage that proposes a restructuring parks it, with a person's recorded 
   assert.equal(job?.proposal?.reason, RESTRUCTURE_REASON);
   assert.deepEqual(w.calls, ["answerTurn 1 decision"]);
   // In the log too, so a restart (or another machine) puts it back.
-  assert.match(w.lines[0] ?? "", /^1 question \{"question":"Triage proposes.*"proposal":\{"reason":"Triage proposes.*","original":"umbrella","parts":\[\{"title":"Part one".*"goes":"child"\},\{.*"goes":"into","into":"2"\}\],"carried":"- Asked: Which format\?.*"\},"parked":"needs-decision"\}$/);
+  assert.match(w.lines[0] ?? "", /^1 question \{"question":"Triage proposes.*"proposal":\{"id":"[0-9a-f]{8}","reason":"Triage proposes.*","original":"umbrella","parts":\[\{"title":"Part one".*"goes":"child"\},\{.*"goes":"into","into":"2"\}\],"carried":"- Asked: Which format\?.*"\},"parked":"needs-decision"\}$/);
   // The board shows it as a person's turn.
   const held = loadSnapshot(w.store).parked?.find((each) => each.subject.id === "1");
   assert.deepEqual(held?.proposal?.parts, PARTS);
@@ -3306,7 +3306,8 @@ test("a proposed restructuring is a question comment with the restructuring in i
   const [asked] = fake.comments.get("1")!;
   assert.deepEqual(job.parked?.questions, [String(asked!.id)]);
   assert.equal(asked!.body!.split("\n\n<!--")[0], `**Q1: Proposed restructuring: ${RESTRUCTURE_REASON}**\n\n1. **Part one** (new sub-issue): Do the first half.\n2. **Part two** (added to #2): Do the second half.\n\nThis Item becomes an umbrella over its sub-issues.\n\nAccept, edit or reject the restructuring on Scope Soup's board.`);
-  assert.deepEqual(readMarker(asked!.body)?.data.proposal, { reason: RESTRUCTURE_REASON, original: "umbrella", parts: PARTS });
+  assert.deepEqual(readMarker(asked!.body)?.data.proposal, { id: job.proposal!.id, reason: RESTRUCTURE_REASON, original: "umbrella", parts: PARTS });
+  assert.match(job.proposal!.id, /^[0-9a-f]{8}$/, "its own id, carried by its marker lines");
   // The Item page reads it from the comment; the parts are found on GitHub, none yet.
   const page = buildItemPage(loadSnapshot(w.store), ghKey("1"), new Date(w.clock.ms))!;
   assert.deepEqual(page.proposal?.parts, PARTS);

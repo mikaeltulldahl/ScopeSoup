@@ -56,7 +56,7 @@ export function loadSnapshot(store: Store): Snapshot {
       // On GitHub each question is a comment, and its answer is read from there.
       const onHost = job.parked.questions;
       // There a restructuring's parts are the items that carry its part lines; they are not stored.
-      const proposal = stored && onHost ? { ...stored, created: hostParts(store, job.item, stored.parts) } : stored;
+      const proposal = stored && onHost ? { ...stored, created: hostParts(store, job.item, stored) } : stored;
       const hostAnswers = onHost ? store.get<WorkItem>(job.item)?.answers ?? [] : [];
       const questions = jobQuestions(job).map((each, index): ParkedQuestion => {
         const answer = onHost ? hostAnswers.find((given) => given.to !== undefined && given.to === onHost[index])?.answer : job.answered?.find((given) => given.index === index)?.answer;
@@ -83,8 +83,8 @@ export function loadSnapshot(store: Store): Snapshot {
 }
 
 /** The parts of an item's restructuring that exist on its host, found by their part lines; a child is `linked` when it is a sub-issue of the item. */
-export function hostParts(store: Store, item: Ref, parts: readonly ProposedPart[]): CreatedPart[] {
-  return [...markedParts(store.list<WorkItem>("work", item.host), item, parts)]
-    .map(([part, work]) => ({ part, ref: work.ref, linked: partLinked(parts[part]!, work, item) }))
+export function hostParts(store: Store, item: Ref, proposal: { id: string; parts: readonly ProposedPart[] }): CreatedPart[] {
+  return [...markedParts(store.list<WorkItem>("work", item.host), item, proposal)]
+    .map(([part, work]) => ({ part, ref: work.ref, linked: partLinked(proposal.parts[part]!, work, item) }))
     .sort((a, b) => a.part - b.part);
 }

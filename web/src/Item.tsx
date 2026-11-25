@@ -653,6 +653,52 @@ const FATE_LABEL: Record<OriginalFate, string> = { keeps: "Keeps one part", umbr
 /** Where one part goes, in a few words: "New sub-item", "Into #12". */
 const goesText = (part: ProposedPart): string => (part.goes === "into" ? `Into ${/^\d+$/.test(part.into ?? "") ? "#" : ""}${part.into ?? "?"}` : GOES_LABEL[part.goes]);
 
+/** An existing Item a part goes into, as it stands. */
+type IntoTarget = { key: string; label: string; title: string; state: string; busy?: string };
+
+/** The target's title, and a warning when it is closed or being worked on. */
+function TargetNote({ target }: { target: IntoTarget | null | undefined }) {
+  if (target === undefined) return null;
+  if (target === null) return <span class="error"> no such item here</span>;
+  const closed = target.state === "done" || target.state === "abandoned";
+  return (
+    <>
+      {" "}<a href={itemHref(target.key)}>{target.title}</a>
+      {closed && <span class="error"> ({target.state}: Accept refuses it)</span>}
+      {!closed && target.busy && <span class="muted"> ({target.busy})</span>}
+    </>
+  );
+}
+
+/** The existing Items typed into Edit, looked up as they are typed: id to the target, null when there is none, absent while unknown. */
+function useTargets(host: string, ids: readonly string[]): Map<string, IntoTarget | null> {
+  const [found, setFound] = useState<Map<string, IntoTarget | null>>(new Map());
+  const wanted = [...new Set(ids.filter(Boolean))];
+  useEffect(() => {
+    const missing = wanted.filter((id) => !found.has(id));
+    if (missing.length === 0) return;
+    let live = true;
+    const timer = setTimeout(() => {
+      void Promise.all(missing.map(async (id) => {
+        try {
+          const page = await fetchItem(`${host}:work:${id}`);
+          const target: IntoTarget = { key: page.item.key, label: page.item.label, title: page.item.title, state: page.item.state };
+          return [id, target] as [string, IntoTarget | null];
+        } catch {
+          return [id, null] as [string, IntoTarget | null];
+        }
+      })).then((pairs) => {
+        if (live) setFound((before) => new Map<string, IntoTarget | null>([...before, ...pairs]));
+      });
+    }, 400);
+    return () => {
+      live = false;
+      clearTimeout(timer);
+    };
+  }, [host, wanted.join(",")]);
+  return found;
+}
+
 /**
  * Triage proposes to restructure the item: each part's text and where it goes, what becomes of this item, and Accept, Edit and
  * Reject. Edit changes the parts' text, where each goes, and this item's fate. Where the host can be written here, accepting makes
@@ -666,8 +712,16 @@ function RestructureProposal({ page, proposal, now, reload, primary }: { page: I
   const { busy, error, send } = useSend();
   const created = proposal.created ?? [];
   const madeFor = (index: number) => created.find((made) => made.part === index);
+  const host = page.item.key.split(":")[0] ?? "";
+  const typed = useTargets(host, editing ? draft.flatMap((part) => (part.goes === "into" && part.into ? [part.into] : [])) : []);
+  const shownTarget = (part: ProposedPart, index: number): IntoTarget | null | undefined => {
+    if (part.goes !== "into" || !part.into) return undefined;
+    const known = proposal.targets?.[index];
+    if (known && proposal.parts[index]?.into === part.into) return known;
+    return typed.has(part.into) ? typed.get(part.into)! : undefined;
+  };
   const problem = editing ? restructuringProblem(fate, draft) ?? (draft.some((part) => !part.title.trim()) ? "Each part needs a title." : undefined) : undefined;
-  const decide = (action: "accept" | "edit" | "reject") =>
+  const decide = (action: "accept" | "edit" | "reject" | "stop") =>
     send(() => postProposal(page.item.key, action, { ...(action === "edit" ? { parts: draft, original: fate } : {}), ...(proposal.at ? { to: proposal.at } : {}) }).then(reload));
   const change = (index: number, patch: Partial<ProposedPart>) => setDraft(draft.map((part, at) => (at === index ? { ...part, ...patch } : part)));
   const value = (event: Event) => (event.target as HTMLInputElement).value;
@@ -686,7 +740,7 @@ function RestructureProposal({ page, proposal, now, reload, primary }: { page: I
           <p><strong>This item:</strong> {FATE_LABEL[proposal.original].toLowerCase()}.</p>
           {proposal.parts.map((part, index) => (
             <div class="version" key={index}>
-              <p class="num">{index + 1}. {part.title} <span class="tag">{goesText(part)}</span>{madeFor(index) && <> <a href={itemHref(madeFor(index)!.key)}>{madeFor(index)!.label}</a></>}</p>
+              <p class="num">{index + 1}. {part.title} <span class="tag">{goesText(part)}</span><TargetNote target={shownTarget(part, index)} />{madeFor(index) && part.goes !== "into" && <> <a href={itemHref(madeFor(index)!.key)}>{madeFor(index)!.label}</a></>}</p>
               {part.description ? <Markdown text={part.description} /> : <p class="empty">No description.</p>}
               <p class="muted">Verification: {part.verification || "none given"}</p>
             </div>
@@ -717,6 +771,7 @@ function RestructureProposal({ page, proposal, now, reload, primary }: { page: I
                 <>
                   <label for={`part-into-${index}`}>Existing item (its number or id)</label>
                   <input id={`part-into-${index}`} value={part.into ?? ""} onInput={(event) => change(index, { into: value(event).trim().replace(/^#/, "") })} disabled={busy} />
+                  <p class="muted">{part.into ? <>Into {/^\d+$/.test(part.into) ? "#" : ""}{part.into}<TargetNote target={shownTarget(part, index)} /></> : "Name the item this part's text is added to."}</p>
                 </>
               )}
               <label for={`part-description-${index}`}>Description</label>
@@ -759,13 +814,18 @@ function RestructureProposal({ page, proposal, now, reload, primary }: { page: I
               Reject
             </button>
           )}
+          {created.length > 0 && (
+            <button type="button" onClick={() => decide("stop")} disabled={busy}>
+              Stop here
+            </button>
+          )}
         </p>
       )}
       <p class="muted">
         {proposal.canCreate
           ? "Accept makes the parts in order, with the decisions above carried over into each new item, then changes this item as it says. Nothing is made before."
           : "Scope Soup cannot write items on this host. Accept records your decision; carry it out by hand from the text above."}{" "}
-        {created.length === 0 ? "Reject starts the item over at triage, and triage is told not to propose this again." : "Some parts exist already, so it can only be finished, not rejected."}
+        {created.length === 0 ? "Reject starts the item over at triage, and triage is told not to propose this again." : "Some parts exist already, so it can no longer be edited or rejected: Accept finishes it, and Stop here ends it with what exists, leaving the rest as text on this item for a person."}
       </p>
       {error && <p class="error">{error}</p>}
     </section>

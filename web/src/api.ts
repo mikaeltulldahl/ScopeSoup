@@ -186,7 +186,7 @@ export async function postDraft(ref: string, parkedAt: string, answers: string[]
 /**
  * A person's decision on a proposed restructuring: accept it, accept it with a person's own `parts` and `original` (edit), or reject it.
  */
-export async function postProposal(ref: string, action: "accept" | "edit" | "reject", fields: { parts?: ProposedPart[]; original?: OriginalFate; to?: string } = {}): Promise<{ released: boolean }> {
+export async function postProposal(ref: string, action: "accept" | "edit" | "reject" | "stop", fields: { parts?: ProposedPart[]; original?: OriginalFate; to?: string } = {}): Promise<{ released: boolean }> {
   const response = await call("/api/proposal", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ref, action, ...fields }) });
   const body = (await response.json().catch(() => null)) as { released?: boolean; error?: { message?: string } } | null;
   if (!response.ok) throw new Error(body?.error?.message ?? `The server answered ${response.status}.`);

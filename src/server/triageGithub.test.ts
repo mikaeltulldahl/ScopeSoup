@@ -161,15 +161,15 @@ describe("triage drafts and restructurings as comments", () => {
   test("a restructuring too large for a comment posts nothing", async () => {
     fake.clear();
     const huge = [{ title: "All of it", description: "Tides. ".repeat(9000), verification: "", goes: "child" as const }];
-    await assert.rejects(actions.askQuestions!(ref("5"), [{ question: `Proposed restructuring: ${REASON}`, options: [], parked: "needs-decision", step: "triage", proposal: { reason: REASON, original: "umbrella" as const, parts: huge } }]), TooLarge);
+    await assert.rejects(actions.askQuestions!(ref("5"), [{ question: `Proposed restructuring: ${REASON}`, options: [], parked: "needs-decision", step: "triage", proposal: { id: "abc12345", reason: REASON, original: "umbrella" as const, parts: huge } }]), TooLarge);
     assert.deepEqual(writes(), []);
   });
 
   test("with the store deleted mid-restructuring, the next Accept links the existing children and creates only the missing parts", async () => {
     store.put((await host.work.getWork(ref("4")))!, "sync", at);
-    const asked = await actions.askQuestions!(ref("4"), [{ question: `Proposed restructuring: ${REASON}`, options: [], parked: "needs-decision", step: "triage", proposal: { reason: REASON, original: "umbrella" as const, parts: PARTS } }]);
-    assert.deepEqual(readMarker(fake.comments.get("4")!.at(-1)!.body)!.data.proposal, { reason: REASON, original: "umbrella", parts: PARTS });
-    saveJobs(store, { ...loadJobs(store), [key("4")]: jobOf("4", { proposal: { reason: REASON, original: "umbrella" as const, parts: PARTS }, parked: { as: "needs-decision", reason: REASON, at, questions: asked!.ids, askedAt: asked!.at } }) });
+    const asked = await actions.askQuestions!(ref("4"), [{ question: `Proposed restructuring: ${REASON}`, options: [], parked: "needs-decision", step: "triage", proposal: { id: "abc12345", reason: REASON, original: "umbrella" as const, parts: PARTS } }]);
+    assert.deepEqual(readMarker(fake.comments.get("4")!.at(-1)!.body)!.data.proposal, { id: "abc12345", reason: REASON, original: "umbrella", parts: PARTS });
+    saveJobs(store, { ...loadJobs(store), [key("4")]: jobOf("4", { proposal: { id: "abc12345", reason: REASON, original: "umbrella" as const, parts: PARTS }, parked: { as: "needs-decision", reason: REASON, at, questions: asked!.ids, askedAt: asked!.at } }) });
 
     // Part 1 is created and linked; part 2 is created, but GitHub refuses its link.
     let links = 0;
@@ -187,8 +187,8 @@ describe("triage drafts and restructurings as comments", () => {
 
     // Part 1 was made before the line changed, naming the ref key: it is still found.
     const old = fake.issues.get("6")!;
-    assert.match(old.body ?? "", /Part 1 of the restructuring of #4\.$/);
-    old.body = (old.body ?? "").replace("Part 1 of the restructuring of #4.", "Part 1 of the restructuring of github:work:4.");
+    assert.match(old.body ?? "", /Part 1 of restructuring abc12345 of #4\.$/);
+    old.body = (old.body ?? "").replace("Part 1 of restructuring abc12345 of #4.", "Part 1 of restructuring abc12345 of github:work:4.");
     old.updated_at = "2026-11-22T11:00:00Z";
     // The store is deleted: a new one is synced from GitHub, with no job.
     const fresh = openStore(":memory:");
@@ -207,7 +207,7 @@ describe("triage drafts and restructurings as comments", () => {
       assert.deepEqual([...fake.issues.keys()], ["1", "2", "3", "4", "5", "6", "7", "8"]);
       for (const [index, child] of ["6", "7", "8"].entries()) {
         assert.equal(fake.issues.get(child)!.parent_issue_url, `${ISSUES_API}${R}/4`);
-        assert.match(fake.issues.get(child)!.body ?? "", new RegExp(`Part ${index + 1} of the restructuring of ${child === "6" ? "github:work:4" : "#4"}\\.$`));
+        assert.match(fake.issues.get(child)!.body ?? "", new RegExp(`Part ${index + 1} of restructuring abc12345 of ${child === "6" ? "github:work:4" : "#4"}\\.$`));
       }
       assert.deepEqual([lastMarker("4").data.to, lastMarker("4").data.proposal], [Number(asked!.ids[0]), "accepted"]);
       assert.equal(fresh.getValue("person.answers"), null);
@@ -221,8 +221,8 @@ describe("triage drafts and restructurings as comments", () => {
   test("Reject of a restructuring posts an answer comment with proposal rejected and un-parks the Item", async () => {
     store.put((await host.work.getWork(ref("5")))!, "sync", at);
     const parts = PARTS.slice(0, 2).map((part) => ({ ...part, title: `${part.title} (5)` }));
-    const asked = await actions.askQuestions!(ref("5"), [{ question: `Proposed restructuring: ${REASON}`, options: [], parked: "needs-decision", step: "triage", proposal: { reason: REASON, original: "umbrella" as const, parts } }]);
-    saveJobs(store, { ...loadJobs(store), [key("5")]: jobOf("5", { proposal: { reason: REASON, original: "umbrella" as const, parts }, parked: { as: "needs-decision", reason: REASON, at, questions: asked!.ids, askedAt: asked!.at } }) });
+    const asked = await actions.askQuestions!(ref("5"), [{ question: `Proposed restructuring: ${REASON}`, options: [], parked: "needs-decision", step: "triage", proposal: { id: "abc12345", reason: REASON, original: "umbrella" as const, parts } }]);
+    saveJobs(store, { ...loadJobs(store), [key("5")]: jobOf("5", { proposal: { id: "abc12345", reason: REASON, original: "umbrella" as const, parts }, parked: { as: "needs-decision", reason: REASON, at, questions: asked!.ids, askedAt: asked!.at } }) });
     const response = await post("/api/proposal", { ref: key("5"), action: "reject" });
     assert.equal(response.status, 200, await response.clone().text());
     assert.deepEqual(await response.json(), { recorded: true, released: true });

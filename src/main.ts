@@ -487,7 +487,7 @@ async function main(): Promise<void> {
     // host items are written on here (meta branch), when both are configured. GitHub keeps an item's verification in its text.
     restructure: [restructureHost, itemHost]
       .filter((host, index, all): host is Host => host?.write?.createWork !== undefined && all.findIndex((other) => other?.info.id === host.info.id) === index)
-      .map((host) => ({ host: host.info.id, write: host.write!, ...(host.info.id === "github" ? { verificationInBody: true, issueNumbers: true } : {}) })),
+      .map((host) => ({ host: host.info.id, write: host.write!, ...(host.work ? { read: (ref: Ref) => host.work!.getWork(ref) } : {}), ...(host.info.id === "github" ? { verificationInBody: true, issueNumbers: true } : {}) })),
     syncNow: async () => {
       await sync.refreshNow();
       loop?.refresh();

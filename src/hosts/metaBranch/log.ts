@@ -4,7 +4,7 @@
 // Nothing here is fatal: a line that cannot be read, or a known kind with fields that do not fit,
 // is kept with its problem and counted; a kind Scope Soup does not know is kept and counted.
 
-import { asOptions, asRestructuring } from "../../model/types.ts";
+import { asOptions, asRestructuringRecord } from "../../model/types.ts";
 import type { DecisionOption, OriginalFate, ProposedPart } from "../../model/types.ts";
 import { isBranchName, isFullSha } from "./ids.ts";
 
@@ -158,7 +158,7 @@ export interface QuestionLine {
   /** Several options may be picked. */
   multiSelect?: true;
   /** A proposed restructuring: `original`, `parts` (and `carried`), and `reason`. */
-  proposal?: { reason: string; original: OriginalFate; parts: ProposedPart[]; carried?: string };
+  proposal?: { id: string; reason: string; original: OriginalFate; parts: ProposedPart[]; carried?: string };
 }
 
 /** An item's current picture, as far as its log tells it. */
@@ -315,7 +315,7 @@ export function foldLog(log: ParsedLog): LogPicture {
         if (typeof proposed === "object" && proposed !== null && !Array.isArray(proposed)) {
           const fields = proposed as Record<string, unknown>;
           const reason = text(fields.reason);
-          const restructuring = asRestructuring(fields);
+          const restructuring = asRestructuringRecord(fields);
           const carried = text(fields.carried);
           if (reason && restructuring) line.proposal = { reason, ...restructuring, ...(carried ? { carried } : {}) };
           // A proposed rewrite of the item's text (removed): the line stays in the log and the history, but nothing
