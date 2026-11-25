@@ -36,7 +36,7 @@ export const ACTIVITY_EVENTS: readonly string[] = [
   "control.stopped", "control.startup_paused", "control.paused", "control.resumed", "control.queue_resume", "orchestrator.queue_paused",
   "scopesoup.upgraded", "scopesoup.went_back", "scopesoup.upgrade_failed",
   "orchestrator.rewrite_accepted", "orchestrator.rewrite_edited", "orchestrator.rewrite_rejected", "orchestrator.rewrite_answered",
-  "orchestrator.questions_asked", "person.answered", "person.claimed", "person.handed_back", "person.released", "orchestrator.merged", "config.changed", "media.deleted", "media.expired",
+  "orchestrator.questions_asked", "person.answered", "person.claimed", "person.handed_back", "person.released", "person.moved", "orchestrator.merged", "config.changed", "media.deleted", "media.expired",
   "draft.created", "draft.updated",
 ];
 
@@ -357,6 +357,11 @@ export function buildActivity(input: ActivityInput, now: string, limit = MAX_ACT
         const note = str(data.note);
         const words = event.kind === "person.claimed" ? "Took the Item on the board" : event.kind === "person.handed_back" ? "Handed the Item back on the board" : "Let the Item go on the board";
         add({ ...base, kind: "item", items, who, agent: false, text: words, ...(note ? { detail: clip(note) } : {}) });
+        break;
+      }
+      case "person.moved": {
+        const words: Record<string, string> = { triage: "Sent the Item to triage again on the board", backlog: "Put the Item back in the backlog on the board", "in-review": "Started the Item's review on the board", "merge-queue": "Queued the Item for merging on the board" };
+        add({ ...base, kind: "item", items, who: event.actor, agent: false, text: words[str(data.to)] ?? "Set the Item's state on the board" });
         break;
       }
       case "orchestrator.merged":

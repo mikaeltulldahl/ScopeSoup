@@ -1,12 +1,9 @@
-// The form an item is written in: a new item from the overview, or an edit from its page.
+// The form an item is written in: a new item from the overview, or an edit from its page. The state is set on the page's State menu, not here.
 
 import { useEffect, useState } from "preact/hooks";
 import type { ItemFields } from "./api.ts";
-import { stateLabel } from "./format.ts";
 
-const STATES = ["todo", "doing", "waiting", "done", "abandoned"];
-
-export function ItemForm({ start, withState, states = STATES, submitWords, onSubmit, onCancel, onDirty }: { start: ItemFields; withState: boolean; states?: string[]; submitWords: string; onSubmit: (fields: ItemFields) => Promise<void>; onCancel: () => void; onDirty?: (dirty: boolean) => void }) {
+export function ItemForm({ start, submitWords, onSubmit, onCancel, onDirty }: { start: ItemFields; submitWords: string; onSubmit: (fields: ItemFields) => Promise<void>; onCancel: () => void; onDirty?: (dirty: boolean) => void }) {
   const [fields, setFields] = useState(start);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -57,16 +54,6 @@ export function ItemForm({ start, withState, states = STATES, submitWords, onSub
           {fields.priority === "major" && <option value="major">major</option>}
         </select>
       </label>
-      {withState && (
-        <label>
-          State
-          <select value={fields.state} onChange={set("state")} disabled={busy}>
-            {states.map((state) => (
-              <option key={state} value={state}>{stateLabel(state)}</option>
-            ))}
-          </select>
-        </label>
-      )}
       <div class="form-actions">
         <button type="submit" class="primary" disabled={busy || fields.title.trim() === ""}>
           {busy ? "Saving…" : submitWords}

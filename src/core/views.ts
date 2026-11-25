@@ -543,6 +543,11 @@ export interface ItemPage {
   hold?: { claim?: HoldAction; handBack?: HoldAction; release?: HoldAction; branch?: ItemBranch };
   /** Set by the server: the states an edit may choose (a GitHub Item has no `waiting`). */
   states?: string[];
+  /**
+   * Set by the server where Scope Soup runs: the State menu's moves that act on this machine's job (`src/server/moves.ts`), each with
+   * `why` it cannot be made now. Backlog is absent when there is no work under way to drop.
+   */
+  moves?: Partial<Record<"triage" | "backlog" | "in-review" | "merge-queue", HoldAction>>;
 }
 
 /**

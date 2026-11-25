@@ -6,7 +6,7 @@ import type { BoardView, DiffFile, DiffView, ItemPage, RoundRow, SessionDetailsV
 import { Fragment } from "preact";
 import type { ComponentChildren } from "preact";
 import { useEffect, useId, useState } from "preact/hooks";
-import { fetchChat, fetchDiff, fetchItem, fetchItemBranch, fetchSession, postAnswers, postChat, postRewrite, postEdit, postState, postHandBack, postOpenDiff, postProposal, postRelease, postResolve, postStartOver, postClaim, postMediaDelete, useNow, usePerson, useView } from "./api.ts";
+import { fetchChat, fetchDiff, fetchItem, fetchItemBranch, fetchItems, fetchSession, postAnswers, postChat, postRewrite, postEdit, postHandBack, postOpenDiff, postProposal, postRelease, postResolve, postStartOver, postClaim, postMediaDelete, useNow, usePerson, useView } from "./api.ts";
 import { actorClass, actorWords, Mention, VoteButtons } from "./Card.tsx";
 import { placeText, statusText } from "./cardText.ts";
 import { ItemForm } from "./ItemForm.tsx";
@@ -17,7 +17,11 @@ import type { MediaView } from "./Markdown.tsx";
 import { BatchBox } from "./Batch.tsx";
 import type { ChatSessionView } from "../../src/core/views.ts";
 import { hostDiffers } from "../../src/core/lanes.ts";
-import { fill, itemNoun, words } from "./theme.ts";
+import { itemNoun, words } from "./theme.ts";
+import type { ItemListRow } from "./api.ts";
+import { currentState, effectNote, stateOptions, toastText, withBlocker } from "./stateMenu.ts";
+import type { StateOption } from "./stateMenu.ts";
+import { queueChange, usePendingState } from "./Pending.tsx";
 import { ago, fromWords, laneWord, optionRows, span, stateFacts, unmatchedRecommendation } from "./format.ts";
 import { ProgressBar } from "./Progress.tsx";
 import { collapse, diffLines, hasChanges, hunkParts } from "./textDiff.ts";
@@ -1233,7 +1237,6 @@ function Body({ page, reload, resources }: { page: ItemPage; reload: () => void;
   const { item } = page;
   const [editing, setEditing] = useState(false);
   const [chatWith, setChatWith] = useState<string | null>(null);
-  const headerState = item.hostState.split(";")[0] ?? "";
   const facts = stateFacts(page.lane, item.hostState, hostDiffers(page.lane, item.hostState));
   const waits = waitingForUnit(item.ref.id, resources);
 
@@ -1306,10 +1309,7 @@ function Body({ page, reload, resources }: { page: ItemPage; reload: () => void;
               labels: item.labels.join(", "),
               priority: item.priority ?? "",
               blockedBy: page.blockedBy.map((other) => other.key.split(":").slice(2).join(":")).join(", "),
-              state: (page.states ?? ["todo", "doing", "waiting", "done", "abandoned"]).includes(headerState) ? headerState : item.state,
             }}
-            withState
-            {...(page.states ? { states: page.states } : {})}
             submitWords="Save"
             onSubmit={(fields) =>
               postEdit(item.key, fields).then(() => {
@@ -1366,7 +1366,9 @@ function Body({ page, reload, resources }: { page: ItemPage; reload: () => void;
         {page.why && <Place page={page} />}
         <dl class="facts">
           <dt>State</dt>
-          <dd>{facts.state}</dd>
+          <dd>
+            <StateMenu page={page} />
+          </dd>
           {facts.host !== null && (
             <>
               <dt>On the host</dt>
@@ -1564,54 +1566,147 @@ function Body({ page, reload, resources }: { page: ItemPage; reload: () => void;
         </section>
       )}
 
-      {page.canEdit && !editing && item.state !== "done" && <AbandonRow page={page} reload={reload} />}
+      {page.canEdit && !editing && item.state !== "done" && <AbandonRow page={page} />}
     </article>
     </MediaContext.Provider>
   );
 }
 
-/** The last thing on the page, outside Edit: Abandon (asks first) and, for an abandoned Item, Reopen. Edit's state change, nothing more. */
-function AbandonRow({ page, reload }: { page: ItemPage; reload: () => void }) {
-  const [asking, setAsking] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const abandoned = page.item.state === "abandoned";
+/** Puts the pick of `option` in the Undo wait, with its toast in the theme's words. */
+function queuePick(page: ItemPage, option: StateOption, blockedBy?: string[]): void {
   const theme = words();
-  const set = (state: string) => {
-    setBusy(true);
-    setError(null);
-    postState(page.item.key, state).then(
-      () => {
-        setAsking(false);
-        setBusy(false);
-        reload();
-      },
-      (problem: unknown) => {
-        setError(problem instanceof Error ? problem.message : String(problem));
-        setBusy(false);
-      },
-    );
+  queueChange({ itemKey: page.item.key, state: option.key, seen: page.item.updatedAt, steps: option.steps, text: toastText(page.item.label, option.key, effectNote(option.key, page, theme), theme), ...(blockedBy ? { blockedBy } : {}) });
+}
+
+/**
+ * The State line's menu (#154): the board's columns plus Triage and Abandoned, the current one selected. Picking one waits about 5 s
+ * with an Undo toast, then runs its action; an option that cannot be picked now says why under its name.
+ */
+function StateMenu({ page }: { page: ItemPage }) {
+  const theme = words();
+  const current = currentState(page);
+  const waiting = usePendingState(page.item.key);
+  const shown = waiting ?? current;
+  const options = stateOptions(page, theme);
+  const [open, setOpen] = useState(false);
+  const [blocking, setBlocking] = useState(false);
+  const listId = useId();
+  useEffect(() => {
+    if (!open) return;
+    const close = (event: Event) => {
+      if (event instanceof KeyboardEvent ? event.key === "Escape" : !(event.target as Element).closest?.(".state-menu")) setOpen(false);
+    };
+    document.addEventListener("keydown", close);
+    document.addEventListener("pointerdown", close);
+    return () => {
+      document.removeEventListener("keydown", close);
+      document.removeEventListener("pointerdown", close);
+    };
+  }, [open]);
+  const pick = (option: StateOption) => {
+    setOpen(false);
+    if (option.why || option.key === shown) return;
+    if (option.steps.some((step) => step.kind === "block")) return setBlocking(true);
+    queuePick(page, option);
   };
+  const label = options.find((option) => option.key === shown)?.label ?? shown;
+  return (
+    <div class="state-menu">
+      <button type="button" class="state-button" aria-haspopup="listbox" aria-expanded={open} aria-controls={listId} onClick={() => setOpen(!open)}>
+        {label} <span aria-hidden="true">▾</span>
+      </button>
+      {open && (
+        <ul class="state-list" role="listbox" id={listId} aria-label="State">
+          {options.map((option) => {
+            const off = option.why !== undefined && option.key !== shown;
+            return (
+              <li key={option.key} role="option" aria-selected={option.key === shown} aria-disabled={off}>
+                <button type="button" disabled={off} title={off ? option.why : undefined} class={option.key === shown ? "state-current" : undefined} onClick={() => pick(option)}>
+                  <span>{option.key === shown ? "✓ " : ""}{option.label}</span>
+                  {off && <small>{option.why}</small>}
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      {blocking && (
+        <BlockerPicker
+          page={page}
+          onPick={(row) => {
+            setBlocking(false);
+            const option = options.find((each) => each.key === "blocked");
+            if (option) queuePick(page, option, withBlocker(page.blockedBy.map((other) => other.key), row.key));
+          }}
+          onCancel={() => setBlocking(false)}
+        />
+      )}
+    </div>
+  );
+}
+
+/** Which Item blocks this one: open Items, searched by id or title (the Items list's search). */
+function BlockerPicker({ page, onPick, onCancel }: { page: ItemPage; onPick: (row: ItemListRow) => void; onCancel: () => void }) {
+  const [query, setQuery] = useState("");
+  const [rows, setRows] = useState<ItemListRow[] | null>(null);
+  useEffect(() => {
+    let live = true;
+    const timer = setTimeout(() => {
+      fetchItems(`state=open${query.trim() ? `&q=${encodeURIComponent(query.trim())}` : ""}`).then(
+        (view) => live && setRows(view.items),
+        () => live && setRows([]),
+      );
+    }, 150);
+    return () => {
+      live = false;
+      clearTimeout(timer);
+    };
+  }, [query]);
+  const taken = new Set([page.item.key, ...page.blockedBy.map((other) => other.key)]);
+  const choices = (rows ?? []).filter((row) => !taken.has(row.key)).slice(0, 8);
+  return (
+    <div class="blocker-picker">
+      <input type="search" placeholder="Blocked by: id or title" value={query} onInput={(event) => setQuery((event.target as HTMLInputElement).value)} autoFocus />
+      {rows === null ? (
+        <p class="muted">Loading…</p>
+      ) : choices.length === 0 ? (
+        <p class="muted">No open {itemNoun(true)} match.</p>
+      ) : (
+        <ul>
+          {choices.map((row) => (
+            <li key={row.key}>
+              <button type="button" onClick={() => onPick(row)}>
+                <span class="ref num">{row.label}</span> {row.title}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <button type="button" onClick={onCancel}>Cancel</button>
+    </div>
+  );
+}
+
+/** The last thing on the page, outside Edit: Abandon and, for an abandoned Item, Reopen; each waits with the Undo toast. */
+function AbandonRow({ page }: { page: ItemPage }) {
+  const theme = words();
+  const abandoned = page.item.state === "abandoned";
+  const option = stateOptions(page, theme).find((each) => each.key === (abandoned ? "backlog" : "abandoned"));
+  const waiting = usePendingState(page.item.key);
+  const off = !option || option.why !== undefined || waiting !== undefined;
   return (
     <section class="danger-row">
       {abandoned ? (
         <>
-          <button type="button" disabled={busy} onClick={() => set("todo")}>{theme.reopenButton}</button>
+          <button type="button" disabled={off} title={option?.why} onClick={() => option && queuePick(page, option)}>{theme.reopenButton}</button>
           <span class="muted">{theme.reopenAbout}</span>
-        </>
-      ) : asking ? (
-        <>
-          <span>{fill(theme.abandonAsk, { id: page.item.label })}</span>
-          <button type="button" class="danger" disabled={busy} onClick={() => set("abandoned")}>{theme.abandonYes}</button>
-          <button type="button" disabled={busy} onClick={() => setAsking(false)}>No</button>
         </>
       ) : (
         <>
-          <button type="button" class="danger" onClick={() => setAsking(true)}>{theme.abandonButton}</button>
+          <button type="button" class="danger" disabled={off} title={option?.why} onClick={() => option && queuePick(page, option)}>{theme.abandonButton}</button>
           <span class="muted">{theme.abandonAbout}</span>
         </>
       )}
-      {error && <p class="error">{error}</p>}
     </section>
   );
 }

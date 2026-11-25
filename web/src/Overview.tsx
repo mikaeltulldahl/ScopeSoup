@@ -165,7 +165,6 @@ export function Overview({ board, busy, onSwitch }: { board: BoardView; busy: bo
         <h3 class="dialog-title">New {theme.words.itemOne}</h3>
         <ItemForm
           start={{ title: "", body: "", verification: "", labels: "", blockedBy: "", priority: "" }}
-          withState={false}
           submitWords="Create"
           onDirty={setDirty}
           onSubmit={(fields) =>

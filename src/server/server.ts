@@ -32,7 +32,9 @@ import { explainOrder, voteForPlace, voteLimits } from "../orchestrator/score.ts
 import { setVote, voteInStore } from "../store/votes.ts";
 import { isSha } from "../orchestrator/history.ts";
 import { readMergeQueueNote } from "../orchestrator/mergeQueueLease.ts";
-import { answerQuestion, answerRefusal, rewriteRefusal, keepsRecommendations, loadJobs, questionsSettled, releaseJob, parkedRewrite, resumesStep, settleRewrite } from "../orchestrator/jobs.ts";
+import { answerQuestion, answerRefusal, rewriteRefusal, keepsRecommendations, loadJobs, questionsSettled, releaseJob, parkedRewrite, resumesStep, saveJobs, settleRewrite } from "../orchestrator/jobs.ts";
+import { applyMove, isMove, MOVES, moveWhys } from "./moves.ts";
+import type { MoveInput } from "./moves.ts";
 import type { AnswerRefusal, RewriteRefusal, Rewrite } from "../orchestrator/jobs.ts";
 import { workBranch } from "../orchestrator/paths.ts";
 import type { Media } from "../orchestrator/media.ts";
@@ -56,7 +58,7 @@ import { activityView } from "./activity.ts";
 import { decide as decideItemDraft, draftRequest, draftViews } from "./drafts.ts";
 import type { MergeQueueOptions } from "../config/mergeQueue.ts";
 import { addAnswer, loadAnswers } from "../store/answers.ts";
-import { applyControl, pauseRemembering, startAgain } from "../store/control.ts";
+import { applyControl, mergeQueueOn, pauseRemembering, startAgain } from "../store/control.ts";
 import { countWithoutTriage, withoutTriageKeys } from "./triage.ts";
 import type { ControlAction } from "../store/control.ts";
 import { itemTextHash, optionTexts } from "../core/answerReuse.ts";
@@ -663,6 +665,55 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
     const sent = await options.chat.send(ref, session, message, by().who);
     if (!sent.ok) return sendError(response, sent.status, sent.code, sent.message);
     return sendJson(response, 202, { turn: sent.turn.id });
+  }
+
+  /** What a move is decided from, for an Item as the store has it now. */
+  function moveInput(work: WorkItem, lane: ItemPage["lane"]): MoveInput {
+    return { item: work, job: loadJobs(store)[refKey(work.ref)], lane, level: options.planning?.().level ?? 0, mergeQueueOn: mergeQueueOn(store), at: now().getTime() };
+  }
+
+  /**
+   * Why a change a person picked is refused because the Item changed since their page read it: `seen` is the `updatedAt` the page
+   * showed (the State menu sends it after its Undo wait). Absent `seen` checks nothing (the item commands, the Edit form).
+   */
+  function changedSince(work: WorkItem, seen: unknown): string | undefined {
+    if (seen === undefined) return undefined;
+    return typeof seen === "string" && Date.parse(seen) === Date.parse(work.updatedAt) ? undefined : `${work.ref.id} changed meanwhile: look again and pick again.`;
+  }
+
+  /**
+   * A person sets an Item's state from its page (#154): `{ ref, to, seen? }` with `to` one of `MOVES` (`src/server/moves.ts`):
+   * triage again, back to the backlog, the review step now, the merge queue now. Acts on this machine's job, never on a running session.
+   */
+  async function moveItem(request: IncomingMessage, response: ServerResponse): Promise<void> {
+    let body: Record<string, unknown>;
+    try {
+      body = await readJson(request);
+    } catch (error) {
+      return sendError(response, 400, "BAD_BODY", error instanceof Error ? error.message : "The body is not JSON.");
+    }
+    const { ref, to, seen } = body;
+    if (typeof ref !== "string" || !isMove(to)) return sendError(response, 400, "BAD_FIELD", `Give { "ref": "host:work:id", "to": ${MOVES.map((each) => `"${each}"`).join(" | ")}, "seen"? }.`);
+    if (options.configFile === undefined) return sendError(response, 409, "NO_PROJECT", "This server has no project configuration, so it runs no agents.");
+    const snapshot = loadSnapshot(store);
+    const work = snapshot.works.find((each) => refKey(each.ref) === ref);
+    if (!work) return sendError(response, 404, "ITEM_NOT_FOUND", `No item ${ref}.`);
+    const changed = changedSince(work, seen);
+    if (changed) return sendError(response, 409, "CHANGED", changed);
+    const lane = buildItemPage(snapshot, ref, now())?.lane ?? null;
+    const at = now().toISOString();
+    const who = by().who;
+    const done = store.tx(() => {
+      const jobs = loadJobs(store);
+      const result = applyMove(jobs, ref, to, { ...moveInput(work, lane), job: jobs[ref] }, who, at);
+      if (!result.ok) return result;
+      saveJobs(store, jobs);
+      store.appendEvent({ kind: "person.moved", subject: ref, actor: who, data: { to, reason: result.reason, via: "board" } }, at);
+      return result;
+    });
+    if (!done.ok) return sendError(response, 409, "REFUSED", `${work.ref.id}: ${done.why}.`);
+    options.onRefresh?.();
+    return sendJson(response, 200, { ref, message: done.reason });
   }
 
   async function startOver(request: IncomingMessage, response: ServerResponse): Promise<void> {
@@ -1275,6 +1326,12 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
     } catch (error) {
       return sendError(response, 400, "BAD_BODY", error instanceof Error ? error.message : "The body is not JSON.");
     }
+    // The State menu sends the `updatedAt` its page read: an Item changed since is refused rather than taken from under someone.
+    if (body.seen !== undefined && typeof body.id === "string") {
+      const seenWork = workByKey(body.id);
+      const changed = seenWork ? changedSince(seenWork, body.seen) : undefined;
+      if (changed) return sendError(response, 409, "CHANGED", changed);
+    }
     if (typeof body.id === "string" && holdHost(body.id) === "jira") return jiraHold(response, verb, options.jiraItems!, body);
     if (!items || !write || !items.work) return sendError(response, 403, "READ_ONLY", "Items cannot be written here: the project's host is read-only.");
     // The item commands say who with `as`; the board's buttons with its picked person.
@@ -1527,6 +1584,8 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
     const onItems = !!write?.editWork && current?.ref.host === items!.host;
     const onHost = !onItems && hostEdit !== undefined && current?.ref.host === hostEdit.host;
     if (!current || (!onItems && !onHost)) return sendError(response, 404, "ITEM_NOT_FOUND", `No item ${body.ref} that can be edited here.`);
+    const stale = changedSince(current, body.seen);
+    if (stale) return sendError(response, 409, "CHANGED", stale);
 
     const patch: WorkPatch = {};
     const changed: string[] = [];
@@ -1994,7 +2053,7 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
   };
 
   /** The POST endpoints that record who did it; the board names its picked person, or the request is refused. */
-  const NEEDS_PERSON = new Set(["/api/answer", "/api/answers", "/api/proposal", "/api/rewrite", "/api/start-over", "/api/chat", "/api/decisions", "/api/item/edit", "/api/item/vote", "/api/item/resolve", "/api/item/media/delete", "/api/item-draft"]);
+  const NEEDS_PERSON = new Set(["/api/answer", "/api/answers", "/api/proposal", "/api/rewrite", "/api/start-over", "/api/chat", "/api/decisions", "/api/item/edit", "/api/item/vote", "/api/item/resolve", "/api/item/media/delete", "/api/item-draft", "/api/item/move"]);
 
   /** The Item a request names by its key, as the store has it. */
   const workByKey = (key: string): WorkItem | undefined => loadSnapshot(store).works.find((work) => refKey(work.ref) === key);
@@ -2103,6 +2162,7 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
         if (path === "/api/decisions") return settleDecisions(request, response);
         if (path === "/api/item/edit") return editItem(request, response);
         if (path === "/api/item/vote") return vote(request, response);
+        if (path === "/api/item/move") return moveItem(request, response);
         if (path === "/api/item/resolve") return resolve(request, response);
         if (path === "/api/item/media/delete") return deleteMedia(request, response);
         if (path === "/api/item/claim") return person(request, response, "claim");
@@ -2298,7 +2358,9 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
         // The Item's images, and whether everyone with the repository sees them (the page reminds the viewer).
         const images = options.media ? await options.media.list(page.item.ref).catch(() => []) : [];
         if (images.length > 0) page.media = { names: images, shared: options.media!.pushing() };
-        return sendJson(response, 200, { ...page, canEdit: (ours && items.write.editWork !== undefined) || onHost, ...(hold ? { hold } : {}), states: onHost ? HOST_STATES : STATES });
+        const work = snapshot.works.find((each) => refKey(each.ref) === refKey(page.item.ref));
+        const moves = work ? moveWhys(moveInput(work, page.lane)) : undefined;
+        return sendJson(response, 200, { ...page, canEdit: (ours && items.write.editWork !== undefined) || onHost, ...(hold ? { hold } : {}), states: onHost ? HOST_STATES : STATES, ...(moves && options.configFile !== undefined ? { moves } : {}) });
       }
       return sendError(response, 404, "NOT_FOUND", `No such endpoint: GET ${path}`);
     }
