@@ -8,7 +8,7 @@ import type { ProjectConfig } from "../../../config/types.ts";
 import type { AgentEvent } from "../../agent.ts";
 import { providerFor } from "../index.ts";
 import { checkAnswer, uncheckedKeywords } from "./answer.ts";
-import { copilotArgs, copilotRefusal, DRIVER, pathOfFileUrl, copilotRules, retryUsageFile, shellRule, usageFile } from "./command.ts";
+import { copilotArgs, COPILOT_WARNING, DRIVER, pathOfFileUrl, copilotRules, retryUsageFile, shellRule, usageFile } from "./command.ts";
 import { copilotCommandsText, copilotProvider } from "./index.ts";
 import { replyIn, tokensIn, tokensInUsage, toolCallsIn } from "./readers.ts";
 import { createCopilotReader } from "./stream.ts";
@@ -63,7 +63,6 @@ test("allowedTools become Copilot rules that never allow more than the entry did
 
   const rules = copilotRules(["Read", "Glob", "Grep", "Edit", "Write", "Bash(git diff *)", "Bash(npm run check*)", "WebFetch"]);
   assert.deepEqual(rules.allow, ["write", "shell(git diff:*)"]);
-  assert.deepEqual(rules.deny, ["shell(git push)"]);
   assert.deepEqual(rules.left, ["Bash(npm run check*)", "WebFetch"]);
 });
 
@@ -71,7 +70,10 @@ test("the prompt names the commands the role really got", () => {
   const text = copilotCommandsText(["Read", "Bash(git log *)", "Bash(git status *)", "Bash(npm run check*)"]);
   assert.match(text, /^Shell commands you may run: `git log \.\.\.`, `git status \.\.\.`\./);
   assert.doesNotMatch(text, /npm run check/);
-  assert.match(text, /`git push` is always refused/);
+  // Nothing on the command line refuses a flag, so the prompt does.
+  assert.match(text, /Never use `--no-verify`, `git push --force` or `git push -f`/);
+  assert.doesNotMatch(text, /always refused/);
+  assert.match(copilotCommandsText(["Bash"]), /^You may run any shell command\. /);
 });
 
 test("each role's command line: model, auto tier, rules, usage file, no question form", () => {
@@ -82,24 +84,42 @@ test("each role's command line: model, auto tier, rules, usage file, no question
   assert.equal(value("--model"), "fusion");
   assert.equal(value("--auto-tier"), "balance");
   assert.equal(value("--usage-output-file"), usageFile("C:\\data\\streams\\s1.ndjson"));
-  for (const word of ["--no-ask-user", "--disable-builtin-mcps", "--no-auto-update", "--deny-tool=shell(git push)", "--allow-tool=shell(git log:*)"]) assert.ok(args.includes(word), word);
+  for (const word of ["--no-ask-user", "--disable-builtin-mcps", "--no-auto-update", "--allow-tool=shell(git log:*)"]) assert.ok(args.includes(word), word);
   assert.ok(!args.includes("--trust-folder") && !args.includes("--reasoning-effort") && !args.includes("--allow-all-tools"));
   // A named model takes no Auto routing profile.
   assert.equal(copilotArgs(c, "review").includes("--auto-tier"), false);
 });
 
-test("a role that may run a git command beyond reading is refused on Copilot: it cannot refuse --no-verify; the read-only roles run", () => {
-  const c = config({ triage: { provider: "copilot" }, implement: { provider: "copilot" }, review: { provider: "copilot" } });
-  assert.equal(copilotRefusal(c, "triage"), null);
-  assert.equal(copilotRefusal(c, "review"), null);
-  assert.match(copilotRefusal(c, "implement") ?? "", /cannot refuse a flag such as `--no-verify`.*allows `git`/);
-  for (const sub of ["commit", "merge", "am", "revert", "cherry-pick", "rebase", "pull", "stash", "add"]) {
+test("a role that may commit and push gets the git rules its allowedTools map to: no refusal, no wholesale deny of git push", () => {
+  const c = config({ implement: { provider: "copilot" }, triage: { provider: "copilot" } });
+  const args = copilotArgs(c, "implement");
+  // The default implement role has `Bash(git *)`: every git command, push included.
+  assert.ok(args.includes("--allow-tool=shell(git:*)"));
+  assert.ok(args.includes("--allow-tool=write"));
+  assert.ok(!args.some((arg) => arg.startsWith("--deny-tool")));
+  assert.ok(!copilotArgs(c, "triage").some((arg) => arg.startsWith("--deny-tool")));
+  // As on Claude, from level 4 no session pushes: the merge queue does.
+  assert.deepEqual(copilotRules(["Bash(git *)"], 4).deny, ["shell(git push)"]);
+  assert.deepEqual(copilotRules(["Bash(git *)"], 3).deny, []);
+  assert.equal("refuses" in copilotProvider, false);
+  for (const sub of ["commit", "push", "merge", "rebase", "stash", "add"]) {
     const one = config({ implement: { provider: "copilot", allowedTools: ["Read", "Edit", `Bash(git ${sub} *)`] } });
-    assert.ok((copilotRefusal(one, "implement") ?? "").includes(`allows \`git ${sub}\``), sub);
+    assert.ok(copilotArgs(one, "implement").includes(`--allow-tool=shell(git ${sub}:*)`), sub);
   }
-  assert.match(copilotRefusal(config({ review: { provider: "copilot", allowedTools: ["Bash"] } }), "review") ?? "", /allows `git`/);
-  const reading = config({ implement: { provider: "copilot", allowedTools: ["Read", "Edit", "Bash(git status)", "Bash(git blame *)", "Bash(pnpm check*)"] } });
-  assert.equal(copilotRefusal(reading, "implement"), null);
+  // Never wider: an exact entry, or one that names a flag, is left out; it is not widened to the whole command.
+  const narrow = config({ implement: { provider: "copilot", allowedTools: ["Read", "Edit", "Bash(git push)", "Bash(git push origin*)", "Bash(git push --force*)", "Bash(git commit)", "Bash(git tag *)"] } });
+  const narrowArgs = copilotArgs(narrow, "implement");
+  assert.deepEqual(narrowArgs.filter((arg) => arg.startsWith("--allow-tool=shell")), ["--allow-tool=shell(git tag:*)"]);
+  assert.deepEqual(copilotRules(["Bash(git push)", "Bash(git push --force*)", "Bash(git commit)"]).left, ["Bash(git push)", "Bash(git push --force*)", "Bash(git commit)"]);
+});
+
+test("the warning for a Copilot role says what the rules cannot refuse, and the Settings page shows the same text", () => {
+  assert.match(COPILOT_WARNING, /first word only/);
+  assert.match(COPILOT_WARNING, /--no-verify and --force cannot be refused/);
+  assert.match(COPILOT_WARNING, /Protect the main branch/);
+  const page = readFileSync(join(import.meta.dirname, "..", "..", "..", "..", "web", "src", "Settings.tsx"), "utf8");
+  assert.ok(page.includes(`"${COPILOT_WARNING}"`), "web/src/Settings.tsx carries the warning word for word");
+  assert.match(page, /provider === "copilot"/);
 });
 
 test("the driver's path is a path on this machine, read from its URL without Node's helpers", () => {

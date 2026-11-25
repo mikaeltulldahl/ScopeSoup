@@ -26,5 +26,7 @@ export const KEYS = {
   upgradeResume: "scopesoup.upgrade_resume",
   /** JSON `{ text, at }`: the note on the board after that ("Upgraded to 0.6.0; agents started again as before"); "" when none. */
   upgradeNote: "scopesoup.upgrade_note",
+  /** `<repo>#<branch>`: the main branch whose "no protection on GitHub" warning a person dismissed; "" when none. */
+  branchProtectionDismissed: "scopesoup.branch_protection_dismissed",
 } as const;
 

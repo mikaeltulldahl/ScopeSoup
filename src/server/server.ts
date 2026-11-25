@@ -12,6 +12,7 @@ import type { AddressInfo } from "node:net";
 import { buildBoard } from "../core/board.ts";
 import type { ResourceConfig } from "../config/types.ts";
 import type { OffboardView } from "../offboard/plan.ts";
+import type { BranchProtection } from "./branchProtection.ts";
 import type { Upgrader } from "../upgrade/upgrader.ts";
 import { readResourceState, resourcesView } from "../orchestrator/resources.ts";
 import type { Self } from "../core/holdings.ts";
@@ -173,6 +174,8 @@ export interface ServerOptions {
   offboard?: () => Promise<OffboardView>;
   /** Scope Soup's version, the update check, Get latest and Go back (`src/upgrade/upgrader.ts`). */
   upgrade?: Pick<Upgrader, "view" | "check" | "getLatest" | "goBack" | "cancel" | "dismissNote">;
+  /** The board's warning about an unprotected main branch on the GitHub remote (`branchProtection.ts`). Absent: no GitHub host, so none. */
+  branchProtection?: BranchProtection;
 }
 
 /**
@@ -1512,6 +1515,10 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
           const asked = requestQueueResume(store, now().toISOString(), picked() ?? "board");
           return asked.ok ? sendJson(response, 200, { requested: true }) : sendError(response, 409, "QUEUE_NOT_PAUSED", asked.reason);
         }
+        if (path === "/api/branch-protection/dismiss") {
+          options.branchProtection?.dismiss();
+          return sendJson(response, 200, { warning: null });
+        }
         if (path.startsWith("/api/upgrade/")) {
           const upgrade = options.upgrade;
           if (!upgrade) return sendError(response, 404, "NO_UPGRADE", "This server has no upgrade.");
@@ -1603,6 +1610,7 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
           return sendJson(response, 200, { now: now().toISOString(), available: false, reason: `The list could not be made: ${error instanceof Error ? error.message : String(error)}` });
         }
       }
+      if (path === "/api/branch-protection") return sendJson(response, 200, { warning: (await options.branchProtection?.read()) ?? null });
       if (path === "/api/upgrade") {
         if (!options.upgrade) return sendError(response, 404, "NO_UPGRADE", "This server has no upgrade.");
         return sendJson(response, 200, options.upgrade.view());

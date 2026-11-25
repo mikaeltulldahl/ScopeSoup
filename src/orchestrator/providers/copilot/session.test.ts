@@ -94,7 +94,7 @@ describe("Copilot sessions", { concurrency: 4 }, () => {
     assert.equal(value("--model"), "fusion");
     assert.equal(value("--auto-tier"), "balance");
     assert.ok(run.args.includes("--allow-tool=shell(git log:*)"));
-    assert.ok(run.args.includes("--deny-tool=shell(git push)"));
+    assert.equal(run.args.some((arg) => arg.startsWith("--deny-tool")), false);
     assert.equal(run.args.some((arg) => arg.startsWith("--allow-tool=write")), false);
     assert.match(run.prompt, /your last message is your answer/);
     assert.equal(existsSync(usageFile(session.streamPath ?? "")), true);
@@ -138,12 +138,14 @@ describe("Copilot sessions", { concurrency: 4 }, () => {
     assert.equal(fakeArgs(session).length, 2);
   });
 
-  test("an implement role that may commit is refused on Copilot before anything starts", async () => {
-    const w = world("ok");
-    const session = await w.runner.start(request("implement"));
-    assert.equal(session.status, "failed");
-    assert.match(session.endReason ?? "", /^Refused: Copilot CLI cannot refuse a flag such as `--no-verify`/);
-    assert.equal(session.pid, undefined);
+  test("an implement role that may commit and push starts on Copilot, with those rules", async () => {
+    const w = world("ok", { FAKE_COPILOT_OUTPUT: '{"done":true,"summary":"edited"}' }, { implement: { provider: "copilot" } });
+    const session = await w.runner.finished((await w.runner.start(request("implement"))).ref.id);
+    assert.equal(session.status, "succeeded", session.endReason);
+    const [run] = fakeArgs(session);
+    assert.ok(run?.args.includes("--allow-tool=shell(git:*)"));
+    assert.ok(run?.args.includes("--allow-tool=write"));
+    assert.equal(run?.args.some((arg) => arg.startsWith("--deny-tool")), false);
   });
 
   test("an implement role with only read-only git commands runs on Copilot with file writes allowed", async () => {
