@@ -123,6 +123,15 @@ export interface TurnPort {
   turns(): Promise<Turn[]>;
 }
 
+/** What a host says about its repository, apart from the work in it. */
+export interface RepositoryPort {
+  /**
+   * Whether the branch has protection on the host (a protection rule or a ruleset). Null when the host cannot say: no rights to
+   * look, no such branch, not reachable. A guess is never made, so a caller that needs a yes or a no skips on null.
+   */
+  branchProtected(branch: string): Promise<boolean | null>;
+}
+
 export interface WatchPort {
   /** Calls back when something may have changed. Returns a function that stops watching. */
   watch(onEvent: (event: HostEvent) => void): Promise<() => void>;
@@ -419,6 +428,7 @@ export interface Host {
   batches?: BatchPort;
   turns?: TurnPort;
   watch?: WatchPort;
+  repository?: RepositoryPort;
   write?: WritePort;
   /** The merge queue's wait for the project's own CI; only with writes on. */
   queueCi?: QueueCiPort;

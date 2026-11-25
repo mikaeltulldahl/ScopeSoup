@@ -2,8 +2,8 @@
 // "Scope Soup X.Y.Z is available". The Settings page has the panel: the check, the release's notes, Upgrade and Go back.
 
 import { useEffect, useRef, useState } from "preact/hooks";
-import type { UpgradeView } from "./api.ts";
-import { fetchUpgrade, postUpgrade } from "./api.ts";
+import type { BranchProtectionWarning, UpgradeView } from "./api.ts";
+import { dismissBranchProtection, fetchBranchProtection, fetchUpgrade, postUpgrade } from "./api.ts";
 import { Markdown } from "./Markdown.tsx";
 
 const INSTALLING = "https://github.com/mikaeltulldahl/scopesoup/blob/main/docs/RUNNING.md#installing-and-upgrading";
@@ -57,6 +57,32 @@ export function UpgradeNote({ switches }: { switches: string }) {
   return (
     <p class="notice notice-person upgrade-note" role="status" id="upgrade-note">
       {note.text}.{" "}
+      <button type="button" onClick={dismiss}>Dismiss</button>
+    </p>
+  );
+}
+
+/** Once, until dismissed: the main branch of the GitHub remote has no protection. Nothing when it is protected or cannot be told. */
+export function BranchProtectionNote() {
+  const [warning, setWarning] = useState<BranchProtectionWarning | null>(null);
+  useEffect(() => {
+    let gone = false;
+    const read = () => fetchBranchProtection().then((next) => !gone && setWarning(next), () => undefined);
+    read();
+    const timer = setInterval(read, 60 * 60_000);
+    return () => {
+      gone = true;
+      clearInterval(timer);
+    };
+  }, []);
+  if (!warning) return null;
+  const dismiss = () => {
+    setWarning(null);
+    dismissBranchProtection().catch(() => undefined);
+  };
+  return (
+    <p class="notice notice-paused" role="status" id="branch-protection-note">
+      {warning.text}{" "}
       <button type="button" onClick={dismiss}>Dismiss</button>
     </p>
   );

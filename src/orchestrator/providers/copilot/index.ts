@@ -3,7 +3,7 @@
 // event format. Its fake for tests is `fake-copilot.ts`; its recorded streams (synthetic) are in `fixtures/`.
 
 import type { AgentProvider } from "../../agent.ts";
-import { ADVICE, buildLaunch, copilotConfig, copilotRefusal, copilotRules, TOKEN_ENV } from "./command.ts";
+import { ADVICE, buildLaunch, copilotConfig, copilotRules, TOKEN_ENV } from "./command.ts";
 import { replyIn, tokensIn, toolCallsIn } from "./readers.ts";
 import { createCopilotReader } from "./stream.ts";
 
@@ -15,11 +15,11 @@ function ruleWords(rule: string): string | null {
   return inner.endsWith(":*") ? `${inner.slice(0, -2)} ...` : inner;
 }
 
-const SHELL_FACTS = "One command per call, as listed: no `cd`, no chaining with `;`, `&&` or pipes, no `$(...)`; write a commit message to a file outside the tree and run `git commit -F <file>`. `git push` is always refused. Copilot also runs commands it knows to be read-only.";
+const SHELL_FACTS = "One command per call, as listed: no `cd`, no chaining with `;`, `&&` or pipes, no `$(...)`; write a commit message to a file outside the tree and run `git commit -F <file>`. Never use `--no-verify`, `git push --force` or `git push -f`, and never skip a hook: nothing on this command line stops you, so you must not. Copilot also runs commands it knows to be read-only.";
 
 export function copilotCommandsText(allowedTools: readonly string[]): string {
   const rules = copilotRules(allowedTools).allow;
-  if (rules.includes("shell")) return `You may run any shell command except \`git push\`. ${SHELL_FACTS}`;
+  if (rules.includes("shell")) return `You may run any shell command. ${SHELL_FACTS}`;
   const words = rules.map(ruleWords).filter((text): text is string => text !== null);
   if (words.length === 0) return `You may not run shell commands that change anything. Use the file tools. ${SHELL_FACTS}`;
   return `Shell commands you may run: ${words.map((text) => `\`${text}\``).join(", ")}. ${SHELL_FACTS}`;
@@ -55,7 +55,6 @@ export const copilotProvider: AgentProvider = {
   commandLimit: "allowlist",
   commandsText: copilotCommandsText,
   refusedProgram,
-  refuses: copilotRefusal,
 
   // No `readUsage`: Copilot says nothing about the plan's windows. Premium requests and AI credits come with each result.
 
