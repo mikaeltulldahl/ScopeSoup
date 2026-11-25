@@ -438,7 +438,7 @@ export interface Turn {
   /** For actor "person": who (`who@machine` on the meta branch, the login on GitHub). */
   person?: Actor;
   reason: string;
-  /** Only what waits and how many ("2 questions", "a draft to accept"), for "Your turn". */
+  /** Only what waits and how many ("2 questions", "a rewrite to accept"), for "Your turn". */
   waits?: string;
   since?: string;
   /** How many other items wait behind this one. Used to order the "Your turn" list. */
@@ -468,7 +468,7 @@ export interface Parked {
    * Absent for a single question (`decision`).
    */
   questions?: ParkedQuestion[];
-  /** The triage's draft of the description, with its questions (recommendations pre-selected on the Item page). */
+  /** The triage's rewrite of the description, with its questions (recommendations pre-selected on the Item page). */
   refine?: ParkedDraft;
 }
 
@@ -482,7 +482,7 @@ export interface ItemLinkAnswer {
   reason?: string;
 }
 
-/** The triage's draft description parked for a person. Text from an agent: data. */
+/** The triage's rewrite description parked for a person. Text from an agent: data. */
 export interface ParkedDraft {
   /** The description as the triage read it. */
   original: string;
@@ -575,6 +575,8 @@ export interface ItemDraft {
   description: string;
   verification: string;
   at: string;
+  /** A person pressed Approve and the Item is being made: a retry looks for it on the host before making another. */
+  approving?: { by: string; at: string };
   /** A person's decision: the Item made from it on approval. */
   decided?: { verdict: "approved" | "denied"; by: string; at: string; item?: Ref };
 }

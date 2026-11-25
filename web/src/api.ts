@@ -175,7 +175,7 @@ export async function postStartOver(ref: string): Promise<void> {
   }
 }
 
-/** Settles the triage's draft, or sends answers that run the triage again. */
+/** Settles the triage's rewrite, or sends answers that run the triage again. */
 export async function postDraft(ref: string, parkedAt: string, answers: string[], action: "accept" | "edit" | "reject", text?: string, labels?: { add: string[]; remove: string[] }): Promise<{ rerun: boolean; settled?: string }> {
   const response = await call("/api/draft", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ref, parkedAt, answers, action, ...(text !== undefined ? { text } : {}), ...(labels !== undefined ? { labels } : {}) }) });
   const body = (await response.json().catch(() => null)) as { rerun?: boolean; settled?: string; error?: { message?: string } } | null;

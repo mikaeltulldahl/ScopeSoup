@@ -285,7 +285,7 @@ export function seedDemo(store: Store, now: Date, dir?: string): void {
       triage: { ready: true, size: "small", paths: ["src/week"], hidesDecision: true, decision: DRAFT_QUESTION, decisions: [DRAFT_QUESTION], draft: DRAFT_TEXT },
       refine: { original: DRAFT_ORIGINAL, draft: DRAFT_TEXT, questions: [DRAFT_QUESTION], round: 1 },
       refineRounds: 1,
-      parked: { as: "needs-decision", reason: `Triage, round 1: a draft description and 1 question wait for an answer: 1. ${DRAFT_QUESTION.question}`, at: at(-36) },
+      parked: { as: "needs-decision", reason: `Triage, round 1: a rewrite of the description and 1 question wait for an answer: 1. ${DRAFT_QUESTION.question}`, at: at(-36) },
     });
     item(52, "Chart datum and the first test harbours", {
       body: "Harbours publish heights against different datums, and the first data set needs a few harbours to test against.",

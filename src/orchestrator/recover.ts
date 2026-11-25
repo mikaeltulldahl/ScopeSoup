@@ -79,9 +79,9 @@ export function jobFromHost(item: WorkItem): Job | null {
     // The rounds so far are the draft comments.
     job.refineRounds = Math.max(record!.draftRounds, draft.round);
     const said = questions.length > 0
-      ? `Triage, round ${draft.round}: a draft description and ${questions.length} question(s) wait for an answer: ${questions.map((each, index) => `${index + 1}. ${each.question}`).join(" ")}`
-      : `Triage, round ${draft.round}: a draft description waits for a person to accept, edit or reject.`;
-    const note = draft.bodyKnown ? "" : " The description the draft read is no longer known: the current one is shown as the original.";
+      ? `Triage, round ${draft.round}: a rewrite of the description and ${questions.length} question(s) wait for an answer: ${questions.map((each, index) => `${index + 1}. ${each.question}`).join(" ")}`
+      : `Triage, round ${draft.round}: a rewrite of the description waits for a person to accept, edit or reject.`;
+    const note = draft.bodyKnown ? "" : " The description the rewrite read is no longer known: the current one is shown as the original.";
     const ids = draft.questions.flatMap((question) => (question.id ? [question.id] : []));
     const askedAt = draft.questions[draft.questions.length - 1]?.at;
     job.parked = { as: "needs-decision", reason: `${said}${note}`, at: draft.at, draft: { id: draft.id, questions: ids, ...(askedAt ? { askedAt } : {}) } };

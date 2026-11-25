@@ -7,7 +7,7 @@ import type { ItemDraft, Ref, WorkItem } from "../model/types.ts";
 import { refKey } from "../model/types.ts";
 import type { WriteOutcome, WritePort } from "../ports/host.ts";
 import type { Store } from "../store/store.ts";
-import { decideDraft, draftRef, draftWork, madeFrom, openDrafts } from "../orchestrator/drafts.ts";
+import { decideDraft, DRAFT_HOST, draftMarker, draftRef, draftWork, madeFrom, openDrafts } from "../orchestrator/drafts.ts";
 
 /** A host an approved draft's Item is made on: the same hosts a restructuring makes its parts on. */
 export interface DraftHost {
@@ -65,11 +65,13 @@ export function draftRequest(body: Record<string, unknown>): DraftRequest | stri
 }
 
 /**
- * A person's decision on a draft. Deny records it. Approve makes the Item on the source Item's host (the text made inert, ending in
- * the draft's marker), then records it with the Item; an Item the store already has with that marker (made before a failed record)
- * is taken instead of making a second. Refused for a draft that is gone or decided, and Approve for a host that cannot be written.
+ * A person's decision on a draft. Deny records it. Approve first records that it is approving (`approving`), then makes the Item on
+ * the source Item's host (the text made inert, ending in the draft's marker line) and records it with the Item. An Item whose last line
+ * is that marker, not taken by another draft's decision, is taken instead of making a second; on a retry after an Approve that did not
+ * finish, the store is brought up to date from the host first (`refresh`), so an Item made then is found. Refused for a draft that is
+ * gone or decided, and Approve for a host that cannot be written.
  */
-export async function decide(store: Store, hosts: readonly DraftHost[], request: DraftRequest, by: string, at: () => string): Promise<DraftDecision> {
+export async function decide(store: Store, hosts: readonly DraftHost[], request: DraftRequest, by: string, at: () => string, refresh?: () => Promise<void>): Promise<DraftDecision> {
   const draft = store.get<ItemDraft>(draftRef(request.id));
   if (!draft) return { ok: false, status: 404, code: "NO_DRAFT", message: `There is no draft ${request.id}.` };
   if (draft.decided) return { ok: false, status: 409, code: "DECIDED", message: `${by === draft.decided.by ? "You" : draft.decided.by} ${draft.decided.verdict} this draft already.` };
@@ -79,10 +81,20 @@ export async function decide(store: Store, hosts: readonly DraftHost[], request:
   }
   const host = hosts.find((each) => each.host === draft.from.host && each.write.createWork);
   if (!host) return { ok: false, status: 403, code: "READ_ONLY", message: readOnlyWhy(draft.from.host, hosts)! };
-  const found = store.list<WorkItem>("work", host.host).find((work) => madeFrom(work.body, draft.ref.id));
-  let item = found?.ref;
+  const marker = draftMarker(draft.from, draft.ref.id, host.issueNumbers === true);
+  const made = (): Ref | undefined => {
+    const taken = new Set(store.list<ItemDraft>("draft", DRAFT_HOST).flatMap((each) => (each.ref.id !== draft.ref.id && each.decided?.item ? [refKey(each.decided.item)] : [])));
+    return store.list<WorkItem>("work", host.host).find((work) => madeFrom(work.body, marker) && !taken.has(refKey(work.ref)))?.ref;
+  };
+  let item = made();
+  // An Approve before this one did not finish: the Item may be on the host and not in the store yet.
+  if (!item && draft.approving && refresh) {
+    await refresh();
+    item = made();
+  }
   let outcome: WriteOutcome | undefined;
   if (!item) {
+    if (!draft.approving) store.put({ ...draft, approving: { by, at: at() } }, by, at());
     const given = { title: request.title ?? draft.title, description: request.description ?? draft.description, verification: request.verification ?? draft.verification };
     outcome = await host.write.createWork!(draftWork(draft, given, { verificationInBody: host.verificationInBody === true, issueNumbers: host.issueNumbers === true, by: { who: by, agent: false } }));
     item = outcome.work;

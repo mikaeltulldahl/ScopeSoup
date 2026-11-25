@@ -39,23 +39,33 @@ export function asDrafts(value: unknown, hasMarkup: (value: unknown) => boolean)
   return out.slice(0, MAX_DRAFTS);
 }
 
-/** A title as drafts are compared: case and spacing aside. */
-export const normalTitle = (title: string): string => title.trim().replace(/\s+/g, " ").toLowerCase();
+/** Text as drafts are compared: case and spacing aside. */
+export const normalText = (text: string): string => text.trim().replace(/\s+/g, " ").toLowerCase();
 
-/** A draft's id: its source Item and normalized title, so the same draft is one object however often it is proposed. */
-export function draftId(from: Ref, title: string): string {
-  return createHash("sha256").update(`${refKey(from)}\n${normalTitle(title)}`).digest("hex").slice(0, 12);
+/**
+ * A draft's id: its source Item, normalized title and normalized description, so the same draft is one object however often it is
+ * proposed, and one with the same title but other text is its own.
+ */
+export function draftId(from: Ref, draft: Pick<ProposedDraft, "title" | "description">): string {
+  return createHash("sha256").update([refKey(from), normalText(draft.title), normalText(draft.description)].join("|")).digest("hex").slice(0, 12);
 }
+
+/** A zero-width space: breaks a word or a marker for a host's parser, invisible to a reader. */
+const ZWSP = String.fromCharCode(0x200b);
 
 export const draftRef = (id: string): Ref => ({ host: DRAFT_HOST, kind: "draft", id });
 
 /** Lines shaped like a restructuring part's marker (`inertPart` in restructure.ts) or a draft's. */
 const MARKER_LINES = /^(\s*)(P)(art \d+ of restructuring)|^(\s*)(F)(ound while working on)/gim;
 
-/** Agent text made inert: no mention or closing keyword, no hidden mark, no line that could pose as a part's or a draft's marker. */
+/**
+ * Agent text made inert: no mention or closing keyword, no hidden mark, no line that could pose as a part's or a draft's marker, and
+ * no "(draft <id>)" anywhere.
+ */
 export function inertDraft(value: string): string {
-  return withoutMarks(inertText(value)).replace(MARKER_LINES, (_all: string, a?: string, b?: string, c?: string, d?: string, e?: string, f?: string) =>
-    b ? `${a}${b}​${c}` : `${d}${e}​${f}`);
+  return withoutMarks(inertText(value))
+    .replace(MARKER_LINES, (_all: string, a?: string, b?: string, c?: string, d?: string, e?: string, f?: string) => (b ? `${a}${b}${ZWSP}${c}` : `${d}${e}${ZWSP}${f}`))
+    .replace(/[(]draft(?=[ ]+[0-9a-f])/gi, (found) => `${found}${ZWSP}`);
 }
 
 /** The last line of an approved draft's Item: the Item it came from (`#N` on GitHub, which links it) and the draft's id. */
@@ -63,25 +73,28 @@ export function draftMarker(from: Ref, id: string, issueNumbers: boolean): strin
   return `Found while working on ${issueNumbers ? `#${from.id}` : from.id} (draft ${id}).`;
 }
 
-/** True when an Item's text ends with this draft's marker: the Item its approval made, found again after a failed record. */
-export const madeFrom = (body: string | undefined, id: string): boolean => (body ?? "").includes(`(draft ${id}).`);
+/** True when an Item's last line, trimmed, is exactly this marker (`draftMarker`): the Item an approval made, found again after a failed record. */
+export function madeFrom(body: string | undefined, marker: string): boolean {
+  const lines = (body ?? "").split("\n").map((line) => line.trim()).filter(Boolean);
+  return lines.at(-1) === marker;
+}
 
 export interface FiledDrafts {
   filed: ItemDraft[];
-  /** Titles of drafts already filed for this source Item (open, approved or denied). */
+  /** Titles of drafts filed before for this source Item with the same text (open, approved or denied). */
   known: string[];
 }
 
 /**
  * Files an agent's drafts for the Item `from`, each made inert, in one transaction (a `draft.created` event each). One with the same
- * source Item and normalized title as a draft filed before (decided or not) is left out.
+ * source Item, normalized title and description as a draft filed before (decided or not) is left out.
  */
 export function fileDrafts(store: Store, from: Ref, role: ItemDraft["role"], drafts: readonly ProposedDraft[], actor: string, at: string): FiledDrafts {
   const result: FiledDrafts = { filed: [], known: [] };
   store.tx(() => {
     const seen = new Set<string>();
     for (const draft of drafts) {
-      const id = draftId(from, draft.title);
+      const id = draftId(from, draft);
       if (seen.has(id) || store.get<ItemDraft>(draftRef(id))) {
         result.known.push(draft.title);
         continue;
@@ -132,7 +145,8 @@ export function decideDraft(store: Store, id: string, verdict: "approved" | "den
   return store.tx(() => {
     const draft = store.get<ItemDraft>(draftRef(id));
     if (!draft || draft.decided) return false;
-    store.put({ ...draft, decided: { verdict, by, at, ...(item ? { item } : {}) } }, by, at);
+    const { approving: _approving, ...rest } = draft;
+    store.put({ ...rest, decided: { verdict, by, at, ...(item ? { item } : {}) } }, by, at);
     return true;
   });
 }

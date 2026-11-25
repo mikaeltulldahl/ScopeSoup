@@ -119,7 +119,7 @@ describe("triage drafts and restructurings as comments", () => {
     assert.equal(store.getValue("person.answers"), null);
     assert.deepEqual(knownAnswers(store).filter((each) => each.subject.id === "1").map((each) => [each.question, each.answer]), [
       ["Metric or imperial?", "Metric"],
-      ["Triage draft, round 1", "Accepted the triage's draft: the description above is the new text."],
+      ["Triage rewrite, round 1", "Accepted the triage's rewrite: the description above is the new text."],
     ]);
   });
 

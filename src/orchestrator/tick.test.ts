@@ -1193,12 +1193,26 @@ test("should findings with review.shouldFindings \"fix\" (the default): back to 
   assert.deepEqual([w.job("1")?.merge, w.job("1")?.fixRounds, roles(w).at(-1)], [undefined, 0, "implement"]);
   assert.match(w.job("1")?.resumeWith ?? "", /^The reviewer approves, and asks for these smaller changes before the merge:\n- \[should\] src\/a\.ts: Name the helper/);
   assert.deepEqual(openDrafts(w.store), []);
+  w.runner.headSha = "4".repeat(40);
   await step(w, "1", "succeeded", { done: true, summary: "Renamed." });
+  assert.equal(roles(w).at(-1), "review");
   // The second approval still says it: the merge goes on, and it becomes one draft.
   await step(w, "1", "succeeded", approve);
   assert.deepEqual([w.job("1")?.merge, w.job("1")?.fixRounds, w.job("1")?.parked], [true, 0, undefined]);
   const drafts = openDrafts(w.store);
   assert.deepEqual(drafts.map((each) => [each.from.id, each.role, each.title]), [["1", "reviewer", "After #1: Name the helper after what it returns."]]);
+  assert.equal(w.events("orchestrator.escalated").length, 0);
+});
+
+test("a round for should findings that commits nothing is not \"nothing to change\": the approved change goes on to the merge and they become a draft", async () => {
+  const w = await toReview(["src/a.ts"]);
+  w.runner.commitsAhead = async () => 0;
+  await step(w, "1", "succeeded", { verdict: "approve", findings: [{ severity: "should", text: "Shorter name." }] });
+  assert.equal(roles(w).at(-1), "implement");
+  await step(w, "1", "succeeded", { done: true, summary: "The name is fine as it is." });
+  assert.deepEqual([w.job("1")?.parked, w.job("1")?.merge, w.job("1")?.shouldRound, roles(w).at(-1)], [undefined, true, undefined, "implement"]);
+  assert.equal(w.runner.requests.filter((request) => request.role === "review").length, 1, "not reviewed again");
+  assert.deepEqual(openDrafts(w.store).map((each) => each.title), ["After #1: Shorter name."]);
   assert.equal(w.events("orchestrator.escalated").length, 0);
 });
 
@@ -2941,7 +2955,7 @@ test("keeping every recommendation settles the draft in one action; then impleme
   w.clock.ms += 1000;
   await w.run();
   assert.deepEqual(roles(w), ["triage", "implement"]);
-  assert.match(w.reasons("orchestrator.step").at(-1) ?? "", /A person accepted the draft\. Next: implement\./);
+  assert.match(w.reasons("orchestrator.step").at(-1) ?? "", /A person accepted the rewrite\. Next: implement\./);
   assert.equal(w.job("1")?.refine, undefined);
 });
 
@@ -2958,7 +2972,7 @@ test("another answer runs the triage again with the answer in its prompt, round 
   // The second round asks a new question and writes a new draft.
   await step(w, "1", "succeeded", { ...TRIAGE, questions: [{ question: "Round to tenths?", options: [{ label: "Yes", description: "" }, { label: "No", description: "" }], recommendation: "Yes" }], draft: "Show the tide table in feet, to tenths." });
   assert.equal(w.job("1")?.refine?.round, 2);
-  assert.match(w.reasons("orchestrator.needs_decision").at(-1) ?? "", /^Triage, round 2: a draft description and 1 question\(s\)/);
+  assert.match(w.reasons("orchestrator.needs_decision").at(-1) ?? "", /^Triage, round 2: a rewrite of the description and 1 question\(s\)/);
   assert.deepEqual(roles(w), ["triage", "triage"]);
   assert.deepEqual(answerDraft(w, "1", ["Yes"], "reject"), { settled: "rejected" });
   await w.run();
@@ -3883,7 +3897,7 @@ test("a triage puts a question and a draft on another backlog Item, which parks 
   assert.equal(job.parked?.as, "needs-decision");
   assert.equal(job.step, "triage");
   assert.deepEqual(job.refine, { original: "Wind units.", draft: ABOUT_DRAFT, questions: [{ ...ABOUT_Q, question: "Knots or metres per second? (asked by triage of 1)" }], round: 1, askedBy: ["triage of 1"] });
-  assert.match(job.parked?.reason ?? "", /^Asked by triage of 1: a draft description and 1 question\(s\) about 2 wait for an answer: 1\. Knots or metres per second\? \(asked by triage of 1\)/);
+  assert.match(job.parked?.reason ?? "", /^Asked by triage of 1: a rewrite of the description and 1 question\(s\) about 2 wait for an answer: 1\. Knots or metres per second\? \(asked by triage of 1\)/);
   // Its own triage did not start; item 1 went on to implement.
   assert.deepEqual(w.runner.requests.map((request) => `${request.role} ${request.subject.id}`), ["triage 1", "implement 1"]);
   assert.ok(w.calls.includes("answerTurn 2 decision"));
@@ -3900,7 +3914,7 @@ test("a triage puts a question and a draft on another backlog Item, which parks 
   assert.equal(w.runner.requests.at(-1)?.role, "triage");
   assert.equal(w.runner.requests.at(-1)?.subject.id, "2");
   assert.match(w.runner.requests.at(-1)!.vars.itemBody!, /Answered: Knots/);
-  assert.match(w.reasons("orchestrator.step").find((reason) => reason.includes("asked about 2")) ?? "", /A person settled what triage of 1 asked about 2 \(the draft accepted\)\. Next: triage again/);
+  assert.match(w.reasons("orchestrator.step").find((reason) => reason.includes("asked about 2")) ?? "", /A person settled what triage of 1 asked about 2 \(the rewrite accepted\)\. Next: triage again/);
 });
 
 test("an implementor puts a question on an Item with paused work, which keeps its branch and session", async () => {

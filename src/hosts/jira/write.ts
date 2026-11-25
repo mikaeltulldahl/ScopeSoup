@@ -561,8 +561,8 @@ ${note}` : ""}`;
     async checkDraft(subject, id) {
       const draft = (await deps.read(subject)).thread.drafts.find((each) => each.id === id);
       if (!draft) throw new Error(`The draft comment ${id} on ${subject.id} is gone (it may have been deleted).`);
-      if (draft.answered) throw new AlreadyAnswered(`The draft of round ${draft.round} on ${subject.id} has an answer already.`);
-      if (descriptionSha((await issueOf(subject)).fields.description) !== draft.bodySha) throw new BodyChanged(`The description of ${subject.id} changed on Jira since the draft of round ${draft.round} was written.`);
+      if (draft.answered) throw new AlreadyAnswered(`The rewrite of round ${draft.round} on ${subject.id} has an answer already.`);
+      if (descriptionSha((await issueOf(subject)).fields.description) !== draft.bodySha) throw new BodyChanged(`The description of ${subject.id} changed on Jira since the rewrite of round ${draft.round} was written.`);
     },
 
     /** One line more in the log, the hidden issue property `scopesoup.log` (silent to watchers). */

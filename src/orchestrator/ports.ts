@@ -131,7 +131,7 @@ export interface Actions {
    */
   addBlockers?(item: Ref, blockers: Ref[]): Promise<void>;
   /**
-   * Replaces the item's description on its host with text a person accepted from the triage's draft, on a host whose
+   * Replaces the item's description on its host with text a person accepted from the triage's rewrite, on a host whose
    * items are issues (GitHub, with writes on). Only the body changes. Throws when the host refuses; false when the item is not on
    * this host. Absent where the host cannot do it.
    */

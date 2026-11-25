@@ -212,7 +212,7 @@ async function draftOnHost(ctx: Context, job: Job): Promise<boolean> {
     draft = await actions.postDraft!(job.item, { round: refine.round, draft: refine.draft, ...(refine.labels ? { labels: refine.labels } : {}) });
   } catch (error) {
     if (error instanceof TooLarge) return keptLocal(ctx, job, "draft", error.limit);
-    await hostFailed(ctx, job, `the draft of round ${refine.round}`, error, `The triage's draft (round ${refine.round}) waits on Scope Soup's board.`);
+    await hostFailed(ctx, job, `the rewrite of round ${refine.round}`, error, `The triage's rewrite (round ${refine.round}) waits on Scope Soup's board.`);
     return true;
   }
   if (!draft) return false;
@@ -230,12 +230,12 @@ async function draftOnHost(ctx: Context, job: Job): Promise<boolean> {
       numbers = asked?.numbers;
       askedAt = asked?.at ?? "";
     } catch (error) {
-      await hostFailed(ctx, job, `the questions of round ${refine.round}`, error, `The triage's draft (round ${refine.round}) and its questions wait on Scope Soup's board.`);
+      await hostFailed(ctx, job, `the questions of round ${refine.round}`, error, `The triage's rewrite (round ${refine.round}) and its questions wait on Scope Soup's board.`);
       return true;
     }
   }
   job.parked = { ...postedParked(job.parked!), draft: { id, questions: ids, ...(ids.length > 0 ? { texts: textsOf(refine.questions, numbers) } : {}), ...(askedAt ? { askedAt } : {}) } };
-  ctx.commit("orchestrator.draft_posted", `Posted the triage's draft of round ${refine.round} on ${job.item.host} (comment ${id})${ids.length > 0 ? ` with ${ids.length} question${ids.length > 1 ? "s" : ""}` : ""}.`, key, { draft: id, questions: ids });
+  ctx.commit("orchestrator.draft_posted", `Posted the triage's rewrite of round ${refine.round} on ${job.item.host} (comment ${id})${ids.length > 0 ? ` with ${ids.length} question${ids.length > 1 ? "s" : ""}` : ""}.`, key, { draft: id, questions: ids });
   return true;
 }
 
@@ -297,7 +297,7 @@ export async function followDraft(ctx: Context, job: Job, item: WorkItem): Promi
   if (gone.length > 0) {
     const was = releaseIn(ctx.jobs, key, ACTOR, true);
     if (!was) return false;
-    ctx.commit("orchestrator.job_released", `A question comment of the triage's draft (round ${refine.round}) was deleted on ${job.item.host}: the Item is no longer parked, and it starts again at its triage.`, key, { was });
+    ctx.commit("orchestrator.job_released", `A question comment of the triage's rewrite (round ${refine.round}) was deleted on ${job.item.host}: the Item is no longer parked, and it starts again at its triage.`, key, { was });
     await questionsDeleted(ctx, job.item, gone.filter((each) => each.question.trim()));
     return true;
   }
@@ -306,7 +306,7 @@ export async function followDraft(ctx: Context, job: Job, item: WorkItem): Promi
   const settle = ctx.deps.actions.settleQuestions;
   if (keepsRecommendations(refine, answers)) {
     job.parked = { ...job.parked!, draft: { ...posted, answered: true } };
-    ctx.commit("orchestrator.draft_questions_answered", `The questions of the triage's draft (round ${refine.round}) were answered on ${job.item.host} with the recommendations: the draft waits for a person to accept, edit or reject it.`, key, { round: refine.round });
+    ctx.commit("orchestrator.draft_questions_answered", `The questions of the triage's rewrite (round ${refine.round}) were answered on ${job.item.host} with the recommendations: the draft waits for a person to accept, edit or reject it.`, key, { round: refine.round });
     return false;
   }
   const changed = refine.questions.map((question, index) => ({ question, answer: answers[index]! })).filter((each) => !picks(each.answer, each.question.recommendation));
@@ -927,6 +927,12 @@ async function settleStep(ctx: Context, job: Job, session: Session | null, recor
       if (overturnsBack(ctx, job)) return;
       return handOver(ctx, job, item);
     }
+    // A round for the review's `should` findings (review.shouldFindings "fix") that committed nothing: the approved change goes on,
+    // and the findings become a draft.
+    if (job.shouldRound) {
+      delete job.shouldRound;
+      if (job.head && (await headOf(ctx, job)) === job.head) return shouldNothingNew(ctx, job, item);
+    }
     // Done with nothing committed. On the first build the implementor found nothing to change in the code: no retry would find
     // more, so it goes to a person to close it (or to answer, which runs the step again). In a fix round the step failed.
     const empty = await emptyBranch(ctx, job);
@@ -950,6 +956,7 @@ async function settleStep(ctx: Context, job: Job, session: Session | null, recor
   }
 
   if (job.step === "review") {
+    delete job.shouldRound;
     const answer = asReview(record.output);
     if (!answer) return failed(ctx, job, "The reviewer's answer does not have the expected shape, or has tool-call markup inside a string.");
     job.review = answer;
@@ -966,6 +973,7 @@ async function settleStep(ctx: Context, job: Job, session: Session | null, recor
       const should = answer.findings.filter((finding) => finding.severity === "should" && finding.text.trim());
       if (should.length > 0 && reviewSettings(ctx.config).shouldFindings === "fix" && job.shouldSent === undefined) {
         job.shouldSent = should.map(findingKey);
+        job.shouldRound = true;
         return backToImplementor(
           ctx, job, `The reviewer approves, and asks for these smaller changes before the merge:\n${formatFindings(should)}\nFix them and commit.`,
           `The review approves with ${should.length} \`should\` finding(s). Next: the implementor fixes them before the merge (review.shouldFindings "fix"); this round is not counted toward the limit of rounds.`,
@@ -998,6 +1006,19 @@ async function settleStep(ctx: Context, job: Job, session: Session | null, recor
       `The review asks for changes (${answer.findings.length} finding(s)). Next: the implementor fixes them, round ${job.fixRounds} of ${max}.`,
     );
   }
+}
+
+/**
+ * The implementor committed nothing in the round for an approval's `should` findings: the approved change is not reviewed again. The
+ * findings become a draft, and the merge goes on as after the approval (level 4: the hand-over; level 3: the implementor merges it).
+ */
+async function shouldNothingNew(ctx: Context, job: Job, item: WorkItem | null): Promise<void> {
+  delete job.resumeWith;
+  const should = (job.review?.findings ?? []).filter((finding) => finding.severity === "should" && finding.text.trim());
+  if (should.length > 0) draftShould(ctx, job, item, should);
+  if (ctx.config.level >= 4) return handOver(ctx, job, item);
+  job.merge = true;
+  return backToImplementor(ctx, job, APPROVED, "The implementor committed nothing for the review's `should` findings; the approved change goes on. Next: the implementor merges it as the project's CLAUDE.md says.");
 }
 
 /** An agent's `drafts`: filed as Item drafts for a person, linked to this Item (decision 95). One filed before is not filed again. */
@@ -1158,14 +1179,14 @@ async function triage(ctx: Context, job: Job, answer: TriageAnswer, item: WorkIt
   const draft = (answer.draft ?? "").trim();
   const { change: labels, dropped } = await proposedLabels(ctx, job, answer, item);
   const droppedNote = dropped.length > 0 ? ` The triage named label${dropped.length > 1 ? "s" : ""} the repository does not have, dropped: ${dropped.join(", ")}.` : "";
-  if (questions.length === 0 && (draft === "" || draft === original) && isEmptyChange(labels)) return afterTriage(ctx, job, answer, ` The draft keeps the description as it is.${droppedNote}`);
+  if (questions.length === 0 && (draft === "" || draft === original) && isEmptyChange(labels)) return afterTriage(ctx, job, answer, ` The rewrite keeps the description as it is.${droppedNote}`);
   const round = (job.refineRounds ?? 0) + 1;
   job.refineRounds = round;
   job.refine = { original, draft: draft || original, questions, round, ...(!isEmptyChange(labels) ? { labels } : {}), ...(dropped.length > 0 ? { droppedLabels: dropped } : {}) };
   const labelNote = isEmptyChange(labels) ? "" : ` Labels: ${changeText(labels)}.`;
   const reason = questions.length > 0
-    ? `Triage, round ${round}: a draft description and ${questions.length} question(s) wait for an answer: ${questions.map((each, index) => `${index + 1}. ${each.question}`).join(" ")}${labelNote}${droppedNote}`
-    : `Triage, round ${round}: a draft description waits for a person to accept, edit or reject.${labelNote}${droppedNote}`;
+    ? `Triage, round ${round}: a rewrite of the description and ${questions.length} question(s) wait for an answer: ${questions.map((each, index) => `${index + 1}. ${each.question}`).join(" ")}${labelNote}${droppedNote}`
+    : `Triage, round ${round}: a rewrite of the description waits for a person to accept, edit or reject.${labelNote}${droppedNote}`;
   return park(ctx, job, "needs-decision", reason, "decision");
 }
 
@@ -1188,7 +1209,7 @@ async function proposedLabels(ctx: Context, job: Job, answer: TriageAnswer, item
 }
 
 /**
- * A person settled the triage's draft (`settleDraft`): an answer that stops the Item (close as a duplicate, hold for a
+ * A person settled the triage's rewrite (`settleDraft`): an answer that stops the Item (close as a duplicate, hold for a
  * conflict) parked it as not ready; otherwise triage's other verdicts follow.
  */
 export async function afterRefine(ctx: Context, job: Job): Promise<void> {
@@ -1196,7 +1217,7 @@ export async function afterRefine(ctx: Context, job: Job): Promise<void> {
   delete job.refine;
   delete job.refineRounds;
   // Questions and a draft from agents of other Items: once settled, this Item is triaged again with the answers.
-  if (refine?.askedBy) return next(ctx, job, "triage", `A person settled what ${refine.askedBy.join(" and ")} asked about ${job.item.id}${refine.settled ? ` (the draft ${refine.settled})` : ""}. Next: triage again, with the answers.`);
+  if (refine?.askedBy) return next(ctx, job, "triage", `A person settled what ${refine.askedBy.join(" and ")} asked about ${job.item.id}${refine.settled ? ` (the rewrite ${refine.settled})` : ""}. Next: triage again, with the answers.`);
   if (refine?.stop && refine.duplicateOf && ctx.deps.actions.closeDuplicate) {
     // Closed on the host, written through; a failure is `orchestrator.host_write_failed`, and the Item parked as before.
     const key = refKey(job.item);
@@ -1213,8 +1234,8 @@ export async function afterRefine(ctx: Context, job: Job): Promise<void> {
     }
   }
   if (refine?.stop) return park(ctx, job, "not-ready", `A person answered: ${refine.stop}. Scope Soup closes nothing itself; answer here to look at it again.`, "not-ready");
-  if (!job.triage) return next(ctx, job, "implement", "The draft is settled. Next: implement.");
-  return afterTriage(ctx, job, job.triage, refine?.settled ? ` A person ${refine.settled} the draft.` : "");
+  if (!job.triage) return next(ctx, job, "implement", "The rewrite is settled. Next: implement.");
+  return afterTriage(ctx, job, job.triage, refine?.settled ? ` A person ${refine.settled} the rewrite.` : "");
 }
 
 /** A person said "try again" after a failed hand-over: repeat it without a session, if the branch is still there. */
@@ -1277,8 +1298,8 @@ export async function writeAboutOthers(ctx: Context): Promise<void> {
     job.refineRounds = round;
     job.refine = { original, draft, questions, round, askedBy };
     const reason = questions.length > 0
-      ? `Asked by ${askedBy.join(" and ")}: ${draft !== original ? "a draft description and " : ""}${questions.length} question(s) about ${item.ref.id} wait for an answer: ${questions.map((each, index) => `${index + 1}. ${each.question}`).join(" ")}`
-      : `Drafted by ${askedBy.join(" and ")}: a draft description of ${item.ref.id} waits for a person to accept, edit or reject.`;
+      ? `Asked by ${askedBy.join(" and ")}: ${draft !== original ? "a rewrite of the description and " : ""}${questions.length} question(s) about ${item.ref.id} wait for an answer: ${questions.map((each, index) => `${index + 1}. ${each.question}`).join(" ")}`
+      : `Rewrite by ${askedBy.join(" and ")}: a rewrite of ${item.ref.id}'s description waits for a person to accept, edit or reject.`;
     store.tx(() => {
       const waiting = readWaitingAbouts(store);
       delete waiting[key];

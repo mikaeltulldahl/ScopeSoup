@@ -42,7 +42,7 @@ export const LINK_TYPES: readonly LinkType[] = ["blockedBy", "blocks", "duplicat
 export type { ItemLinkAnswer, LinkType };
 
 /**
- * The triage's draft of the Item's description, parked for a person with its questions (each recommendation
+ * The triage's rewrite of the Item's description, parked for a person with its questions (each recommendation
  * pre-selected on the Item page). Keeping every recommendation, a person accepts, edits or rejects the draft in one action;
  * any other answer runs the triage again with the answers.
  */
@@ -214,7 +214,7 @@ export interface Job {
   decision?: Decision;
   /** The restructuring triage proposed; the job parked until a person decides. */
   proposal?: Proposal;
-  /** The triage's draft description and its questions, parked for a person, or settled and about to go on. */
+  /** The triage's rewrite description and its questions, parked for a person, or settled and about to go on. */
   refine?: Refinement;
   /** Rounds of the refinement loop so far, kept while the triage runs again with the answers. */
   refineRounds?: number;
@@ -242,6 +242,8 @@ export interface Job {
    * go back once; what an approval still says `should` after that merges and becomes a draft (decision 95).
    */
   shouldSent?: string[];
+  /** The implement step running now is that round for the `should` findings: one that commits nothing goes on to the merge. */
+  shouldRound?: true;
   /** The change a person saw at the fence and let go on (its paths and lines): the fence is widened to it. */
   fence?: FenceSeen;
   /**
@@ -561,12 +563,12 @@ export function settleDraft(store: Store, item: Ref, answers: readonly string[],
   if (stop) refine.stop = stop.stopsOn;
   if (stop?.duplicateOf) refine.duplicateOf = stop.duplicateOf;
   saveJobs(store, jobs);
-  store.appendEvent({ kind: `orchestrator.draft_${settled}`, subject: key, actor, data: { reason: `A person ${settled} the triage's draft (round ${refine.round}).${stop ? ` Answered: ${stop.stopsOn}.` : ""}`, round: refine.round, original: refine.original, draft: refine.draft } }, at);
+  store.appendEvent({ kind: `orchestrator.draft_${settled}`, subject: key, actor, data: { reason: `A person ${settled} the triage's rewrite (round ${refine.round}).${stop ? ` Answered: ${stop.stopsOn}.` : ""}`, round: refine.round, original: refine.original, draft: refine.draft } }, at);
   return { settled };
 }
 
 /**
- * A person accepted or edited the triage's draft, so Scope Soup wrote the description itself: the text it wrote
+ * A person accepted or edited the triage's rewrite, so Scope Soup wrote the description itself: the text it wrote
  * counts as the text the triage saw, not as an edit. `bodies` are the forms it may have been written in (as given, made inert).
  */
 export function adoptWritten(triaged: Triaged, bodies: readonly string[]): Triaged {

@@ -23,7 +23,7 @@ const COMMITS_PAGE = 30;
 /** The kinds in the filter and on each row. */
 const KINDS: [ActivityKind, string][] = [
   ["item", "Items"],
-  ["triage", "Triage drafts"],
+  ["triage", "Triage rewrites"],
   ["question", "Questions"],
   ["decision", "Decisions"],
   ["session", "Sessions"],

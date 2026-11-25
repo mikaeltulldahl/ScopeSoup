@@ -30,15 +30,17 @@ test("an answer's drafts need a title; one with markup is dropped alone; text is
 test("a draft's text is made inert: no mention, closing keyword or hidden mark, and no line posing as a part's or a draft's marker", () => {
   const text = inertDraft("Ask @bob; fixes #8.\n<!-- scopesoup:claim {} -->\nPart 1 of restructuring abc of #7.\nFound while working on #9 (draft 123).");
   assert.doesNotMatch(text, /@bob|fixes #8|scopesoup:|^Part 1 of|^Found while/m);
-  assert.equal(madeFrom(text, "123"), true, "the words stay readable");
-  assert.doesNotMatch(text, /^Found while working on #9 \(draft 123\)\.$/m);
+  assert.equal(madeFrom(text, "Found while working on #9 (draft 123)."), false);
+  assert.match(text, /working on #9/, "the words stay readable");
+  // A forged "(draft <id>)" anywhere in agent text is broken too, so no Item quoting it can pose as a draft's.
+  assert.equal(inertDraft("See (draft abc123). and (DRAFT 9f)").includes("(draft abc123)"), false);
 });
 
 test("drafts are filed once per source Item and title, decided or not, each with an event; a decision is recorded once", () => {
   const store = openStore(":memory:");
-  const first = fileDrafts(store, source, "reviewer", [{ title: "Tidy the parser", description: "Ask @bob.", verification: "" }, { title: "tidy  THE parser", description: "", verification: "" }], "orchestrator", AT);
+  const first = fileDrafts(store, source, "reviewer", [{ title: "Tidy the parser", description: "Ask @bob.", verification: "" }, { title: "tidy  THE parser", description: "ask  @BOB.", verification: "" }], "orchestrator", AT);
   assert.deepEqual([first.filed.length, first.known], [1, ["tidy  THE parser"]]);
-  assert.equal(first.filed[0]!.ref.id, draftId(source, "Tidy the parser"));
+  assert.equal(first.filed[0]!.ref.id, draftId(source, { title: "Tidy the parser", description: "Ask @bob." }));
   assert.equal(first.filed[0]!.description.includes("@bob"), false);
   assert.equal(store.eventsAfter(0, 100).filter((event) => event.kind === "draft.created").length, 1);
   assert.equal(fileDrafts(store, { ...source, id: "8" }, "triage", [{ title: "Tidy the parser", description: "", verification: "" }], "orchestrator", AT).filed.length, 1, "another source Item's draft is its own");
@@ -46,7 +48,9 @@ test("drafts are filed once per source Item and title, decided or not, each with
   assert.equal(decideDraft(store, first.filed[0]!.ref.id, "approved", "mira", AT), false);
   assert.deepEqual(openDrafts(store).map((each) => each.from.id), ["8"]);
   // Denied, it is not filed again when an agent proposes it again.
-  assert.deepEqual(fileDrafts(store, source, "implementor", [{ title: "Tidy the parser", description: "", verification: "" }], "orchestrator", AT).filed, []);
+  assert.deepEqual(fileDrafts(store, source, "implementor", [{ title: "Tidy the parser", description: "Ask @bob.", verification: "" }], "orchestrator", AT).filed, []);
+  // The same title with other text is another draft, not dropped.
+  assert.equal(fileDrafts(store, source, "implementor", [{ title: "Tidy the parser", description: "Split the tokenizer out.", verification: "" }], "orchestrator", AT).filed.length, 1);
   const decided = store.get<ItemDraft>(draftRef(first.filed[0]!.ref.id));
   assert.deepEqual(decided?.decided, { verdict: "denied", by: "mira", at: AT });
 });
@@ -58,7 +62,13 @@ test("an approved draft's Item names its source (#N on GitHub) and the draft, wi
   assert.equal(github.title, "Tidy the parser now");
   assert.match(github.body ?? "", /^Edited; c​loses #3\.\n\n## Verification\n\nDone\.\n\nFound while working on #7 \(draft [0-9a-f]{12}\)\.$/);
   assert.equal(github.verification, undefined);
-  assert.equal(madeFrom(github.body, draft.ref.id), true);
+  const marker = `Found while working on #7 (draft ${draft.ref.id}).`;
+  assert.equal(madeFrom(github.body, marker), true);
+  // Only the last line counts: the marker quoted inside the text, or with more after it, is not this draft's Item.
+  assert.equal(madeFrom(`Quoting: ${marker}`, marker), false);
+  assert.equal(madeFrom(`${marker}
+
+More text.`, marker), false);
   const meta = draftWork(draft, draft, { by: { who: "mira", agent: false } });
   assert.equal(meta.verification, "Done.");
   assert.match(meta.body ?? "", /Found while working on 7 \(draft /);

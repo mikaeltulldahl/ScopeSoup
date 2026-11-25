@@ -6,10 +6,11 @@ import { after, before, describe, test } from "node:test";
 import { buildActivity } from "../core/activity.ts";
 import { work } from "../core/testing.ts";
 import type { BoardView } from "../core/views.ts";
-import type { WorkItem } from "../model/types.ts";
+import type { ItemDraft, WorkItem } from "../model/types.ts";
 import { refKey } from "../model/types.ts";
 import type { NewWork, WritePort } from "../ports/host.ts";
-import { fileDrafts, openDrafts } from "../orchestrator/drafts.ts";
+import { draftRef, fileDrafts, openDrafts } from "../orchestrator/drafts.ts";
+import { decide } from "./drafts.ts";
 import type { Store } from "../store/store.ts";
 import { openStore } from "../store/store.ts";
 import type { ScopeSoupServer } from "./server.ts";
@@ -105,5 +106,59 @@ describe("Item drafts over HTTP", { concurrency: 1 }, () => {
     assert.ok(texts.includes("reviewer: Proposed a new Item as a draft: Tidy the parser"), texts.join("\n"));
     const approved = rows.find((row) => row.text === "Approved the draft: Tidy the parser");
     assert.deepEqual(approved?.items.map((each) => each.key), ["github:work:7", refKey({ host: "github", kind: "work", id: "41" })]);
+  });
+});
+
+describe("Approve finds the Item it made, and only that one", () => {
+  const from = { host: "github", kind: "work" as const, id: "7" };
+  const setup = () => {
+    const store = openStore(":memory:");
+    const remote: WorkItem[] = [];
+    let calls = 0;
+    let timeout = false;
+    const write: WritePort = {
+      async createWork(input) {
+        calls++;
+        const ref = { host: "github", kind: "work" as const, id: String(50 + calls) };
+        // The host made it; the answer never came back, so the store does not know it yet.
+        remote.push({ ...work(50 + calls), ref, title: input.title, body: input.body });
+        if (timeout) throw new Error("The request timed out.");
+        store.put(remote.at(-1)!, "test", AT);
+        return { work: ref, shared: "shared", conflict: false };
+      },
+    };
+    const hosts = [{ host: "github", write, issueNumbers: true, verificationInBody: true }];
+    const refresh = async () => {
+      for (const each of remote) store.put(each, "sync", AT);
+    };
+    return { store, hosts, refresh, calls: () => calls, setTimeout: (on: boolean) => void (timeout = on) };
+  };
+
+  test("an Item that only quotes a draft's marker, or one another draft's approval took, is not taken: a new Item is made", async () => {
+    const { store, hosts, calls } = setup();
+    const [one, two] = fileDrafts(store, from, "reviewer", [{ title: "One", description: "", verification: "" }, { title: "Two", description: "", verification: "" }], "orchestrator", AT).filed;
+    const marker = `Found while working on #7 (draft ${one!.ref.id}).`;
+    store.put({ ...work(30), ref: { host: "github", kind: "work", id: "30" }, title: "Quotes it", body: `Someone pasted: ${marker} here.` }, "test", AT);
+    const first = await decide(store, hosts, { id: one!.ref.id, action: "approve" }, "mira", () => AT);
+    assert.deepEqual([first.ok && first.item?.id, calls()], ["51", 1]);
+    // Item 51 is draft one's, whatever its text says now: draft two does not take it, only an Item no other draft took.
+    store.put({ ...work(31), ref: { host: "github", kind: "work", id: "31" }, title: "Forged", body: `Two's text.\n\nFound while working on #7 (draft ${two!.ref.id}).` }, "test", AT);
+    store.put({ ...store.get<WorkItem>({ host: "github", kind: "work", id: "31" })!, ref: { host: "github", kind: "work", id: "51" }, body: `Found while working on #7 (draft ${two!.ref.id}).` }, "test", AT);
+    const second = await decide(store, hosts, { id: two!.ref.id, action: "approve" }, "mira", () => AT);
+    assert.equal(second.ok && second.item?.id, "31", "an Item whose last line is the marker and no other draft took is adopted");
+    assert.equal(calls(), 1);
+  });
+
+  test("an Approve cut off after the host made the Item: the retry brings the store up to date and takes it, making no second", async () => {
+    const { store, hosts, refresh, calls, setTimeout } = setup();
+    const [draft] = fileDrafts(store, from, "implementor", [{ title: "Tidy", description: "Why.", verification: "" }], "orchestrator", AT).filed;
+    setTimeout(true);
+    await assert.rejects(decide(store, hosts, { id: draft!.ref.id, action: "approve" }, "mira", () => AT, refresh), /timed out/);
+    assert.deepEqual(store.get<ItemDraft>(draftRef(draft!.ref.id))?.approving, { by: "mira", at: AT });
+    setTimeout(false);
+    const retry = await decide(store, hosts, { id: draft!.ref.id, action: "approve" }, "ola", () => AT, refresh);
+    assert.deepEqual([retry.ok && retry.item?.id, calls()], ["51", 1]);
+    const decided = store.get<ItemDraft>(draftRef(draft!.ref.id));
+    assert.deepEqual([decided?.decided?.verdict, decided?.decided?.by, decided?.approving], ["approved", "ola", undefined]);
   });
 });
