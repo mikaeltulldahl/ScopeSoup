@@ -521,10 +521,10 @@ export function createRunner(deps: RunnerDeps): Runner {
       return stopped;
     },
 
-    stopFor(subject, reason) {
+    stopFor(subject, reason, stepsOnly) {
       let stopped = 0;
       for (const entry of live.values()) {
-        if (entry.kill || entry.over || refKey(entry.session.subject) !== refKey(subject)) continue;
+        if (entry.kill || entry.over || refKey(entry.session.subject) !== refKey(subject) || (stepsOnly && entry.session.chat)) continue;
         kill(entry, "cancelled", reason);
         stopped++;
       }

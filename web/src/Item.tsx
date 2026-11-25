@@ -1216,8 +1216,11 @@ function Place({ page }: { page: ItemPage }) {
   );
 }
 
-/** "held by mira; Scope Soup leaves it alone until …": the explanation after the short text the header shows. */
-const holdWhy = (page: ItemPage): string | undefined => (page.heldBy && page.reason.startsWith("held by ") && page.reason.includes("; ") ? page.reason.slice(page.reason.indexOf("; ") + 2) : undefined);
+/**
+ * "held by mira; Scope Soup leaves it alone until …": the explanation after the short text the header shows. For an agent's hold
+ * the header shows the whole reason already, so it is not said twice.
+ */
+const holdWhy = (page: ItemPage): string | undefined => (page.heldBy && !page.item.holder?.actor.bot && page.reason.startsWith("held by ") && page.reason.includes("; ") ? page.reason.slice(page.reason.indexOf("; ") + 2) : undefined);
 
 /** Who sees the Item's images, both ways, with the way to the setting that decides it. */
 function MediaNote({ media, error }: { media: NonNullable<ItemPage["media"]>; error: string | null }) {

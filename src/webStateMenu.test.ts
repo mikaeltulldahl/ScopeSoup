@@ -121,3 +121,11 @@ test("the Undo wait: due after about 5 s, Undo takes it out unsent, each pick on
   list = cancelPending(first.rest, 2);
   assert.deepEqual(duePending(list, 99_999).due, []);
 });
+
+test("below level 4 the server offers no Merge queue, and the menu leaves it out, unless the Item is in the queue", () => {
+  const keys = (menu: MenuPage) => stateOptions(menu, theme).map((option) => option.key);
+  const low = page({ moves: { triage: {}, "in-review": {} } });
+  assert.equal(keys(low).includes("merge-queue"), false);
+  assert.equal(keys({ ...low, lane: "queued" }).includes("merge-queue"), true);
+  assert.equal(keys(page()).includes("merge-queue"), true);
+});

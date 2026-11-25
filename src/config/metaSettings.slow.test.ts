@@ -131,7 +131,7 @@ describe("meta settings", { concurrency: 3 }, () => {
       assert.ok((await one.save({ repoPath: a, remote: "origin", machine: "laptop-a", by: "Ada", update: (current) => ({ ...current, level: 2 }) })).ok);
       await one.fetch(a, "origin", "laptop-a");
       assert.deepEqual(one.requests(a)[0]?.answer?.done, ["moved"]);
-      assert.equal(git(origin, "show", "refs/scopesoup/meta:requests/log.jsonl").trim().split(/\r?\n/).length, 2);
+      assert.equal(git(origin, "show", `refs/scopesoup/meta:requests/${new Date().toISOString().slice(0, 7)}.jsonl`).trim().split(/\r?\n/).length, 2);
       // An answer written by another machine than the one asked is not taken.
       assert.ok((await one.writeRequest({ repoPath: a, remote: "origin", machine: "laptop-a" }, { kind: "pick", by: { who: "mira", agent: false }, fields: { id: "r-2", item: "meta:work:A-2", for: "laptop-b", seen: "x", steps } })).ok);
       assert.ok((await one.writeRequest({ repoPath: a, remote: "origin", machine: "laptop-a" }, { kind: "pick-refused", by: { who: "scopesoup", agent: true }, fields: { request: "r-2", why: "no" } })).ok);

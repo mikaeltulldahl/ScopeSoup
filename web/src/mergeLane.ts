@@ -15,6 +15,12 @@ export interface MergeLane {
   count: number;
 }
 
+/**
+ * Whether the board shows the merge queue (its lane, its tab): it is Scope Soup's own, from level 4 (decision 104). Below, only
+ * while it still holds or checks changes (after the level was lowered), until it is empty. Board only (no level): shown.
+ */
+export const queueShown = (level: number | undefined, count: number): boolean => level === undefined || level >= 4 || count > 0;
+
 export function mergeLane(queued: LaneView | undefined, checking: LaneView | undefined, queue: Pick<QueueView, "batches" | "forming" | "waiting">): MergeLane {
   const batches = [...queue.batches, ...queue.forming];
   // A member sent back to the queue shows in the box as "back in queue", and waits below as a card.

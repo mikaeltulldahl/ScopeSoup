@@ -20,7 +20,7 @@ import { providerFor } from "./providers/index.ts";
 import type { Actions, SessionResultRecord } from "./ports.ts";
 import type { QuestionWrite } from "../ports/host.ts";
 import { COMMENT_LIMIT, TooLarge, WriteLater } from "../ports/host.ts";
-import { switchOnFor } from "../store/control.ts";
+import { mergeQueueOn } from "../store/control.ts";
 import { handOverToQueue } from "./queueMerge.ts";
 import { closeMerged } from "./mergedClose.ts";
 import { itemRepository } from "./workspaces.ts";
@@ -64,6 +64,10 @@ export function backoffMs(failures: number, capMs: number): number {
 export async function park(ctx: Context, job: Job, as: ParkedAs, reason: string, ask?: Parameters<Actions["answerTurn"]>[1], retry?: "hand-over", byStep?: true): Promise<void> {
   const key = refKey(job.item);
   job.parked = { as, reason, at: ctx.at, ...(retry ? { retry } : {}), ...(byStep ? { byStep } : {}) };
+  // A person's ask was for the step that ended here (decision 104).
+  delete job.triageAskedBy;
+  delete job.reviewAskedBy;
+  delete job.queueAskedBy;
   // Answers to an earlier set of questions do not count for this parked Item.
   delete job.answered;
   delete job.sessionId;
@@ -577,8 +581,21 @@ const APPROVED = "Approved. Merge now as CLAUDE.md says.";
 async function handOver(ctx: Context, job: Job, item: WorkItem | null, askedBy?: string): Promise<void> {
   // This is the hand-over that was owed, if one was: whatever happens now, it is not owed any more unless said again below.
   delete job.owes;
-  // Below level 4 Scope Soup merges nothing on its own; a change a person handed to the merge queue goes there (decision 104).
-  if (ctx.config.level < 4 && job.queueAskedBy === undefined) return sessionMerged(ctx, job, item, askedBy);
+  if (ctx.config.level < 4) return sessionMerged(ctx, job, item, askedBy);
+  // A person's Merge queue pick was checked against the job as it was then: only the revision the reviewer approved goes to the
+  // queue. A session may have committed since (one the pick ended), so the branch's head is read again (decision 104).
+  if (job.queueAskedBy !== undefined) {
+    const head = await headOf(ctx, job);
+    const approved = job.review?.verdict === "approve" && !job.review.findings.some((finding) => finding.severity === "must");
+    if (!approved || head === null || head !== job.reviewedHead) {
+      const asker = job.queueAskedBy;
+      delete job.queueAskedBy;
+      if (head !== null) job.head = head;
+      const what = head === null ? `${job.branch} could not be read` : !approved ? "its review did not approve it" : `${job.branch} is at ${head.slice(0, 7)}, not at the revision the reviewer approved (${job.reviewedHead?.slice(0, 7) ?? "none"})`;
+      return next(ctx, job, "review", `${asker}'s Merge queue pick is not carried out: ${what}. Next: review.`);
+    }
+    delete job.queueAskedBy;
+  }
   const { runner } = ctx.deps;
   const empty = await emptyBranch(ctx, job);
   if (empty) return backToImplement(ctx, job, empty);
@@ -600,7 +617,7 @@ async function handOver(ctx: Context, job: Job, item: WorkItem | null, askedBy?:
     next(ctx, job, "implement", `${job.branch} is still at ${head.slice(0, 7)}, the revision the merge queue sent back; it is not handed to the queue again. Next: the implementor fixes it.`);
     return;
   }
-  if (!switchOnFor(ctx.deps.store, "mergeQueue", ctx.config.level)) {
+  if (!mergeQueueOn(ctx.deps.store)) {
     job.owes = "hand-over";
     // The session is over: the tick hands it over by itself once the merge queue is resumed, and settles nothing again meanwhile.
     delete job.sessionId;
@@ -747,6 +764,7 @@ export async function sendBack(ctx: Context, job: Job, finding: string, what: st
   // queue was for the revision it sent back; what comes next goes as the level says.
   delete job.owes;
   delete job.queueAskedBy;
+  delete job.reviewAskedBy;
   job.fixRounds++;
   job.review = { verdict: "changes", findings: [{ severity: "must", text: finding }] };
   backToImplementor(ctx, job, `Merging failed: ${finding}\nFix it and commit.`, `${what}; nothing was pushed. Next: the implementor fixes it, round ${job.fixRounds} of ${max}.`);
@@ -879,6 +897,8 @@ async function settleStep(ctx: Context, job: Job, session: Session | null, recor
   }
 
   if (job.step === "triage") {
+    // A person's Triage pick (decision 104) was for this step.
+    delete job.triageAskedBy;
     const answer = asTriage(record.output);
     if (!answer) return failed(ctx, job, `The triage answer does not have the expected shape, has tool-call markup inside a string, or gives no reason for "not ready" or no question for "needs decision". The answer was: ${JSON.stringify(record.output ?? null).slice(0, 4000)}`);
     job.triage = answer;

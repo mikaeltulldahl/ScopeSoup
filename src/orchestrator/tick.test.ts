@@ -4182,22 +4182,43 @@ test("a review step a person picked runs below level 3, even at level 0 with its
   assert.deepEqual(roles(stopped), [], "Stop in force holds it");
 });
 
-test("a change a person handed to the merge queue below level 4 goes to the queue, with the hidden switch paused", async () => {
+test("a person's Merge queue pick hands over only the revision the reviewer approved: the branch's head is read again", async () => {
+  const picked = (over: Record<string, unknown> = {}) => pickedReview("1", { reviewAskedBy: undefined, reviewedHead: HEAD, review: { verdict: "approve", findings: [] }, owes: "hand-over", owesAskedBy: "Ada", queueAskedBy: "Ada", ...over });
   const queue = fakeQueue();
-  const w = world(config({ level: 2, ...MERGES }), [item("1")]);
+  const w = world(config({ level: 4, ...MERGES }), [item("1")]);
   w.queue = queue;
-  applyControl(w.store, "merge-queue.pause" as ControlAction, new Date(T0).toISOString(), "test");
-  saveJobs(w.store, { [refKey(ref("1"))]: pickedReview("1", { reviewAskedBy: undefined, reviewedHead: HEAD, review: { verdict: "approve", findings: [] }, owes: "hand-over", owesAskedBy: "Ada", queueAskedBy: "Ada" }) });
+  saveJobs(w.store, { [refKey(ref("1"))]: picked() });
   await w.run();
   assert.deepEqual(queue.enqueued, ["1 scopesoup/1"]);
-  assert.equal(w.job("1")?.parked?.as, "queued");
-  // Without the person's ask, the same job at level 2 is the implementor's to merge: nothing goes to the queue.
-  const own = fakeQueue();
-  const v = world(config({ level: 2, ...MERGES }), [item("1")]);
-  v.queue = own;
-  saveJobs(v.store, { [refKey(ref("1"))]: pickedReview("1", { reviewAskedBy: undefined, reviewedHead: HEAD, review: { verdict: "approve", findings: [] }, owes: "hand-over" }) });
+  assert.equal(w.job("1")?.queueAskedBy, undefined);
+
+  // The implementor committed after the approval (its session ended by the pick): the new revision is not reviewed.
+  const other = fakeQueue();
+  const v = world(config({ level: 4, ...MERGES }), [item("1")]);
+  v.queue = other;
+  v.runner.headSha = "4".repeat(40);
+  saveJobs(v.store, { [refKey(ref("1"))]: picked() });
   await v.run();
-  assert.deepEqual(own.enqueued, []);
+  assert.deepEqual(other.enqueued, []);
+  assert.deepEqual([v.job("1")?.step, v.job("1")?.queueAskedBy, v.job("1")?.owes, v.job("1")?.head], ["review", undefined, undefined, "4".repeat(40)]);
+  assert.match(v.reasons("orchestrator.step").at(-1) ?? "", /Ada's Merge queue pick is not carried out: scopesoup\/1 is at 4444444, not at the revision the reviewer approved/);
+});
+
+test("a triage a person picked runs at level 0, and its settling clears the ask", async () => {
+  const w = world(config({ level: 0 }), [item("1"), item("2")]);
+  w.store.addUsageSample(usage(0.1, 0.1));
+  applyControl(w.store, "pause", new Date(T0).toISOString(), "test");
+  const ask = { item: ref("1"), workspace: workspaceKey(ref("1")), branch: "scopesoup/1", step: "triage" as const, failures: 0, fixRounds: 0, startedAt: new Date(T0).toISOString(), triageAskedBy: "Ada" };
+  saveJobs(w.store, { [refKey(ref("1"))]: ask });
+  await w.run();
+  assert.deepEqual(w.runner.requests.map((request) => `${request.role} ${request.subject.id}`), ["triage 1"]);
+  w.runner.end("1", "succeeded", TRIAGE_OK);
+  await w.run();
+  assert.equal(w.job("1")?.triageAskedBy, undefined);
+  assert.equal(w.job("1")?.step, "implement");
+  w.clock.ms += 60_000;
+  await w.run();
+  assert.equal(roles(w).length, 1, "nothing more starts on its own at level 0");
 });
 
 test("a pick that replaces the running step ends its session at once, as Stop does, and its result is not settled", async () => {
@@ -4225,6 +4246,31 @@ test("a pick that replaces the running step ends its session at once, as Stop do
   assert.equal(w.job("1")?.interrupt, undefined);
 });
 
+test("another change to the job while its session starts (an answer, not a pick) is kept, and so is the session", async () => {
+  const w = world(config({ level: 2 }), [item("1")]);
+  w.store.addUsageSample(usage(0.1, 0.1));
+  await w.run();
+  w.runner.end("1", "succeeded", TRIAGE_OK);
+  await w.run();
+  w.clock.ms += 5_000;
+  const key = refKey(ref("1"));
+  const start = w.runner.start;
+  // The server writes to the job while the runner starts the session (it awaits a setup): not a pick.
+  w.runner.start = async (request) => {
+    const session = await start(request);
+    const jobs = loadJobs(w.store);
+    jobs[key]!.fence = { paths: ["src/b.ts"] };
+    saveJobs(w.store, jobs);
+    return session;
+  };
+  await w.run();
+  w.runner.start = start;
+  assert.deepEqual(roles(w), ["triage", "implement"]);
+  assert.deepEqual(w.runner.stops, []);
+  assert.equal(w.job("1")?.sessionId, "s2");
+  assert.deepEqual(w.job("1")?.fence, { paths: ["src/b.ts"] });
+});
+
 test("a pick made while the tick prepares a session's start wins: nothing starts, and the pick is carried out", async () => {
   const w = world(config({ level: 2 }), [item("1")]);
   w.store.addUsageSample(usage(0.1, 0.1));
@@ -4247,5 +4293,23 @@ test("a pick made while the tick prepares a session's start wins: nothing starts
   await w.run();
   // Dropped, and started again from triage, as Backlog says.
   assert.deepEqual(roles(w), ["triage", "triage"]);
+  assert.match(w.reasons("orchestrator.job_dropped")[0] ?? "", /Ada put 1 back in the backlog/);
+});
+
+test("a session a pick could not end is waited for 2 minutes, then the job goes on as the pick left it, with an event", async () => {
+  const w = world(config({ level: 2 }), [item("1")]);
+  w.store.addUsageSample(usage(0.1, 0.1));
+  await w.run();
+  const key = refKey(ref("1"));
+  // The process does not go: the runner tells it to stop, and it stays.
+  w.runner.stopFor = () => 0;
+  const jobs = loadJobs(w.store);
+  Object.assign(jobs[key]!, { dropAskedBy: "Ada", interrupt: { by: "Ada", at: new Date(w.clock.ms).toISOString(), to: "backlog" } });
+  saveJobs(w.store, jobs);
+  await w.run();
+  assert.ok(w.job("1")?.interrupt, "waited for");
+  w.clock.ms += 3 * 60_000;
+  await w.run();
+  assert.match(w.reasons("orchestrator.interrupt_failed")[0] ?? "", /still there 2 minutes after Ada's pick ended it/);
   assert.match(w.reasons("orchestrator.job_dropped")[0] ?? "", /Ada put 1 back in the backlog/);
 });

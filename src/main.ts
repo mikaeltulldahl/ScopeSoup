@@ -96,7 +96,7 @@ import type { ProjectInfo } from "./server/project.ts";
 import { gitRemoteUrl } from "./config/mergeQueue.ts";
 import type { AssumptionHost } from "./server/server.ts";
 import { createChat } from "./orchestrator/chat.ts";
-import { mergeQueueStopped, pauseRemembering, roleStopped, startAgain, switchOnFor } from "./store/control.ts";
+import { mergeQueueOn, mergeQueueStopped, pauseRemembering, roleStopped, startAgain } from "./store/control.ts";
 import { KEYS } from "./store/keys.ts";
 import { createBranchProtection } from "./server/branchProtection.ts";
 import { NEWER_STORE, STORE_VERSION } from "./store/schema.ts";
@@ -296,7 +296,7 @@ async function main(): Promise<void> {
       store, runner, config, actions, now: iso, resources: units, ...(mergeQueue ? { mergeQueue } : {}),
       // Merging through the merge queue (level 4): its own clone, the check command, Start/Pause merge queue.
       // With mergeQueue.ci "github" the project's CI on the writable GitHub host (remote checked above) checks each batch.
-      queue: queue = createQueueDriver({ store, config: current, git: realGit, runCheck: createCheckRunner(realProcesses), runSetup: createSetupRunner(realProcesses, process.env, () => config.load().config ?? undefined), now: iso, paused: () => !switchOnFor(store, "mergeQueue", config.load().config?.level ?? 0), stopped: () => mergeQueueStopped(store), resources: units, ...(writable?.queueCi && !ciRefused ? { ci: writable.queueCi } : {}), ...(ciRefused ? { ciRefused } : {}) }),
+      queue: queue = createQueueDriver({ store, config: current, git: realGit, runCheck: createCheckRunner(realProcesses), runSetup: createSetupRunner(realProcesses, process.env, () => config.load().config ?? undefined), now: iso, paused: () => !mergeQueueOn(store), stopped: () => mergeQueueStopped(store), resources: units, ...(writable?.queueCi && !ciRefused ? { ci: writable.queueCi } : {}), ...(ciRefused ? { ciRefused } : {}) }),
       onTick: (report) => {
         const state = config.load().config;
         awake.set(shouldStayAwake({ enabled: state?.keepAwake ?? false, level: state?.level ?? 0, paused: report.paused === true, running: report.running, queued: report.queued, waitingForTime: report.wakeAt !== undefined }));

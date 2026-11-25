@@ -38,7 +38,7 @@ import { answerQuestion, answerRefusal, rewriteRefusal, keepsRecommendations, lo
 import { applyMove, isMove, MOVES, moveWhys, ROLE_WORDS, runningRole } from "./moves.ts";
 import { holdStands } from "../model/people.ts";
 import type { PickRequest, RequestStep } from "../hosts/metaBranch/requests.ts";
-import { requestState } from "../hosts/metaBranch/requests.ts";
+import { aheadWhy, requestable, requestState } from "../hosts/metaBranch/requests.ts";
 import { randomUUID } from "node:crypto";
 import type { MoveInput } from "./moves.ts";
 import type { AnswerRefusal, RewriteRefusal, Rewrite } from "../orchestrator/jobs.ts";
@@ -64,7 +64,7 @@ import { activityView } from "./activity.ts";
 import { decide as decideItemDraft, draftRequest, draftViews } from "./drafts.ts";
 import type { MergeQueueOptions } from "../config/mergeQueue.ts";
 import { addAnswer, loadAnswers } from "../store/answers.ts";
-import { applyControl, pauseRemembering, startAgain, switchOnFor } from "../store/control.ts";
+import { applyControl, mergeQueueOn, pauseRemembering, startAgain } from "../store/control.ts";
 import { countWithoutTriage, withoutTriageKeys } from "./triage.ts";
 import type { ControlAction } from "../store/control.ts";
 import { itemTextHash, optionTexts } from "../core/answerReuse.ts";
@@ -128,7 +128,7 @@ export interface ServerOptions {
   /** The label for Items an AI made or rewrote (`labels.aiGenerated`), or undefined when the project keeps none. Read at each use. */
   aiLabel?: () => string | undefined;
   /** The orchestrator's labels, which order the backlog column. Defaults to bug label "bug". */
-  planning?: () => { bugLabels: string[]; plannedSessions?: number; level?: number; resources?: ResourceConfig[]; reserve?: Record<UsageWindowKind, number>; allowances?: AllowancePlan[]; pickNeeds?: { review?: string; queue?: string } };
+  planning?: () => { bugLabels: string[]; plannedSessions?: number; level?: number; resources?: ResourceConfig[]; reserve?: Record<UsageWindowKind, number>; allowances?: AllowancePlan[]; pickNeeds?: { triage?: string; review?: string } };
   /** Reads the diff of an item's branch for `GET /api/diff`. Absent in board-only mode. */
   diff?: (ref: Ref) => Promise<DiffView>;
   /** Opens an Item's change, or one of its files, in the person's own diff tool for `POST /api/open-diff` (`src/orchestrator/diffTool.ts`). Absent in board-only mode. */
@@ -304,6 +304,9 @@ export interface ScopeSoupServer {
 }
 
 export const DEFAULT_PORT = 4310;
+
+/** The store's list of the pick requests this machine took to carry out (decision 104). */
+const HANDLED_KEY = "pickRequests.taken";
 
 const STATES: WorkState[] = ["todo", "doing", "waiting", "done", "abandoned"];
 /** A GitHub Item: `waiting` is not mapped there. */
@@ -694,8 +697,8 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
   }
 
   /** What a move is decided from, for an Item as the store has it now. */
-  /** The requests this process carried out (or is carrying out), so a slow write of the answer does not run one twice. */
-  const handled = new Set<string>();
+  /** When this process first read each pick request: a request lapses from then, whatever the clock of the machine that wrote it. */
+  const firstSeen = new Map<string, number>();
 
   function moveInput(work: WorkItem, lane: ItemPage["lane"]): MoveInput {
     const key = refKey(work.ref);
@@ -705,7 +708,7 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
     const job = loadJobs(store)[key];
     const elsewhere = job ? undefined : workElsewhere(work);
     return {
-      item: work, job, lane, level, mergeQueueOn: switchOnFor(store, "mergeQueue", level), at: now().getTime(),
+      item: work, job, lane, level, mergeQueueOn: mergeQueueOn(store), at: now().getTime(),
       ...(live ? { liveRole: live.role } : {}), ...(plan?.pickNeeds ? { needs: plan.pickNeeds } : {}), ...(elsewhere ? { elsewhere } : {}),
     };
   }
@@ -724,7 +727,7 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
   /** The newest pick requested for an Item from any board, with where it stands (`requestState`). */
   function lastRequest(key: string): (PickRequest & { state: ReturnType<typeof requestState> }) | undefined {
     const found = options.requests?.list().filter((request) => request.item === key).at(-1);
-    return found ? { ...found, state: requestState(found, now().getTime()) } : undefined;
+    return found ? { ...found, state: stateOf(found) } : undefined;
   }
 
   /** Marks the job of an Item a person made abandoned whose session runs here: the tick ends that session at once (decision 104). */
@@ -856,8 +859,9 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
     const elsewhere = loadJobs(store)[ref] ? undefined : workElsewhere(work);
     const typed = steps as PickStep[];
     if (elsewhere && typed.some((step) => step.kind === "move" || (step.kind === "state" && step.state === "abandoned"))) {
+      if (!requestable(typed)) return sendError(response, 409, "REFUSED", `${work.ref.id}'s work runs on ${elsewhere}: pick one state at a time for it.`);
       const id = randomUUID();
-      const written = await options.requests!.write({ kind: "pick", by: { who: by().who, agent: false }, fields: { id, item: ref, for: elsewhere, seen, steps: typed, ...(blockedBy ? { blockedBy } : {}) } });
+      const written = await options.requests!.write({ kind: "pick", by: { who: by().who, agent: false }, fields: { id, item: ref, for: elsewhere, seen, steps: typed } });
       if (!written.ok) return sendError(response, 502, "NOT_WRITTEN", `The pick could not be written for ${elsewhere}: ${written.error}`);
       store.appendEvent({ kind: "person.moved", subject: ref, actor: by().who, data: { to: typed.map((step) => (step.kind === "move" ? step.to : step.kind === "state" ? step.state : step.kind)).join(", "), reason: `${by().who} asked ${elsewhere}, where ${work.ref.id}'s work runs, to carry out their pick at its next fetch.`, via: "board", request: id, for: elsewhere } }, now().toISOString());
       options.onRefresh?.();
@@ -896,22 +900,51 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
     if (!port) return 0;
     let answered = 0;
     for (const request of port.list()) {
-      if (request.for !== port.machine || requestState(request, now().getTime()) !== "pending" || handled.has(request.id)) continue;
-      handled.add(request.id);
-      const work = workByKey(request.item);
-      const result = !work ? { ok: false as const, message: `no Item ${request.item} here` }
-        : changedSince(work, request.seen) ? { ok: false as const, message: changedSince(work, request.seen)! }
-        : await requestPerson.run(request.who, () => runPick(request.item, request.steps, request.blockedBy));
+      if (request.for !== port.machine || stateOf(request) !== "pending" || takenRequests().includes(request.id)) continue;
+      // Taken before anything is done, in the store with an event: a restart or a slow answer never runs it twice.
+      const at = now().toISOString();
+      store.tx(() => {
+        store.setValue(HANDLED_KEY, JSON.stringify([...takenRequests(), request.id].slice(-500)));
+        store.appendEvent({ kind: "orchestrator.pick_request_taken", subject: request.item, actor: "orchestrator", data: { request: request.id, by: request.who, from: request.from, via: "meta branch" } }, at);
+      });
+      let result: { ok: true; done: string[] } | { ok: false; message: string };
+      try {
+        const work = workByKey(request.item);
+        const ahead = aheadWhy(request, now().getTime());
+        result = ahead ? { ok: false, message: ahead }
+          : !work ? { ok: false, message: `no Item ${request.item} here` }
+          : changedSince(work, request.seen) ? { ok: false, message: changedSince(work, request.seen)! }
+          : await requestPerson.run(request.who, () => runPick(request.item, request.steps, undefined));
+      } catch (error) {
+        result = { ok: false, message: `it failed here: ${error instanceof Error ? error.message : String(error)}` };
+      }
       const fields = result.ok ? { request: request.id, done: result.done } : { request: request.id, why: result.message };
-      const written = await port.write({ kind: result.ok ? "pick-done" : "pick-refused", by: { who: "scopesoup", agent: true }, fields });
+      const written = await port.write({ kind: result.ok ? "pick-done" : "pick-refused", by: { who: "scopesoup", agent: true }, fields }).catch((error: unknown) => ({ ok: false as const, error: error instanceof Error ? error.message : String(error) }));
       store.appendEvent({
         kind: "orchestrator.pick_request", subject: request.item, actor: "orchestrator",
-        data: { request: request.id, by: request.who, from: request.from, done: result.ok, reason: result.ok ? `Carried out ${request.who}'s pick from ${request.from ?? "another machine"}.` : `Refused ${request.who}'s pick from ${request.from ?? "another machine"}: ${result.message}`, ...(written.ok ? {} : { notWritten: written.error }) },
+        data: { request: request.id, by: request.who, from: request.from, via: "meta branch", done: result.ok, reason: result.ok ? `Carried out ${request.who}'s pick, asked from ${request.from ?? "another machine"} through the meta branch.` : `Refused ${request.who}'s pick, asked from ${request.from ?? "another machine"} through the meta branch: ${result.message}`, ...(written.ok ? {} : { notWritten: written.error }) },
       }, now().toISOString());
       answered++;
     }
     if (answered > 0) options.onRefresh?.();
     return answered;
+  }
+
+  /** The requests this machine took to carry out (the newest 500), kept in the store. */
+  function takenRequests(): string[] {
+    try {
+      const list = JSON.parse(store.getValue(HANDLED_KEY) ?? "[]") as unknown;
+      return Array.isArray(list) ? list.filter((each): each is string => typeof each === "string") : [];
+    } catch {
+      return [];
+    }
+  }
+
+  /** Where a request stands here: it lapses 15 minutes after this machine first read it (or an hour after its own time). */
+  function stateOf(request: PickRequest): ReturnType<typeof requestState> {
+    const at = now().getTime();
+    if (!firstSeen.has(request.id)) firstSeen.set(request.id, at);
+    return requestState(request, at, firstSeen.get(request.id));
   }
 
   async function startOver(request: IncomingMessage, response: ServerResponse): Promise<void> {

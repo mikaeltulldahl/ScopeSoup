@@ -100,7 +100,9 @@ export function stateOptions(page: MenuPage, theme: ThemeWords): StateOption[] {
     done: edit("done", releasing),
     abandoned: edit("abandoned", releasing),
   };
-  return STATE_KEYS.map((key) => ({ key, label: stateLabel(key, theme), ...options[key] }));
+  // Below level 4 the server offers no Merge queue (decision 104): the option is not shown, unless the Item is in the queue.
+  const hidden = (key: StateKey): boolean => key === "merge-queue" && moves !== undefined && moves["merge-queue"] === undefined && currentState(page) !== "merge-queue";
+  return STATE_KEYS.filter((key) => !hidden(key)).map((key) => ({ key, label: stateLabel(key, theme), ...options[key] }));
 }
 
 /** The picks that replace the step that runs, and so end its session at once (decision 104). Done lets it finish its step. */

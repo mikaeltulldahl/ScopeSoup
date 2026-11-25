@@ -6,7 +6,7 @@
 import { budgetReserve } from "../config/budgetReserve.ts";
 import { clearWithoutTriage } from "../core/statedSize.ts";
 import { answersText, knownAnswers } from "../store/answers.ts";
-import { ROLES, SWITCH_WORDS, switchOnFor, switchState } from "../store/control.ts";
+import { mergeQueueOn, ROLES, SWITCH_WORDS, switchOnFor, switchState } from "../store/control.ts";
 import type { SwitchState } from "../store/control.ts";
 import { KEYS } from "../store/keys.ts";
 import type { Level, ProjectConfig } from "../config/types.ts";
@@ -29,7 +29,7 @@ import { allowanceDecision } from "./allowance.ts";
 import type { Store } from "../store/store.ts";
 import type { UsageCheckDecision } from "./usageCheck.ts";
 import type { Job, Jobs } from "./jobs.ts";
-import { changedInStore, loadJobs, NO_DECISIONS, takenText } from "./jobs.ts";
+import { adoptStored, changedMeanwhile, loadJobs, NO_DECISIONS, takenText } from "./jobs.ts";
 import { workBranch, workspaceKey } from "./paths.ts";
 import { adoptHandbacks } from "./handback.ts";
 import { migrateRemovedSteps, recoverFromLogs } from "./recover.ts";
@@ -125,22 +125,28 @@ function recordConfigChanges(ctx: Context, config: ProjectConfig): void {
 /** The words of a pick (`interrupt.to`) in the event that ends a session for it. */
 const PICK_WORDS: Record<string, string> = { triage: "Triage", backlog: "Backlog", "in-review": "In review", "merge-queue": "Merge queue", abandoned: "Abandoned" };
 
+/** How long the tick waits for a session a pick ended to be over before it gives up waiting (decision 104). */
+const INTERRUPT_WAIT_MS = 2 * 60_000;
+
 /**
- * A person's pick replaced the step that runs on the Item (decision 104, `interrupt` on the job): its session is ended at once,
- * the way Stop ends sessions (the runner kills the process tree), and its result is not settled. True while that session is
- * still there (the job waits for it); false once it is over, with the job left as the pick made it.
+ * A person's pick replaced the step that runs on the Item (decision 104, `interrupt` on the job): its step session is ended at
+ * once, the way Stop ends sessions (the runner kills the process tree), and its result is not settled. A person's chat turn on
+ * the Item is left alone. True while that session is still there (the job waits for it, at most `INTERRUPT_WAIT_MS`); false once
+ * it is over, with the job left as the pick made it.
  */
 function interrupted(ctx: Context, key: string, job: Job, item: WorkItem | null): boolean {
   const { store, runner } = ctx.deps;
   const asked = job.interrupt!;
-  const session = job.sessionId ? store.get<Session>({ host: "scopesoup", kind: "session", id: job.sessionId }) : undefined;
-  const live = (session && !OVER.includes(session.status) && !session.finishedAt) || runner.busy?.(job.item) === true;
-  if (live) {
-    const role = session?.role ?? job.step;
-    const reason = `${asked.by} picked ${PICK_WORDS[asked.to] ?? asked.to} for ${item?.ref.id ?? key} on the board: the ${role} session${session ? ` ${session.ref.id}` : ""} is ended now and its result is not taken.`;
-    const stopped = runner.stopFor?.(job.item, `Stopped: ${reason}`) ?? 0;
-    if (stopped > 0) ctx.commit("orchestrator.stopped", reason, key, { by: asked.by, to: asked.to, role, ...(session ? { session: session.ref.id } : {}) });
-    return true;
+  const isLive = (each: Session): boolean => !OVER.includes(each.status) && !each.finishedAt;
+  const own = job.sessionId ? store.get<Session>({ host: "scopesoup", kind: "session", id: job.sessionId }) : undefined;
+  // A step session the runner stored before the tick saved its id counts too; a chat turn does not.
+  const session = own && isLive(own) ? own : store.list<Session>("session").find((each) => refKey(each.subject) === key && !each.chat && isLive(each));
+  if (session) {
+    const reason = `${asked.by} picked ${PICK_WORDS[asked.to] ?? asked.to} for ${item?.ref.id ?? key} on the board: the ${session.role} session ${session.ref.id} is ended now and its result is not taken.`;
+    const stopped = runner.stopFor?.(job.item, `Stopped: ${reason}`, true) ?? 0;
+    if (stopped > 0) ctx.commit("orchestrator.stopped", reason, key, { by: asked.by, to: asked.to, role: session.role, session: session.ref.id });
+    if (Date.parse(ctx.at) - Date.parse(asked.at) <= INTERRUPT_WAIT_MS) return true;
+    ctx.commit("orchestrator.interrupt_failed", `The ${session.role} session ${session.ref.id} on ${item?.ref.id ?? key} is still there ${Math.round(INTERRUPT_WAIT_MS / 60_000)} minutes after ${asked.by}'s pick ended it; the job goes on as the pick left it, and nothing starts on the Item while that session runs.`, key, { by: asked.by, session: session.ref.id });
   }
   delete job.interrupt;
   delete job.sessionId;
@@ -389,7 +395,7 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
   // A hand-over owed waits while its switch is paused (Pause, Stop, start-up). At level 4 that is the merge queue's: the hand-over
   // gives the change to the queue, which pushes the main branch. Below level 4 Scope Soup merges nothing and the merge queue's
   // switch is not shown: the hand-over looks at what the implementor did and may resume it, so it waits for the implementors'.
-  const merging = config.level >= 4 ? switchOnFor(store, "mergeQueue", config.level) : switchState(store, "implement") === "started";
+  const merging = config.level >= 4 ? mergeQueueOn(store) : switchState(store, "implement") === "started";
   for (const [key, job] of Object.entries(jobs)) {
     const item = itemByKey.get(key) ?? null;
     // A post that failed in an earlier tick; one that fails in this tick is tried again by the next.
@@ -428,8 +434,7 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
     // A person settled the triage's rewrite: triage's other verdicts follow, without a session.
     if (!job.sessionId && !job.parked && job.step === "triage" && job.rewrite?.settled) await afterRewrite(ctx, job);
     // Below level 2 nothing is built, so nothing is handed over either: the hand-over waits for the level to come back.
-    const handing = job.queueAskedBy !== undefined ? switchOnFor(store, "mergeQueue", config.level) : merging && config.level >= 2;
-    if (job.owes && handing && !job.parked && !job.sessionId && item && item.state !== "done" && item.state !== "abandoned") {
+    if (job.owes && merging && config.level >= 2 && !job.parked && !job.sessionId && item && item.state !== "done" && item.state !== "abandoned") {
       // The item holds no clone: it was parked for a person and the clone was freed (a failed hand-over a person retries), or the record was rebuilt from
       // the log and says nothing. A clone is taken again before the hand-over, so the branch can be read; with none free the hand-over waits.
       // Rebuilt from the log with no record of the item's clone: the clone that holds its newest revision is found first.
@@ -490,8 +495,7 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
   await renewClaims(ctx, itemByKey);
 
   // Level 4 merges through the merge queue: the queue is driven now that finished sessions are settled.
-  // Below it, a change a person handed to the queue (decision 104) is driven the same way.
-  if (config.level >= 4 || Object.values(jobs).some((job) => job.queueAskedBy !== undefined)) await driveQueue(ctx, items);
+  if (config.level >= 4) await driveQueue(ctx, items);
 
   const reasons: string[] = [];
   let queuedCount = 0;
@@ -519,8 +523,9 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
   // A paused role's running sessions finish their step and are settled above; nothing new of that role starts, the others
   // go on. A stopped role (the stop switch, not resumed since) has its running sessions ended too.
   const level = config.level;
-  // A review step a person picked (decision 104) runs whatever the level, held only by the switches a person can see.
-  const personAsked = (job: Job | null | undefined, step: SessionRole): boolean => step === "review" && job?.reviewAskedBy !== undefined && switchOnFor(store, "review", level);
+  // A triage or review step a person picked (decision 104) runs whatever the level, held only by the switches a person can see.
+  const personAsked = (job: Job | null | undefined, step: SessionRole): boolean =>
+    ((step === "review" && job?.reviewAskedBy !== undefined) || (step === "triage" && job?.triageAskedBy !== undefined)) && switchOnFor(store, step, level);
   const personWork = Object.values(jobs).some((job) => !job.parked && !job.sessionId && !job.owes && personAsked(job, job.step));
   const control = Object.fromEntries(ROLES.map((role) => [role, switchState(store, role)])) as Record<SessionRole, SwitchState>;
   const stoppedRoles = ROLES.filter((role) => control[role] === "stopped");
@@ -762,8 +767,8 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
           reasons.push(`${entry.item.ref.id} waits: a person is talking to one of its sessions`);
           continue;
         }
-        // A person picked a state for the Item while its start was prepared (decision 104): their change stands, and nothing starts.
-        if (entry.job && changedInStore(store, jobs, key)) {
+        // A person picked a state for the Item while its start was prepared (decision 104): their pick stands, and nothing starts.
+        if (entry.job && changedMeanwhile(store, jobs, key) === "picked") {
           reasons.push(`${entry.item.ref.id} waits: a person changed it while its ${step} step was prepared`);
           continue;
         }
@@ -782,18 +787,28 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
       // The units go back when the session did not start; once it has, the runner gives them back when it is over.
       if (!started) await deps.resources?.give(key);
     }
-    // A pick that came while the session started (the runner stored it after an await) wins: the session is ended, not taken.
-    if (entry.job && changedInStore(store, jobs, key)) {
-      const ended = runner.stopFor?.(job.item, "Stopped: a person picked a state for the Item while this session started.") ?? 0;
-      ctx.commit("orchestrator.stopped", `A person picked a state for ${entry.item.ref.id} while its ${step} session ${session.ref.id} started: ${ended > 0 ? "the session is ended and" : ""} its result is not taken.`, key, { role: step, session: session.ref.id });
+    // Someone changed the job while the session started (the runner stored it after an await). A person's pick wins: the session is
+    // ended, not taken. Another change (an answer, a hold) is kept, and so is the session.
+    let target = job;
+    const meanwhile = entry.job ? changedMeanwhile(store, jobs, key) : "none";
+    if (meanwhile === "picked") {
+      const ended = runner.stopFor?.(job.item, "Stopped: a person picked a state for the Item while this session started.", true) ?? 0;
+      ctx.commit("orchestrator.stopped", `A person picked a state for ${entry.item.ref.id} while its ${step} session ${session.ref.id} started: ${ended > 0 ? "the session is ended and " : ""}its result is not taken.`, key, { role: step, session: session.ref.id });
       continue;
     }
-    jobs[key] = job;
-    job.sessionId = session.ref.id;
+    if (meanwhile === "changed") {
+      const kept = adoptStored(store, jobs, key)!;
+      // What this tick added to the job before the start, and has not saved yet.
+      if (job.triaging) kept.triaging = job.triaging;
+      if (job.base !== undefined) kept.base = job.base;
+      target = kept;
+    }
+    jobs[key] = target;
+    target.sessionId = session.ref.id;
     if (step === "implement") busy = busyFiles(jobs);
-    delete job.notBefore;
-    delete job.resume;
-    delete job.answerArrived;
+    delete target.notBefore;
+    delete target.resume;
+    delete target.answerArrived;
     running++;
     report.started.push({ item: key, role: step, sessionId: session.ref.id });
     ctx.commit("orchestrator.started", `Started ${label} because ${why}. ${decision.reason}`, key, { role: step, session: session.ref.id, model: session.model });

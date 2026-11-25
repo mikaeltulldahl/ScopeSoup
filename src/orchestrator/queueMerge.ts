@@ -6,7 +6,7 @@ import { mergeQueueCi } from "../config/types.ts";
 import type { WorkItem } from "../model/types.ts";
 import { refKey } from "../model/types.ts";
 import type { SendBackReason } from "../queue/index.ts";
-import { mergeQueueStopped, switchOnFor } from "../store/control.ts";
+import { mergeQueueOn, mergeQueueStopped } from "../store/control.ts";
 import type { Context } from "./context.ts";
 import { createLog, errorText } from "./context.ts";
 import { park, sendBack } from "./cycle.ts";
@@ -194,7 +194,7 @@ export async function driveQueue(ctx: Context, items: readonly WorkItem[]): Prom
   const waiting = new Set(Object.entries(ctx.jobs).filter(([k, job]) => live.has(k) && job.parked?.as === "queued" && job.queued !== undefined).map(([k]) => k));
   queue.reconcile(waiting);
 
-  if (!switchOnFor(store, "mergeQueue", ctx.config.level)) return;
+  if (!mergeQueueOn(store)) return;
   const why = queue.pausedWhy();
   const asker = resumeRequestedBy(store);
   if (why !== null && asker !== null) {
