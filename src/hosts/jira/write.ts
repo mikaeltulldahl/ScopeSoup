@@ -16,7 +16,7 @@ import { spliceBody } from "../github/map.ts";
 import type { JiraClient } from "./client.ts";
 import { JiraError, transient } from "./client.ts";
 import type { JiraClaim, JiraRead } from "./conventions.ts";
-import { CLAIM_PROPERTY, claimOrder, COMMENT_PROPERTY, FOLLOW_UP_PROPERTY, LOG_PROPERTY, OVERTURNS_PROPERTY, PROPERTY_LIMIT, propertySize, splitMarked, withoutFollowUpMarks } from "./conventions.ts";
+import { CLAIM_PROPERTY, claimOrder, COMMENT_PROPERTY, HANDBACK_KIND, FOLLOW_UP_PROPERTY, LOG_PROPERTY, OVERTURNS_PROPERTY, PROPERTY_LIMIT, propertySize, splitMarked, withoutFollowUpMarks } from "./conventions.ts";
 import { toJiraText, writeDescription } from "./description.ts";
 import type { JiraScope } from "./map.ts";
 import { ISSUE_FIELDS, isoTime, NEEDS_DECISION_LABEL, priorityOf, stateOf, workRef } from "./map.ts";
@@ -413,6 +413,20 @@ export function createJiraWrite(deps: JiraWriteDeps): WritePort {
       const after = (await issueOf(work)).fields.assignee;
       const now = after ? (after.accountId ?? after.name ?? "") : "";
       failIf(work, (wanted === null ? !after : same(now, wanted)) ? [] : [wanted === null ? "assignee not removed" : `assignee ${wanted} not set`]);
+    },
+
+    /**
+     * A person's hand-back: a comment that says it, with the branch and its tip in its property; then the re-read must count it.
+     * The branch name is shown in a code span and the note is inert already.
+     */
+    async recordHandback(subject, { sha, branch, note }) {
+      const markdown = `**Handed back** on \`${branch.replaceAll("`", "")}\` (${sha.slice(0, 9)}) for Scope Soup's review.${note ? `
+
+${note}` : ""}`;
+      const property = { v: 1, kind: HANDBACK_KIND, sha, branch, ...(note ? { note } : {}) };
+      checkSize(subject, "The hand-back", markdown, property);
+      await postComment(subject, markdown, property);
+      if (!(await deps.read(subject)).handbacks.some((each) => each.sha === sha && each.branch === branch)) throw new Error(`Jira took the hand-back of ${subject.id} but it does not show as one.`);
     },
 
     async comment(subject, markdown) {

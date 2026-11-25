@@ -112,12 +112,13 @@ type Draft = { actor: TurnActor; reason: string; waits?: string; tone: Tone; sin
 
 /**
  * The person an item is with now, if any: a person who holds it, else the person whose hand-back is its newest revision
- * (a `revision` line with `handback: true` on the meta branch, an open pull request labelled for review on GitHub). Scope Soup's own later
+ * (a `revision` line with `handback: true` on the meta branch, an open pull request labelled for review on GitHub, `handedBack` on Jira). Scope Soup's own later
  * revision supersedes a hand-back.
  */
 export function personOf(situation: Pick<Situation, "item" | "change">): Actor | undefined {
   const { item, change } = situation;
   if (item.holder && !item.holder.actor.bot) return item.holder.actor;
+  if (item.handedBack && !item.handedBack.by.bot) return item.handedBack.by;
   const newest = [...(item.log ?? [])].reverse().find((line) => line.kind === "revision");
   if (newest && !newest.by.agent && newest.fields.handback === true) {
     const { who, machine } = newest.by;

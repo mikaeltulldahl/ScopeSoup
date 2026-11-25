@@ -63,6 +63,11 @@ export interface JiraConfig {
   answerers?: string[];
   /** How long a claim waits after its write before it reads who stands. Default 2 s. */
   claimSettleMs?: number;
+  /**
+   * For a person's item commands: an agent's claim in `scopesoup.claim` counts whoever wrote the property, since the person's token
+   * is not the server's. A forged claim only makes the person wait.
+   */
+  claimsOfAnyone?: boolean;
   /** Where a problem that does not stop the host is said (a failed `/myself` or assignable-user read). Default `console.warn`. */
   log?: (line: string) => void;
 }
@@ -259,7 +264,7 @@ export function createJiraHost(config: JiraConfig): JiraHost {
     const self = await selfId();
     const jira = await threadAs(ref, self);
     const may = await answerers();
-    return readJiraThread(scope.host, ref, jira, self, (id) => may.has(id), now());
+    return readJiraThread(scope.host, ref, jira, self, (id) => may.has(id), now(), config.claimsOfAnyone === true);
   }
 
   /** Issues with an open question: read again each listing, so a deleted question comment is seen. */

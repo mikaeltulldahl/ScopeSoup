@@ -2,6 +2,7 @@
 // check and merging, as for an agent's change. The item command writes the signal; this reads it.
 //   metaBranch: a `revision` line by a person with `handback: true` (and the hold released after it).
 //   GitHub:  an open pull request labelled `scopesoup:review` that names the item.
+//   Jira:    Scope Soup's hand-back comment by a person (`WorkItem.handedBack`), newer than Scope Soup's own revision.
 // Each hand-back is taken on once per store. The job it makes stands where an implement session
 // would have left it: built, with the branch and its head. Nothing here starts a session.
 
@@ -38,6 +39,11 @@ export function findHandbacks(items: readonly WorkItem[], changes: readonly Chan
   const byKey = new Map(items.map((item) => [refKey(item.ref), item]));
   for (const item of items) {
     if (!open(item)) continue;
+    const handed = item.handedBack;
+    if (handed) {
+      found.push({ key: `${refKey(item.ref)}@${handed.sha}`, item, branch: handed.branch, sha: handed.sha, by: handed.by.name, ...(handed.note ? { note: handed.note } : {}) });
+      continue;
+    }
     // The newest revision of the log, and only when a person wrote it as a hand-back: Scope Soup's own later work supersedes it.
     const newest = [...(item.log ?? [])].reverse().find((line) => line.kind === "revision");
     if (!newest || newest.by.agent || newest.fields.handback !== true) continue;
