@@ -12,6 +12,7 @@ import { isIdPrefix } from "../hosts/metaBranch/ids.ts";
 import type { HostConfig } from "../config/types.ts";
 import { createGitHubHost } from "../hosts/github/index.ts";
 import { createJiraHost, type JiraHost, type JiraThreadComment } from "../hosts/jira/index.ts";
+import { filterChange } from "../hosts/jira/adapter.ts";
 import { readIssues } from "../items/githubImport.ts";
 import { fromGitHub, fromJira, githubOldHost, jiraOldHost, type OldHost, type SourceItem } from "../items/moveToMeta.ts";
 import type { Session, WorkItem } from "../model/types.ts";
@@ -41,6 +42,39 @@ export function hostFor(kind: ConnectKind, connection: HostConnection, token: st
     log: () => undefined,
     ...(options.onOutside ? { onOutsideFilter: options.onOutside } : {}),
   });
+}
+
+/** What a new Jira filter would do, counted on Jira before it is saved (#141). */
+export type FilterPreview = { ok: true; added: number; removed: number; lines: string[] } | { ok: false; error: string };
+
+/**
+ * Asks Jira which open issues of the project a new filter adds as Items (they match it and are not Items now) and which it removes,
+ * in words for the confirm. A filter Jira cannot read is refused with Jira's message.
+ */
+export async function filterPreview(host: Extract<HostConfig, { kind: "jira" }>, next: string | undefined, level: number, deps: ConnectDeps): Promise<FilterPreview> {
+  const token = deps.env[TOKEN_VARIABLE.jira];
+  if (!token) return { ok: false, error: `${TOKEN_VARIABLE.jira} is not set in the environment Scope Soup was started in, so the new filter cannot be checked on Jira, and it was not saved.` };
+  let change: { added: string[]; removed: string[] };
+  try {
+    const client = createJiraClient({ site: host.site, deployment: host.deployment, token, ...(host.email ? { email: host.email } : {}), ...(deps.fetchImpl ? { fetchImpl: deps.fetchImpl } : {}) });
+    change = await filterChange(client, host.project, host.filter, next);
+  } catch (error) {
+    return { ok: false, error: `Jira refused the filter, so it was not saved: ${messageOf(error)}` };
+  }
+  const { added, removed } = { added: change.added.length, removed: change.removed.length };
+  const issues = (count: number): string => `${count} open issue${count === 1 ? "" : "s"}`;
+  const lines: string[] = [];
+  if (added > 0) {
+    lines.push(`This adds ${issues(added)} of ${host.project} as Items.`);
+    lines.push(level === 0
+      ? "At level 0 they only show on the board: nothing reads or writes them on Jira."
+      : host.write
+        ? "Triage reads each of them and writes comments and labels on Jira."
+        : "Triage reads each of them; Scope Soup is read-only on Jira (host.write is false), so nothing is written there.");
+  }
+  if (removed > 0) lines.push(`It removes ${issues(removed)} from the board: Scope Soup no longer reads, shows or touches them.`);
+  if (lines.length === 0) lines.push("No open issue becomes an Item or stops being one.");
+  return { ok: true, added, removed, lines };
 }
 
 /**

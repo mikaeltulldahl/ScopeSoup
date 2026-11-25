@@ -45,7 +45,7 @@ import { createServer, DEFAULT_PORT } from "./server.ts";
 import { offboardPlan, type Found } from "../offboard/plan.ts";
 import { defaultOutFolder } from "../offboard/scan.ts";
 import { projectInfo } from "./project.ts";
-import { fakeJira } from "../hosts/jira/fakeJira.ts";
+import { FAKE_SITE, fakeJira } from "../hosts/jira/fakeJira.ts";
 import { fakeIssues, ISSUES_API } from "../hosts/github/fakeIssues.ts";
 import { fakeMeta } from "../items/fakeMeta.ts";
 import type { FetchLike } from "../hosts/github/client.ts";
@@ -542,12 +542,15 @@ export async function writeDemoConfig(dir: string, settings: MetaSettings = meta
     resources: [{ name: "emulator", units: 1, neededBy: ["implement", "check"], env: { ANDROID_SERIAL: "emulator-555{{unit}}" } }],
     // This machine's part of the meta branch host (synthetic person), so Settings' Connect can list the Items to move.
     meta: { authorName: "Demo Person", authorEmail: "demo@example.invalid", prefix: "D" },
+    // This machine's part of the Jira host (the fake site's synthetic account), for DEMO_HOST=jira.
+    ...(process.env.DEMO_HOST === "jira" ? { jira: { email: CLOUD_EMAIL } } : {}),
   };
   const shared = {
     project: "tidepool",
     // The demo's Items are its own store's; named as a meta branch so Settings' Connect offers to move them. DEMO_HOST=github names a
-    // fake GitHub repository instead, so Settings offers "Move back to the meta branch" (#134).
-    host: process.env.DEMO_HOST === "github" ? { kind: "github", repo: DEMO_REPO, write: true } : { kind: "metaBranch", write: true },
+    // fake GitHub repository instead, so Settings offers "Move back to the meta branch" (#134); DEMO_HOST=jira the fake Jira site's
+    // synthetic project with a filter, so Settings' Jira filter can be changed and counted (#141).
+    host: process.env.DEMO_HOST === "github" ? { kind: "github", repo: DEMO_REPO, write: true } : process.env.DEMO_HOST === "jira" ? DEMO_JIRA_HOST : { kind: "metaBranch", write: true },
     level: 4,
     bugLabels: ["bug"],
     roles: allowanceDemo.roles,
@@ -586,6 +589,9 @@ export function demoConfigOptions(dir: string, settings: MetaSettings = metaSett
     metaBranch: () => fakeMeta("D"),
   };
 }
+
+/** The Jira host DEMO_HOST=jira names: the fake Jira site's synthetic project, its Items those labelled frontend. */
+const DEMO_JIRA_HOST = { kind: "jira", site: FAKE_SITE, project: "DEMO", deployment: "cloud", write: true, filter: "labels = frontend" };
 
 /** The repository DEMO_HOST=github names: synthetic, on the fake GitHub. */
 const DEMO_REPO = "example/tidepool";

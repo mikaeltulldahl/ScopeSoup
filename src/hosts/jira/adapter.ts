@@ -19,10 +19,13 @@ export interface JiraConfig {
   site: string;
   /** The project key, `DEMO`. */
   project: string;
-  /** A JQL condition ANDed with the project: which issues are Items. Issues outside it are not read, shown or touched. */
-  filter?: string;
-  /** The component names new Items get. */
-  components?: string[];
+  /**
+   * A JQL condition ANDed with the project: which issues are Items. Issues outside it are not read, shown or touched. A function is
+   * asked at each read and write, so a change in Settings holds from the next one.
+   */
+  filter?: string | (() => string | undefined);
+  /** The component names new Items get; a function is asked at each create. */
+  components?: string[] | (() => string[] | undefined);
   /** Called when an Item just created does not match the filter (or the project read): its key and why. Default: `log`. */
   onOutsideFilter?: (key: string, reason: string) => void;
   deployment: Deployment;
@@ -114,6 +117,17 @@ export interface JiraHost extends Host {
 /** JQL compares `updated` to the minute, so each listing asks from this much before the cursor and gets the newest again. */
 const OVERLAP_MS = 2 * 60_000;
 
+/**
+ * What changing the filter `from` to `to` does to the open issues of the project: the keys that would become Items (`added`) and the
+ * keys that would stop being Items (`removed`). A filter Jira cannot read throws Jira's own message.
+ */
+export async function filterChange(client: JiraClient, project: string, from: string | undefined, to: string | undefined): Promise<{ added: string[]; removed: string[] }> {
+  const open = async (filter: string | undefined): Promise<Set<string>> =>
+    new Set((await client.search<JiraIssue>(`${itemsJql({ project, filter })} AND statusCategory != Done ORDER BY updated ASC, key ASC`, ["summary"])).map((issue) => issue.key).filter((key) => projectOf(key) === project));
+  const [before, after] = [await open(from), await open(to)];
+  return { added: [...after].filter((key) => !before.has(key)), removed: [...before].filter((key) => !after.has(key)) };
+}
+
 const notFound = (error: unknown): boolean => error instanceof JiraError && error.status === 404;
 const ours = (key: string): boolean => key === PROPERTY_PREFIX || key.startsWith(`${PROPERTY_PREFIX}.`);
 
@@ -126,11 +140,13 @@ export function createJiraHost(config: JiraConfig): JiraHost {
     ...(config.sleep ? { sleep: config.sleep } : {}),
   });
   const now = config.now ?? Date.now;
+  const liveFilter = (): string | undefined => (typeof config.filter === "function" ? config.filter() : config.filter) || undefined;
   const scope: JiraScope = {
     host: config.id ?? "jira",
     site: client.site,
     project: config.project,
-    ...(config.filter ? { filter: config.filter } : {}),
+    // Asked each time: the filter is a live setting.
+    get filter() { return liveFilter(); },
     deployment: config.deployment,
     priorities: config.priorities ?? DEFAULT_PRIORITIES,
     abandonedResolutions: config.abandonedResolutions ?? DEFAULT_ABANDONED_RESOLUTIONS,
@@ -169,11 +185,18 @@ export function createJiraHost(config: JiraConfig): JiraHost {
     return item;
   };
 
+  /** The filter of the last listing: when it changed since, the next listing is a full one and names the Items that left. */
+  let listedFilter = scope.filter;
+
   const plainWork: WorkPort = {
     async listWork(since?: Cursor): Promise<Page<WorkItem>> {
-      const project = itemsJql(scope);
+      const filter = scope.filter;
+      const project = itemsJql({ project: scope.project, filter });
+      const changed = filter !== listedFilter;
+      // The open issues the old filter had and the new one does not: they leave the store, as if gone.
+      const removed = changed ? (await filterChange(client, scope.project, listedFilter, filter)).removed.map((key) => workRef(scope, key)) : [];
       let jql: string;
-      if (since) {
+      if (since && !changed) {
         const from = new Date(Date.parse(since) - OVERLAP_MS).toISOString();
         jql = `${project} AND updated >= ${jqlString(jqlTime(from, (await myself()).timeZone))} ORDER BY updated ASC, key ASC`;
       } else {
@@ -186,7 +209,8 @@ export function createJiraHost(config: JiraConfig): JiraHost {
       for (const item of items) if (item.updatedAt > cursor) cursor = item.updatedAt;
       // Nothing to take a time from: start a minute back, for a clock that runs ahead of Jira's.
       if (!cursor) cursor = new Date(now() - 60_000).toISOString();
-      return { items, cursor };
+      listedFilter = filter;
+      return { items, cursor, ...(removed.length > 0 ? { removed } : {}) };
     },
 
     async getWork(ref: Ref): Promise<WorkItem | null> {
@@ -384,7 +408,7 @@ export function createJiraHost(config: JiraConfig): JiraHost {
         relatesLink: config.relatesLink ?? DEFAULT_RELATES_LINK,
         duplicateLink: config.duplicateLink ?? DEFAULT_DUPLICATE_LINK,
         commentLimit,
-        components: config.components ?? [],
+        get components() { return (typeof config.components === "function" ? config.components() : config.components) ?? []; },
       },
       onOutsideFilter: config.onOutsideFilter ?? ((key, reason) => log(`Jira: ${key} ${reason}`)),
       ...(claims ? { machine: claims } : {}),

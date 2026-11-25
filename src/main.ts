@@ -169,6 +169,8 @@ async function main(): Promise<void> {
   // Singleplayer or multiplayer as the file says now: a switch on the Settings page holds from the next sharing round.
   const multiplayer = (): boolean => config?.load().config?.multiplayer ?? first?.config?.multiplayer ?? true;
   if (hostSet.shares) hostSet.shares = multiplayer;
+  // The Jira filter and components as the shared settings have them now (Settings changes them, #141).
+  if (hostSet.jira) hostSet.jiraLive = () => { const host = config?.load().config?.host; return host?.kind === "jira" ? host : undefined; };
   const ignored = ignoredVariables(hostSet, env);
   if (ignored.length > 0) console.log(`The configuration file has a host, so these are not read: ${ignored.join(", ")}.`);
   if (env.SCOPESOUP_MACHINE !== undefined) console.log("SCOPESOUP_MACHINE is no longer read: the configuration file's machineName names this machine.");

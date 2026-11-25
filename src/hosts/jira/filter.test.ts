@@ -48,6 +48,31 @@ for (const deployment of ["cloud", "datacenter"] as const) {
       assert.deepEqual(fake.issues.get(made.work.id)!.fields.labels, []);
     });
 
+    test("a live filter holds from the next read and write: the next listing is full and names the Items that left", async () => {
+      const live = { filter: "labels = frontend" as string | undefined, components: [] as string[] };
+      const { another, ref, fake } = writable(deployment, { fake: { components: ["Board"] } });
+      const host = another("laptop-a", { filter: () => live.filter, components: () => live.components });
+      const first = await host.work.listWork();
+      assert.deepEqual(first.items.map((item) => item.ref.id), ["DEMO-1"]);
+      assert.equal(await host.work.getWork(ref("DEMO-2")), null);
+      live.filter = "labels = bug";
+      // A cursor listing would miss DEMO-2 (not updated since): the change makes it a full one.
+      const next = await host.work.listWork(first.cursor);
+      assert.deepEqual(next.items.map((item) => item.ref.id), ["DEMO-2"]);
+      assert.deepEqual(next.removed?.map((each) => each.id), ["DEMO-1"]);
+      assert.equal((await host.work.listWork(next.cursor)).removed, undefined);
+      assert.equal((await host.work.getWork(ref("DEMO-2")))?.ref.id, "DEMO-2");
+      assert.equal(await host.work.getWork(ref("DEMO-1")), null);
+      // The write refusal asks the same live filter.
+      await assert.rejects(host.write!.setLabels!(ref("DEMO-1"), ["x"], []), /outside host\.filter \(labels = bug\)/);
+      await host.write!.setLabels!(ref("DEMO-2"), ["x"], []);
+      live.filter = undefined;
+      assert.equal((await host.work.getWork(ref("DEMO-1")))?.ref.id, "DEMO-1");
+      live.components = ["Board"];
+      const made = await host.write!.createWork!({ title: "With the new component" });
+      assert.deepEqual(fake.issues.get(made.work.id)!.fields.components, [{ name: "Board" }]);
+    });
+
     test("a component the project lacks is refused by Jira", async () => {
       const { another } = writable(deployment, { fake: { components: ["Board"] } });
       await assert.rejects(another("laptop-a", { components: ["Nope"] }).write!.createWork!({ title: "x" }), /Component name 'Nope' is not valid/);

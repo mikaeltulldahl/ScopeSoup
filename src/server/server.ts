@@ -46,7 +46,8 @@ import type { RemoteBranches } from "../items/remoteBranch.ts";
 import { branchCommands, farUntil, handBackItem, holdsIt, itemDetails, itemRef as itemRefOn, listItems, Refused, releaseItem, claimItem, whyNotHandBack, whyNotRelease, whyNotClaim } from "../items/service.ts";
 import type { JiraBoard } from "../items/jiraBackend.ts";
 import { connectHost, editConfig, type EditOptions, type HostConnection, type MetaPart, metaPartOf, readConfigView, type SharedSaved } from "../config/edit.ts";
-import { busyMachines, busyText, type ConnectDeps, connectionOf, HOST_NAME, hostFor, type HostKind, hostWhere, joinConnection, lookAtHost, metaPartProblems, type MoveSource, sourceOf, TOKEN_VARIABLE } from "./connect.ts";
+import { busyMachines, busyText, type ConnectDeps, connectionOf, filterPreview, HOST_NAME, hostFor, type HostKind, hostWhere, joinConnection, lookAtHost, metaPartProblems, type MoveSource, sourceOf, TOKEN_VARIABLE } from "./connect.ts";
+import { jqlFragmentProblem } from "../config/validate.ts";
 import { type MoveReport, moveItems, moveLines } from "../items/moveToHost.ts";
 import { type MetaTarget, moveBack, type MoveBackReport, moveBackLines } from "../items/moveToMeta.ts";
 import type { MachineSetup } from "../hostSetup.ts";
@@ -1630,13 +1631,17 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
     }
     const person = picked();
     // A switch to multiplayer whose remote names another project or host: the person's choice, "join" or "mine" (decision 98).
-    const { players, ...change } = body;
+    // `confirm`: the person saw what a new Jira filter adds and said yes (#141).
+    const { players, confirm, ...change } = body;
     // Join theirs replaces this clone's Items: not while an agent works on them, here or (by its claims) elsewhere.
     if (players === "join") {
       const snapshot = loadSnapshot(store);
       const busy = busyMachines(snapshot.works, snapshot.sessions, options.machine, now());
       if (busy.length > 0) return sendJson(response, 400, { error: { code: "CONFIG_REFUSED", message: busyText(busy, "Join theirs") }, errors: [busyText(busy, "Join theirs")] });
     }
+    // A new Jira filter is asked of Jira first: refused with Jira's message when Jira cannot read it, and confirmed when it adds Items.
+    const filter = await filterCheck(change, confirm === true);
+    if (filter) return sendJson(response, filter.status, filter.body);
     const result = await editConfig(options.configFile, change, { ...configOptions, ...(person ? { by: person } : {}), ...(players === "join" || players === "mine" ? { players } : {}) });
     if (!result.ok) {
       return sendJson(response, result.status, { error: { code: result.status === 409 ? "PLAYERS_DIFFER" : result.status === 400 ? "CONFIG_REFUSED" : "CONFIG_WRITE_FAILED", message: result.errors.join(" ") }, errors: result.errors, ...("players" in result ? { players: result.players } : {}) });
@@ -1652,6 +1657,30 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
       options.onConfigChanged?.();
     }
     return sendJson(response, 200, { changed: result.changed, ...(saved ? { shared: saved } : {}), ...readConfigView(options.configFile, configOptions) });
+  }
+
+  /**
+   * Before a change of the Jira filter is saved (#141): the filter checked in form, then on Jira, which counts the open issues it adds
+   * and removes. An answer to send instead of saving (400 refused, 409 to confirm what it adds), or null to save.
+   */
+  async function filterCheck(change: Record<string, unknown>, confirmed: boolean): Promise<{ status: number; body: unknown } | null> {
+    const wanted = change.host;
+    if (typeof wanted !== "object" || wanted === null || !Object.hasOwn(wanted, "filter")) return null;
+    const view = readConfigView(options.configFile, configOptions);
+    const host = view.present ? view.config?.host : undefined;
+    if (host?.kind !== "jira") return null;
+    const given = (wanted as Record<string, unknown>).filter;
+    if (given !== null && typeof given !== "string") return null;
+    const next = typeof given === "string" && given.trim() !== "" ? given.trim() : undefined;
+    if (next === host.filter) return null;
+    const refused = (message: string) => ({ status: 400, body: { error: { code: "CONFIG_REFUSED", message }, errors: [message] } });
+    const problem = next === undefined ? null : jqlFragmentProblem(next);
+    if (problem) return refused(`host.filter (${next}) ${problem}`);
+    const level = view.present ? (view.config?.level ?? 0) : 0;
+    const preview = await filterPreview(host, next, level, options.connect ?? { env: process.env });
+    if (!preview.ok) return refused(preview.error);
+    if (preview.added === 0 || confirmed) return null;
+    return { status: 409, body: { error: { code: "FILTER_WIDENS", message: preview.lines.join(" ") }, errors: preview.lines, filter: { added: preview.added, removed: preview.removed, lines: preview.lines } } };
   }
 
   /**
