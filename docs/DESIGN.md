@@ -57,6 +57,22 @@ Ports are split by capability (`src/ports/host.ts`), so a deployment can combine
 - Polling uses conditional requests (decision 9).
 - A host adapter holds no project-specific conventions; a project's own conventions would be a layer on top of it. Scope Soup's own conventions on GitHub (comment markers, `Q1:`/`A1:` replies, labels) are such a layer, `src/hosts/github/conventions.ts`; the design is [`docs/github-mapping.md`](github-mapping.md).
 
+### Hosts and players: the switches
+
+What Scope Soup does when a project changes its host (Settings' Connect, decision 95) or a machine switches between singleplayer and multiplayer (Settings' Players, decisions 93 and 95).
+
+| Situation | What happens |
+|---|---|
+| 1. Singleplayer on the meta branch, Connect to Jira or GitHub | The dialog checks the token and the host, lists the open Items to tick, moves the ticked ones (marker, new ids, history comment, old Item closed) and then writes the shared `host`; the rest stay on the meta branch. |
+| 2. Multiplayer on the meta branch, Connect | The same, and each other machine keeps its own per-host parts; at its next start it reads the new host, or, lacking the token or Jira email, shows "Set up this machine for <host>" and starts no agent. |
+| 3. Multiplayer while a machine is busy | Connect is refused while a session runs here or an agent holds an unexpired claim on an Item, naming the busy machines. |
+| 4. Singleplayer with Jira, switch to multiplayer, the remote has no meta ref | The switch needs no question, and the meta writer pushes this clone's meta ref (the shared settings) to the remote. |
+| 5. Singleplayer, switch to multiplayer, the remote's settings name another host or project | The page shows both and asks: "Join theirs" backs this clone's meta ref up under `refs/scopesoup-backup/` and uses the remote's; "Make mine the project's" warns that it changes every machine and puts this clone's commits on top of the remote's. |
+| 6. Singleplayer on the meta branch, switch to multiplayer, the same host and project on the remote | The switch needs no question, and the meta writer puts this clone's own commits on top of the remote's: Items merge and an id taken on both sides is renumbered. |
+| 7. A new machine joins | Onboarding writes its private file; when it lacks what the project's GitHub or Jira host needs, its board shows the same "Set up this machine" dialog with the host filled in from the shared settings. |
+| 8. Multiplayer to singleplayer and back | Switching off shares nothing more; switching on runs scenario 5's check again, and asks only if the remote's settings now name another host or project. |
+| 9. Jira to GitHub, or either back | It goes through the meta branch: first back to the meta branch (not supported yet, issue #134), then Connect; Connect itself refuses to go from one to the other directly. |
+
 ## Items on a meta branch
 
 For a project whose items live in its own repository (decisions 23 and 24), the host is `src/hosts/metaBranch`. It reads one ref, `refs/scopesoup/meta` (a fixed name; the project's shared settings are on it too, so finding them needs no setting), straight from the repository's object store with `git rev-parse`, `git ls-tree` and one `git cat-file --batch`. It never checks the branch out. It fetches and writes Items only when writes are switched on ("Writing to the meta branch" below); the shared settings fetch the ref and write it on every host (below). A repository without the ref is an empty project. It implements the work and change ports, and the ordinary sync fills the store from it. The cursor of a listing is the meta commit plus the ids it returned, so a listing on an unchanged ref is free and one after a move says which items went.

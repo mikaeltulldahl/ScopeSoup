@@ -369,21 +369,56 @@ export const fetchConfig = () => getJson<ConfigView>("/api/config");
  */
 export async function postConfig(change: Record<string, unknown>): Promise<ConfigView & { shared?: string }> {
   const response = await call("/api/config", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(change) });
-  const body = (await response.json().catch(() => null)) as (ConfigView & { errors?: string[]; error?: { message?: string } }) | null;
+  const body = (await response.json().catch(() => null)) as (ConfigView & { errors?: string[]; error?: { message?: string }; players?: PlayersDiffer["players"] }) | null;
+  if (response.status === 409 && body?.players) throw new PlayersDiffer(body.errors?.join("\n") ?? "", body.players);
   if (!response.ok) throw new Error(body?.errors?.join("\n") ?? body?.error?.message ?? `The server answered ${response.status}.`);
   return body as ConfigView & { shared?: string };
+}
+
+/** One open Item of the meta branch that the connect dialog may move. */
+export interface MovableItem {
+  id: string;
+  title: string;
+}
+
+/** What `POST /api/connect` answered: the plan, what stands in the way, the Items to tick, and once done the configuration after. */
+export interface ConnectAnswer {
+  lines: string[];
+  problems: string[];
+  items?: MovableItem[];
+  moved?: string[];
+  done?: boolean;
+  shared?: string;
+  view?: ConfigView;
 }
 
 /**
  * Settings' connect dialogs (#127): without `confirm` what connecting would do (`lines`) and what stands in the way (`problems`);
  * with it, connects, and `view` is the configuration after. Rejects only when the server refused the request itself.
  */
-export async function postConnect(body: Record<string, unknown>): Promise<{ lines: string[]; problems: string[]; done?: boolean; shared?: string; view?: ConfigView }> {
+export async function postConnect(body: Record<string, unknown>): Promise<ConnectAnswer> {
   const response = await call("/api/connect", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-  const answer = (await response.json().catch(() => null)) as ({ lines?: string[]; problems?: string[]; done?: boolean; shared?: string; error?: { message?: string } } & Partial<ConfigView>) | null;
+  const answer = (await response.json().catch(() => null)) as (Omit<ConnectAnswer, "view"> & { error?: { message?: string } } & Partial<ConfigView>) | null;
   if (!answer || (!response.ok && !answer.problems)) throw new Error(answer?.error?.message ?? `The server answered ${response.status}.`);
-  const { lines = [], problems = [], done, shared } = answer;
-  return { lines, problems, ...(done ? { done, view: answer as ConfigView } : {}), ...(shared ? { shared } : {}) };
+  const { lines = [], problems = [], items, moved, done, shared } = answer;
+  return { lines, problems, ...(items ? { items } : {}), ...(moved ? { moved } : {}), ...(done ? { done, view: answer as ConfigView } : {}), ...(shared ? { shared } : {}) };
+}
+
+/** What this machine lacks for the project's host (decision 95), and the host as the shared settings name it. */
+export interface MachineSetupView {
+  setup: { kind: "github" | "jira"; missing: string[] } | null;
+  host?: { kind: "github" | "jira"; repo?: string; site?: string; project?: string; deployment?: "cloud" | "datacenter"; write?: boolean };
+}
+
+export const fetchMachineSetup = () => getJson<MachineSetupView>("/api/machine-setup");
+
+/** A refused switch to multiplayer whose remote names another project or host: both sides, for the person's choice. */
+export class PlayersDiffer extends Error {
+  players: { mine: { project: string | null; host: string }; theirs: { project: string | null; host: string } };
+  constructor(message: string, players: PlayersDiffer["players"]) {
+    super(message);
+    this.players = players;
+  }
 }
 
 /** Re-renders every second with the server's time, for bars and "4 min ago". */

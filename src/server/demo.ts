@@ -524,9 +524,13 @@ export async function writeDemoConfig(dir: string, settings: MetaSettings = meta
     ...allowanceDemo.machine(new Date()),
     // This machine's one emulator, its own port for whoever holds it.
     resources: [{ name: "emulator", units: 1, neededBy: ["implement", "check"], env: { ANDROID_SERIAL: "emulator-555{{unit}}" } }],
+    // This machine's part of the meta branch host (synthetic person), so Settings' Connect can list the Items to move.
+    meta: { authorName: "Demo Person", authorEmail: "demo@example.invalid", prefix: "D" },
   };
   const shared = {
     project: "tidepool",
+    // The demo's Items are its own store's; named as a meta branch so Settings' Connect offers to move them.
+    host: { kind: "metaBranch", write: true },
     level: 4,
     bugLabels: ["bug"],
     roles: allowanceDemo.roles,

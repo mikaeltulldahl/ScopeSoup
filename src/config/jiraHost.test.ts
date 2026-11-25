@@ -50,13 +50,14 @@ test("a Jira host with writes on takes the write settings, and any level", () =>
   assert.equal(choices[2]?.pickable, true);
 });
 
-test("a Jira host is refused above level 0 with writes off, or with a bad site, key, deployment, email or map", () => {
+test("a Jira host is refused above level 0 with writes off, or with a bad site, key, deployment or map; a Cloud host may lack the email", () => {
   assert.match(bad({ ...base, level: 1, host: dc }), /level is 1, but the Jira host has writes off.*Set host.write to true, or level to 0/);
   assert.match(bad({ ...base, host: { ...dc, site: "jira.example.test" } }), /host.site .* must be an http or https address/);
   assert.match(bad({ ...base, host: { ...dc, site: undefined } }), /host.site must be the Jira site's address/);
   assert.match(bad({ ...base, host: { ...dc, project: "demo" } }), /must be a Jira project key/);
   assert.match(bad({ ...base, host: { ...dc, deployment: "server" } }), /host.deployment must be "cloud" .* or "datacenter"/);
-  assert.match(bad({ ...base, host: { ...cloud, email: undefined } }), /account's email is required/);
+  // A Cloud host without this machine's email is valid: the board asks this machine to set up (decision 95).
+  assert.equal(good({ ...base, host: { ...cloud, email: undefined } }).host?.kind, "jira");
   assert.match(bad({ ...base, host: { ...dc, email: "robin@example.test" } }), /needs no email/);
   assert.match(bad({ ...base, host: { ...dc, priorities: { P1: "urgent" } } }), /host.priorities.P1 must be one of blocker, critical, major, minor/);
   assert.match(bad({ ...base, host: { ...dc, abandonedResolutions: "Nope" } }), /host.abandonedResolutions must be a list/);
@@ -73,8 +74,12 @@ test("the Cloud email is this machine's own: jira.email in the private file, nev
   assert.match(inShared.ok ? "" : inShared.errors.join("\n"), /host.email belongs to one person: it goes in that machine's scopesoup.config.json as jira.email/);
   const token = validateFiles({ ...own, jira: { email, token: "x" } }, { project: "p", host: shared }, BASE);
   assert.match(token.ok ? "" : token.errors.join("\n"), /jira.token: a token is never kept/);
-  const wrongHost = validateFiles({ ...own, jira: { email } }, { project: "p", host: { kind: "metaBranch" } }, BASE);
-  assert.match(wrongHost.ok ? "" : wrongHost.errors.join("\n"), /the host in .* is not "jira"\. Remove jira\./);
+  // Each host's part stays side by side: a leftover one is ignored, never an error (decision 95).
+  const leftover = validateFiles({ ...own, jira: { email }, meta: { prefix: "A" } }, { project: "p", host: { kind: "metaBranch" } }, BASE);
+  assert.equal(leftover.ok, true, leftover.ok ? "" : leftover.errors.join("\n"));
+  const onDataCenter = validateFiles({ ...own, jira: { email } }, { project: "p", host: dc }, BASE);
+  assert.ok(onDataCenter.ok, onDataCenter.ok ? "" : onDataCenter.errors.join("\n"));
+  assert.equal(onDataCenter.config.host?.kind === "jira" ? onDataCenter.config.host.email : "not jira", undefined);
 });
 
 test("config:check accepts a Jira host and says it is read-only", () => {

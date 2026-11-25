@@ -540,7 +540,10 @@ body.dialog-open { overflow: hidden; }
 .dialog:has(.connect-form) { max-width: 640px; }
 .connect-form .notice ul { margin: 4px 0 0; padding-left: 20px; }
 .connect-form .notice { border: 1px solid var(--line); border-radius: 6px; }
-.connect-deployment { display: grid; gap: 4px; border: 0; padding: 0; margin: 0; }
+.connect-deployment, .connect-items { display: grid; gap: 4px; border: 0; padding: 0; margin: 0; }
+.connect-items { max-height: 40vh; overflow-y: auto; }
+.players-choice { border: 1px solid var(--line); border-radius: 6px; }
+#setup-banner button { margin-left: 8px; }
 .item-form.connect-form .resource-check { display: flex; gap: 6px; align-items: center; color: var(--text); }
 .item-form.connect-form .resource-check input { width: auto; min-height: 0; margin: 0; flex: none; }
 @media (max-width: 640px) {

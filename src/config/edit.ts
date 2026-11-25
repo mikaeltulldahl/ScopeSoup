@@ -21,6 +21,7 @@ import { mergeQueueCi } from "./types.ts";
 import { metaSettings } from "./metaSettings.ts";
 import { parseShared, PRIVATE_KEYS, PRIVATE_SETTINGS, repositoryOf, SaveRefused, type SettingChange, SHARED_KEYS, SHARED_SETTINGS, SHARED_WHERE, type SharedSettings, validateFiles } from "./shared.ts";
 import { configText, writeConfigFile } from "./write.ts";
+import { recordInManifest } from "./manifest.ts";
 
 type Obj = Record<string, unknown>;
 
@@ -136,7 +137,14 @@ export interface SharedSaved {
 
 export type EditResult =
   | { ok: true; config: ProjectConfig; raw: Obj; changed: boolean; level?: LevelChange; shared?: SharedSaved }
-  | { ok: false; status: 400 | 500; errors: string[] };
+  | { ok: false; status: 400 | 500; errors: string[] }
+  | { ok: false; status: 409; errors: string[]; players: { mine: PlayersSide; theirs: PlayersSide } };
+
+/** One side of a switch to multiplayer: the project's name and host, as each side's shared settings name them. */
+export interface PlayersSide {
+  project: string | null;
+  host: string;
+}
 
 /** How a program is looked up for the level's needs; tests give a fake so they never depend on the machine's agent CLI. */
 export interface EditOptions {
@@ -149,6 +157,13 @@ export interface EditOptions {
   shared?: SharedSettings;
   /** The person who saves, named in the meta commit and the settings' log. A shared change needs one. */
   by?: string;
+  /**
+   * A switch to multiplayer when the remote's shared settings name another host or project: "join" (this clone's meta ref backed
+   * up under refs/scopesoup-backup/, the remote's used) or "mine" (this clone's settings pushed over the project's, for every machine).
+   */
+  players?: "join" | "mine";
+  /** The time, for the backup's name; the clock by default. */
+  now?: () => Date;
 }
 
 let defaultShared: SharedSettings | null = null;
@@ -230,6 +245,45 @@ async function saveShared(files: Files, nextOwn: Obj, multiplayer: boolean, fiel
   return { ok: true, saved: done.changed ? { commit: done.commit, changes: done.changes, sharing: done.sharing } : undefined };
 }
 
+/** The host in words, from a shared `host` value: what the switch to multiplayer compares and shows. */
+function hostWords(host: unknown): string {
+  if (!isObj(host)) return "none (from the environment)";
+  if (host.kind === "github") return `GitHub Issues ${String(host.repo)}`;
+  if (host.kind === "jira") return `Jira ${String(host.site)} project ${String(host.project)}`;
+  if (host.kind === "metaBranch") return "the meta branch";
+  return String(host.kind);
+}
+
+/**
+ * Before a switch from singleplayer to multiplayer: the remote's shared settings. When they name another project or host, the switch
+ * waits for a person's choice (409 with both sides), unless `players` gives it: "join" backs this clone's meta ref up and uses the
+ * remote's; "mine" goes on, and the meta writer puts this clone's settings on top of the project's. Null: nothing to ask (no remote
+ * ref, the same project and host, or no way to read the remote here).
+ */
+async function joinCheck(files: Files, options: EditOptions): Promise<{ ok: true } | Extract<EditResult, { ok: false }> | null> {
+  const store = sharedOf(options);
+  if (!store.remote) return null;
+  const theirs = await store.remote(files.repoPath, files.remote);
+  if (!theirs.ok) return { ok: false, status: 400, errors: [`${theirs.error} Multiplayer joins the project's shared settings there, so it was not switched on.`] };
+  if (theirs.raw === null || theirs.commit === null) return null;
+  const mine: PlayersSide = { project: typeof files.shared.raw.project === "string" ? files.shared.raw.project : null, host: hostWords(files.shared.raw.host) };
+  const other: PlayersSide = { project: typeof theirs.raw.project === "string" ? theirs.raw.project : null, host: hostWords(theirs.raw.host) };
+  if (mine.project === other.project && mine.host === other.host) return null;
+  if (options.players === "mine") return null;
+  if (options.players !== "join") {
+    return { ok: false, status: 409, errors: [`The remote's shared settings name ${other.project ?? "no project"} on ${other.host}; this clone's name ${mine.project ?? "no project"} on ${mine.host}. Join theirs, or make yours the project's.`], players: { mine, theirs: other } };
+  }
+  if (!store.adopt) return { ok: false, status: 400, errors: ["This Scope Soup cannot replace the meta ref here."] };
+  const backup = `refs/scopesoup-backup/meta-${(options.now ?? (() => new Date()))().toISOString().replace(/[-:.]/g, "")}`;
+  try {
+    await store.adopt(files.repoPath, theirs.commit, backup);
+  } catch (error) {
+    return { ok: false, status: 500, errors: [`Joining the remote's settings failed: ${error instanceof Error ? error.message : String(error)}`] };
+  }
+  recordInManifest(files.path, [{ kind: "ref", ref: backup, what: "this clone's meta ref before it joined the remote's (Join theirs)" }], "scopesoup");
+  return { ok: true };
+}
+
 /**
  * Reads both, merges the change into each one's part (shared keys into the shared settings on the meta ref, this
  * machine's into its private file), validates the two together, and only then writes: the shared part as one meta commit
@@ -248,8 +302,17 @@ export async function editConfig(file: string, change: unknown, options: EditOpt
   }
   if (errors.length > 0) return { ok: false, status: 400, errors };
 
-  const read = readFiles(file, options);
+  let read = readFiles(file, options);
   if (!read.ok) return { ok: false, status: 500, errors: read.errors };
+  // Singleplayer to multiplayer: the remote's shared settings first (decision 95).
+  if (change.multiplayer === true && read.files.raw.multiplayer === false) {
+    const players = await joinCheck(read.files, options);
+    if (players) {
+      if (!players.ok) return players;
+      read = readFiles(file, options);
+      if (!read.ok) return { ok: false, status: 500, errors: read.errors };
+    }
+  }
   const { path, text, raw, shared } = read.files;
   const files = read.files;
   const migrated = migrateConfig(raw);
@@ -311,10 +374,11 @@ export interface HostConnection {
 
 /**
  * Connects the project to another host: `host` in the shared settings (one meta commit, as any project setting), and in this
- * machine's file `jira.email` for Jira Cloud, with the old host's part of this machine (`meta`, `jira`) removed. Checked as a whole
- * first; `dryRun` stops there and writes nothing. Items are not moved: that is the caller's to say.
+ * machine's file `jira.email` for Jira Cloud; the other hosts' parts of this machine stay. `join` sets this machine up for the
+ * host the project has and leaves the shared settings alone. Checked as a whole first; `dryRun` stops there and writes nothing.
+ * Items are moved by the caller (`src/items/moveToHost.ts`).
  */
-export async function connectHost(file: string, connection: HostConnection, options: EditOptions & { dryRun?: boolean } = {}): Promise<EditResult> {
+export async function connectHost(file: string, connection: HostConnection, options: EditOptions & { dryRun?: boolean; join?: boolean } = {}): Promise<EditResult> {
   if (!isObj(connection.host) || FORBIDDEN.some((key) => Object.hasOwn(connection.host, key))) return { ok: false, status: 400, errors: ["host must be an object."] };
   const read = readFiles(file, options);
   if (!read.ok) return { ok: false, status: 500, errors: read.errors };
@@ -325,11 +389,10 @@ export async function connectHost(file: string, connection: HostConnection, opti
     const old = isObj(current.host) && current.host.kind === connection.host.kind ? Object.fromEntries(Object.entries(current.host).filter(([key]) => !CONNECT_KEYS.includes(key))) : {};
     return { ...current, host: { ...old, ...connection.host } };
   };
+  // This machine's part of each host stays side by side (`meta`, `jira`): only the active host's is read (decision 95).
   const nextOwn: Obj = { ...migrated.raw };
-  delete nextOwn.meta;
-  delete nextOwn.jira;
-  if (connection.email !== undefined) nextOwn.jira = { email: connection.email };
-  const nextShared = withHost(files.shared.raw);
+  if (connection.email !== undefined) nextOwn.jira = { ...(isObj(nextOwn.jira) ? nextOwn.jira : {}), email: connection.email };
+  const nextShared = options.join ? files.shared.raw : withHost(files.shared.raw);
   const result = validateFiles(nextOwn, nextShared, dirname(files.path));
   if (!result.ok) return { ok: false, status: 400, errors: result.errors };
   if (options.dryRun) return { ok: true, config: result.config, raw: nextOwn, changed: false };

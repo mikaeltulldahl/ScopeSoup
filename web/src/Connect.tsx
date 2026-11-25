@@ -1,10 +1,12 @@
-// Settings' "Connect to GitHub Issues" and "Connect to Jira" (#127): a dialog that asks what the host needs, lets the server check
-// it (the configuration, the token from the environment, one look at the host) and say what connecting would do, and only then
-// connects. The token is never asked for here: the server says which variable to set when it is missing.
+// Settings' "Connect to GitHub Issues" and "Connect to Jira" (#127, decision 95): a dialog that asks what the host needs, lets the
+// server check it (the configuration, the token from the environment, one look at the host, no agent session running anywhere) and
+// say what connecting would do, and only then connects. From the meta branch it lists the open Items; the ticked ones move.
+// In join mode ("Set up this machine") the host is the project's, shown and not changed: only this machine's part is asked for.
+// The token is never asked for here: the server says which variable to set when it is missing.
 
-import { useState } from "preact/hooks";
+import { useEffect, useState } from "preact/hooks";
 import { Dialog } from "./Dialog.tsx";
-import { type ConfigView, postConnect } from "./api.ts";
+import { type ConfigView, fetchMachineSetup, type MachineSetupView, type MovableItem, postConnect } from "./api.ts";
 
 export type ConnectKind = "github" | "jira";
 
@@ -21,36 +23,55 @@ interface Fields {
 
 const EMPTY: Fields = { repo: "", site: "", project: "", deployment: "cloud", email: "", filter: "", components: "", write: true };
 
-function bodyOf(kind: ConnectKind, fields: Fields): Record<string, unknown> {
-  if (kind === "github") return { kind, repo: fields.repo, write: fields.write };
+export const HOST_NAMES: Record<ConnectKind, string> = { github: "GitHub Issues", jira: "Jira" };
+
+function bodyOf(kind: ConnectKind, fields: Fields, join: boolean, move: string[]): Record<string, unknown> {
+  if (join) return { mode: "join", ...(kind === "jira" && fields.deployment === "cloud" ? { email: fields.email } : {}) };
+  if (kind === "github") return { kind, repo: fields.repo, write: fields.write, move };
   return {
     kind, site: fields.site, project: fields.project, deployment: fields.deployment, write: fields.write,
     ...(fields.deployment === "cloud" ? { email: fields.email } : {}),
     filter: fields.filter,
     components: fields.components.split(",").map((each) => each.trim()).filter((each) => each !== ""),
+    move,
   };
 }
 
-export function ConnectDialog({ kind, onClose, onConnected }: { kind: ConnectKind; onClose: () => void; onConnected: (view: ConfigView, shared: string | undefined) => void }) {
-  const [fields, setFields] = useState<Fields>(EMPTY);
+export function ConnectDialog({ kind, join = false, host, onClose, onConnected }: {
+  kind: ConnectKind;
+  /** Set up this machine for the project's host (`host`, shown, not changed). */
+  join?: boolean;
+  host?: MachineSetupView["host"];
+  onClose: () => void;
+  onConnected: (view: ConfigView, shared: string | undefined, moved: string[] | undefined) => void;
+}) {
+  const [fields, setFields] = useState<Fields>(host ? { ...EMPTY, repo: host.repo ?? "", site: host.site ?? "", project: host.project ?? "", deployment: host.deployment ?? "cloud", write: host.write ?? true } : EMPTY);
   const [busy, setBusy] = useState(false);
   // What the server said about these fields: the plan, and what stands in the way. Cleared by any edit.
   const [plan, setPlan] = useState<{ lines: string[]; problems: string[] } | null>(null);
+  // The meta branch's open Items, from the last check; kept while ticks change.
+  const [items, setItems] = useState<MovableItem[] | null>(null);
+  const [move, setMove] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const title = kind === "github" ? "Connect to GitHub Issues" : "Connect to Jira";
+  const title = join ? `Set up this machine for ${HOST_NAMES[kind]}` : `Connect to ${HOST_NAMES[kind]}`;
   const set = (patch: Partial<Fields>) => {
     setFields({ ...fields, ...patch });
     setPlan(null);
     setError(null);
   };
+  const tick = (id: string, on: boolean) => {
+    setMove((now) => (on ? [...now.filter((each) => each !== id), id] : now.filter((each) => each !== id)));
+    setPlan(null);
+  };
   const send = (confirm: boolean) => {
     setBusy(true);
     setError(null);
-    postConnect({ ...bodyOf(kind, fields), confirm }).then(
+    postConnect({ ...bodyOf(kind, fields, join, move), confirm }).then(
       (answer) => {
         setBusy(false);
-        if (answer.done && answer.view) onConnected(answer.view, answer.shared);
-        else setPlan({ lines: answer.lines, problems: answer.problems });
+        if (answer.done && answer.view) return onConnected(answer.view, answer.shared, answer.moved);
+        setPlan({ lines: answer.lines, problems: answer.problems });
+        if (answer.items) setItems(answer.items);
       },
       (problem: unknown) => {
         setBusy(false);
@@ -65,8 +86,9 @@ export function ConnectDialog({ kind, onClose, onConnected }: { kind: ConnectKin
       {note && <span class="muted">{note}</span>}
     </label>
   );
+  const variable = kind === "github" ? "SCOPESOUP_GITHUB_TOKEN" : "SCOPESOUP_JIRA_TOKEN";
   return (
-    <Dialog label={title} onClose={onClose} focusSelector="input" keepOnOutsideClick>
+    <Dialog label={title} onClose={onClose} focusSelector="input, button.primary" keepOnOutsideClick>
       <h3 class="dialog-title">{title}</h3>
       <form
         class="item-form connect-form"
@@ -75,14 +97,19 @@ export function ConnectDialog({ kind, onClose, onConnected }: { kind: ConnectKin
           send(false);
         }}
       >
-        {kind === "github" ? (
+        {join ? (
           <>
-            <p class="muted">The project's Items become the repository's issues. The token is read from <code>SCOPESOUP_GITHUB_TOKEN</code> in the environment Scope Soup runs in; it is not asked for here.</p>
+            <p class="muted">The project's Items are on {kind === "github" ? `GitHub Issues: ${fields.repo}` : `Jira: project ${fields.project} on ${fields.site}`}. This machine needs its own access before it reads them or starts agents. The token is read from <code>{variable}</code> in the environment Scope Soup runs in; it is not asked for here.</p>
+            {kind === "jira" && fields.deployment === "cloud" && input("email", "Your Jira account's email", "you@example.com", "This machine's own: kept in its scopesoup.config.json, not in the shared settings.")}
+          </>
+        ) : kind === "github" ? (
+          <>
+            <p class="muted">The project's Items become the repository's issues. The token is read from <code>{variable}</code> in the environment Scope Soup runs in; it is not asked for here.</p>
             {input("repo", "Repository", "owner/name")}
           </>
         ) : (
           <>
-            <p class="muted">The project's Items become the Jira project's issues. The token is read from <code>SCOPESOUP_JIRA_TOKEN</code> in the environment Scope Soup runs in; it is not asked for here.</p>
+            <p class="muted">The project's Items become the Jira project's issues. The token is read from <code>{variable}</code> in the environment Scope Soup runs in; it is not asked for here.</p>
             {input("site", "Site", "https://example.atlassian.net")}
             {input("project", "Project key", "DEMO")}
             <fieldset class="connect-deployment" disabled={busy}>
@@ -95,26 +122,43 @@ export function ConnectDialog({ kind, onClose, onConnected }: { kind: ConnectKin
             {input("components", "Components of new Items (optional)", "Board", "Comma separated. Empty: none.")}
           </>
         )}
-        <label class="resource-check">
-          <input type="checkbox" checked={fields.write} disabled={busy} onChange={(event) => set({ write: (event.target as HTMLInputElement).checked })} />
-          {" "}Let Scope Soup write ({kind === "github" ? "issues, labels and comments" : "issues, comments, labels and properties"}); off: it only shows them, and the level must be 0 (Watch)
-        </label>
+        {!join && (
+          <label class="resource-check">
+            <input type="checkbox" checked={fields.write} disabled={busy} onChange={(event) => set({ write: (event.target as HTMLInputElement).checked })} />
+            {" "}Let Scope Soup write ({kind === "github" ? "issues, labels and comments" : "issues, comments, labels and properties"}); off: it only shows them, and the level must be 0 (Watch)
+          </label>
+        )}
+        {items && items.length > 0 && (
+          <fieldset class="connect-items" disabled={busy}>
+            <legend><b>Move these Items to {HOST_NAMES[kind]}</b> (the others stay on the meta branch)</legend>
+            <label class="resource-check">
+              <input type="checkbox" checked={move.length === items.length} onChange={(event) => { setMove((event.target as HTMLInputElement).checked ? items.map((item) => item.id) : []); setPlan(null); }} />
+              <i>All {items.length}</i>
+            </label>
+            {items.map((item) => (
+              <label key={item.id} class="resource-check">
+                <input type="checkbox" checked={move.includes(item.id)} onChange={(event) => tick(item.id, (event.target as HTMLInputElement).checked)} />
+                <code>{item.id}</code> {item.title}
+              </label>
+            ))}
+          </fieldset>
+        )}
         {plan && plan.problems.length > 0 && (
           <div class="notice notice-bad" role="alert">
-            <b>Not connected:</b>
+            <b>{join ? "Not set up:" : "Not connected:"}</b>
             <ul>{plan.problems.map((each) => <li key={each}>{each}</li>)}</ul>
           </div>
         )}
-        {plan && plan.problems.length === 0 && (
+        {plan && plan.lines.length > 0 && (
           <div class="notice connect-plan" role="status">
-            <b>Connecting would:</b>
+            <b>{plan.problems.length > 0 ? "Once that is settled, " : ""}{join ? (plan.problems.length > 0 ? "setting up would:" : "Setting up would:") : plan.problems.length > 0 ? "connecting would:" : "Connecting would:"}</b>
             <ul>{plan.lines.map((each) => <li key={each}>{each}</li>)}</ul>
           </div>
         )}
         {error && <pre class="notice notice-bad settings-errors" role="alert">{error}</pre>}
         <div class="form-actions">
           {plan && plan.problems.length === 0 ? (
-            <button type="button" class="primary" disabled={busy} onClick={() => send(true)}>{busy ? "Connecting…" : "Connect"}</button>
+            <button type="button" class="primary" disabled={busy} onClick={() => send(true)}>{busy ? (move.length > 0 ? "Moving…" : "Saving…") : join ? "Set up" : move.length > 0 ? `Move ${move.length} and connect` : "Connect"}</button>
           ) : (
             <button type="submit" class="primary" disabled={busy}>{busy ? "Checking…" : "Check"}</button>
           )}
@@ -122,5 +166,41 @@ export function ConnectDialog({ kind, onClose, onConnected }: { kind: ConnectKin
         </div>
       </form>
     </Dialog>
+  );
+}
+
+/** The board's "Set up this machine for <host>" note, while this machine lacks what the project's host needs (no agent runs). */
+export function MachineSetupNote() {
+  const [view, setView] = useState<MachineSetupView | null>(null);
+  const [open, setOpen] = useState(false);
+  const [done, setDone] = useState(false);
+  useEffect(() => {
+    fetchMachineSetup().then(setView, () => setView(null));
+  }, []);
+  const setup = view?.setup;
+  if (!setup || !view?.host) return null;
+  const name = HOST_NAMES[setup.kind];
+  return (
+    <>
+      <p class="notice notice-paused" role="status" id="setup-banner">
+        {done ? (
+          <><b>Saved.</b> Start Scope Soup again on this machine to read {name} and start agents{setup.missing.some((each) => each.startsWith("SCOPESOUP_")) ? `, with ${setup.missing.filter((each) => each.startsWith("SCOPESOUP_")).join(" and ")} set in its environment` : ""}.</>
+        ) : (
+          <><b>This machine is not set up for {name}</b> ({setup.missing.join(" and ")} missing), so it reads no Items and starts no agents. <button type="button" onClick={() => setOpen(true)}>Set up this machine for {name}</button></>
+        )}
+      </p>
+      {open && (
+        <ConnectDialog
+          kind={setup.kind}
+          join
+          host={view.host}
+          onClose={() => setOpen(false)}
+          onConnected={() => {
+            setOpen(false);
+            setDone(true);
+          }}
+        />
+      )}
+    </>
   );
 }

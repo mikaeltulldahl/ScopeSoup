@@ -18,9 +18,9 @@ import { FolderButton } from "./ProjectHeader.tsx";
 import type { AskedField, MergeQueueSetup } from "../../src/config/levels.ts";
 import type { Sliders } from "../../src/config/sliders.ts";
 import { commandText, commandWords } from "../../src/config/commandLine.ts";
-import { fetchConfig, postConfig } from "./api.ts";
+import { fetchConfig, PlayersDiffer, postConfig } from "./api.ts";
 import { EFFORT_LEVELS } from "../../src/config/types.ts";
-import { ConnectDialog, type ConnectKind } from "./Connect.tsx";
+import { ConnectDialog, type ConnectKind, HOST_NAMES } from "./Connect.tsx";
 
 const ONBOARDING = "https://github.com/mikaeltulldahl/scopesoup/blob/main/docs/ONBOARDING.md";
 
@@ -192,6 +192,8 @@ export function Settings({ project, openHistory = false }: { project?: ProjectVi
   const [committed, setCommitted] = useState<string | null>(null);
   // The connect dialog open, if one is (#127).
   const [connecting, setConnecting] = useState<ConnectKind | null>(null);
+  // A switch to multiplayer refused because the remote's shared settings name another project or host: both sides, and the change.
+  const [players, setPlayers] = useState<(PlayersDiffer["players"] & { change: Record<string, unknown> }) | null>(null);
 
   const show = (next: ConfigView) => {
     setView(next);
@@ -232,6 +234,7 @@ export function Settings({ project, openHistory = false }: { project?: ProjectVi
   }
 
   const base = draftOf(view.config, view.raw, view.mergeQueue);
+  const hostKind = view.config.host?.kind;
   const pinned = pinnedRoles(view.raw);
   const defaultModels: Readonly<Record<string, string | undefined>> = view.defaultModels ?? {};
   const levels = view.levels ?? [];
@@ -252,7 +255,9 @@ export function Settings({ project, openHistory = false }: { project?: ProjectVi
         setBusy(false);
       },
       (problem: unknown) => {
-        setError(problem instanceof Error ? problem.message : String(problem));
+        // A switch to multiplayer whose remote names another project or host waits for the person's choice.
+        if (problem instanceof PlayersDiffer) setPlayers({ ...problem.players, change });
+        else setError(problem instanceof Error ? problem.message : String(problem));
         setBusy(false);
       },
     );
@@ -300,6 +305,24 @@ export function Settings({ project, openHistory = false }: { project?: ProjectVi
             </label>
           ))}
         </fieldset>
+
+        {players && (
+          <div class="notice notice-paused players-choice" role="alert">
+            <p><b>The remote's shared settings are another project's.</b> Multiplayer shares one set of settings and Items; pick whose.</p>
+            <dl class="facts">
+              <dt>Theirs (the remote)</dt>
+              <dd>{players.theirs.project ?? "no project name"} on {players.theirs.host}</dd>
+              <dt>Yours (this clone)</dt>
+              <dd>{players.mine.project ?? "no project name"} on {players.mine.host}</dd>
+            </dl>
+            <div class="form-actions">
+              <button type="button" class="primary" disabled={busy} onClick={() => { const { change: wanted } = players; setPlayers(null); run({ ...wanted, players: "join" }, () => setSaved(true)); }}>Join theirs</button>
+              <button type="button" disabled={busy} onClick={() => { const { change: wanted } = players; setPlayers(null); run({ ...wanted, players: "mine" }, () => setSaved(true)); }}>Make mine the project's</button>
+              <button type="button" disabled={busy} onClick={() => setPlayers(null)}>Cancel</button>
+            </div>
+            <p class="muted">Join theirs keeps this clone's settings and Items under refs/scopesoup-backup/ and uses the remote's. Make mine the project's puts this clone's settings and Items on top of the remote's: <b>it changes the project for every machine</b> (Items merge; an id taken on both sides is renumbered).</p>
+          </div>
+        )}
 
         <fieldset class="levels" disabled={busy}>
           <legend><b>Level</b>: how much Scope Soup does on its own; each level includes the ones below</legend>
@@ -464,11 +487,15 @@ export function Settings({ project, openHistory = false }: { project?: ProjectVi
         <h4 id="host">Where the Items are</h4>
         <p class="muted">
           {view.config.host?.kind === "github" ? `GitHub Issues: ${view.config.host.repo}.` : view.config.host?.kind === "jira" ? `Jira: project ${view.config.host.project} on ${view.config.host.site}.` : view.config.host?.kind === "metaBranch" ? "The project's meta branch (refs/scopesoup/meta)." : "Set by the environment (SCOPESOUP_GITHUB_* or SCOPESOUP_META_*)."}
-          {" "}A project setting: connecting changes it for every machine, and takes effect when Scope Soup starts again. Items already there are not moved.
+          {" "}A project setting: connecting changes it for every machine, and takes effect when Scope Soup starts again. From the meta branch you pick which open Items move; the others stay there.
         </p>
         <div class="form-actions">
-          <button type="button" disabled={busy || dirty} title={dirty ? "Save or undo your changes first" : ""} onClick={() => setConnecting("github")}>Connect to GitHub Issues</button>
-          <button type="button" disabled={busy || dirty} title={dirty ? "Save or undo your changes first" : ""} onClick={() => setConnecting("jira")}>Connect to Jira</button>
+          {(["github", "jira"] as const).map((kind) => {
+            // GitHub and Jira are connected only from the meta branch (or no host): going between them, or back, is not supported yet.
+            const across = (hostKind === "github" || hostKind === "jira") && hostKind !== kind;
+            const why = dirty ? "Save or undo your changes first" : across ? "Going between GitHub and Jira goes through the meta branch, and going back to it is not supported yet." : "";
+            return <button key={kind} type="button" disabled={busy || dirty || across} title={why} onClick={() => setConnecting(kind)}>Connect to {HOST_NAMES[kind]}</button>;
+          })}
         </div>
 
         {view.config?.host?.kind === "jira" && (
@@ -567,11 +594,11 @@ export function Settings({ project, openHistory = false }: { project?: ProjectVi
         <ConnectDialog
           kind={connecting}
           onClose={() => setConnecting(null)}
-          onConnected={(next, shared) => {
+          onConnected={(next, shared, moved) => {
             setConnecting(null);
             show(next);
             setSaved(false);
-            setCommitted(`${shared ?? "Connected."} Start Scope Soup again to use the new host.`);
+            setCommitted(`${moved && moved.length > 0 ? `Moved: ${moved.join("; ")}. ` : ""}${shared ?? "Connected."} Start Scope Soup again to use the new host.`);
           }}
         />
       )}

@@ -113,6 +113,8 @@ export function describeLine(entry: LogEntry): string {
       return `Check${tail("", d.command)}: ${words(d.verdict)} on ${short(d.sha)}.${tail("", d.findings)}`;
     case "merged":
       return `Merged ${short(d.sha)}${tail("in ", d.target)}.`;
+    case "moved":
+      return `Moved to ${words(d.to)}${d.host === "jira" ? " on Jira" : d.host === "github" ? " on GitHub" : ""}.`;
     default: {
       const rest = Object.fromEntries(Object.entries(d).filter(([key]) => key !== "at" && key !== "by" && key !== "kind"));
       return `${entry.kind}: ${JSON.stringify(rest)}`;

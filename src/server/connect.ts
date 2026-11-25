@@ -1,13 +1,18 @@
-// Settings' "Connect to GitHub Issues" and "Connect to Jira" (#127): what the dialog sent, read into the shared `host` (and Jira
-// Cloud's email for this machine), then one look at the host with the token from the environment, so the dialog can say what
-// connecting would do before anything is written. The token is only read from the environment: never asked for, shown or kept.
-// Items are not moved: Scope Soup has no move from the meta branch (or another host) to GitHub Issues or Jira, so the dialog
-// says that and the old Items stay where they are. (`src/items/githubMove.ts` is the other way, GitHub to the meta branch.)
+// Settings' "Connect to GitHub Issues" and "Connect to Jira" (#127, decision 95): what the dialog sent, read into the shared
+// `host` (and Jira Cloud's email for this machine), then one look at the host with the token from the environment, so the dialog
+// can say what connecting would do before anything is written. The token is only read from the environment: never asked for,
+// shown or kept. The Items a person ticks move with `src/items/moveToHost.ts`; the rest stay on the meta branch. The same dialog
+// in join mode sets up a machine for the host the project already has ("Set up this machine").
 
 import { createClient, type FetchLike } from "../hosts/github/client.ts";
 import { createJiraClient } from "../hosts/jira/client.ts";
 import { itemsJql } from "../hosts/jira/map.ts";
 import type { HostConnection } from "../config/edit.ts";
+import type { HostConfig } from "../config/types.ts";
+import { createGitHubHost } from "../hosts/github/index.ts";
+import { createJiraHost } from "../hosts/jira/index.ts";
+import type { Session, WorkItem } from "../model/types.ts";
+import type { Host } from "../ports/host.ts";
 
 export type ConnectKind = "github" | "jira";
 
@@ -17,6 +22,41 @@ export interface ConnectDeps {
   fetchImpl?: FetchLike;
   /** The GitHub API's address; the fake's in tests. */
   githubApi?: string;
+}
+
+/** The new host with writes on, for moving Items: made with the token from the environment and the deps' `fetch`. */
+export function hostFor(kind: ConnectKind, connection: HostConnection, token: string, deps: ConnectDeps, machine: string | undefined): Host {
+  const host = connection.host;
+  const fetchImpl = deps.fetchImpl ? { fetchImpl: deps.fetchImpl } : {};
+  if (kind === "github") return createGitHubHost({ token, repo: String(host.repo), allowWrites: true, conventions: true, ...(machine ? { machine } : {}), ...fetchImpl, ...(deps.githubApi ? { apiUrl: deps.githubApi } : {}) });
+  return createJiraHost({
+    site: String(host.site), project: String(host.project), deployment: host.deployment === "datacenter" ? "datacenter" : "cloud", token, allowWrites: true, conventions: true,
+    ...(connection.email ? { email: connection.email } : {}), ...(machine ? { machine } : {}), ...fetchImpl,
+    ...(typeof host.filter === "string" ? { filter: host.filter } : {}), ...(Array.isArray(host.components) ? { components: host.components as string[] } : {}),
+    log: () => undefined,
+  });
+}
+
+/** The machines where an agent session runs now: this one's running sessions, and agents' unexpired claims on Items (the meta ref's holders). */
+export function busyMachines(works: readonly WorkItem[], sessions: readonly Session[], machine: string | undefined, now: Date): string[] {
+  const busy = new Set<string>();
+  if (sessions.some((session) => session.status === "starting" || session.status === "running" || session.status === "stalled")) busy.add(machine ?? "this machine");
+  for (const work of works) {
+    const holder = work.holder;
+    if (!holder?.actor.bot || work.state === "done" || work.state === "abandoned") continue;
+    if (holder.until && Date.parse(holder.until) <= now.getTime()) continue;
+    const at = holder.actor.id.lastIndexOf("@");
+    busy.add(at >= 0 ? holder.actor.id.slice(at + 1) : holder.actor.name);
+  }
+  return [...busy].sort();
+}
+
+/** Join mode: the host the project already has, as the dialog would send it, with this machine's email for Jira Cloud. */
+export function joinConnection(host: HostConfig, email: unknown): { ok: true; kind: ConnectKind; connection: HostConnection } | { ok: false; error: string } {
+  if (host.kind === "github") return { ok: true, kind: "github", connection: { host: { kind: "github", repo: host.repo, write: host.write } } };
+  if (host.kind !== "jira") return { ok: false, error: "The project's host is the meta branch: onboarding sets a machine up for it." };
+  const { email: _own, ...shared } = host;
+  return { ok: true, kind: "jira", connection: { host: shared as unknown as Record<string, unknown>, ...(host.deployment === "cloud" ? { email: text(email) } : {}) } };
 }
 
 export const TOKEN_VARIABLE: Record<ConnectKind, string> = { github: "SCOPESOUP_GITHUB_TOKEN", jira: "SCOPESOUP_JIRA_TOKEN" };

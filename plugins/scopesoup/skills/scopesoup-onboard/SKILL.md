@@ -73,7 +73,7 @@ What the two answers lead to:
 | Nowhere, or a text file | GitHub Issues | The github host. A text file can be filed as issues by the person; the skill does not write to GitHub. |
 | Another tracker (Jira, Trello, ...) | Items or GitHub Issues | That host. Say plainly: "Importing from <tracker> is not supported yet, so the backlog there stays where it is and Scope Soup starts without it." |
 
-Not sure yet? Items is a safe start: the Settings page's "Connect to GitHub Issues" and "Connect to Jira" switch the host later (the Items already made stay on the meta branch).
+Not sure yet? Items is a safe start: the Settings page's "Connect to GitHub Issues" and "Connect to Jira" switch the host later, moving the Items the person ticks. On a project whose host is GitHub or Jira, a machine without its token (or Jira Cloud email) is asked on its board to "Set up this machine".
 
 ### 3b. Today GitHub Issues, from now on Items: the import
 
