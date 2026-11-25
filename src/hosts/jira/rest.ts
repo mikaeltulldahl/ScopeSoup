@@ -42,6 +42,8 @@ export interface JiraIssueFields {
   resolution?: { name: string } | null;
   priority?: { name: string } | null;
   labels?: string[];
+  /** Only the fake and the filter read them; the host asks for no components. */
+  components?: { name: string }[];
   issuetype?: { name?: string; subtask?: boolean };
   parent?: JiraIssueStub;
   subtasks?: JiraIssueStub[];

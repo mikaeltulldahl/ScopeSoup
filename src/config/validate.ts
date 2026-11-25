@@ -454,7 +454,7 @@ function resourcesOf(value: unknown, shared: boolean, err: (message: string) => 
 }
 
 const GITHUB_KEYS = ["kind", "repo", "write"];
-const JIRA_KEYS = ["kind", "site", "project", "deployment", "write", "email", "priorities", "abandonedResolutions", "blocksLink", "issueType", "childIssueType", "transitions", "resolutions", "relatesLink", "duplicateLink", "commentLimit", "answerers"];
+const JIRA_KEYS = ["kind", "site", "project", "deployment", "filter", "components", "write", "email", "priorities", "abandonedResolutions", "blocksLink", "issueType", "childIssueType", "transitions", "resolutions", "relatesLink", "duplicateLink", "commentLimit", "answerers"];
 const TRANSITION_TARGETS = ["todo", "doing", "done", "abandoned"] as const;
 const RESOLUTION_TARGETS = ["done", "abandoned", "duplicate"] as const;
 const PRIORITY_NAMES = ["blocker", "critical", "major", "minor"] as const;
@@ -499,6 +499,29 @@ function mediaOf(value: Obj, err: (message: string) => void): MediaConfig {
 // The meta ref is refs/scopesoup/meta in repoPath, shared with remote (both from this machine's file): no ref, folder or remote here.
 const META_BRANCH_KEYS = ["kind", "write", "authorName", "authorEmail", "prefix", "fetchSeconds"];
 
+/** Why a text cannot be a JQL condition to AND with the project, or null: no ORDER BY, balanced quotes and parentheses. */
+export function jqlFragmentProblem(text: string): string | null {
+  let depth = 0;
+  let quote: string | null = null;
+  let outside = "";
+  for (let at = 0; at < text.length; at += 1) {
+    const char = text[at]!;
+    if (quote) {
+      if (char === "\\") at += 1;
+      else if (char === quote) quote = null;
+    } else if (char === '"' || char === "'") quote = char;
+    else {
+      outside += char;
+      if (char === "(") depth += 1;
+      else if (char === ")" && --depth < 0) return "closes a parenthesis that was never opened.";
+    }
+  }
+  if (quote) return "has a quote that is never closed.";
+  if (depth !== 0) return "has a parenthesis that is never closed.";
+  if (/\border\s+by\b/i.test(outside)) return "must not have an ORDER BY: Scope Soup orders the issues itself.";
+  return null;
+}
+
 /** `host` of kind "jira": a Jira project, written to with `write`. */
 function jiraHostOf(value: Obj, write: boolean, text: (key: string) => string | undefined, err: (message: string) => void): JiraHostConfig {
   const site = text("site")?.replace(/\/+$/, "");
@@ -507,6 +530,17 @@ function jiraHostOf(value: Obj, write: boolean, text: (key: string) => string | 
   const project = text("project");
   if (project === undefined) err(`host.project must be the Jira project key, as "DEMO".`);
   else if (!/^[A-Z][A-Z0-9_]+$/.test(project)) err(`host.project (${project}) must be a Jira project key: capital letters, digits and "_", starting with a letter, as "DEMO".`);
+  const filter = text("filter");
+  if (filter !== undefined) {
+    const problem = jqlFragmentProblem(filter);
+    if (problem) err(`host.filter (${filter}) ${problem} Write it as a condition on the project's issues, as 'component = "Board" AND labels = scopesoup'.`);
+  }
+  let components: string[] | undefined;
+  if (value.components !== undefined) {
+    const given = value.components;
+    if (!Array.isArray(given) || given.length === 0 || !given.every((entry) => typeof entry === "string" && entry.trim() !== "")) err(`host.components must be a list of component names that new Items get, as ["Board"].`);
+    else components = [...new Set(given.map((entry: string) => entry.trim()))];
+  }
   const deployment = value.deployment;
   if (deployment !== "cloud" && deployment !== "datacenter") err(`host.deployment must be "cloud" (Jira Cloud, an API token with the account's email) or "datacenter" (self-hosted Jira, a personal access token).`);
   const email = text("email");
@@ -514,6 +548,8 @@ function jiraHostOf(value: Obj, write: boolean, text: (key: string) => string | 
   if (deployment === "datacenter" && email !== undefined) err("host.deployment is \"datacenter\": a personal access token needs no email. Remove jira.email.");
   const config: JiraHostConfig = { kind: "jira", site: site ?? "", project: project ?? "", deployment: deployment === "datacenter" ? "datacenter" : "cloud", write };
   if (email !== undefined) config.email = email;
+  if (filter !== undefined) config.filter = filter;
+  if (components) config.components = components;
   if (value.priorities !== undefined) {
     if (!isObj(value.priorities) || Object.keys(value.priorities).length === 0) err(`host.priorities must be an object from Jira priority names to ${PRIORITY_NAMES.join(", ")}, as { "Highest": "blocker" }.`);
     else {
