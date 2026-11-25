@@ -410,6 +410,11 @@ export interface WritePort {
   releaseClaim?(work: Ref, claim: { shown: string }): Promise<void>;
   /** Adds and removes assignees (logins) of an item, on a host where the assignee is the holder (GitHub). A person's hold, never a claim. */
   setAssignees?(work: Ref, add: string[], remove: string[]): Promise<void>;
+  /**
+   * A person's hand-back on a host with no pull requests (Jira): a comment that names the Item's branch and its tip, read back as
+   * `WorkItem.handedBack`. The note is inert already.
+   */
+  recordHandback?(work: Ref, handback: { sha: string; branch: string; note?: string }): Promise<void>;
   setWorkState?(work: Ref, state: WorkState): Promise<void>;
   vote?(change: Ref, revision: string, dimension: string, value: VerdictValue, score?: number): Promise<void>;
   /** `expectSha` makes sure no revision other than the tested one can merge. */

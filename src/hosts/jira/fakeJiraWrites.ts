@@ -122,6 +122,16 @@ export interface FakeWriteState {
   commentLimit: number;
   now: () => number;
   ids: { comment: number; link: number; issue: number };
+  /** Issue key -> its changelog, oldest first: the assignee changes the fake makes. */
+  changelog: Record<string, FakeHistory[]>;
+}
+
+/** One changelog entry, as `expand=changelog` lists it [known, unconfirmed]: Cloud names people by account id, Data Center by user name. */
+export interface FakeHistory {
+  id: string;
+  author: JiraUser;
+  created: string;
+  items: { field: string; fieldId?: string; from: string | null; to: string | null; fromString: string | null; toString: string | null }[];
 }
 
 type Answer = (status: number, body?: unknown) => FetchResponse;
@@ -301,6 +311,14 @@ export function routeWrite(state: FakeWriteState, method: string, rest: string, 
     if (!issue) return missing();
     const who = person(isObject(body) ? body : {});
     if (who === "unknown") return refuse(400, "assignee: User cannot be assigned issues.");
+    const before = issue.fields.assignee ?? null;
+    if (userId(before) !== userId(who)) {
+      const history = (state.changelog[issue.key] ??= []);
+      history.push({
+        id: String(70_000 + history.length), author: state.user, created: stamp(state.now()),
+        items: [{ field: "assignee", fieldId: "assignee", from: userId(before) || null, to: userId(who) || null, fromString: before?.displayName ?? null, toString: who?.displayName ?? null }],
+      });
+    }
     issue.fields.assignee = who;
     touch(issue);
     return answer(204);

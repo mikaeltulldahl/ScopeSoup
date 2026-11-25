@@ -4,15 +4,20 @@
 // - an agent's hold: the issue property `scopesoup.claim`; a person's hold is the assignee.
 // - the log: the issue property `scopesoup.log`; Accept and Overturn verdicts: the issue property `scopesoup.overturns`.
 // - needs-decision: the label `scopesoup-needs-decision`; a follow-up: an issue link, and `scopesoup.followUp` to find it again.
+// - a person's hand-back (`scopesoup item handback`): a comment whose property (`kind: "handback"`) names the Item's branch and its
+//   tip. Scope Soup's `revision` log line that adopts it names the comment (`handback`), which supersedes it and every earlier one.
 //
 // The trust rule, as on GitHub: a comment property counts only on a comment whose author is the token's own account (Jira lets only
 // a comment's author and admins edit it and its properties); an answer, and an `A1:` reply, also from any person who can comment
-// on the issue. Issue properties carry no author: they count only when their `by` is the token's own account, and whoever may edit
-// the issue may change them (as a GitHub collaborator may edit Scope Soup's comment).
+// on the issue. A hand-back counts from the token's own account, or (`handbackFrom`) from the person who was the assignee when
+// they posted it or one named in `answerers`: it moves more than an answer, so not from any person of the project. Issue properties
+// carry no author: they count only when their `by` is the token's own account, and whoever may edit the issue may change them (as a
+// GitHub collaborator may edit Scope Soup's comment).
 //
 // The thread logic itself (numbering, `An:` replies, drafts waiting, claims, verdicts) is the GitHub conventions' own: each Jira
 // comment is shown to it as a GitHub comment whose marker line is built from its property. Pure.
 
+import { ITEM_BRANCH_PREFIX } from "../../model/people.ts";
 import type { Actor, Assumption, Ref, WorkItem } from "../../model/types.ts";
 import type { AssumptionVerdict, MarkerKind, Thread } from "../github/conventions.ts";
 import { applyThread, claimActor, liveClaims, readMarker, readThread, writeMarker } from "../github/conventions.ts";
@@ -25,6 +30,8 @@ export const CLAIM_PROPERTY = "scopesoup.claim";
 export const LOG_PROPERTY = "scopesoup.log";
 export const OVERTURNS_PROPERTY = "scopesoup.overturns";
 export const FOLLOW_UP_PROPERTY = "scopesoup.followUp";
+/** The comment property kind of a person's hand-back. */
+export const HANDBACK_KIND = "handback";
 /** Jira's limit of one property's value, in bytes of JSON [docs: entity properties, 32 KB]. */
 export const PROPERTY_LIMIT = 32_768;
 
@@ -71,9 +78,12 @@ function ownProperty(value: unknown, self: string | null): Record<string, unknow
   return str(value.by).toLowerCase() === self ? value : null;
 }
 
-/** The claims of a `scopesoup.claim` value, earliest first, each `until` capped at `MAX_CLAIM_MS` from `now`. */
-export function claimsOf(value: unknown, self: string | null, now: number): JiraClaim[] {
-  const own = ownProperty(value, self);
+/**
+ * The claims of a `scopesoup.claim` value, earliest first, each `until` capped at `MAX_CLAIM_MS` from `now`. `anyone`: whoever
+ * wrote it (a person's item commands, whose token is not the server's: a forged claim only makes them wait).
+ */
+export function claimsOf(value: unknown, self: string | null, now: number, anyone = false): JiraClaim[] {
+  const own = anyone ? (isObject(value) && value.v === 1 ? value : null) : ownProperty(value, self);
   const out: JiraClaim[] = [];
   for (const each of Array.isArray(own?.claims) ? own.claims : []) {
     if (!isObject(each)) continue;
@@ -106,6 +116,18 @@ export interface JiraRead {
   claims: JiraClaim[];
   verdicts: Record<string, unknown[]>;
   followUp: { item: string; sha: string } | null;
+  /** People's hand-backs of this Item's own branch, oldest first, from whom `readJiraThread` lets them count. */
+  handbacks: JiraHandback[];
+}
+
+export interface JiraHandback {
+  /** The comment's id. */
+  id: string;
+  by: Actor;
+  at: string;
+  sha: string;
+  branch: string;
+  note?: string;
 }
 
 // Synthetic comment ids for the issue properties: below any comment id, the log first, then the claims in order.
@@ -126,16 +148,35 @@ const trustedAuthor = (comment: JiraThreadComment, self: string | null, kind: st
  * not known, and then nothing but people's answers counts. `host` is the host id the refs carry. `mayAnswer` says, for a lower-case
  * account id or user name, whether that person's answers and `A1:` replies count. `now` caps the claims (`MAX_CLAIM_MS`).
  */
-export function readJiraThread(host: string, subject: Ref, jira: JiraThread, self: string | null, mayAnswer: (id: string) => boolean, now: number): JiraRead {
+export interface ReadOptions {
+  /** An agent's claim counts whoever wrote `scopesoup.claim` (a person's item commands, `claimsOf`). */
+  claimsOfAnyone?: boolean;
+  /** Whether a hand-back comment by someone other than the token's own account counts. Default: none does. */
+  handbackFrom?: (comment: JiraThreadComment) => boolean;
+}
+
+/** The branch a hand-back of the issue must name: its own item branch (`workBranch` of a Jira key, which needs no escaping). */
+export const handbackBranch = (subject: Ref): string => `${ITEM_BRANCH_PREFIX}${subject.id}`;
+
+export function readJiraThread(host: string, subject: Ref, jira: JiraThread, self: string | null, mayAnswer: (id: string) => boolean, now: number, options: ReadOptions = {}): JiraRead {
   const verdicts = verdictsOf(jira.properties[OVERTURNS_PROPERTY], self);
   const data = new Map<string, Record<string, unknown>>();
   const comments: RestComment[] = [];
+  const handbacks: JiraHandback[] = [];
   for (const comment of [...jira.comments].sort((a, b) => Number(a.id) - Number(b.id))) {
     const user = { login: comment.author.id.toLowerCase() };
     // A person of the project may answer (an `A1:` reply or an answer, a draft's decision too); anyone else's is a plain comment.
     const association = mayAnswerAs(comment, mayAnswer) ? "MEMBER" : "NONE";
     const property = comment.properties[COMMENT_PROPERTY];
     const kind = isObject(property) && property.v === 1 ? str(property.kind) : "";
+    // A hand-back of this issue's own branch counts from the token's own account, or as `handbackFrom` says (never an app's); its
+    // comment reads as a plain one besides.
+    const handback = kind === HANDBACK_KIND ? (property as Record<string, unknown>) : null;
+    const fromWhom = self !== null && user.login === self ? true : !comment.author.bot && options.handbackFrom?.(comment) === true;
+    if (handback && /^[0-9a-f]{40}([0-9a-f]{24})?$/.test(str(handback.sha)) && str(handback.branch) === handbackBranch(subject) && fromWhom) {
+      const note = str(handback.note);
+      handbacks.push({ id: comment.id, by: comment.author, at: comment.created, sha: str(handback.sha), branch: str(handback.branch), ...(note ? { note } : {}) });
+    }
     if (COMMENT_KINDS.has(kind) && trustedAuthor(comment, self, kind, mayAnswer)) {
       const { kind: _kind, text, ...rest } = property as Record<string, unknown>;
       data.set(comment.id, property as Record<string, unknown>);
@@ -155,7 +196,7 @@ export function readJiraThread(host: string, subject: Ref, jira: JiraThread, sel
     const { v: _v, by: _by, ...rest } = log;
     comments.push({ id: LOG_ID, body: writeMarker("log", rest), user: selfUser, created_at: "" });
   }
-  const claims = claimsOf(jira.properties[CLAIM_PROPERTY], self, now);
+  const claims = claimsOf(jira.properties[CLAIM_PROPERTY], self, now, options.claimsOfAnyone === true);
   claims.forEach((claim, index) => {
     comments.push({ id: CLAIM_ID + index, body: writeMarker("claim", { machine: claim.machine, until: claim.until, released: claim.released }), user: selfUser, created_at: "" });
   });
@@ -164,7 +205,7 @@ export function readJiraThread(host: string, subject: Ref, jira: JiraThread, sel
   thread.assumptions = thread.assumptions.map((each): Assumption => (each.settled?.item ? { ...each, settled: { ...each.settled, item: { ...each.settled.item, host } } } : each));
   const follow = ownProperty(jira.properties[FOLLOW_UP_PROPERTY], self);
   const followUp = follow && str(follow.item) ? { item: str(follow.item), sha: str(follow.sha) } : null;
-  return { thread, comments: comments.filter((comment) => comment.id > 0), data, log, claims, verdicts, followUp };
+  return { thread, comments: comments.filter((comment) => comment.id > 0), data, log, claims, verdicts, followUp, handbacks };
 }
 
 /**
@@ -193,6 +234,11 @@ export function applyJiraThread(item: WorkItem, read: JiraRead, bodyKnown: (sha:
     const duplicate = read.thread.log?.lines.filter((line) => line.kind === "duplicate" && str(line.fields.of)).pop();
     if (duplicate) item.duplicateOf = { host: item.ref.host, kind: "work", id: str(duplicate.fields.of) };
   }
+  // A person's newest hand-back, unless Scope Soup adopted it or a later one: its `revision` line names the comment it took on.
+  // Comment ids only grow, so no clock is compared.
+  const adopted = Math.max(0, ...(read.thread.log?.lines ?? []).filter((line) => line.kind === "revision").map((line) => Number(str(line.fields.handback)) || 0));
+  const handback = read.handbacks.at(-1);
+  if (handback && open && Number(handback.id) > adopted) item.handedBack = { id: handback.id, sha: handback.sha, branch: handback.branch, by: handback.by, at: handback.at, ...(handback.note ? { note: handback.note } : {}) };
   if (read.followUp) item.body = `${item.body ? `${item.body}\n\n` : ""}${followUpMarkOf(read.followUp)}`;
   return item;
 }

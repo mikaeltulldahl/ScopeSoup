@@ -70,6 +70,11 @@ export interface WorkItem {
   /** The Item was closed as a duplicate of this one (GitHub: the `duplicate` line in Scope Soup's log comment). */
   duplicateOf?: Ref;
   /**
+   * A person's hand-back on a host with no pull requests (Jira: Scope Soup's hand-back comment, `id`), not adopted yet: the branch
+   * and its tip, for review, check and merging.
+   */
+  handedBack?: { id: string; sha: string; branch: string; by: Actor; at: string; note?: string };
+  /**
    * The decisions an implementor took itself as cheap to change later, oldest first, settled or not (GitHub: Scope Soup's
    * `assumption` comments; metaBranch: `assumption` lines and the `accepted` and `overturned` lines that name them).
    */

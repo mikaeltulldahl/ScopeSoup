@@ -16,7 +16,7 @@ import { spliceBody } from "../github/map.ts";
 import type { JiraClient } from "./client.ts";
 import { JiraError, transient } from "./client.ts";
 import type { JiraClaim, JiraRead } from "./conventions.ts";
-import { CLAIM_PROPERTY, claimOrder, COMMENT_PROPERTY, FOLLOW_UP_PROPERTY, LOG_PROPERTY, OVERTURNS_PROPERTY, PROPERTY_LIMIT, propertySize, splitMarked, withoutFollowUpMarks } from "./conventions.ts";
+import { CLAIM_PROPERTY, claimOrder, COMMENT_PROPERTY, HANDBACK_KIND, FOLLOW_UP_PROPERTY, LOG_PROPERTY, OVERTURNS_PROPERTY, PROPERTY_LIMIT, propertySize, splitMarked, withoutFollowUpMarks } from "./conventions.ts";
 import { toJiraText, writeDescription } from "./description.ts";
 import type { JiraScope } from "./map.ts";
 import { ISSUE_FIELDS, isoTime, NEEDS_DECISION_LABEL, priorityOf, stateOf, workRef } from "./map.ts";
@@ -415,6 +415,20 @@ export function createJiraWrite(deps: JiraWriteDeps): WritePort {
       failIf(work, (wanted === null ? !after : same(now, wanted)) ? [] : [wanted === null ? "assignee not removed" : `assignee ${wanted} not set`]);
     },
 
+    /**
+     * A person's hand-back: a comment that says it, with the branch and its tip in its property; then the re-read must count it.
+     * The branch name is shown in a code span and the note is inert already.
+     */
+    async recordHandback(subject, { sha, branch, note }) {
+      const markdown = `**Handed back** on \`${branch.replaceAll("`", "")}\` (${sha.slice(0, 9)}) for Scope Soup's review.${note ? `
+
+${note}` : ""}`;
+      const property = { v: 1, kind: HANDBACK_KIND, sha, branch, ...(note ? { note } : {}) };
+      checkSize(subject, "The hand-back", markdown, property);
+      await postComment(subject, markdown, property);
+      if (!(await deps.read(subject)).handbacks.some((each) => each.sha === sha && each.branch === branch)) throw new Error(`Jira took the hand-back of ${subject.id} but it does not show as one.`);
+    },
+
     async comment(subject, markdown) {
       checkSize(subject, "The comment", markdown);
       await postComment(subject, markdown);
@@ -575,6 +589,8 @@ export function createJiraWrite(deps: JiraWriteDeps): WritePort {
      * a live claim of another machine wins without a write; else this machine's entry (a new one with its time and a nonce, or its
      * live one renewed, keeping its time) is written, and after `claimSettleMs` the property is read again. The earliest live entry
      * there wins (by time, then nonce); it must be this write's own nonce, else this entry is taken out and the claim is not won.
+     * A person's claim (`scopesoup item claim`) sets the assignee, waits as long and yields to a claim it then finds; this claim
+     * looks at the assignee again after its own wait and yields to a person who appeared. Both may yield; neither runs over the other.
      */
     async claim(subject, { until }) {
       const machine = deps.machine!;
@@ -592,8 +608,10 @@ export function createJiraWrite(deps: JiraWriteDeps): WritePort {
       await deps.sleep(deps.claimSettleMs ?? 2000);
       const after = live((await deps.read(subject)).claims);
       const winner = after[0];
-      if (winner?.nonce === nonce) return { won: true };
+      const assignee = winner?.nonce === nonce ? (await issueOf(subject)).fields.assignee : null;
+      if (winner?.nonce === nonce && !assignee) return { won: true };
       if (after.some((each) => each.nonce === nonce)) await writeClaims(subject, after.filter((each) => each.nonce !== nonce));
+      if (assignee) return { won: false, why: `held by ${assignee.displayName ?? assignee.accountId ?? assignee.name}` };
       return { won: false, why: winner ? `scopesoup on ${winner.machine} claimed it first` : "the claim does not show on Jira" };
     },
 

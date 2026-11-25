@@ -2,6 +2,8 @@
 // check and merging, as for an agent's change. The item command writes the signal; this reads it.
 //   metaBranch: a `revision` line by a person with `handback: true` (and the hold released after it).
 //   GitHub:  an open pull request labelled `scopesoup:review` that names the item.
+//   Jira:    Scope Soup's hand-back comment by a person (`WorkItem.handedBack`) that no `revision` line has adopted yet. It must
+//            name the Item's own branch and that branch's head here; taking it on writes a `revision` line naming the comment.
 // Each hand-back is taken on once per store. The job it makes stands where an implement session
 // would have left it: built, with the branch and its head. Nothing here starts a session.
 
@@ -18,7 +20,7 @@ import { workBranch, workspaceKey, BRANCH_PREFIX } from "./paths.ts";
 const SEEN_KEY = "orchestrator.handbacks";
 
 export interface Handback {
-  /** What makes it once-only: the item and the commit on the meta branch, the pull request on GitHub. */
+  /** What makes it once-only: the item and the commit on the meta branch, the pull request on GitHub, the comment on Jira. */
   key: string;
   item: WorkItem;
   branch: string;
@@ -27,6 +29,8 @@ export interface Handback {
   by: string;
   note?: string;
   change?: Ref;
+  /** Jira: the hand-back comment's id. */
+  comment?: string;
 }
 
 const str = (value: unknown): string => (typeof value === "string" ? value : "");
@@ -38,6 +42,12 @@ export function findHandbacks(items: readonly WorkItem[], changes: readonly Chan
   const byKey = new Map(items.map((item) => [refKey(item.ref), item]));
   for (const item of items) {
     if (!open(item)) continue;
+    // Jira: only a hand-back of the Item's own branch (the host checks it too).
+    const handed = item.handedBack;
+    if (handed) {
+      if (handed.branch === workBranch(item.ref)) found.push({ key: `${refKey(item.ref)}@comment:${handed.id}`, item, branch: handed.branch, sha: handed.sha, by: handed.by.name, comment: handed.id, ...(handed.note ? { note: handed.note } : {}) });
+      continue;
+    }
     // The newest revision of the log, and only when a person wrote it as a hand-back: Scope Soup's own later work supersedes it.
     const newest = [...(item.log ?? [])].reverse().find((line) => line.kind === "revision");
     if (!newest || newest.by.agent || newest.fields.handback !== true) continue;
@@ -90,6 +100,8 @@ export async function adoptHandbacks(ctx: Context, items: readonly WorkItem[], c
     const held = holdStands(holder, Date.parse(ctx.at));
     if (held && holder?.actor.id !== actions.claimant) continue;
     if (ctx.jobs[key]?.sessionId) continue;
+    // Jira: a job of the Item already stands, so this hand-back is not taken on over it (nor replayed).
+    if (handed.comment && ctx.jobs[key]) continue;
     if (!handed.branch.startsWith(BRANCH_PREFIX) || handed.branch === BRANCH_PREFIX) {
       ctx.say("orchestrator.handback_refused", `The hand-back of ${item.ref.id} names the branch ${handed.branch}, which is not an item branch (${BRANCH_PREFIX}...). Scope Soup does not review it.`, key);
       pending.delete(key);
@@ -105,6 +117,11 @@ export async function adoptHandbacks(ctx: Context, items: readonly WorkItem[], c
         continue;
       }
     }
+    // Jira: the comment names a commit; the branch here must be at exactly that one. Until a hand-back that is, the Item waits.
+    if (handed.comment && head !== handed.sha) {
+      ctx.say("orchestrator.handback_refused", `The hand-back of ${item.ref.id} names ${handed.sha.slice(0, 9)}, but ${handed.branch} is at ${head.slice(0, 9)} here. Scope Soup does not review it, nor start the Item over it; hand it back again.`, key);
+      continue;
+    }
     ctx.forget("orchestrator.handback_waits", key);
     const job: Job = {
       item: item.ref, workspace: workspaceKey(item.ref), branch: handed.branch || workBranch(item.ref),
@@ -119,6 +136,8 @@ export async function adoptHandbacks(ctx: Context, items: readonly WorkItem[], c
     pending.delete(key);
     store.setValue(SEEN_KEY, JSON.stringify([...seen]));
     ctx.commit("orchestrator.handback", `${handed.by} handed ${item.ref.id} back on ${handed.branch} (${head.slice(0, 9)}). The cycle goes on from the review.`, key, { branch: handed.branch, head });
+    // Jira: the revision line names the comment it took on, which supersedes it (and every earlier one) on any machine.
+    if (handed.comment) await ctx.act("write the hand-back's revision to the item's log", key, () => actions.appendLog(item.ref, "revision", { sha: head, branch: handed.branch, handback: handed.comment }));
     await ctx.act("continue the cycle after a hand-back", key, () => afterBuild(ctx, job, item));
   }
   return pending;

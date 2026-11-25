@@ -1,8 +1,8 @@
 // `pnpm item <verb>`: the item commands for a person at a terminal or an interactive Claude Code
 // session (docs/RUNNING.md, "Item commands"). On the meta branch they go through the running Scope Soup
 // server's local API when it is up, and straight to the meta ref with the existing writer when not.
-// On GitHub they go to the API with the token from SCOPESOUP_GITHUB_TOKEN. Tokens only from the
-// environment; nothing here prints one.
+// On GitHub they go to the API with the token from SCOPESOUP_GITHUB_TOKEN, on Jira with the one from SCOPESOUP_JIRA_TOKEN.
+// Tokens only from the environment; nothing here prints one.
 
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -19,6 +19,8 @@ import type { HostSettings } from "../hostSetup.ts";
 import { FROM_CLAUDE_CODE } from "../model/people.ts";
 import type { Git } from "../orchestrator/process.ts";
 import { realGit } from "../orchestrator/process.ts";
+import type { JiraHost } from "../hosts/jira/index.ts";
+import type { Ref } from "../model/types.ts";
 import type { Host } from "../ports/host.ts";
 import { gitRemoteUrl } from "../config/mergeQueue.ts";
 import { DEFAULT_PORT } from "../server/server.ts";
@@ -86,6 +88,8 @@ export interface CliDeps {
   home?: string | null;
   /** Replaces `git remote get-url`, for tests. */
   remoteUrlOf?: (repoPath: string, remote: string) => string;
+  /** Replaces the wait of a claim on Jira, for tests. */
+  sleep?: (ms: number) => Promise<void>;
 }
 
 /** What a verb does, wherever it runs. */
@@ -124,8 +128,7 @@ export function loadSetup(deps: CliDeps, configPath: string | undefined): Setup 
     config = state.config;
   } else if (found.ok) throw new Refused(`There is no configuration file ${file}.`);
   const settings = hostSettings(config, deps.env, (path) => resolve(deps.cwd, path));
-  if (settings.jira) throw new Refused(`The host is the Jira project ${settings.jira.project}: the item commands do not work on a Jira host yet. Use Jira itself, or the board.`);
-  if (!settings.meta && !settings.github) throw new Refused(`No item host is configured: ${file} has no \`host\` and neither SCOPESOUP_META_REPO nor SCOPESOUP_GITHUB_REPO is set.`);
+  if (!settings.meta && !settings.github && !settings.jira) throw new Refused(`No item host is configured: ${file} has no \`host\` and neither SCOPESOUP_META_REPO nor SCOPESOUP_GITHUB_REPO is set.`);
   const identity = config ? projectInfo(config, file, deps.remoteUrlOf ?? gitRemoteUrl) : null;
   return {
     config, settings, repo: config?.repoPath ?? deps.cwd, remote: config?.remote ?? "origin", mainBranch: config?.mainBranch ?? "main",
@@ -216,7 +219,18 @@ interface Opened {
   doer: Doer;
   /** `server`, `meta ref` or `GitHub`: said once, so the person knows where the write went. */
   via: string;
-  kind: "metaBranch" | "github";
+  kind: "metaBranch" | "github" | "jira";
+}
+
+/** How long a person's claim on Jira waits for an agent's claim written meanwhile: the agents' own settle time. */
+const JIRA_CLAIM_SETTLE_MS = 2000;
+
+/** Jira: the agent whose live claim stands on the issue, if any. */
+function jiraAgentClaim(host: JiraHost, now: () => Date) {
+  return async (ref: Ref): Promise<string | undefined> => {
+    const live = (await host.read(ref)).claims.filter((each) => !each.released && Date.parse(each.until) > now().getTime());
+    return live[0] ? `scopesoup on ${live[0].machine}` : undefined;
+  };
 }
 
 async function open(deps: CliDeps, setup: Setup, values: { as?: string; server?: string; "no-server"?: boolean }, reading = false): Promise<Opened> {
@@ -237,6 +251,21 @@ async function open(deps: CliDeps, setup: Setup, values: { as?: string; server?:
     if (!host?.work) throw new Refused("The meta host cannot be read.");
     const backend: Backend = { kind: "metaBranch", host: host.info.id, ...(host.info.machine ? { machine: host.info.machine } : {}), who, work: host.work, write: host.write ?? {}, now, mainBranch: setup.mainBranch, branches: branchesOf(deps, setup) };
     return { doer: hostDoer(backend, host), via: "the meta ref (no server for this project)", kind: "metaBranch" };
+  }
+  const jira = setup.settings.jira;
+  if (jira) {
+    // `personCommands`: an agent's claim is seen whoever wrote it, since the person's token need not be the server's.
+    const host = (deps.makeHosts ?? ((settings, env) => createHosts(settings, env, () => undefined)))({ from: setup.settings.from, jira, machine: setup.settings.machine, personCommands: true }, deps.env)[0] as JiraHost | undefined;
+    if (!host?.work || !("read" in host)) throw new Refused("The Jira host cannot be read.");
+    // On Jira, as on GitHub, the person is the token's account: the assignee is whoever the token acts as.
+    const me = await host.info.whoami();
+    if (values.as && values.as !== me.id && values.as !== me.name) throw new Refused(`On Jira the item is held by the token's account, ${me.name}; --as ${values.as} cannot hold it.`);
+    const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((done) => setTimeout(done, ms)));
+    const backend: Backend = {
+      kind: "jira", host: host.info.id, who: me.id, name: me.name, work: host.work, write: host.write ?? {}, now, mainBranch: setup.mainBranch, branches: branchesOf(deps, setup),
+      agentClaim: jiraAgentClaim(host, now), settle: () => sleep(JIRA_CLAIM_SETTLE_MS),
+    };
+    return { doer: hostDoer(backend, host), via: `Jira ${jira.project} as ${me.name}`, kind: "jira" };
   }
   const github = setup.settings.github;
   if (!github) throw new Refused("No item host is configured.");
@@ -417,7 +446,7 @@ async function runImport(
   try {
     const setup = loadSetup(deps, values.config);
     const meta = setup.settings.meta;
-    if (!meta) throw new Refused("The import writes Items to a meta branch, and this project's items are on GitHub: there is nothing to import into.");
+    if (!meta) throw new Refused("The import writes Items to a meta branch, and this project's items are on GitHub or Jira: there is nothing to import into.");
     const token = deps.env.SCOPESOUP_GITHUB_TOKEN;
     if (!token) throw new Refused("Set SCOPESOUP_GITHUB_TOKEN to a token that can read the repository's issues. The token is only read from the environment.");
     host = (deps.makeHosts ?? ((settings, env) => createHosts(settings, env, () => undefined)))({ from: setup.settings.from, meta, machine: setup.settings.machine }, deps.env)[0] as MetaBranchHost | undefined;

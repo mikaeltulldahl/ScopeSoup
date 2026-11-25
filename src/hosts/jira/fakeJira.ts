@@ -43,6 +43,8 @@ export interface FakeJiraSetup {
   emptyExpand?: boolean;
   /** Who may be assigned in the project (the assignable-user search). Default `user` and `people`. */
   assignable?: JiraUser[];
+  /** Other accounts with their own tokens (a person's), acting as themselves: `/myself`, comment authors. Add them to `people` too. */
+  others?: { token: string; email?: string; user: JiraUser }[];
 }
 
 export interface FakeJiraCall {
@@ -76,7 +78,8 @@ const JQL = /^project = "([A-Z][A-Z0-9_]*)"(?: AND updated >= "(\d{4}-\d{2}-\d{2
 export function fakeJira(setup: FakeJiraSetup): FakeJira {
   const site = (setup.site ?? (setup.deployment === "cloud" ? FAKE_SITE : FAKE_DC_SITE)).replace(/\/+$/, "");
   const api = setup.deployment === "cloud" ? "/rest/api/3" : "/rest/api/2";
-  const auth = setup.deployment === "cloud" ? `Basic ${Buffer.from(`${setup.email ?? ""}:${setup.token}`).toString("base64")}` : `Bearer ${setup.token}`;
+  const authOf = (token: string, email: string | undefined): string => (setup.deployment === "cloud" ? `Basic ${Buffer.from(`${email ?? ""}:${token}`).toString("base64")}` : `Bearer ${token}`);
+  const accounts = new Map([[authOf(setup.token, setup.email), setup.user], ...(setup.others ?? []).map((other): [string, JiraUser] => [authOf(other.token, other.email), other.user])]);
   const issues = new Map((setup.issues ?? []).map((issue) => [issue.key, issue]));
   const pageSize = setup.pageSize ?? 100;
   const comments = (setup.comments ??= {});
@@ -88,6 +91,7 @@ export function fakeJira(setup: FakeJiraSetup): FakeJira {
     people: [setup.user, ...(setup.people ?? [])], assignable: setup.assignable, commentLimit: setup.commentLimit ?? 32_767,
     now: setup.now ?? (() => (tick += 1000)),
     ids: { comment: 40_000, link: 50_000, issue: 60_000 },
+    changelog: {},
   };
   const calls: FakeJiraCall[] = [];
   const limits: { times: number; headers: Record<string, string> }[] = [];
@@ -127,7 +131,7 @@ export function fakeJira(setup: FakeJiraSetup): FakeJira {
   function route(method: string, path: string, query: URLSearchParams, body: unknown): FetchResponse {
     if (!path.startsWith(`${api}/`)) return refuse(404, "No such API on this deployment.");
     const rest = path.slice(api.length);
-    if (method === "GET" && rest === "/myself") return answer(200, setup.user);
+    if (method === "GET" && rest === "/myself") return answer(200, writes.user);
     if (rest === "/search" && setup.deployment === "cloud") return refuse(410, "This endpoint was removed; use /rest/api/3/search/jql.");
     if (method === "POST" && rest === "/search/jql" && setup.deployment === "cloud") {
       const request = (body ?? {}) as { jql?: string; fields?: string[]; maxResults?: number; nextPageToken?: string };
@@ -152,7 +156,9 @@ export function fakeJira(setup: FakeJiraSetup): FakeJira {
       const key = decodeURIComponent(match[1]);
       const issue = issues.get(setup.moved?.[key] ?? key);
       if (!issue) return refuse(404, "Issue does not exist or you do not have permission to see it.");
-      return answer(200, withFields(issue, query.get("fields")?.split(",") ?? null));
+      const histories = writes.changelog[issue.key] ?? [];
+      const changelog = (query.get("expand") ?? "").split(",").includes("changelog") ? { changelog: { startAt: 0, maxResults: histories.length, total: histories.length, histories } } : {};
+      return answer(200, { ...withFields(issue, query.get("fields")?.split(",") ?? null), ...changelog });
     }
     match = /^\/issue\/([^/]+)\/comment$/.exec(rest);
     if (method === "GET" && match?.[1]) {
@@ -209,7 +215,7 @@ export function fakeJira(setup: FakeJiraSetup): FakeJira {
       let response: FetchResponse;
       const limited = limits[0];
       if (!url.startsWith(`${site}/`)) response = refuse(404, "Another site.");
-      else if (headers.Authorization !== auth) response = answer(401, "Unauthorized");
+      else if (!accounts.has(headers.Authorization ?? "")) response = answer(401, "Unauthorized");
       else if (failures.some((each) => each.times > 0 && each.path.test(path))) {
         const failure = failures.find((each) => each.times > 0 && each.path.test(path))!;
         failure.times -= 1;
@@ -218,7 +224,11 @@ export function fakeJira(setup: FakeJiraSetup): FakeJira {
         limited.times -= 1;
         if (limited.times <= 0) limits.shift();
         response = answer(429, { errorMessages: ["Rate limit exceeded."] }, limited.headers);
-      } else response = route(method, path, parsed.searchParams, body);
+      } else {
+        // The request acts as the token's account.
+        writes.user = accounts.get(headers.Authorization ?? "")!;
+        response = route(method, path, parsed.searchParams, body);
+      }
       calls.push({ method, path: url.slice(site.length), status: response.status, headers, ...(body !== undefined ? { body } : {}) });
       return response;
     },

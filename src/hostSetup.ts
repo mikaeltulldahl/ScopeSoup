@@ -28,6 +28,8 @@ export interface HostSettings {
    * name. Absent only without a configuration file, and then nothing may be written.
    */
   machine?: string;
+  /** The hosts are for a person's item commands (`scopesoup item`), not for the server: Jira then sees agents' claims whoever wrote them. */
+  personCommands?: boolean;
 }
 
 const ENV_HOST_VARIABLES = ["SCOPESOUP_GITHUB_REPO", "SCOPESOUP_WRITE", "SCOPESOUP_META_REPO", "SCOPESOUP_META_WRITE", "SCOPESOUP_META_AUTHOR_NAME", "SCOPESOUP_META_AUTHOR_EMAIL", "SCOPESOUP_META_PREFIX", "SCOPESOUP_META_REMOTE", "SCOPESOUP_META_FETCH_SECONDS"];
@@ -110,6 +112,7 @@ export function createHosts(settings: HostSettings, env: Env, log: (line: string
     configured.push(createJiraHost({
       site: jira.site, project: jira.project, deployment: jira.deployment, token, conventions: true, allowWrites: jira.write,
       ...(settings.machine ? { machine: settings.machine } : {}),
+      ...(settings.personCommands ? { claimsOfAnyone: true } : {}),
       ...(jira.issueType ? { issueType: jira.issueType } : {}),
       ...(jira.childIssueType ? { childIssueType: jira.childIssueType } : {}),
       ...(jira.transitions ? { transitions: jira.transitions } : {}),
