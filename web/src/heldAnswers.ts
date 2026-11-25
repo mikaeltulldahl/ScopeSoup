@@ -93,3 +93,10 @@ export function answerText(held: Held | undefined, options: readonly { label: st
   if (own) parts.push(own);
   return parts.join("; ");
 }
+
+/**
+ * Whether a question has an answer: an option is picked (one that is still asked), or "Other" holds words. A multi-select
+ * question with nothing ticked, or "Other" ticked and left empty, has none, so it is not counted and not sent.
+ */
+export const isAnswered = (held: Held | undefined, options: readonly { label: string; send: string }[]): boolean =>
+  held !== undefined && (options.some((option) => held.picked.includes(option.label)) || (held.other ?? "").trim() !== "");
