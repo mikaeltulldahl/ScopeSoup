@@ -19,7 +19,7 @@ import type { JiraClaim, JiraRead } from "./conventions.ts";
 import { CLAIM_PROPERTY, claimOrder, COMMENT_PROPERTY, HANDBACK_KIND, FOLLOW_UP_PROPERTY, LOG_PROPERTY, OVERTURNS_PROPERTY, PROPERTY_LIMIT, propertySize, splitMarked, withoutFollowUpMarks } from "./conventions.ts";
 import { toJiraText, writeDescription } from "./description.ts";
 import type { JiraScope } from "./map.ts";
-import { ISSUE_FIELDS, isoTime, NEEDS_DECISION_LABEL, priorityOf, stateOf, workRef } from "./map.ts";
+import { ISSUE_FIELDS, isoTime, itemsJql, jqlString, NEEDS_DECISION_LABEL, priorityOf, projectOf, stateOf, workRef } from "./map.ts";
 import type { JiraComment, JiraIssue } from "./rest.ts";
 
 /** What Scope Soup moves an issue to: the workflow's transition is named per target in the configuration. */
@@ -50,12 +50,18 @@ export interface JiraWriteSettings {
   relatesLink: string;
   duplicateLink: string;
   commentLimit: number;
+  /** The project new Items are created in. */
+  createProject: string;
+  /** The component names new Items get. */
+  components: string[];
 }
 
 export interface JiraWriteDeps {
   client: JiraClient;
   scope: JiraScope;
   settings: JiraWriteSettings;
+  /** Called when an Item just created does not match the filter or the project read. */
+  onOutsideFilter?(key: string, reason: string): void;
   /** This machine's name in claims; without it there is no claim. */
   machine?: string;
   /** The token's own account: Cloud's account id, Data Center's user name. */
@@ -93,6 +99,13 @@ const same = (a: string, b: string): boolean => a.toLowerCase() === b.toLowerCas
 /** The Jira name of a Scope Soup priority: the first name the configured map gives it. */
 export function priorityName(scope: JiraScope, priority: Priority): string | undefined {
   return Object.entries(scope.priorities).find(([, value]) => value === priority)?.[0];
+}
+
+/** Whether an issue is an Item: in the project and the filter, asked of Jira (a search for its key). */
+export async function issueInFilter(client: JiraClient, scope: JiraScope, key: string): Promise<boolean> {
+  if (!scope.filter) return projectOf(key) === scope.project;
+  const found = await client.search<JiraIssue>(`${itemsJql(scope)} AND key = ${jqlString(key)} ORDER BY updated ASC, key ASC`, ["summary"]);
+  return found.some((issue) => issue.key === key);
 }
 
 export function createJiraWrite(deps: JiraWriteDeps): WritePort {
@@ -278,6 +291,17 @@ export function createJiraWrite(deps: JiraWriteDeps): WritePort {
     await putIssueProperty(ref, CLAIM_PROPERTY, { v: 1, by: await deps.self(), claims });
   }
 
+  /** A new Item that Scope Soup would not read back (outside the filter, or in another project) is reported, not thrown. */
+  async function checkInFilter(key: string): Promise<void> {
+    if (!scope.filter && settings.createProject === scope.project) return;
+    try {
+      if (await issueInFilter(client, scope, key)) return;
+      deps.onOutsideFilter?.(key, `was created in ${settings.createProject}${settings.components.length > 0 ? ` with ${settings.components.length === 1 ? "component" : "components"} ${settings.components.join(", ")}` : ""}, but it is not an Item (host.project is ${scope.project}${scope.filter ? `, host.filter is ${scope.filter}` : ""}): Scope Soup will not read, show or touch it.`);
+    } catch (error) {
+      deps.onOutsideFilter?.(key, `was created, but whether it is an Item could not be checked: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
   const write: WritePort = {
     async createWork(input) {
       // A follow-up is named only by `followUpOf`; a mark in the text is dropped (it may have come from an agent).
@@ -288,11 +312,12 @@ export function createJiraWrite(deps: JiraWriteDeps): WritePort {
       checkLabels(labels);
       const priority = input.priority ? priorityName(scope, input.priority) : undefined;
       const fields = (parent: Ref | undefined): Record<string, unknown> => ({
-        project: { key: scope.project },
+        project: { key: settings.createProject },
         issuetype: { name: parent ? settings.childIssueType : settings.issueType },
         summary: input.title,
         ...(markdown ? { description: toJiraText(deployment, markdown) } : {}),
         ...(labels.length > 0 ? { labels } : {}),
+        ...(settings.components.length > 0 ? { components: settings.components.map((name) => ({ name })) } : {}),
         ...(priority ? { priority: { name: priority } } : {}),
         ...(parent ? { parent: { key: parent.id } } : {}),
       });
@@ -318,6 +343,7 @@ export function createJiraWrite(deps: JiraWriteDeps): WritePort {
         await putIssueProperty(work, FOLLOW_UP_PROPERTY, { v: 1, by: await deps.self(), item: followUp.item, sha: followUp.sha });
       }
       if (input.state && input.state !== "todo" && input.state !== "waiting") await transitionTo(work, input.state, input.state === "done" ? settings.resolutions.done : input.state === "abandoned" ? settings.resolutions.abandoned : undefined);
+      await checkInFilter(work.id);
       const outcome: WriteOutcome = { work, shared: "shared", conflict: false };
       if (problem) Object.assign(outcome, { linked: false, problem: `Created ${work.id} but could not put it under ${input.parent?.id}: ${problem}` });
       return outcome;
@@ -629,6 +655,22 @@ ${note}` : ""}`;
     delete write.claim;
     delete write.releaseClaim;
   }
-  return write;
+  if (!scope.filter) return write;
+  // A write to an issue outside the filter is refused, whichever write it is: every Item given to a method is checked first.
+  const isRef = (value: unknown): value is Ref => typeof value === "object" && value !== null && (value as Ref).kind === "work" && (value as Ref).host === scope.host && typeof (value as Ref).id === "string";
+  const guarded: Record<string, unknown> = {};
+  for (const [name, method] of Object.entries(write)) {
+    if (typeof method !== "function" || name === "createWork") {
+      guarded[name] = method;
+      continue;
+    }
+    guarded[name] = async (...args: unknown[]): Promise<unknown> => {
+      for (const ref of args.flatMap((arg) => (Array.isArray(arg) ? arg : [arg])).filter(isRef)) {
+        if (!(await issueInFilter(client, scope, ref.id))) throw new Error(`${ref.id} is not an Item here: it is outside host.filter (${scope.filter}), so Scope Soup does not touch it.`);
+      }
+      return (method as (...given: unknown[]) => unknown).apply(write, args);
+    };
+  }
+  return guarded as WritePort;
 }
 

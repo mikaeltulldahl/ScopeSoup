@@ -8,17 +8,25 @@ import { WorkGone } from "../../ports/host.ts";
 import type { Deployment, FetchLike, JiraClient } from "./client.ts";
 import { createJiraClient, JiraError } from "./client.ts";
 import type { JiraScope } from "./map.ts";
-import { actorOf, DEFAULT_ABANDONED_RESOLUTIONS, DEFAULT_BLOCKS_LINK, DEFAULT_PRIORITIES, ISSUE_FIELDS, isoTime, issueToWork, jqlString, jqlTime, PROPERTY_PREFIX, projectOf, textOf, workRef } from "./map.ts";
+import { actorOf, DEFAULT_ABANDONED_RESOLUTIONS, DEFAULT_BLOCKS_LINK, DEFAULT_PRIORITIES, ISSUE_FIELDS, isoTime, issueToWork, itemsJql, jqlString, jqlTime, PROPERTY_PREFIX, projectOf, textOf, workRef } from "./map.ts";
 import type { JiraComment, JiraIssue, JiraProperty, JiraUser } from "./rest.ts";
 import type { JiraRead } from "./conventions.ts";
 import { applyJiraThread, COMMENT_PROPERTY, HANDBACK_KIND, readJiraThread } from "./conventions.ts";
 import type { TransitionTarget } from "./write.ts";
-import { createJiraWrite, DEFAULT_CHILD_ISSUE_TYPE, DEFAULT_DUPLICATE_LINK, DEFAULT_ISSUE_TYPE, DEFAULT_RELATES_LINK, DEFAULT_RESOLUTIONS, DEFAULT_TRANSITIONS, descriptionSha, JIRA_COMMENT_LIMIT } from "./write.ts";
+import { createJiraWrite, issueInFilter, DEFAULT_CHILD_ISSUE_TYPE, DEFAULT_DUPLICATE_LINK, DEFAULT_ISSUE_TYPE, DEFAULT_RELATES_LINK, DEFAULT_RESOLUTIONS, DEFAULT_TRANSITIONS, descriptionSha, JIRA_COMMENT_LIMIT } from "./write.ts";
 
 export interface JiraConfig {
   site: string;
   /** The project key, `DEMO`. */
   project: string;
+  /** A JQL condition ANDed with the project: which issues are Items. Issues outside it are not read, shown or touched. */
+  filter?: string;
+  /** The project new Items are created in. Default `project`. */
+  createProject?: string;
+  /** The component names new Items get. */
+  components?: string[];
+  /** Called when an Item just created does not match the filter (or the project read): its key and why. Default: `log`. */
+  onOutsideFilter?: (key: string, reason: string) => void;
   deployment: Deployment;
   /** Passed in by the caller from SCOPESOUP_JIRA_TOKEN; the adapter never reads the environment. */
   token: string;
@@ -124,6 +132,7 @@ export function createJiraHost(config: JiraConfig): JiraHost {
     host: config.id ?? "jira",
     site: client.site,
     project: config.project,
+    ...(config.filter ? { filter: config.filter } : {}),
     deployment: config.deployment,
     priorities: config.priorities ?? DEFAULT_PRIORITIES,
     abandonedResolutions: config.abandonedResolutions ?? DEFAULT_ABANDONED_RESOLUTIONS,
@@ -164,7 +173,7 @@ export function createJiraHost(config: JiraConfig): JiraHost {
 
   const plainWork: WorkPort = {
     async listWork(since?: Cursor): Promise<Page<WorkItem>> {
-      const project = `project = ${jqlString(scope.project)}`;
+      const project = itemsJql(scope);
       let jql: string;
       if (since) {
         const from = new Date(Date.parse(since) - OVERLAP_MS).toISOString();
@@ -192,6 +201,8 @@ export function createJiraHost(config: JiraConfig): JiraHost {
       }
       // A moved issue still answers on its old key, with its new key (unconfirmed, research section 1).
       if (issue.key !== ref.id) throw new WorkGone(`${ref.id} was moved on Jira to ${issue.key}.`, issue.key);
+      // An issue outside the filter is not an Item: as if it were not there.
+      if (!(await issueInFilter(client, scope, issue.key))) return null;
       return toWork(issue);
     },
   };
@@ -375,7 +386,10 @@ export function createJiraHost(config: JiraConfig): JiraHost {
         relatesLink: config.relatesLink ?? DEFAULT_RELATES_LINK,
         duplicateLink: config.duplicateLink ?? DEFAULT_DUPLICATE_LINK,
         commentLimit,
+        createProject: config.createProject ?? config.project,
+        components: config.components ?? [],
       },
+      onOutsideFilter: config.onOutsideFilter ?? ((key, reason) => log(`Jira: ${key} ${reason}`)),
       ...(claims ? { machine: claims } : {}),
       self: async () => (await myself()).actor.id,
       read,

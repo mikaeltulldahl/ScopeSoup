@@ -434,6 +434,23 @@ export function Settings({ project, openHistory = false }: { project?: ProjectVi
           <button type="button" disabled={busy} onClick={() => set({ resources: [...draft.resources, { name: "", units: "1", shared: false, neededBy: ["implement"], env: "" }] })}>Add a resource</button>
         </div>
 
+        {view.config?.host?.kind === "jira" && (
+          <>
+            <h4 id="jira">Jira</h4>
+            <p class="muted">Set in the configuration file (<code>host</code>); not changed here.</p>
+            <dl class="facts">
+              <dt>Project read</dt>
+              <dd>{view.config.host.project}</dd>
+              <dt>Filter</dt>
+              <dd>{view.config.host.filter ? <code>{view.config.host.filter}</code> : "none: every issue of the project is an Item"}</dd>
+              <dt>New Items go in</dt>
+              <dd>{view.config.host.createProject ?? view.config.host.project}</dd>
+              <dt>Components of new Items</dt>
+              <dd>{view.config.host.components?.join(", ") ?? "none"}</dd>
+            </dl>
+          </>
+        )}
+
         <h4 id="images">Images</h4>
         <p class="muted">
           Agents may attach images to what they answer (a screenshot, a before and after of a UI change). Scope Soup keeps them in this machine's data folder and shows them on the Item page. Hosts (GitHub, Jira) get only the words "image on the board", never the picture.

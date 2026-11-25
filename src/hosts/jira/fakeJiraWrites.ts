@@ -111,6 +111,10 @@ export interface FakeWriteState {
   site: string;
   user: JiraUser;
   project: string;
+  /** The projects an issue may be created in; the first is `project`. */
+  projects: string[];
+  /** The components the project has; a name not among them is refused. Undefined: any name is taken. */
+  components?: string[] | undefined;
   issues: Map<string, JiraIssue>;
   comments: Record<string, JiraComment[]>;
   issueProperties: Record<string, Record<string, unknown>>;
@@ -161,7 +165,7 @@ export function routeWrite(state: FakeWriteState, method: string, rest: string, 
   if (method === "POST" && rest === "/issue") {
     const fields = (isObject(body) && isObject(body.fields) ? body.fields : {}) as Record<string, unknown>;
     const project = isObject(fields.project) ? fields.project.key : undefined;
-    if (project !== state.project) return refuse(400, "project: valid project is required");
+    if (typeof project !== "string" || !state.projects.includes(project)) return refuse(400, "project: valid project is required");
     const typeName = isObject(fields.issuetype) ? String(fields.issuetype.name) : "";
     const type = ISSUE_TYPES[typeName];
     if (!type) return refuse(400, "issuetype: valid issue type is required");
@@ -173,6 +177,8 @@ export function routeWrite(state: FakeWriteState, method: string, rest: string, 
     if (fields.labels !== undefined && (!Array.isArray(fields.labels) || badLabels(fields.labels))) return refuse(400, "labels: The label must not contain spaces.");
     const priority = isObject(fields.priority) ? String(fields.priority.name) : undefined;
     if (priority !== undefined && !PRIORITIES.includes(priority)) return refuse(400, "priority: valid priority is required");
+    const components = Array.isArray(fields.components) ? fields.components.map((each) => (isObject(each) ? String(each.name) : "")) : [];
+    for (const name of components) if (!name || (state.components && !state.components.includes(name))) return refuse(400, `components: Component name '${name}' is not valid.`);
     const parentKey = isObject(fields.parent) ? String(fields.parent.key) : undefined;
     const parent = parentKey ? state.issues.get(parentKey) : undefined;
     if (parentKey && !parent) return refuse(400, "parent: Could not find issue by id or key.");
@@ -182,13 +188,14 @@ export function routeWrite(state: FakeWriteState, method: string, rest: string, 
       if (parentType.level !== type.level + 1) return refuse(400, `parent: an issue of type ${typeName} cannot be a child of a ${parent.fields.issuetype?.name ?? "Task"}.`);
     }
     state.ids.issue += 1;
-    const number = Math.max(0, ...[...state.issues.keys()].map((key) => Number(/-(\d+)$/.exec(key)?.[1] ?? 0))) + 1;
-    const key = `${state.project}-${number}`;
+    const number = Math.max(0, ...[...state.issues.keys()].filter((each) => each.startsWith(`${project}-`)).map((each) => Number(/-(\d+)$/.exec(each)?.[1] ?? 0))) + 1;
+    const key = `${project}-${number}`;
     const issue: JiraIssue = {
       id: String(state.ids.issue), key, self: `${state.site}/rest/api/x/issue/${state.ids.issue}`,
       fields: {
         summary: fields.summary, description: fields.description ?? null, status: FAKE_STATUSES["To Do"]!, resolution: null,
         priority: priority ? { name: priority } : { name: "Medium" }, labels: (fields.labels as string[] | undefined) ?? [],
+        ...(components.length > 0 ? { components: components.map((name) => ({ name })) } : {}),
         issuetype: { name: typeName, subtask: type.subtask }, subtasks: [], issuelinks: [], assignee: null, updated: stamp(state.now()), created: stamp(state.now()),
         ...(parent ? { parent: stubOf(parent) } : {}),
       },
