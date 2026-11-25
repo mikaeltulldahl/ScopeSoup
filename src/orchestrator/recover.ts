@@ -134,6 +134,7 @@ function fromLines(item: WorkItem, log: readonly LogRecord[], startedAt: string)
   if (review) {
     const findings: Finding[] = (Array.isArray(review.fields.findings) ? review.fields.findings : []).filter((text): text is string => typeof text === "string").map((text) => ({ severity: "must", text }));
     job.review = { verdict: review.fields.verdict === "pass" ? "approve" : "changes", findings };
+    if (str(review.fields.sha)) job.reviewedHead = str(review.fields.sha);
   }
   return { job, of, sessions, newest, review };
 }

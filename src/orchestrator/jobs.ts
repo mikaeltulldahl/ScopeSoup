@@ -232,6 +232,10 @@ export interface Job {
    */
   answerArrived?: string;
   review?: ReviewAnswer;
+  /** The branch head `review` was given on, so an approval counts only for that revision (a person's "Merge queue" on the board). */
+  reviewedHead?: string;
+  /** A person put the Item back in the backlog on the board: the tick drops the job once no session runs, and gives back its claim and workspace. */
+  dropAskedBy?: string;
   /**
    * The progress guards' memory. `must` and `findings`: the `must` findings of the last review round that asked for changes
    * (their count and `findingKey`s), cleared by an approval. `mergeQueue`: the last merging failure's key (`failureKey`).

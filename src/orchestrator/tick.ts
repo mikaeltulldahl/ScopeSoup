@@ -122,6 +122,16 @@ function recordConfigChanges(ctx: Context, config: ProjectConfig): void {
   });
 }
 
+/** Drops a job a person put back in the backlog: its claim on the host (when this machine holds it) and its workspace go back. */
+async function dropAsked(ctx: Context, jobs: Jobs, key: string, job: Job, item: WorkItem | null): Promise<void> {
+  const { actions, runner } = ctx.deps;
+  delete jobs[key];
+  const reason = `${job.dropAskedBy} put ${item?.ref.id ?? key} back in the backlog on the board: the work under way is dropped (the branch stays).`;
+  ctx.commit("orchestrator.job_dropped", reason, key, { by: job.dropAskedBy });
+  if (actions.claims && actions.claimant && item?.holder?.actor.id === actions.claimant) await ctx.act("release the claim", key, () => actions.release(job.item, reason));
+  await ctx.act("remove the worktree", key, () => runner.releaseWorkspace(job.workspace));
+}
+
 /**
  * A claim lapses `CLAIM_EXPIRY_MINUTES` after its last line, and a session may run longer than that. So an
  * item this machine holds and has work under way on (a session, or a change waiting for a person or
@@ -361,6 +371,17 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
     // A person's chat turn runs on the item: Scope Soup starts nothing on it (no hand-over, no close) until it is over.
     if (!job.sessionId && runner.busy?.(job.item)) {
       running++;
+      continue;
+    }
+    // A person put the Item back in the backlog on the board (src/server/moves.ts): once its session is over (its result is not
+    // taken), the job goes with this machine's claim and workspace. The branch stays; the Item starts again at triage.
+    if (job.dropAskedBy) {
+      const session = job.sessionId ? store.get<Session>({ host: "scopesoup", kind: "session", id: job.sessionId }) : undefined;
+      if (session && !OVER.includes(session.status) && !session.finishedAt) {
+        running++;
+        continue;
+      }
+      await dropAsked(ctx, jobs, key, job, item);
       continue;
     }
     if (job.sessionId) {

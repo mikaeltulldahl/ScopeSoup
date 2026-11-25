@@ -960,6 +960,8 @@ async function settleStep(ctx: Context, job: Job, session: Session | null, recor
     const answer = asReview(record.output);
     if (!answer) return failed(ctx, job, "The reviewer's answer does not have the expected shape, or has tool-call markup inside a string.");
     job.review = answer;
+    if (job.head !== undefined) job.reviewedHead = job.head;
+    else delete job.reviewedHead;
     await writeReview(ctx, job, answer);
     keepDrafts(ctx, job, "reviewer", answer.drafts);
     const must = answer.findings.filter((finding) => finding.severity === "must");

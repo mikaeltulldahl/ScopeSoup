@@ -382,6 +382,9 @@ test("level 4 (Autopilot): triage, implement and review start, and the reviewed 
   assert.deepEqual(roles(w), ["triage", "implement", "review"]);
   assert.deepEqual(queue.enqueued, ["1 scopesoup/1"]);
   assert.equal(w.job("1")?.parked?.as, "queued");
+  // The approval is tied to the revision it was given on (the board's Merge queue reads it).
+  assert.equal(w.job("1")?.reviewedHead, w.job("1")?.head);
+  assert.ok(w.job("1")?.head);
   assert.equal(w.runner.main, MAIN_START, "the session did not merge: Scope Soup merges at level 4");
 });
 
@@ -4124,4 +4127,26 @@ test("Jira at level 2: claimed in a property, a question comment answered by a p
   assert.ok(log?.lines.some((line) => line.kind === "session"), JSON.stringify(log));
   await sync();
   assert.equal(w.store.get<WorkItem>(made.work)?.state, "done");
+});
+
+test("a job a person put back in the backlog on the board is dropped once its session is over, with this machine's claim and workspace", async () => {
+  const w = world(config({ level: 2 }), [item("1")]);
+  w.claims = true;
+  w.claimant = "scopesoup@here";
+  w.store.addUsageSample(usage(0.1, 0.1));
+  await w.run();
+  assert.deepEqual(roles(w), ["triage"]);
+  // The person's move (src/server/moves.ts) only marks the job; the triage session still runs.
+  const jobs = loadJobs(w.store);
+  jobs[refKey(ref("1"))]!.dropAskedBy = "Ada";
+  saveJobs(w.store, jobs);
+  w.store.put(item("1", { holder: { actor: { id: "scopesoup@here", name: "here", bot: true }, until: "2099-01-01T00:00:00Z" } }), "sync", new Date(w.clock.ms).toISOString());
+  await w.run();
+  assert.ok(w.job("1"), "kept while its session runs");
+  w.runner.end("1", "succeeded", TRIAGE_OK);
+  await w.run();
+  assert.equal(w.job("1"), undefined);
+  assert.match(w.reasons("orchestrator.job_dropped")[0] ?? "", /Ada put 1 back in the backlog/);
+  assert.ok(w.calls.includes("release 1"), w.calls.join("\n"));
+  assert.ok(w.runner.released.includes(workspaceKey(ref("1"))));
 });

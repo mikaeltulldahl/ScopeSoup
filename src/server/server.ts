@@ -9,6 +9,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import type { IncomingMessage, Server, ServerResponse } from "node:http";
 import { createServer as createHttpServer } from "node:http";
 import type { AddressInfo } from "node:net";
+import { Readable } from "node:stream";
 import { buildBoard } from "../core/board.ts";
 import type { HostConfig, ResourceConfig } from "../config/types.ts";
 import type { OffboardView } from "../offboard/plan.ts";
@@ -23,7 +24,8 @@ import { buildIndex } from "../core/snapshot.ts";
 import { toStatusView } from "../core/status.ts";
 import { PRIORITIES, isPriority } from "../model/priority.ts";
 import type { CommitView, DiffView, HistoryView, ItemBranchState, ItemPage } from "../core/views.ts";
-import type { Assumption, CreatedPart, LabelChange, LogWriter, OpenQuestion, OriginalFate, Priority, ProposedPart, Ref, Parked, ParkedQuestion, Restructuring, UsageWindowKind, WorkItem, WorkState } from "../model/types.ts";
+import type { Assumption, CreatedPart, LabelChange, LogWriter, OpenQuestion, OriginalFate, Priority, ProposedPart, Ref, Parked, ParkedQuestion, Restructuring, Session, UsageWindowKind, WorkItem, WorkState } from "../model/types.ts";
+import { isLive } from "../core/lanes.ts";
 import { asParts, asRestructuring, ORIGINAL_FATES, refKey, restructuringProblem, restructuringWords } from "../model/types.ts";
 import { applyChange, asLabelChange, changeText, isEmptyChange } from "../model/labels.ts";
 import type { OpenDiffResult } from "../orchestrator/diffTool.ts";
@@ -669,7 +671,9 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
 
   /** What a move is decided from, for an Item as the store has it now. */
   function moveInput(work: WorkItem, lane: ItemPage["lane"]): MoveInput {
-    return { item: work, job: loadJobs(store)[refKey(work.ref)], lane, level: options.planning?.().level ?? 0, mergeQueueOn: mergeQueueOn(store), at: now().getTime() };
+    const key = refKey(work.ref);
+    const live = store.list<Session>("session").find((session) => refKey(session.subject) === key && !session.chat && isLive(session));
+    return { item: work, job: loadJobs(store)[key], lane, level: options.planning?.().level ?? 0, mergeQueueOn: mergeQueueOn(store), at: now().getTime(), ...(live ? { liveRole: live.role } : {}) };
   }
 
   /**
@@ -714,6 +718,88 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
     if (!done.ok) return sendError(response, 409, "REFUSED", `${work.ref.id}: ${done.why}.`);
     options.onRefresh?.();
     return sendJson(response, 200, { ref, message: done.reason });
+  }
+
+  /**
+   * Runs one of this server's POST handlers in this process with `body`, as the same person, and returns what it answered: the
+   * steps of a State menu pick go through exactly the code their own endpoints run.
+   */
+  async function inProcess(handler: (request: IncomingMessage, response: ServerResponse) => Promise<void>, body: Record<string, unknown>): Promise<{ status: number; message?: string }> {
+    const request = Readable.from([Buffer.from(JSON.stringify(body))]) as unknown as IncomingMessage;
+    let status = 500;
+    let text = "";
+    const response = {
+      writeHead(code: number) {
+        status = code;
+        return response;
+      },
+      setHeader() {
+        return response;
+      },
+      end(chunk?: unknown) {
+        text = chunk === undefined ? "" : String(chunk);
+        return response;
+      },
+    } as unknown as ServerResponse;
+    await handler(request, response);
+    type Answer = { message?: string; error?: { message?: string } };
+    const read = (): Answer => {
+      try {
+        return text ? (JSON.parse(text) as Answer) : {};
+      } catch {
+        return {};
+      }
+    };
+    const answer = read();
+    const message = answer.error?.message ?? answer.message;
+    return { status, ...(message ? { message } : {}) };
+  }
+
+  /**
+   * A pick on the Item page's State menu (#154), after its Undo wait: `{ ref, seen, steps, blockedBy? }`. The steps (release, claim,
+   * the state edit, Blocked by, a move) run here in order, each through its own endpoint's code; `seen`, the `updatedAt` the page
+   * showed, is checked once before the first. One that is refused stops the rest, and the answer says which went through.
+   */
+  async function pickState(request: IncomingMessage, response: ServerResponse): Promise<void> {
+    let body: Record<string, unknown>;
+    try {
+      body = await readJson(request);
+    } catch (error) {
+      return sendError(response, 400, "BAD_BODY", error instanceof Error ? error.message : "The body is not JSON.");
+    }
+    const { ref, seen, steps } = body;
+    const blockedBy = body.blockedBy === undefined ? undefined : list(body.blockedBy);
+    type PickStep = { kind: "release" | "claim" | "block" } | { kind: "state"; state: string } | { kind: "move"; to: string };
+    const valid = (step: unknown): step is PickStep => {
+      if (typeof step !== "object" || step === null) return false;
+      const each = step as Record<string, unknown>;
+      if (each.kind === "release" || each.kind === "claim" || each.kind === "block") return true;
+      if (each.kind === "state") return each.state === "todo" || each.state === "done" || each.state === "abandoned";
+      return each.kind === "move" && isMove(each.to);
+    };
+    if (typeof ref !== "string" || typeof seen !== "string" || !Array.isArray(steps) || steps.length === 0 || steps.length > 3 || !steps.every(valid) || blockedBy === null) {
+      return sendError(response, 400, "BAD_FIELD", 'Give { "ref": "host:work:id", "seen": "the updatedAt shown", "steps": [{ "kind": ... }], "blockedBy"?: ["A-1"] }.');
+    }
+    const work = workByKey(ref);
+    if (!work) return sendError(response, 404, "ITEM_NOT_FOUND", `No item ${ref}.`);
+    const changed = changedSince(work, seen);
+    if (changed) return sendError(response, 409, "CHANGED", changed);
+    const done: string[] = [];
+    const words: Record<string, string> = { release: "released", claim: "claimed", state: "state changed", block: "blocker added", move: "moved" };
+    for (const step of steps as PickStep[]) {
+      const kind = step.kind;
+      const answer = kind === "release" || kind === "claim" ? await inProcess((req, res) => person(req, res, kind), { id: ref })
+        : step.kind === "state" ? await inProcess(editItem, { ref, state: step.state })
+        : step.kind === "move" ? await inProcess(moveItem, { ref, to: step.to })
+        : await inProcess(editItem, { ref, blockedBy: blockedBy ?? [] });
+      if (answer.status >= 400) {
+        const message = `${done.length > 0 ? `${done.join(", ").replace(/^./, (first) => first.toUpperCase())}; then refused: ` : ""}${answer.message ?? `the server answered ${answer.status}`}`;
+        return sendError(response, answer.status, "STEP_REFUSED", message);
+      }
+      done.push(words[step.kind]!);
+    }
+    options.onRefresh?.();
+    return sendJson(response, 200, { ref, done });
   }
 
   async function startOver(request: IncomingMessage, response: ServerResponse): Promise<void> {
@@ -2053,7 +2139,7 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
   };
 
   /** The POST endpoints that record who did it; the board names its picked person, or the request is refused. */
-  const NEEDS_PERSON = new Set(["/api/answer", "/api/answers", "/api/proposal", "/api/rewrite", "/api/start-over", "/api/chat", "/api/decisions", "/api/item/edit", "/api/item/vote", "/api/item/resolve", "/api/item/media/delete", "/api/item-draft", "/api/item/move"]);
+  const NEEDS_PERSON = new Set(["/api/answer", "/api/answers", "/api/proposal", "/api/rewrite", "/api/start-over", "/api/chat", "/api/decisions", "/api/item/edit", "/api/item/vote", "/api/item/resolve", "/api/item/media/delete", "/api/item-draft", "/api/item/move", "/api/item/pick"]);
 
   /** The Item a request names by its key, as the store has it. */
   const workByKey = (key: string): WorkItem | undefined => loadSnapshot(store).works.find((work) => refKey(work.ref) === key);
@@ -2163,6 +2249,7 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
         if (path === "/api/item/edit") return editItem(request, response);
         if (path === "/api/item/vote") return vote(request, response);
         if (path === "/api/item/move") return moveItem(request, response);
+        if (path === "/api/item/pick") return pickState(request, response);
         if (path === "/api/item/resolve") return resolve(request, response);
         if (path === "/api/item/media/delete") return deleteMedia(request, response);
         if (path === "/api/item/claim") return person(request, response, "claim");

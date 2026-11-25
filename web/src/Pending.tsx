@@ -1,6 +1,6 @@
 // The State menu's Undo wait (#154), kept at the app's level: a pick waits about 5 s with a toast and its Undo, then is sent.
-// Closing the Item or going to another view keeps the timer; leaving the page sends what waits at once (keepalive requests,
-// which carry the board's person as every request does).
+// Closing the Item or going to another view keeps the timer; leaving the page sends what waits at once (one keepalive
+// request per pick, which carries the board's person as every request does).
 
 import { useEffect, useState } from "preact/hooks";
 import { postStep, reloadViews } from "./api.ts";
@@ -25,29 +25,12 @@ let failure: string | null = null;
 const watchers = new Set<() => void>();
 const tell = () => watchers.forEach((watcher) => watcher());
 
-/** The request for one step. Only the first carries `seen`: the Item changes with each step. */
-function request(change: Change, step: Step, first: boolean): { path: string; body: Record<string, unknown> } {
-  const seen = first ? { seen: change.seen } : {};
-  switch (step.kind) {
-    case "release":
-      return { path: "/api/item/release", body: { id: change.itemKey, ...seen } };
-    case "claim":
-      return { path: "/api/item/claim", body: { id: change.itemKey, ...seen } };
-    case "state":
-      return { path: "/api/item/edit", body: { ref: change.itemKey, state: step.state, ...seen } };
-    case "block":
-      return { path: "/api/item/edit", body: { ref: change.itemKey, blockedBy: change.blockedBy ?? [], ...seen } };
-    case "move":
-      return { path: "/api/item/move", body: { ref: change.itemKey, to: step.to, ...seen } };
-  }
-}
+/** The pick as one request: the server runs its steps in order and checks `seen` once, before the first (`POST /api/item/pick`). */
+const body = (change: Change): Record<string, unknown> => ({ ref: change.itemKey, seen: change.seen, steps: change.steps, ...(change.blockedBy ? { blockedBy: change.blockedBy } : {}) });
 
 async function send(change: Change): Promise<void> {
   try {
-    for (const [index, step] of change.steps.entries()) {
-      const { path, body } = request(change, step, index === 0);
-      await postStep(path, body);
-    }
+    await postStep("/api/item/pick", body(change));
   } catch (problem) {
     failure = `${change.text}: ${problem instanceof Error ? problem.message : String(problem)}`;
     tell();
@@ -89,10 +72,7 @@ function flush(): void {
   const now = pending;
   pending = [];
   window.clearTimeout(timer);
-  for (const change of now) change.steps.forEach((step, index) => {
-    const { path, body } = request(change, step, index === 0);
-    void postStep(path, body, true).catch(() => undefined);
-  });
+  for (const change of now) void postStep("/api/item/pick", body(change), true).catch(() => undefined);
 }
 
 if (typeof window !== "undefined") window.addEventListener("pagehide", flush);
