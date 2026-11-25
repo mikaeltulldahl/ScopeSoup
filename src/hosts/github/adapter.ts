@@ -778,7 +778,8 @@ export function createGitHubHost(config: GitHubConfig): GitHubHost {
       return { added, removed };
     },
     async setLabels(subject, add, remove) {
-      for (const name of add) await ensureLabel(name, true);
+      // A project's own label (the AI label) is made when missing; Scope Soup's own labels were never made here.
+      for (const name of add) if (!LABEL_LOOKS[name]) await ensureLabel(name, true);
       if (add.length > 0) await client.send("POST", r(`/issues/${subject.id}/labels`), { labels: add });
       await removeLabels(subject, remove);
       if (add.length > 0 || remove.length > 0) failIf(subject, notApplied(await reread(subject), { add, remove }));
