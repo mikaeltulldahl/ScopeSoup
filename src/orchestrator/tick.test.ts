@@ -17,7 +17,7 @@ import { openStore } from "../store/store.ts";
 import type { Store } from "../store/store.ts";
 import { compareItems, readyItems } from "./candidates.ts";
 import { backoffMs } from "./cycle.ts";
-import { followUpMark, isFollowUp } from "./followUp.ts";
+import { openDrafts } from "./drafts.ts";
 import type { MergeQueue } from "./mergeQueue.ts";
 import { createLoop } from "./loop.ts";
 import { workspaceKey } from "./paths.ts";
@@ -120,9 +120,6 @@ interface World {
   /** The fake `closeMerged`: what it answers (or "throw"), and the closes it was asked for. */
   closeResult: "closed" | "by-hand" | "not-needed" | "throw";
   closes: string[];
-  /** The follow-up Items the fake host filed (`fileFollowUp`), in order, or "throw" to refuse. */
-  followUps: { from: string; title: string; body: string; verification: string; mark: string }[];
-  followUpResult?: "throw";
   run(): ReturnType<typeof tick>;
   /** The dependencies `run` passes to the tick, for a test that adds one. */
   depsFor(): Parameters<typeof tick>[0];
@@ -234,11 +231,6 @@ function world(cfg: ProjectConfig | ConfigSource, items: WorkItem[] = []): World
       if (out.closeResult === "throw") throw new Error("GitHub refused: 403");
       return out.closeResult;
     },
-    async fileFollowUp(target, work) {
-      if (out.followUpResult === "throw") throw new Error("GitHub refused: 403");
-      out.followUps.push({ from: target.id, ...work });
-      return { host: "fake", kind: "work", id: `f${out.followUps.length}` };
-    },
     async appendLog(target, kind, fields) {
       hostWrites.push(`appendLog ${target.id} ${kind} ${JSON.stringify(fields)}`);
       // The progress lines are kept apart, so the tests of the other actions read as before.
@@ -249,7 +241,7 @@ function world(cfg: ProjectConfig | ConfigSource, items: WorkItem[] = []): World
   const source = "load" in cfg ? cfg : fixedConfig(cfg);
   const events = (prefix = "orchestrator.") => store.eventsAfter(0, 10_000).filter((event) => event.kind.startsWith(prefix));
   const out: World = {
-    store, runner, clock, calls, hostWrites, lines, events, claim: { won: true }, closeResult: "closed", closes: [], followUps: [],
+    store, runner, clock, calls, hostWrites, lines, events, claim: { won: true }, closeResult: "closed", closes: [],
     depsFor: () => ({ store, runner, config: source, actions, now, ...(out.queue ? { queue: out.queue } : {}), ...(out.mergeQueue ? { mergeQueue: out.mergeQueue } : {}) }),
     run: () => tick(out.depsFor()),
     reasons: (kind) => events(kind).map((event) => (event.data as { reason: string }).reason),
@@ -1119,8 +1111,8 @@ test("review rounds are bounded", async () => {
 // --- the fence and the progress guards ---
 
 /** Level 3 with fix rounds to spare (persistence 4: four rounds), up to the first review's start. */
-async function toReview(paths: string[], triage: Record<string, unknown> = TRIAGE_OK): Promise<World> {
-  const w = world(config({ rules: STAGE1, settings: { persistence: { value: 4, reason: "test" } } }), [item("1")]);
+async function toReview(paths: string[], triage: Record<string, unknown> = TRIAGE_OK, extra: Record<string, unknown> = {}): Promise<World> {
+  const w = world(config({ rules: STAGE1, settings: { persistence: { value: 4, reason: "test" } }, ...extra }), [item("1")]);
   w.store.addUsageSample(usage(0.1, 0.1));
   w.runner.paths = paths;
   await w.run();
@@ -1194,52 +1186,44 @@ test("progress: fewer must findings go on; the same finding twice in a row escal
   assert.match(w.reasons("orchestrator.escalated")[0] ?? "", /^The review gives the same finding as the round before: name {2}is UNCLEAR\. The same failure twice in a row ends the run\. After 2 round\(s\)/);
 });
 
-test("an approval with should findings files one follow-up Item naming them and the Item, and the merge goes on", async () => {
+test("should findings with review.shouldFindings \"fix\" (the default): back to the implementor once, not counted as a round; what is left after it becomes a draft", async () => {
   const w = await toReview(["src/a.ts"]);
-  const approve = { verdict: "approve", findings: [{ severity: "should", file: "src/a.ts", text: "Name the helper after what it returns." }, { severity: "should", text: "Add a test for the empty list." }] };
+  const approve = { verdict: "approve", findings: [{ severity: "should", file: "src/a.ts", text: "Name the helper after what it returns." }] };
   await step(w, "1", "succeeded", approve);
-  assert.equal(w.followUps.length, 1);
-  const made = w.followUps[0]!;
-  assert.equal(made.from, "1");
-  assert.equal(made.title, "Follow-up to #1: Name the helper after what it returns.");
-  assert.match(made.body, /^The review of #1 \("Item 1"\) approved its change at 3333333 and said these findings should still change:\n\n- `src\/a\.ts`: Name the helper after what it returns\.\n- Add a test for the empty list\./);
-  assert.match(made.mark, /scopesoup:follow-up/);
-  assert.match(w.reasons("orchestrator.follow_up_filed")[0] ?? "", /f1 follows them up, and the merge goes on/);
-  // The merge goes on: the implementor is resumed to merge it (level 3).
-  assert.deepEqual([w.job("1")?.merge, roles(w).at(-1)], [true, "implement"]);
+  assert.deepEqual([w.job("1")?.merge, w.job("1")?.fixRounds, roles(w).at(-1)], [undefined, 0, "implement"]);
+  assert.match(w.job("1")?.resumeWith ?? "", /^The reviewer approves, and asks for these smaller changes before the merge:\n- \[should\] src\/a\.ts: Name the helper/);
+  assert.deepEqual(openDrafts(w.store), []);
+  await step(w, "1", "succeeded", { done: true, summary: "Renamed." });
+  // The second approval still says it: the merge goes on, and it becomes one draft.
+  await step(w, "1", "succeeded", approve);
+  assert.deepEqual([w.job("1")?.merge, w.job("1")?.fixRounds, w.job("1")?.parked], [true, 0, undefined]);
+  const drafts = openDrafts(w.store);
+  assert.deepEqual(drafts.map((each) => [each.from.id, each.role, each.title]), [["1", "reviewer", "After #1: Name the helper after what it returns."]]);
+  assert.equal(w.events("orchestrator.escalated").length, 0);
 });
 
-test("the review of a follow-up Item files no follow-up of its own: its should finding stays in its review line, and the merge goes on", async () => {
-  // As in the trial: A-14 was filed for a should finding of A-9, which itself followed up A-3.
-  const body = `The review of #9 ("Item 9") approved its change at 1234567 and said this finding should still change:
-
-- Add a test.
-
-${followUpMark(item("9"), "1".repeat(40))}`;
-  const w = world(config({ rules: STAGE1, settings: { persistence: { value: 4, reason: "test" } } }), [item("1", { body })]);
-  w.store.addUsageSample(usage(0.1, 0.1));
-  w.runner.paths = ["src/a.ts"];
-  await w.run();
-  await step(w, "1", "succeeded", TRIAGE_OK);
-  await step(w, "1", "succeeded", IMPLEMENT_OK);
-  await step(w, "1", "succeeded", { verdict: "approve", findings: [{ severity: "should", file: "src/a.ts", text: "Name the helper after what it returns." }] });
-  assert.deepEqual(w.followUps, []);
-  assert.deepEqual(w.reasons("orchestrator.follow_up_filed"), []);
-  assert.match(w.reasons("orchestrator.follow_up_skipped")[0] ?? "", /^The review approved with 1 `should` finding\(s\), but 1 is itself a follow-up, so no further follow-up Item is filed; the finding\(s\) stay in its review line, and the merge goes on: src\/a\.ts: Name the helper/);
-  assert.ok(w.calls.some((call) => call.startsWith("appendLog 1 review") && call.includes("[should] src/a.ts: Name the helper after what it returns.")));
+test("should findings with review.shouldFindings \"draft\": the change merges and they become one draft, filed once; no should finding files nothing", async () => {
+  const w = await toReview(["src/a.ts"], TRIAGE_OK, { review: { shouldFindings: "draft" } });
+  await step(w, "1", "succeeded", { verdict: "approve", findings: [{ severity: "should", file: "src/a.ts", text: "Name the helper @bob likes; fixes #8." }, { severity: "should", text: "Add a test for the empty list." }] });
   assert.deepEqual([w.job("1")?.merge, roles(w).at(-1)], [true, "implement"]);
-  assert.equal(isFollowUp(item("1")), false);
-});
-
-test("a follow-up the host refuses is an event; the merge goes on, and an approval with no should finding files nothing", async () => {
-  const w = await toReview(["src/a.ts"]);
-  w.followUpResult = "throw";
-  await step(w, "1", "succeeded", { verdict: "approve", findings: [{ severity: "should", text: "Shorter name." }] });
-  assert.match(w.reasons("orchestrator.host_write_failed")[0] ?? "", /^Could not file the follow-up Item .*GitHub refused: 403 The merge goes on\. The finding\(s\): Shorter name\./);
-  assert.equal(w.job("1")?.merge, true);
-  const quiet = await toReview(["src/a.ts"]);
+  const drafts = openDrafts(w.store);
+  assert.equal(drafts.length, 1);
+  assert.doesNotMatch(`${drafts[0]!.title} ${drafts[0]!.description}`, /@bob|fixes #8/);
+  assert.match(drafts[0]!.description, /these findings should still change:\n\n- `src\/a\.ts`: Name the helper/);
+  assert.match(w.reasons("orchestrator.drafts_filed")[0] ?? "", /^The reviewer of 1 proposed a new Item: .* It waits in Your turn as a draft for a person to approve or deny\./);
+  const quiet = await toReview(["src/a.ts"], TRIAGE_OK, { review: { shouldFindings: "draft" } });
   await step(quiet, "1", "succeeded", REVIEW_OK);
-  assert.deepEqual([quiet.followUps.length, quiet.events("orchestrator.follow_up").length], [0, 0]);
+  assert.deepEqual(openDrafts(quiet.store), []);
+});
+
+test("drafts in the triage's, the implementor's and the reviewer's answers are filed for a person, linked to the Item; nothing goes to the host", async () => {
+  const draft = (title: string) => ({ title, description: "Found it while reading.", verification: "It is done." });
+  const w = await toReview(["src/a.ts"], { ...TRIAGE_OK, drafts: [draft("Tidy the parser")] });
+  await step(w, "1", "succeeded", { ...REVIEW_OK, drafts: [draft("Document the cache"), draft("tidy  the PARSER")] });
+  const drafts = openDrafts(w.store);
+  assert.deepEqual(drafts.map((each) => [each.role, each.title, each.from.id]), [["triage", "Tidy the parser", "1"], ["reviewer", "Document the cache", "1"]]);
+  assert.match(w.reasons("orchestrator.drafts_known")[0] ?? "", /proposed "tidy the PARSER" again: filed as a draft before, not filed twice\./);
+  assert.equal(w.hostWrites.some((write) => write.includes("Tidy the parser")), false);
 });
 
 test("a session cut off by the limit is resumed after the reset, not counted as a failure", async () => {
@@ -2215,7 +2199,7 @@ async function toQueueAfterPause(w: World, queue: ReturnType<typeof fakeQueue>):
 }
 
 test("merging by queue: an approved change waiting through many ticks for a paused merge queue writes its review and session lines once", async () => {
-  const w = world(config(QUEUE), [item("1")]);
+  const w = world(config({ ...QUEUE, review: { shouldFindings: "draft" } }), [item("1")]);
   const queue = fakeQueue();
   w.queue = queue;
   w.store.addUsageSample(usage(0.1, 0.1));
@@ -2224,9 +2208,10 @@ test("merging by queue: an approved change waiting through many ticks for a paus
   await step(w, "1", "succeeded", IMPLEMENT_OK);
   w.store.setValue(KEYS.mergeQueue, "paused");
   await step(w, "1", "succeeded", { verdict: "approve", findings: [{ severity: "should", text: "Name the constant." }] });
+  assert.equal(openDrafts(w.store).length, 1);
   const reviews = () => logCalls(w).filter((call) => call.startsWith("appendLog 1 review"));
   const reviewSessions = () => w.lines.filter((line) => line.startsWith("1 session") && line.includes('"role":"review"'));
-  const followUps = w.followUps.length;
+  const drafts = w.store.list("draft").length;
   const events = w.events().length;
   for (let tick = 0; tick < 20; tick++) {
     w.clock.ms += 30_000;
@@ -2235,7 +2220,7 @@ test("merging by queue: an approved change waiting through many ticks for a paus
   assert.equal(reviews().length, 1, reviews().join("\n"));
   assert.equal(reviewSessions().length, 1, reviewSessions().join("\n"));
   assert.equal(w.runner.requests.filter((request) => request.role === "review").length, 1);
-  assert.equal(w.followUps.length, followUps, "nothing more is filed while it waits");
+  assert.equal(w.store.list("draft").length, drafts, "nothing more is filed while it waits");
   assert.ok(w.events().length - events <= 2, w.events().slice(events).map((event) => event.kind).join(", "));
   assert.deepEqual(queue.enqueued, []);
   // Once the queue is started, it takes the change; still one review line.

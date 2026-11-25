@@ -4,13 +4,13 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import type { MergeQueueSetup, LevelChoice } from "../../src/config/levels.ts";
 import type { Sliders } from "../../src/config/sliders.ts";
 import type { ProjectConfig } from "../../src/config/types.ts";
-import type { ActivityView, BoardView, ChatView, FolderName, CommitView, DiffView, HistoryView, ItemBranchState, ItemListView, ItemPage, SessionDetailsView, UsageView } from "../../src/core/views.ts";
+import type { ActivityView, BoardView, DraftView, ChatView, FolderName, CommitView, DiffView, HistoryView, ItemBranchState, ItemListView, ItemPage, SessionDetailsView, UsageView } from "../../src/core/views.ts";
 import type { OriginalFate, ProposedPart } from "../../src/model/types.ts";
 import { currentPerson, onPersonChange, personHeaders } from "./person.ts";
 import type { PickEntry } from "./heldDecisions.ts";
 
 export type { ProjectConfig };
-export type { BoardView, DiffView, ItemPage };
+export type { BoardView, DiffView, DraftView, ItemPage };
 export type * from "../../src/core/views.ts";
 import type { SwitchPath } from "./switches.ts";
 
@@ -214,6 +214,9 @@ async function postJson(path: string, body: unknown): Promise<{ ref: string; mes
 
 /** Deletes one of an Item's images: here and, when it was pushed, from its media ref (the server records who). */
 export const postMediaDelete = (ref: string, name: string) => postJson("/api/item/media/delete", { ref, name });
+
+/** A person's Approve (with their edit of the text, if any) or Deny of an Item draft. Approve resolves with the new Item's ref key. */
+export const postItemDraft = (id: string, action: "approve" | "deny", text: { title?: string; description?: string; verification?: string } = {}) => postJson("/api/item-draft", { id, action, ...text });
 
 /** Creates an item. Resolves with its ref key. */
 export const postItem = (fields: ItemFields) => postJson("/api/items", fields);

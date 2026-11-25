@@ -48,6 +48,7 @@ import type { JiraBoard } from "../items/jiraBackend.ts";
 import { editConfig, readConfigView, type SharedSaved } from "../config/edit.ts";
 import type { SettingsLogEntry, SharedSettings } from "../config/shared.ts";
 import { activityView } from "./activity.ts";
+import { decide as decideItemDraft, draftRequest, draftViews } from "./drafts.ts";
 import type { MergeQueueOptions } from "../config/mergeQueue.ts";
 import { addAnswer, loadAnswers } from "../store/answers.ts";
 import { applyControl } from "../store/control.ts";
@@ -1702,7 +1703,7 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
   };
 
   /** The POST endpoints that record who did it; the board names its picked person, or the request is refused. */
-  const NEEDS_PERSON = new Set(["/api/answer", "/api/answers", "/api/proposal", "/api/draft", "/api/start-over", "/api/chat", "/api/decisions", "/api/item/edit", "/api/item/vote", "/api/item/resolve", "/api/item/media/delete"]);
+  const NEEDS_PERSON = new Set(["/api/answer", "/api/answers", "/api/proposal", "/api/draft", "/api/start-over", "/api/chat", "/api/decisions", "/api/item/edit", "/api/item/vote", "/api/item/resolve", "/api/item/media/delete", "/api/item-draft"]);
 
   /** The Item a request names by its key, as the store has it. */
   const workByKey = (key: string): WorkItem | undefined => loadSnapshot(store).works.find((work) => refKey(work.ref) === key);
@@ -1734,6 +1735,37 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
       "Cache-Control": "private, no-cache",
     });
     response.end(headOnly ? undefined : found.bytes);
+  }
+
+  /** Drafts being approved now: a second click waits for the first instead of making a second Item. */
+  const approving = new Set<string>();
+
+  /**
+   * A person approves or denies an Item draft (decision 95): `{ id, action, title?, description?, verification? }` (`src/server/drafts.ts`).
+   * Approve makes the Item on the source Item's host and brings the store up to date; a host that refuses leaves the draft open.
+   */
+  async function itemDraft(request: IncomingMessage, response: ServerResponse): Promise<void> {
+    let body: Record<string, unknown>;
+    try {
+      body = await readJson(request);
+    } catch (error) {
+      return sendError(response, 400, "BAD_BODY", error instanceof Error ? error.message : "The body is not JSON.");
+    }
+    const given = draftRequest(body);
+    if (typeof given === "string") return sendError(response, 400, "BAD_FIELD", given);
+    if (approving.has(given.id)) return sendError(response, 409, "APPROVING", "This draft is being approved now.");
+    approving.add(given.id);
+    try {
+      const done = await decideItemDraft(store, options.restructure ?? [], given, by().who, () => now().toISOString());
+      if (!done.ok) return sendError(response, done.status, done.code, done.message);
+      if (done.outcome) return written(response, done.outcome, done.message);
+      return sendJson(response, 200, { message: done.message, ...(done.item ? { ref: refKey(done.item) } : {}) });
+    } catch (error) {
+      store.appendEvent({ kind: "orchestrator.host_write_failed", actor: by().who, data: { reason: `Could not file the Item from draft ${given.id}: ${error instanceof Error ? error.message : String(error)}` } }, now().toISOString());
+      return sendError(response, 502, "WRITE_REFUSED", error instanceof Error ? error.message : String(error));
+    } finally {
+      approving.delete(given.id);
+    }
   }
 
   /** `POST /api/item/media/delete` with `{ ref, name }`: the image goes here and, when it was pushed, from the media ref. */
@@ -1773,6 +1805,7 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
         if (path === "/api/answers") return answers(request, response);
         if (path === "/api/proposal") return proposal(request, response);
         if (path === "/api/draft") return draft(request, response);
+        if (path === "/api/item-draft") return itemDraft(request, response);
         if (path === "/api/start-over") return startOver(request, response);
         if (path === "/api/chat") return chatSend(request, response);
         if (path === "/api/items") return createItem(request, response);
@@ -1828,7 +1861,7 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
         const snapshot = loadSnapshot(store);
         const without = withoutTriageNow(snapshot);
         const project = projectNow();
-        return sendJson(response, 200, { ...boardNow(), ...(project ? { project: projectView(project) } : {}), canWrite: items?.write.createWork !== undefined, people: knownPeople(snapshot.works, loadAnswers(store), options.jiraItems?.host), ...(Object.keys(peopleNames(snapshot.works, options.jiraItems?.host)).length > 0 ? { peopleNames: peopleNames(snapshot.works, options.jiraItems?.host) } : {}), ...(without > 0 ? { withoutTriage: without } : {}) });
+        return sendJson(response, 200, { ...boardNow(), ...(project ? { project: projectView(project) } : {}), canWrite: items?.write.createWork !== undefined, ...((drafts) => (drafts.length > 0 ? { drafts } : {}))(draftViews(store, snapshot.works, options.restructure ?? [])), people: knownPeople(snapshot.works, loadAnswers(store), options.jiraItems?.host), ...(Object.keys(peopleNames(snapshot.works, options.jiraItems?.host)).length > 0 ? { peopleNames: peopleNames(snapshot.works, options.jiraItems?.host) } : {}), ...(without > 0 ? { withoutTriage: without } : {}) });
       }
       if (path === "/api/items") return sendJson(response, 200, (({ snapshot, notTriaged }) => buildItemList(snapshot, parseListQuery(url.searchParams), now(), picked(), notTriaged))(triageView()));
       // The item commands' list: who holds what, as one person sees it (`?as=name`).

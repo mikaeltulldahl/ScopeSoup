@@ -32,7 +32,10 @@ import type { ChangedFile } from "../core/fence.ts";
 import { FENCE_OUTSIDE_FILES, fenceBreach, proposedSplit } from "../core/fence.ts";
 import type { Finding } from "./jobs.ts";
 import { restructuringId } from "./restructure.ts";
-import { findingKey, followUpItem, isFollowUp, noProgress } from "./followUp.ts";
+import { findingKey, noProgress, shouldDraft } from "./progress.ts";
+import type { ProposedDraft } from "./drafts.ts";
+import { fileDrafts } from "./drafts.ts";
+import { reviewSettings } from "../config/types.ts";
 import { busyWhy, isOpenItem, keepAboutOthers, linkedItem as namedItem, readWaitingAbouts, writeWaitingAbouts } from "./aboutOthers.ts";
 import { workBranch, workspaceKey } from "./paths.ts";
 
@@ -877,6 +880,7 @@ async function settleStep(ctx: Context, job: Job, session: Session | null, recor
     if (!answer) return failed(ctx, job, `The triage answer does not have the expected shape, has tool-call markup inside a string, or gives no reason for "not ready" or no question for "needs decision". The answer was: ${JSON.stringify(record.output ?? null).slice(0, 4000)}`);
     job.triage = answer;
     keepAboutOthers(ctx, job, "triage", answer.aboutOthers);
+    keepDrafts(ctx, job, "triage", answer.drafts);
     // What this triage saw, so it is taken again once that is out of date.
     const text = job.triaging ?? (item ? triagedText(item) : undefined);
     if (text) job.triaged = triagedNow(text, item, ctx.deps.store.list<WorkItem>("work"), ctx.at, main);
@@ -908,6 +912,7 @@ async function settleStep(ctx: Context, job: Job, session: Session | null, recor
     if (!answer) return failed(ctx, job, "The implementer's answer does not have the expected shape, or has tool-call markup inside a string.");
     job.implement = answer;
     keepAboutOthers(ctx, job, "implement", answer.aboutOthers);
+    keepDrafts(ctx, job, "implementor", answer.drafts);
     // The decisions it took itself go on the Item first, whether it finished or stopped to ask.
     if (answer.decisions?.length) await recordDecisions(ctx, job, answer.decisions);
     // Stopped without a question after a command was refused: a setting for a person, not a question.
@@ -949,6 +954,7 @@ async function settleStep(ctx: Context, job: Job, session: Session | null, recor
     if (!answer) return failed(ctx, job, "The reviewer's answer does not have the expected shape, or has tool-call markup inside a string.");
     job.review = answer;
     await writeReview(ctx, job, answer);
+    keepDrafts(ctx, job, "reviewer", answer.drafts);
     const must = answer.findings.filter((finding) => finding.severity === "must");
     if (answer.verdict === "approve" && must.length === 0) {
       // An approval starts the review rounds' progress afresh; the merge's stays.
@@ -956,8 +962,16 @@ async function settleStep(ctx: Context, job: Job, session: Session | null, recor
       else delete job.progress;
       // A person overturned a decision while it was in review: back to the implementor, not on to the merge.
       if (overturnsBack(ctx, job)) return;
-      // The `should` findings become a follow-up Item; the merge goes on.
-      await followUp(ctx, job, item, answer.findings);
+      // The `should` findings go back to the implementor once ("fix"), or become one draft and the merge goes on.
+      const should = answer.findings.filter((finding) => finding.severity === "should" && finding.text.trim());
+      if (should.length > 0 && reviewSettings(ctx.config).shouldFindings === "fix" && job.shouldSent === undefined) {
+        job.shouldSent = should.map(findingKey);
+        return backToImplementor(
+          ctx, job, `The reviewer approves, and asks for these smaller changes before the merge:\n${formatFindings(should)}\nFix them and commit.`,
+          `The review approves with ${should.length} \`should\` finding(s). Next: the implementor fixes them before the merge (review.shouldFindings "fix"); this round is not counted toward the limit of rounds.`,
+        );
+      }
+      if (should.length > 0) draftShould(ctx, job, item, should);
       if (ctx.config.level >= 4) return handOver(ctx, job, item);
       // Level 3: Scope Soup merges nothing below level 4. The implementor's own session is resumed to merge it.
       job.merge = true;
@@ -986,36 +1000,26 @@ async function settleStep(ctx: Context, job: Job, session: Session | null, recor
   }
 }
 
-/**
- * The `should` findings of an approved change become one small follow-up Item that names them and the Item they came from,
- * once per finding. Where the host cannot file it, or refuses, an event says so with the findings; the merge goes on either way.
- * A follow-up's own approval files none (follow-ups are one deep).
- */
-async function followUp(ctx: Context, job: Job, item: WorkItem | null, findings: readonly Finding[]): Promise<void> {
-  const done = new Set(job.followUps ?? []);
-  const should = findings.filter((finding) => finding.severity === "should" && finding.text.trim() && !done.has(findingKey(finding)));
-  if (should.length === 0) return;
+/** An agent's `drafts`: filed as Item drafts for a person, linked to this Item (decision 95). One filed before is not filed again. */
+function keepDrafts(ctx: Context, job: Job, role: "triage" | "implementor" | "reviewer", drafts: readonly ProposedDraft[] | undefined): void {
+  if (!drafts || drafts.length === 0) return;
   const key = refKey(job.item);
+  const made = fileDrafts(ctx.deps.store, job.item, role, drafts, ACTOR, ctx.at);
+  const titles = (list: readonly string[]): string => list.map((title) => `"${clipText(title, 120)}"`).join(", ");
+  if (made.filed.length > 0) {
+    ctx.commit("orchestrator.drafts_filed", `The ${role} of ${job.item.id} proposed ${made.filed.length === 1 ? "a new Item" : `${made.filed.length} new Items`}: ${titles(made.filed.map((each) => each.title))}. ${made.filed.length === 1 ? "It waits" : "They wait"} in Your turn as ${made.filed.length === 1 ? "a draft" : "drafts"} for a person to approve or deny.`, key, { drafts: made.filed.map((each) => each.ref.id) });
+  }
+  if (made.known.length > 0) ctx.commit("orchestrator.drafts_known", `The ${role} of ${job.item.id} proposed ${titles(made.known)} again: filed as a draft before, not filed twice.`, key, { count: made.known.length });
+}
+
+/**
+ * The `should` findings of an approved change, with `review.shouldFindings` "draft" or after their one round back ("fix"), become one
+ * draft from the reviewer; the merge goes on.
+ */
+function draftShould(ctx: Context, job: Job, item: WorkItem | null, should: readonly Finding[]): void {
   const listed = should.map((finding) => clipText(`${finding.file ? `${finding.file}: ` : ""}${finding.text.trim()}`, 300)).join(" / ");
-  // A follow-up's own review files no follow-up of its own (decision 73): its findings stay in its review line, so follow-ups stay one deep.
-  if (item && isFollowUp(item)) {
-    job.followUps = [...done, ...should.map(findingKey)].slice(-50);
-    ctx.commit("orchestrator.follow_up_skipped", `The review approved with ${should.length} \`should\` finding(s), but ${job.item.id} is itself a follow-up, so no further follow-up Item is filed; the finding(s) stay in its review line, and the merge goes on: ${listed}`, key, { findings: should.length });
-    return;
-  }
-  const file = ctx.deps.actions.fileFollowUp;
-  let made: Ref | null = null;
-  if (file && item) {
-    try {
-      made = await file(job.item, followUpItem(item, should, job.head ?? (await ctx.deps.runner.head(job.branch))));
-    } catch (error) {
-      ctx.commit("orchestrator.host_write_failed", `Could not file the follow-up Item for the review's \`should\` finding(s) of ${job.item.id}: ${errorText(error)} The merge goes on. The finding(s): ${listed}`, key);
-      return;
-    }
-  }
-  job.followUps = [...done, ...should.map(findingKey)].slice(-50);
-  if (made) ctx.commit("orchestrator.follow_up_filed", `The review approved with ${should.length} \`should\` finding(s); ${made.id} follows ${should.length === 1 ? "it" : "them"} up, and the merge goes on: ${listed}`, key, { item: refKey(made), findings: should.length });
-  else ctx.commit("orchestrator.follow_up_unfiled", `The review approved with ${should.length} \`should\` finding(s), but ${job.item.host} cannot file a follow-up Item here; the merge goes on. The finding(s): ${listed}`, key, { findings: should.length });
+  ctx.commit("orchestrator.should_drafted", `The review approved with ${should.length} \`should\` finding(s); they become a draft for a person, and the merge goes on: ${listed}`, refKey(job.item), { findings: should.length });
+  keepDrafts(ctx, job, "reviewer", [shouldDraft(item ?? { ref: job.item, title: job.item.id }, should)]);
 }
 
 /**

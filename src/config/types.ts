@@ -192,7 +192,7 @@ export interface JiraHostConfig {
   transitions?: Partial<Record<"todo" | "doing" | "done" | "abandoned", string>>;
   /** The resolution a transition's screen gets when it asks for one; defaults "Done", "Won't Do", "Duplicate". */
   resolutions?: Partial<Record<"done" | "abandoned" | "duplicate", string>>;
-  /** The link type from a follow-up to its Item. Default "Relates". */
+  /** The link type from a related part of a restructuring to its Item. Default "Relates". */
   relatesLink?: string;
   /** The link type from a duplicate to its original. Default "Duplicate". */
   duplicateLink?: string;
@@ -232,6 +232,19 @@ export interface MediaConfig {
 /** The media setting in use: off and kept when the settings say nothing. */
 export function mediaSettings(config: Pick<ProjectConfig, "media">): MediaConfig {
   return config.media ?? { push: false, keepDaysAfterClose: null };
+}
+
+/** What a reviewer's `should` findings on an approved change do (decision 95). A project setting. Absent: `{ shouldFindings: "fix" }`. */
+export interface ReviewConfig {
+  /** "fix": back to the implementor once before the merge. "draft": the change merges and they become one Item draft. */
+  shouldFindings: "fix" | "draft";
+}
+
+export const SHOULD_FINDINGS: readonly ReviewConfig["shouldFindings"][] = ["fix", "draft"];
+
+/** The review setting in use: "fix" when the settings say nothing. */
+export function reviewSettings(config: Pick<ProjectConfig, "review">): ReviewConfig {
+  return config.review ?? { shouldFindings: "fix" };
 }
 
 /** Whether this machine pushes agents' images: `media.push`, in multiplayer only. */
@@ -343,6 +356,8 @@ export interface ProjectConfig {
   mergeQueue?: MergeQueueConfig;
   /** Agents' images: pushed or not, and kept how long. Absent: `mediaSettings`' default. */
   media?: MediaConfig;
+  /** What a reviewer's `should` findings do. Absent: `reviewSettings`' default. */
+  review?: ReviewConfig;
   /** This machine's resources (`resources`) and the shared ones (`sharedResources`), in that order. Absent: none. */
   resources?: ResourceConfig[];
   claude: ClaudeConfig;

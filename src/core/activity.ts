@@ -37,6 +37,7 @@ export const ACTIVITY_EVENTS: readonly string[] = [
   "scopesoup.upgraded", "scopesoup.went_back", "scopesoup.upgrade_failed",
   "orchestrator.draft_accepted", "orchestrator.draft_edited", "orchestrator.draft_rejected", "orchestrator.draft_answered",
   "orchestrator.questions_asked", "person.answered", "person.claimed", "person.handed_back", "person.released", "orchestrator.merged", "config.changed", "media.deleted", "media.expired",
+  "draft.created", "draft.updated",
 ];
 
 /** Most rows in one view. */
@@ -367,6 +368,22 @@ export function buildActivity(input: ActivityInput, now: string, limit = MAX_ACT
         if (data.shared) break;
         const fields = Array.isArray(data.fields) ? data.fields.filter((each): each is string => typeof each === "string") : [];
         add({ ...base, kind: "settings", text: `Changed this machine's own settings${fields.length > 0 ? `: ${fields.join(", ")}` : ""}` });
+        break;
+      }
+      // Item drafts (decision 95): an agent's proposal, and a person's Approve or Deny. The draft is linked to its source Item.
+      case "draft.created": {
+        const from = obj(data.from);
+        const key = str(from.host) ? `${str(from.host)}:work:${str(from.id)}` : undefined;
+        add({ ...base, kind: "item", items: link(key), who: str(data.role) || "agent", agent: true, text: `Proposed a new Item as a draft: ${clip(str(data.title), 120)}` });
+        break;
+      }
+      case "draft.updated": {
+        const decided = obj(data.decided);
+        if (!str(decided.verdict)) break;
+        const from = obj(data.from);
+        const made = obj(decided.item);
+        const keys = [str(from.host) ? `${str(from.host)}:work:${str(from.id)}` : "", str(made.host) ? `${str(made.host)}:work:${str(made.id)}` : ""].filter(Boolean);
+        add({ ...base, kind: "item", items: keys.flatMap((key) => link(key)), who: str(decided.by) || event.actor, agent: false, text: `${decided.verdict === "approved" ? "Approved" : "Denied"} the draft: ${clip(str(data.title), 120)}`, ...(decided.verdict === "approved" ? { tone: "good" as const } : {}) });
         break;
       }
       case "media.deleted":

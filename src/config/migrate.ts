@@ -121,6 +121,8 @@ function from0to1(raw: Obj, changes: string[]): string[] {
 
   for (const [key, why] of Object.entries(KEYS_0)) {
     if (!Object.hasOwn(raw, key)) continue;
+    // Only format 0's `review` (its `checklist`) is dropped; `review.shouldFindings` is today's (decision 95).
+    if (key === "review" && !(typeof raw.review === "object" && raw.review !== null && Object.hasOwn(raw.review, "checklist"))) continue;
     delete raw[key];
     dropped(key === "review" ? "review.checklist" : key, why);
   }

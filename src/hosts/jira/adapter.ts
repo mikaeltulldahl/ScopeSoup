@@ -56,7 +56,7 @@ export interface JiraConfig {
   transitions?: Partial<Record<TransitionTarget, string>>;
   /** The resolution a transition's screen gets, when it asks for one; defaults `DEFAULT_RESOLUTIONS`. */
   resolutions?: Partial<Record<"done" | "abandoned" | "duplicate", string>>;
-  /** The link type from a follow-up to the Item it came from. Default "Relates". */
+  /** The link type from a related part of a restructuring to its Item. Default "Relates". */
   relatesLink?: string;
   /** The link type from a duplicate to its original. Default "Duplicate". */
   duplicateLink?: string;

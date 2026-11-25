@@ -287,6 +287,20 @@ export interface ResourcesView {
   }[];
 }
 
+/** An Item draft waiting for a person (decision 95), shown in Your turn. Its text came from an agent and was made inert. */
+export interface DraftView {
+  id: string;
+  title: string;
+  description: string;
+  verification: string;
+  role: "triage" | "implementor" | "reviewer";
+  at: string;
+  /** The Item it was found while working on. */
+  from: { key: string; id: string; title?: string };
+  /** Why Approve is not offered here (the source Item's host cannot be written from this board). Absent: it is. */
+  readOnly?: string;
+}
+
 export interface BoardView {
   /** The server's clock when the view was built. The browser animates from it. */
   now: string;
@@ -296,6 +310,8 @@ export interface BoardView {
   status: StatusLine;
   /** Set by the server: items can be created here (the project's host can be written to). */
   canWrite?: boolean;
+  /** Set by the server: the Item drafts waiting for a person, oldest first. In every person's Your turn. */
+  drafts?: DraftView[];
   /** Set by the server when the project declares limited resources. */
   resources?: ResourcesView;
   /** Set by the server: the people Scope Soup knows (holds, log lines, answers), for the board's person picker. */

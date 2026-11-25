@@ -16,7 +16,7 @@ import { spliceBody } from "../github/map.ts";
 import type { JiraClient } from "./client.ts";
 import { JiraError, transient } from "./client.ts";
 import type { JiraClaim, JiraRead } from "./conventions.ts";
-import { CLAIM_PROPERTY, claimOrder, COMMENT_PROPERTY, HANDBACK_KIND, FOLLOW_UP_PROPERTY, LOG_PROPERTY, OVERTURNS_PROPERTY, PROPERTY_LIMIT, propertySize, splitMarked, withoutFollowUpMarks } from "./conventions.ts";
+import { CLAIM_PROPERTY, claimOrder, COMMENT_PROPERTY, HANDBACK_KIND, LOG_PROPERTY, OVERTURNS_PROPERTY, PROPERTY_LIMIT, propertySize, splitMarked } from "./conventions.ts";
 import { toJiraText, writeDescription } from "./description.ts";
 import type { JiraScope } from "./map.ts";
 import { ISSUE_FIELDS, isoTime, itemsJql, jqlString, NEEDS_DECISION_LABEL, priorityOf, projectOf, stateOf, workRef } from "./map.ts";
@@ -32,7 +32,7 @@ export const DEFAULT_RESOLUTIONS: Readonly<Record<"done" | "abandoned" | "duplic
 /** The issue type of a new Item and of a split's child. Jira's default names. */
 export const DEFAULT_ISSUE_TYPE = "Task";
 export const DEFAULT_CHILD_ISSUE_TYPE = "Sub-task";
-/** The link type from a follow-up to the Item it came from, and from a duplicate to its original. Jira's default names. */
+/** The link type from a related part of a restructuring to its Item, and from a duplicate to its original. Jira's default names. */
 export const DEFAULT_RELATES_LINK = "Relates";
 export const DEFAULT_DUPLICATE_LINK = "Duplicate";
 /**
@@ -307,9 +307,7 @@ export function createJiraWrite(deps: JiraWriteDeps): WritePort {
 
   const write: WritePort = {
     async createWork(input) {
-      // A follow-up is named only by `followUpOf`; a mark in the text is dropped (it may have come from an agent).
-      const body = withoutFollowUpMarks(input.body ?? "");
-      const followUp = input.followUpOf;
+      const body = input.body ?? "";
       const markdown = input.verification !== undefined ? spliceBody(body, { verification: input.verification }) : body.trim();
       const labels = input.labels ?? [];
       checkLabels(labels);
@@ -340,11 +338,6 @@ export function createJiraWrite(deps: JiraWriteDeps): WritePort {
       const assignee = input.assignees?.[0];
       if (assignee) await client.put(`${path(work)}/assignee`, deployment === "cloud" ? { accountId: assignee } : { name: assignee });
       if (input.blockedBy && input.blockedBy.length > 0) await setBlockers(work, input.blockedBy.filter((each) => each.host === scope.host), true);
-      if (followUp) {
-        const [host, , id] = followUp.item.split(":");
-        if (host === scope.host && id) await link(settings.relatesLink, work.id, id);
-        await putIssueProperty(work, FOLLOW_UP_PROPERTY, { v: 1, by: await deps.self(), item: followUp.item, sha: followUp.sha });
-      }
       if (input.state && input.state !== "todo" && input.state !== "waiting") await transitionTo(work, input.state, input.state === "done" ? settings.resolutions.done : input.state === "abandoned" ? settings.resolutions.abandoned : undefined);
       await checkInFilter(work.id);
       const outcome: WriteOutcome = { work, shared: "shared", conflict: false };

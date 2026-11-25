@@ -1,7 +1,7 @@
 // The host-neutral model. Nothing here knows about GitHub, Gerrit or any other host.
 // Times are ISO 8601 strings in UTC. Durations are milliseconds.
 
-export type RefKind = "work" | "change" | "run" | "batch" | "session";
+export type RefKind = "work" | "change" | "run" | "batch" | "session" | "draft";
 
 /** Points at one object on one host (or in Scope Soup itself, host "scopesoup"). */
 export interface Ref {
@@ -557,6 +557,26 @@ export interface CreatedPart {
   part: number;
   ref: Ref;
   linked: boolean;
+}
+
+/**
+ * An Item draft (decision 95): a new Item an agent proposed (`drafts` in its answer, or a review's `should` findings), kept in this
+ * machine's store (host "scopesoup", kind "draft") until a person approves it, which makes the real Item on the source Item's host,
+ * or denies it. Kept after the decision, so the same draft (same source Item, same title) is never filed twice. Its text was made
+ * inert when it was filed.
+ */
+export interface ItemDraft {
+  ref: Ref;
+  /** The Item it was found while working on. */
+  from: Ref;
+  /** Which agent proposed it. */
+  role: "triage" | "implementor" | "reviewer";
+  title: string;
+  description: string;
+  verification: string;
+  at: string;
+  /** A person's decision: the Item made from it on approval. */
+  decided?: { verdict: "approved" | "denied"; by: string; at: string; item?: Ref };
 }
 
 /** One part of a proposed restructuring: its title, description and verification, and where it goes. Text from an agent: data. */
