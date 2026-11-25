@@ -59,6 +59,7 @@ import { createEventStreams } from "./sse.ts";
 import { serveStatic } from "./static.ts";
 import { sessionDetails } from "./sessionDetails.ts";
 import { buildUsageView, parseSpan } from "./usage.ts";
+import type { CopilotPlan } from "./usage.ts";
 import { isFolder, isFolderName, openFolder, projectView } from "./project.ts";
 import type { FolderOpener, ProjectInfo } from "./project.ts";
 
@@ -96,7 +97,7 @@ export interface ServerOptions {
    */
   configFile?: string;
   /** The orchestrator's labels, which order the backlog column. Defaults to bug label "bug". */
-  planning?: () => { bugLabels: string[]; plannedSessions?: number; level?: number; resources?: ResourceConfig[]; reserve?: Record<UsageWindowKind, number> };
+  planning?: () => { bugLabels: string[]; plannedSessions?: number; level?: number; resources?: ResourceConfig[]; reserve?: Record<UsageWindowKind, number>; copilot?: CopilotPlan };
   /** Reads the diff of an item's branch for `GET /api/diff`. Absent in board-only mode. */
   diff?: (ref: Ref) => Promise<DiffView>;
   /** The newest `limit` commits of the project for `GET /api/history`, and one commit for `GET /api/commit`. Absent in board-only mode. */
@@ -1640,7 +1641,7 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
         const snapshot = loadSnapshot(store);
         const plan = options.planning?.();
         if (plan?.plannedSessions !== undefined) snapshot.plannedSessions = plan.plannedSessions;
-        return sendJson(response, 200, buildUsageView(store, snapshot, span, now(), plan?.reserve));
+        return sendJson(response, 200, buildUsageView(store, snapshot, span, now(), plan?.reserve, plan?.copilot));
       }
       if (path === "/api/history") {
         if (!options.history) return sendJson(response, 200, { now: now().toISOString(), available: false, reason: "Commits show when Scope Soup runs with a project configuration; this board reads no repository." });

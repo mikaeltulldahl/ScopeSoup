@@ -96,6 +96,10 @@ export interface CopilotConfig {
   prefixArgs: string[];
   /** Arguments placed after Scope Soup's own. */
   extraArgs: string[];
+  /** The plan's premium requests per month: Copilot reports no window, so this is its budget. Absent: Copilot sessions are not paced. */
+  monthlyRequests?: number;
+  /** The day of the month (1 to 28, UTC) the allowance resets. Absent: the 1st. */
+  resetDay?: number;
 }
 
 /**

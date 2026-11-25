@@ -2,6 +2,7 @@
 
 import type { Actor, Assumption, BatchMemberState, DecisionOption, BatchStatus, ConflictVersions, HistoryLine, LinkType, LogWriter, OpenQuestion, Priority, ProposedPart, Ref, ParkedDraft, ParkedKind, ParkedQuestion, RunStatus, SessionRole, SessionStatus, TurnActor, UsageWindowKind, VerdictValue, WorkState } from "../model/types.ts";
 import type { BisectMark } from "./bisect.ts";
+import type { CopilotUse } from "./copilotBudget.ts";
 import type { ForecastPoint, UsageAttribution, UsagePlot } from "./usage.ts";
 import type { UsageForecast } from "./forecast.ts";
 import type { Progress } from "./estimates.ts";
@@ -661,6 +662,22 @@ export interface UsagePageWindow extends UsageAttribution {
   forecastLine: ForecastPoint[];
 }
 
+/** The Copilot section of the Usage page: the month's premium requests against the plan's allowance. */
+export interface CopilotUsageView {
+  /** The month's start and the next reset (ISO). */
+  from: string;
+  resetsAt: string;
+  /** The plan's monthly premium requests; absent when none is set. */
+  allowance?: number;
+  /** The share of the allowance kept for people's own use. */
+  reserve: number;
+  /** Premium requests used this month, AI credits where reported, and per role. */
+  requests: number;
+  credits: number;
+  byRole: CopilotUse["byRole"];
+  sessions: number;
+}
+
 export interface UsageView {
   now: string;
   /** "5h", "7d" or "<N>d". */
@@ -672,6 +689,8 @@ export interface UsageView {
   /** Sessions that ran in the span, and how many had token counts in their stream. */
   sessions: number;
   withTokens: number;
+  /** Present when some role runs on Copilot. */
+  copilot?: CopilotUsageView;
 }
 
 /** One turn of a person's chat with a session: the message, and the reply as far as it is written. */
