@@ -38,7 +38,7 @@ function ItemDialog({ closeHref, children }: { closeHref: string; children: Comp
 }
 
 /** Where the New item button sits in the top bar: "after-nav" (after Settings), "before-nav" (between "You are" and the tabs) or "after-project" (before "You are"). */
-const NEW_ITEM_AT: "after-nav" | "before-nav" | "after-project" = "after-nav";
+const NEW_ITEM_AT: "after-nav" | "before-nav" | "after-project" = "before-nav";
 
 function App() {
   const { route: current, below: route, belowHash } = useRoute();
