@@ -374,6 +374,18 @@ export async function postConfig(change: Record<string, unknown>): Promise<Confi
   return body as ConfigView & { shared?: string };
 }
 
+/**
+ * Settings' connect dialogs (#127): without `confirm` what connecting would do (`lines`) and what stands in the way (`problems`);
+ * with it, connects, and `view` is the configuration after. Rejects only when the server refused the request itself.
+ */
+export async function postConnect(body: Record<string, unknown>): Promise<{ lines: string[]; problems: string[]; done?: boolean; shared?: string; view?: ConfigView }> {
+  const response = await call("/api/connect", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const answer = (await response.json().catch(() => null)) as ({ lines?: string[]; problems?: string[]; done?: boolean; shared?: string; error?: { message?: string } } & Partial<ConfigView>) | null;
+  if (!answer || (!response.ok && !answer.problems)) throw new Error(answer?.error?.message ?? `The server answered ${response.status}.`);
+  const { lines = [], problems = [], done, shared } = answer;
+  return { lines, problems, ...(done ? { done, view: answer as ConfigView } : {}), ...(shared ? { shared } : {}) };
+}
+
 /** Re-renders every second with the server's time, for bars and "4 min ago". */
 export function useNow(): number {
   const [now, setNow] = useState(serverNow());

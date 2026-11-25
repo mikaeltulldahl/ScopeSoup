@@ -44,7 +44,8 @@ import type { Backend } from "../items/service.ts";
 import type { RemoteBranches } from "../items/remoteBranch.ts";
 import { branchCommands, farUntil, handBackItem, holdsIt, itemDetails, itemRef as itemRefOn, listItems, Refused, releaseItem, claimItem, whyNotHandBack, whyNotRelease, whyNotClaim } from "../items/service.ts";
 import type { JiraBoard } from "../items/jiraBackend.ts";
-import { editConfig, readConfigView, type SharedSaved } from "../config/edit.ts";
+import { connectHost, editConfig, readConfigView, type SharedSaved } from "../config/edit.ts";
+import { type ConnectDeps, connectionOf, HOST_NAME, hostWhere, lookAtHost, TOKEN_VARIABLE } from "./connect.ts";
 import type { SettingsLogEntry, SharedSettings } from "../config/shared.ts";
 import { activityView } from "./activity.ts";
 import type { MergeQueueOptions } from "../config/mergeQueue.ts";
@@ -128,6 +129,8 @@ export interface ServerOptions {
   branches?: RemoteBranches;
   /** Where the shared settings are read from and saved to: the meta ref (`metaSettings`) by default. */
   sharedSettings?: SharedSettings;
+  /** How Settings' connect dialogs read the token and look at GitHub or Jira (#127): `process.env` and `fetch` by default. Tests and the demo give fakes. */
+  connect?: ConnectDeps;
   /** The saves of the shared settings, newest first, for History (`GET /api/settings/log`). */
   settingsLog?: () => SettingsLogEntry[];
   /**
@@ -1490,6 +1493,56 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
     return sendJson(response, 200, { changed: result.changed, ...(saved ? { shared: saved } : {}), ...readConfigView(options.configFile, configOptions) });
   }
 
+  /**
+   * Settings' "Connect to GitHub Issues" / "Connect to Jira" (#127). Without `confirm` it only says what connecting would do, or
+   * why it cannot: the configuration checked as a whole, the token from the environment, one look at the host. With `confirm`
+   * and nothing in the way it writes the shared `host` (one meta commit) and this machine's part. Items are not moved.
+   */
+  async function connect(request: IncomingMessage, response: ServerResponse): Promise<void> {
+    if (options.configFile === undefined) return sendError(response, 404, "NO_CONFIG", "There is no project configuration: Scope Soup runs as a board only.");
+    let body: Record<string, unknown>;
+    try {
+      body = await readJson(request);
+    } catch (error) {
+      return sendError(response, 400, "BAD_BODY", error instanceof Error ? error.message : "The body is not JSON.");
+    }
+    const given = connectionOf(body);
+    if (!given.ok) return sendError(response, 400, "BAD_FIELD", given.error);
+    const { kind, connection } = given;
+    const person = picked();
+    const editOptions = { ...configOptions, ...(person ? { by: person } : {}) };
+    const view = readConfigView(options.configFile, configOptions);
+    const current = view.present ? view.config?.host : undefined;
+    const checked = await connectHost(options.configFile, connection, { ...editOptions, dryRun: true });
+    const looked = checked.ok ? await lookAtHost(kind, connection, options.connect ?? { env: process.env }) : { problems: [], lines: [] };
+    const problems = checked.ok ? looked.problems : checked.errors;
+    const host = connection.host;
+    const target = kind === "github" ? `GitHub Issues (${String(host.repo)})` : `Jira (project ${String(host.project)})`;
+    const same = current !== undefined && hostWhere(current) === target;
+    const open = loadSnapshot(store).works.filter((work) => work.state !== "done" && work.state !== "abandoned").length;
+    const lines = [
+      ...looked.lines,
+      `Sets the project's host to ${target}${host.write ? ", with writes on" : ", read-only"}: one commit to the shared settings on refs/scopesoup/meta${person ? `, named after ${person}` : ""}, for every machine.`,
+      ...(connection.email !== undefined ? [`Writes jira.email (${connection.email}) to this machine's scopesoup.config.json.`] : []),
+      ...(current?.kind === "metaBranch" ? ["Removes meta (this machine's part of the meta branch host) from this machine's scopesoup.config.json."] : []),
+      ...(same ? [] : [open > 0 ? `The ${open} open Item(s) on ${hostWhere(current)} stay there: Scope Soup cannot move them to ${HOST_NAME[kind]}. After the switch the board shows ${target} only.` : `There are no open Items on ${hostWhere(current)} to leave behind.`]),
+      ...(current?.kind === "metaBranch" ? [`On each other machine of the project: remove meta from its scopesoup.config.json${connection.email !== undefined ? ", add jira.email with its person's email" : ""} and set ${TOKEN_VARIABLE[kind]} before Scope Soup starts there again.`] : []),
+      "The new host is read when Scope Soup starts again: restart it after connecting.",
+    ];
+    if (body.confirm !== true) return sendJson(response, 200, { problems, lines });
+    if (problems.length > 0) return sendJson(response, 400, { error: { code: "CONNECT_REFUSED", message: problems.join(" ") }, problems, lines });
+    const result = await connectHost(options.configFile, connection, editOptions);
+    if (!result.ok) return sendJson(response, result.status, { error: { code: "CONNECT_REFUSED", message: result.errors.join(" ") }, problems: result.errors, lines });
+    let saved: string | undefined;
+    if (result.changed) {
+      const by = person ?? "board";
+      store.appendEvent({ kind: "config.changed", actor: by, data: { via: "board", fields: ["host"], connect: kind, ...(result.shared ? { shared: { commit: result.shared.commit, changes: result.shared.changes } } : {}) } }, now().toISOString());
+      if (result.shared) saved = sharedSavedText(result.shared, by);
+      options.onConfigChanged?.();
+    }
+    return sendJson(response, 200, { done: true, problems: [], lines, ...(saved ? { shared: saved } : {}), ...readConfigView(options.configFile, configOptions) });
+  }
+
   /** The project now, or null when there is none or it cannot be read. */
   const projectNow = (): ProjectInfo | null => {
     try {
@@ -1650,6 +1703,7 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
         if (path === "/api/item/handback") return person(request, response, "handback");
         if (path === "/api/item/release") return person(request, response, "release");
         if (path === "/api/config") return changeConfig(request, response);
+        if (path === "/api/connect") return connect(request, response);
         if (path === "/api/open-folder") return openProjectFolder(request, response);
         if (path === "/api/open-diff") return openDiff(request, response);
         request.resume();

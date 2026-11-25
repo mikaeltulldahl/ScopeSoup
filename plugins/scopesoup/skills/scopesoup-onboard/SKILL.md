@@ -73,6 +73,8 @@ What the two answers lead to:
 | Nowhere, or a text file | GitHub Issues | The github host. A text file can be filed as issues by the person; the skill does not write to GitHub. |
 | Another tracker (Jira, Trello, ...) | Items or GitHub Issues | That host. Say plainly: "Importing from <tracker> is not supported yet, so the backlog there stays where it is and Scope Soup starts without it." |
 
+Not sure yet? Items is a safe start: the Settings page's "Connect to GitHub Issues" and "Connect to Jira" switch the host later (the Items already made stay on the meta branch).
+
 ### 3b. Today GitHub Issues, from now on Items: the import
 
 Scope Soup can import the open issues once into Items (`pnpm item import github`, decision 67). Say what it does: every open issue becomes an Item with its title, text, labels, priority (from `priority:*` labels), parent and sub-issues, blockers, and its last 3 comments marked as imported; links between the issues are rewritten to the new Item ids; each Item says which issue it came from, so a second run never imports anything twice. Pull requests are never imported, and closed issues are left out (the person can ask for the last N, or all, in the summary). It is one commit on the meta ref `refs/scopesoup/meta`, by the person, so it can be read and undone. The import itself only reads GitHub.

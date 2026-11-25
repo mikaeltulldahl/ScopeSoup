@@ -7,6 +7,7 @@
 // machine's own. The page shows
 // the two as one: no key is in both.
 // The limited resources: a shared one is a project setting (`sharedResources`), the others this machine's (`resources`).
+// Where the Items are (the host) is a project setting too, changed only through the connect dialogs (Connect.tsx).
 
 import { ThemePicker } from "./ThemePicker.tsx";
 import { useEffect, useState } from "preact/hooks";
@@ -19,6 +20,7 @@ import type { Sliders } from "../../src/config/sliders.ts";
 import { commandText, commandWords } from "../../src/config/commandLine.ts";
 import { fetchConfig, postConfig } from "./api.ts";
 import { EFFORT_LEVELS } from "../../src/config/types.ts";
+import { ConnectDialog, type ConnectKind } from "./Connect.tsx";
 
 const ONBOARDING = "https://github.com/mikaeltulldahl/scopesoup/blob/main/docs/ONBOARDING.md";
 
@@ -188,6 +190,8 @@ export function Settings({ project, openHistory = false }: { project?: ProjectVi
   const [saved, setSaved] = useState(false);
   // What a save of a project setting did: saved for every machine, by whom.
   const [committed, setCommitted] = useState<string | null>(null);
+  // The connect dialog open, if one is (#127).
+  const [connecting, setConnecting] = useState<ConnectKind | null>(null);
 
   const show = (next: ConfigView) => {
     setView(next);
@@ -457,10 +461,20 @@ export function Settings({ project, openHistory = false }: { project?: ProjectVi
           <button type="button" disabled={busy} onClick={() => set({ resources: [...draft.resources, { name: "", units: "1", shared: false, neededBy: ["implement"], env: "" }] })}>Add a resource</button>
         </div>
 
+        <h4 id="host">Where the Items are</h4>
+        <p class="muted">
+          {view.config.host?.kind === "github" ? `GitHub Issues: ${view.config.host.repo}.` : view.config.host?.kind === "jira" ? `Jira: project ${view.config.host.project} on ${view.config.host.site}.` : view.config.host?.kind === "metaBranch" ? "The project's meta branch (refs/scopesoup/meta)." : "Set by the environment (SCOPESOUP_GITHUB_* or SCOPESOUP_META_*)."}
+          {" "}A project setting: connecting changes it for every machine, and takes effect when Scope Soup starts again. Items already there are not moved.
+        </p>
+        <div class="form-actions">
+          <button type="button" disabled={busy || dirty} title={dirty ? "Save or undo your changes first" : ""} onClick={() => setConnecting("github")}>Connect to GitHub Issues</button>
+          <button type="button" disabled={busy || dirty} title={dirty ? "Save or undo your changes first" : ""} onClick={() => setConnecting("jira")}>Connect to Jira</button>
+        </div>
+
         {view.config?.host?.kind === "jira" && (
           <>
             <h4 id="jira">Jira</h4>
-            <p class="muted">Set in the configuration file (<code>host</code>); not changed here.</p>
+            <p class="muted">Set with Connect to Jira, or in the configuration (<code>host</code>).</p>
             <dl class="facts">
               <dt>Project read</dt>
               <dd>{view.config.host.project}</dd>
@@ -549,6 +563,18 @@ export function Settings({ project, openHistory = false }: { project?: ProjectVi
         {committed && <p class="notice settings-committed" role="status">{committed}</p>}
         {error && <pre class="notice notice-bad settings-errors" role="alert">{error}</pre>}
       </form>
+      {connecting && (
+        <ConnectDialog
+          kind={connecting}
+          onClose={() => setConnecting(null)}
+          onConnected={(next, shared) => {
+            setConnecting(null);
+            show(next);
+            setSaved(false);
+            setCommitted(`${shared ?? "Connected."} Start Scope Soup again to use the new host.`);
+          }}
+        />
+      )}
       <SettingsHistory open={openHistory} />
     </div>
   );
