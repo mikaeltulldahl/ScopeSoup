@@ -71,7 +71,8 @@ What the two answers lead to:
 | GitHub Issues | Items | The meta branch host, and the import (below): one more part to the backlog question, what to do with the issues on GitHub. |
 | Nowhere, or a text file | Items | The meta branch host, starting empty. Offer, as an optional step in the summary, to write the first Items (or file them from the text file, one Item per entry, each shown by title in the summary). |
 | Nowhere, or a text file | GitHub Issues | The github host. A text file can be filed as issues by the person; the skill does not write to GitHub. |
-| Another tracker (Jira, Trello, ...) | Items or GitHub Issues | That host. Say plainly: "Importing from <tracker> is not supported yet, so the backlog there stays where it is and Scope Soup starts without it." |
+| Jira | Items | Start with Items (the skill does not set up a Jira host); "Connect to Jira" on the Settings page reads the project live later. |
+| Another tracker (Trello, ...) | Items or GitHub Issues | That host. Say plainly: "Importing from <tracker> is not supported yet, so the backlog there stays where it is and Scope Soup starts without it." |
 
 Not sure yet? Items is a safe start: the Settings page's "Connect to GitHub Issues" and "Connect to Jira" switch the host later, moving the Items the person ticks. On a project whose host is GitHub or Jira, a machine without its token (or Jira Cloud email) is asked on its board to "Set up this machine".
 
