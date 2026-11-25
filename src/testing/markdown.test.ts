@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
-import { inline, parseMarkdown } from "../../web/src/markdownParse.ts";
+import { imageParts, inline, parseMarkdown } from "../../web/src/markdownParse.ts";
 import type { Block } from "../../web/src/markdownParse.ts";
 
 const ISSUE = `Seen on the self-trial board (Item #7): descriptions do not render.
@@ -181,5 +181,22 @@ describe("Markdown.tsx and styles.css", () => {
     assert.match(css, /\.md-table th,\s*\.md-table td\s*\{[^}]*border/);
     assert.match(css, /\.md-quote\s*\{[^}]*border-left/);
     assert.match(css, /\.md-rule\s*\{/);
+  });
+});
+
+describe("images agents attached", () => {
+  it("makes an image only of a relative media/ path with a plain name", () => {
+    assert.deepEqual(inline("see ![the header, before](media/head-before.png) here"), ["see ", { t: "img", name: "head-before.png", alt: "the header, before" }, " here"]);
+    for (const text of ["![x](media/../secret.png)", "![x](media/a/b.png)", "![x](media/page.html)", "![x](/media/a.png)", "![x](https://example.com/a.png)", "![x](javascript:alert(1))", "![x](data:image/png;base64,AAAA)"]) {
+      assert.ok(inline(text).every((part) => typeof part === "string" || part.t !== "img"), text);
+    }
+  });
+  it("finds images in plain text, which stays as it is around them", () => {
+    assert.deepEqual(imageParts("Before ![before](media/a.png) ![after](media/b.svg), *not* emphasis"), ["Before ", { t: "img", name: "a.png", alt: "before" }, " ", { t: "img", name: "b.svg", alt: "after" }, ", *not* emphasis"]);
+    assert.deepEqual(imageParts("![x](media/../a.png)"), ["![x](media/../a.png)"]);
+  });
+  it("a paragraph of images alone is a row, side by side", () => {
+    assert.deepEqual(parseMarkdown("![before](media/a.png) ![after](media/b.png)"), [{ t: "p", c: [{ t: "img", name: "a.png", alt: "before" }, " ", { t: "img", name: "b.png", alt: "after" }] }]);
+    assert.match(readFileSync(new URL("../../web/src/Markdown.tsx", import.meta.url), "utf8"), /md-images/);
   });
 });

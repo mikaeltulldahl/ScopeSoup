@@ -118,6 +118,12 @@ export function settingsWords(changes: readonly SettingChangeLike[]): string[] {
       out.push(fromTo(second ? `Merge queue ${spaced(parts.slice(1).join(" "))}` : "Merge queue", change));
       continue;
     }
+    if (top === "media") {
+      if (second === "push" && parts.length === 2) out.push(change.to === true ? "Images pushed to the remote" : "Images kept on each machine only");
+      else if (second === "keepDaysAfterClose" && parts.length === 2) out.push(typeof change.to === "number" ? `Images deleted ${change.to} days after an Item closes` : "Images kept after an Item closes");
+      else out.push(fromTo("Images", change));
+      continue;
+    }
     if (top === "host") {
       out.push(fromTo(second ? `Host ${spaced(parts.slice(1).join(" "))}` : "Host", change));
       continue;

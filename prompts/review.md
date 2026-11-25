@@ -10,6 +10,6 @@ Title: {{itemTitle}}
 Verification: {{verification}}
 </item>
 
-{{allowedCommands}} {{decisions}}
+{{allowedCommands}} {{media}} {{decisions}}
 
 Answer: `verdict` (approve, or changes when something must be fixed first) and `findings` (each `must` or `should`, the `file`, and what to change; `ask` true for a decision that should have been a question).

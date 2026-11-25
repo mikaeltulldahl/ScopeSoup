@@ -10,7 +10,7 @@ import { EFFORT_LEVELS, LEVELS, mcpToolEntry, PROVIDER_NAMES, ROLES } from "./ty
 import { CHECK_ROLES, withCheckRules } from "./checkRule.ts";
 import { proposeCheckCommand } from "./mergeQueue.ts";
 import { migrateConfig } from "./migrate.ts";
-import type { HostConfig, JiraHostConfig, MergeQueueConfig, ResourceConfig, ResourceUser, WorkspacesConfig } from "./types.ts";
+import type { HostConfig, JiraHostConfig, MediaConfig, MergeQueueConfig, ResourceConfig, ResourceUser, WorkspacesConfig } from "./types.ts";
 import { RESOURCE_USERS } from "./types.ts";
 import { DEFAULT_CI_TIMEOUT_MINUTES } from "./types.ts";
 import { win32 } from "node:path";
@@ -56,7 +56,7 @@ const LEGACY_SETTINGS = ["reserveFiveHour", "reserveSevenDay"];
 const TOP_KEYS = [
   "workspaces", "remoteUrl", "checkCommand", "rerunFilesCommand", "setupCommand", "setupWatch",
   "version", "project", "repoPath", "ownClone", "mainBranch", "remote", "realPaths", "level", "keepAwake", "machineName", "workspacesDir",
-  "streamsDir", "promptsDir", "bugLabels", "claude", "copilot", "settings", "roles", "host", "mergeQueue", "resources", "sharedResources",
+  "streamsDir", "promptsDir", "bugLabels", "claude", "copilot", "settings", "roles", "host", "mergeQueue", "resources", "sharedResources", "media",
 ];
 
 function isObj(value: unknown): value is Obj {
@@ -157,6 +157,11 @@ export function validateConfig(given: unknown, baseDir: string): ConfigResult {
   if (raw.mergeQueue !== undefined) {
     if (isObj(raw.mergeQueue)) mergeQueue = mergeQueueOf(raw.mergeQueue, err);
     else err('mergeQueue must be an object: "ci" and "ciTimeoutMinutes".');
+  }
+  let media: MediaConfig | undefined;
+  if (raw.media !== undefined) {
+    if (isObj(raw.media)) media = mediaOf(raw.media, err);
+    else err('media must be an object: "push" and "keepDaysAfterClose".');
   }
   let checkCommand: string[] | undefined;
   if (raw.checkCommand !== undefined) {
@@ -353,6 +358,7 @@ export function validateConfig(given: unknown, baseDir: string): ConfigResult {
       ...(remoteUrl === undefined ? {} : { remoteUrl }), ...(checkCommand === undefined ? {} : { checkCommand }), ...(rerunFilesCommand === undefined ? {} : { rerunFilesCommand }),
       ...(setupCommand === undefined ? {} : { setupCommand }), ...(setupWatch === undefined ? {} : { setupWatch }),
       ...(mergeQueue === undefined ? {} : { mergeQueue }),
+      ...(media === undefined ? {} : { media }),
       ...(resources.length > 0 ? { resources } : {}),
       claude, copilot, settings, roles,
     },
@@ -467,6 +473,25 @@ function mergeQueueOf(value: Obj, err: (message: string) => void): MergeQueueCon
     else ciTimeoutMinutes = given;
   }
   return { ci, ciTimeoutMinutes };
+}
+
+/** `media`: whether agents' images are pushed to the remote, and how long a closed Item's images are kept. */
+function mediaOf(value: Obj, err: (message: string) => void): MediaConfig {
+  for (const key of Object.keys(value)) {
+    if (key !== "push" && key !== "keepDaysAfterClose") err(`media: unknown key "${key}". Known keys: push, keepDaysAfterClose.`);
+  }
+  let push = false;
+  if (value.push !== undefined) {
+    if (typeof value.push !== "boolean") err("media.push must be true or false.");
+    else push = value.push;
+  }
+  let keepDaysAfterClose: number | null = null;
+  if (value.keepDaysAfterClose !== undefined && value.keepDaysAfterClose !== null) {
+    const given = value.keepDaysAfterClose;
+    if (typeof given !== "number" || !Number.isInteger(given) || given < 0 || given > 3650) err("media.keepDaysAfterClose must be a whole number of days from 0 to 3650, or null to keep the images.");
+    else keepDaysAfterClose = given;
+  }
+  return { push, keepDaysAfterClose };
 }
 
 // The meta ref is refs/scopesoup/meta in repoPath, shared with remote (both from this machine's file): no ref, folder or remote here.

@@ -10,7 +10,7 @@ Title: {{itemTitle}}
 Verification: {{verification}}
 </item>
 
-{{allowedCommands}}
+{{allowedCommands}} {{media}}
 
 {{finish}}
 Sort each question that comes up: one cheap to change later (a name, a layout, which of two equal approaches) you decide, record in `decisions` (the `question`, what you `chosen`, the `others`, `why`) and go on; one expensive or irreversible (a data format, a public interface, deleting anything, anything security-related) you stop and ask in `question`: the question, two or three options, and the label of the one you recommend. When unsure, ask; so too for a review finding marked "ask a person".

@@ -8,6 +8,8 @@ import { createWriteStream, mkdirSync } from "node:fs";
 import type { WriteStream } from "node:fs";
 import { join } from "node:path";
 import type { ProjectConfig } from "../config/types.ts";
+import { mediaSettings } from "../config/types.ts";
+import { mediaPromptText } from "../core/media.ts";
 import { refKey } from "../model/types.ts";
 import type { Ref, Session, SessionRole, SessionStatus, UsageSample } from "../model/types.ts";
 import { ROLES } from "../store/control.ts";
@@ -57,6 +59,8 @@ export interface RunnerDeps {
   stopped?: (role: SessionRole) => boolean;
   /** The agent provider for a session. Default: `providerFor` (`providers/index.ts`); tests give a fake. */
   provider?: (config: ProjectConfig, request: SessionRequest) => AgentProvider;
+  /** Agents' images (`media.ts`): the clone's media folder made before a session, its images taken after. */
+  media?: { prepare(cwd: string): void; collect(subject: Ref, cwd: string): unknown };
   /** The limited resources: the units the caller took for a session are given back here once it is over, however it ended. */
   resources?: Resources;
 }
@@ -229,6 +233,8 @@ export function createRunner(deps: RunnerDeps): Runner {
     if (summary.sessionId) session.agentSessionId = summary.sessionId;
     if (summary.lastAction) session.lastAction = summary.lastAction;
     if (summary.result?.costUsd !== undefined) session.costUsd = summary.result.costUsd;
+    // The images the agent saved, taken before anyone is told the session is over (the answer refers to them).
+    if (session.cwd) deps.media?.collect(session.subject, session.cwd);
     store.tx(() => {
       store.setValue(sessionResultKey(session.ref.id), JSON.stringify(record));
       store.put(session, ACTOR, iso(at));
@@ -367,6 +373,7 @@ export function createRunner(deps: RunnerDeps): Runner {
       const restored = config.workspaces.kind === "worktree" ? await restoreWip(git, cwd, wipPatchPath(config.streamsDir, request.workspace)) : null;
       const unset = await setUp(config, request, cwd);
       if (unset) return unset;
+      deps.media?.prepare(cwd);
       // A reused worktree may not be the folder the session to resume ran in; the agent CLI keeps a session per folder, so it starts afresh with the prompt.
       if (request.resume && config.workspaces.kind === "worktree" && !request.chat) {
         const ran = store.list<Session>("session", SESSION_HOST).find((each) => each.agentSessionId === request.resume && each.cwd !== undefined);
@@ -376,7 +383,7 @@ export function createRunner(deps: RunnerDeps): Runner {
         }
       }
       // A resumed session with a message (findings, a failed merging) is sent only the message: it has the prompt already.
-      const rendered = request.resume && request.message ? request.message : renderTemplate(spec.template, { setup: setupPromptLine(config), decisions: NO_DECISIONS, recheck: "", ...request.vars, base });
+      const rendered = request.resume && request.message ? request.message : renderTemplate(spec.template, { setup: setupPromptLine(config), decisions: NO_DECISIONS, recheck: "", media: mediaPromptText(mediaSettings(config).push), ...request.vars, base });
       const prompt = request.message && rendered !== request.message ? `${rendered}\n\n${request.message}` : rendered;
       command = provider.launch({
         config, role: spec.role, prompt: restored ? `${prompt}\n\n${restored}\n` : prompt, partial: request.chat === true, env: { ...(deps.env ?? process.env) }, streamPath, nodePath: process.execPath,
