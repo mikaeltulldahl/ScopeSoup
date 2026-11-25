@@ -26,7 +26,7 @@ Three folders, always named like this:
 
 Two places, each key in exactly one (`SCOPESOUP/docs/RUNNING.md`, "The project's configuration"): the project's **shared** settings on its meta ref, `settings/settings.json` on `refs/scopesoup/meta` (`project`, `host`, `mainBranch`, `level`, `setupCommand`, `setupWatch`, roles and rules), and this machine's **private** `scopesoup.config.json` (`machineName`, `repoPath`, `remote`, `realPaths`, `ownClone`, `meta`, local paths, spending). Scope Soup refuses a key in the wrong place and says where it belongs.
 
-**First, is the project run by Scope Soup already?** Run `git ls-remote <remote URL> refs/scopesoup/meta` in the project clone. If it prints a line, a teammate has onboarded the project: the person is **joining** (`SCOPESOUP/docs/RUNNING.md`, "Joining a project Scope Soup already runs"). Then write only this machine's private file: skip question 2 and the setup (step 4c; the host and the setup are the team's, in the shared settings), still ask question 3 for Items (read the host after the yes with `pnpm config:check`, step 6), and never write or commit shared settings or a script. Say so in the summary: "This project already runs Scope Soup: I will write only this machine's settings."
+**First, is the project run by Scope Soup already?** Run `git ls-remote <remote URL> refs/scopesoup/meta` in the project clone. If it prints a line, a teammate has onboarded the project: the person is **joining** (`SCOPESOUP/docs/RUNNING.md`, "Joining a project Scope Soup already runs"). Then write only this machine's private file: skip question 2 and the setup (step 4c; the host and the setup are the team's, in the shared settings), still ask question 3 for Items (read the host after the yes with `pnpm config:check`, step 6), and never write or commit shared settings or a script. Say so in the summary: "This project already runs Scope Soup: I will write only this machine's settings." This `ls-remote` only reads, to tell a project already run from a new one; it pushes nothing, in singleplayer too.
 
 ## 1. Find the Scope Soup install
 
@@ -96,7 +96,7 @@ A person joining is multiplayer: do not ask. It can be switched later on the Set
 
 ## 4. Question 3 (Items only): this machine's prefix
 
-Every machine that writes Items needs its own prefix: `A` gives ids `A-1`, `A-2`. Read the ids that exist with `git ls-remote <remote URL> refs/scopesoup/meta`; if it prints nothing, nothing is taken. Otherwise confirm after the yes, in `repoPath`: `git fetch <remote> refs/scopesoup/meta`, then `git ls-tree --name-only FETCH_HEAD items/`; the letters before `-` in each name are taken. Propose the first free letter of `A`, `B`, `C`, ... and ask. A prefix is a letter followed by up to 15 letters or digits.
+Every machine that writes Items needs its own prefix: `A` gives ids `A-1`, `A-2`. Singleplayer (step 3c) has one machine and nothing to read on the remote: propose `A` and skip the rest of this step. Otherwise read the ids that exist with `git ls-remote <remote URL> refs/scopesoup/meta`; if it prints nothing, nothing is taken. Otherwise confirm after the yes, in `repoPath`: `git fetch <remote> refs/scopesoup/meta`, then `git ls-tree --name-only FETCH_HEAD items/`; the letters before `-` in each name are taken. Propose the first free letter of `A`, `B`, `C`, ... and ask. A prefix is a letter followed by up to 15 letters or digits.
 
 ## 4b. The machine's name (proposed, not asked)
 

@@ -283,8 +283,11 @@ export function createMetaBranchHost(config: MetaBranchConfig): MetaBranchHost {
   return {
     info: {
       id: host, capabilities, whoami: async () => user, ...(config.machine ? { machine: config.machine } : {}),
-      // A meta branch with writes and a remote to share it with is shared, and Scope Soup claims what it starts there.
-      ...(config.allowWrites && config.remote !== null ? { shared: true as const } : {}),
+      // A meta branch with writes and a remote to share it with is shared, and Scope Soup claims what it starts there. Read each
+      // time: singleplayer (`shares` false) is not shared, and it can be switched while Scope Soup runs.
+      get shared(): true | undefined {
+        return config.allowWrites && config.remote !== null && config.shares?.() !== false ? true : undefined;
+      },
     },
     work,
     changes,

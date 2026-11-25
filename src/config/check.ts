@@ -90,7 +90,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
         const raw = JSON.parse(readFileSync(resolve(file), "utf8")) as unknown;
         const where = repositoryOf(raw, dirname(resolve(file)));
         if (where.machine) {
-          const report = await meta.fetch(where.repoPath, where.metaRemote, where.machine);
+          const report = await meta.fetch(where.repoPath, where.remote, where.machine, where.multiplayer);
           if (report.problem) console.log(`Fetching the shared settings: ${report.problem}`);
         }
       } catch {

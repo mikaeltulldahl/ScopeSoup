@@ -10,7 +10,7 @@ The Claude Code skill `/scopesoup:scopesoup-onboard` (`plugins/scopesoup/skills/
 2. The backlog, in two parts asked together: where it is today (GitHub Issues, another tracker, a text file, or nowhere yet), and where to keep it from now on (Scope Soup's own Items on the project's meta branch, or GitHub Issues when the remote is on GitHub).
 3. For Items only: this machine's prefix for new ids (it proposes the first free one).
 
-On a new project the backlog question also asks singleplayer or multiplayer (decision 93). Singleplayer is for a project you play alone: Scope Soup pushes nothing under `refs/scopesoup/*` (Items and shared settings, the merge queue lease, images stay in this clone), while work branches and merges go to the remote as ever. Multiplayer, today's way, shares them. It is this machine's `multiplayer` in its private file; a person joining is multiplayer. The Settings page switches it ("Players").
+On a new project the backlog question also asks singleplayer (nothing under `refs/scopesoup/*` is pushed) or multiplayer (shared through the remote), decision 93. A person joining is multiplayer. The Settings page switches it ("Players").
 
 The two parts of the backlog question decide what happens (decided):
 

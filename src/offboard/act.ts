@@ -41,11 +41,14 @@ async function run(git: Git, args: string[], cwd: string, input?: string, env?: 
   return result.stdout;
 }
 
-/** The Items and shared settings of the remote's meta ref, as Markdown files: `items/<id>.md` (item.md, then its log). */
-export async function exportItems(git: Git, setup: OffboardSetup, out: string): Promise<string[]> {
+/**
+ * The Items and shared settings of the remote's meta ref (singleplayer: the one in Scope Soup's clone, nothing fetched), as
+ * Markdown files: `items/<id>.md` (item.md, then its log).
+ */
+export async function exportItems(git: Git, setup: Pick<OffboardSetup, "repoPath" | "remote" | "singleplayer">, out: string): Promise<string[]> {
   const repo = setup.repoPath;
-  await run(git, ["fetch", "-q", "--no-tags", setup.remote, META_REF], repo);
-  const sha = (await run(git, ["rev-parse", "FETCH_HEAD"], repo)).trim();
+  if (!setup.singleplayer) await run(git, ["fetch", "-q", "--no-tags", setup.remote, META_REF], repo);
+  const sha = (await run(git, ["rev-parse", "--verify", setup.singleplayer ? `${META_REF}^{commit}` : "FETCH_HEAD"], repo)).trim();
   const paths = (await run(git, ["ls-tree", "-r", "--name-only", sha], repo)).split("\n").filter(Boolean);
   const show = (path: string) => run(git, ["show", `${sha}:${path}`], repo);
   const written: string[] = [];

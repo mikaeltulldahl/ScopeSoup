@@ -31,14 +31,15 @@ export async function initSettings(sharedFile: string, privateFile: string, by: 
   if (!where.machine) return { ok: false, lines: [`${privateFile} has no machineName: the commit names this machine.`] };
   const checked = validateFiles(privateRaw, sharedRaw, dirname(privateFile));
   if (!checked.ok) return { ok: false, lines: [`${sharedFile} with ${privateFile} is not valid. ${checked.errors.length} problem(s):`, ...checked.errors.map((error) => `- ${error}`)] };
-  const fetched = await settings.fetch(where.repoPath, where.metaRemote, where.machine);
+  const fetched = await settings.fetch(where.repoPath, where.remote, where.machine, where.multiplayer);
   if (fetched.problem) return { ok: false, lines: [`The meta ref could not be fetched from ${where.remote}, so nothing was written (the project may have shared settings there already): ${fetched.problem}`] };
   if (settings.read(where.repoPath).ok) {
     return { ok: false, lines: [`This project has ${SHARED_WHERE} already: you are joining a project Scope Soup runs. Nothing was written. Write only this machine's private file (${privateFile}); change a shared setting on the Settings page.`] };
   }
   const done = await settings.save({
     repoPath: where.repoPath,
-    remote: where.metaRemote,
+    remote: where.remote,
+    multiplayer: where.multiplayer,
     machine: where.machine,
     by,
     update: (current) => {

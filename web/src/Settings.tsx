@@ -31,8 +31,8 @@ const COPILOT_WARNING = "Copilot's rules name a program and its first word only 
 
 /** Singleplayer or multiplayer, as the page names them (decision 93). */
 const PLAYERS: [boolean, string, string][] = [
-  [false, "Singleplayer", "You play alone: the Items and shared settings (meta ref), the merge queue lease and images stay in this clone. Nothing under refs/scopesoup/ is fetched or pushed; work branches and the main branch are pushed as ever."],
-  [true, "Multiplayer", "Several machines play: Scope Soup shares the meta ref, the merge queue lease and (if on) images on the remote under refs/scopesoup/. Switching to it pushes what this clone has."],
+  [false, "Singleplayer", "Scope Soup stays on this machine: nothing under refs/scopesoup/ is pushed."],
+  [true, "Multiplayer", "Several machines share the Items, the merge queue and (if on) images through the remote."],
 ];
 
 /** The three roles, as the page names them. */
@@ -462,7 +462,7 @@ export function Settings({ project, openHistory = false }: { project?: ProjectVi
           Agents may attach images to what they answer (a screenshot, a before and after of a UI change). Scope Soup keeps them in this machine's data folder and shows them on the Item page. Hosts (GitHub, Jira) get only the words "image on the board", never the picture.
         </p>
         <div class="settings-grid">
-          {!draft.multiplayer ? <p class="muted">Singleplayer: images stay on this machine; they are pushed only in multiplayer, with this project setting on.</p> : <label class="resource-check">
+          {!draft.multiplayer ? <p class="muted">Singleplayer: images stay on this machine.</p> : <label class="resource-check">
             <input type="checkbox" checked={draft.media.push} disabled={busy} onChange={(event) => set({ media: { ...draft.media, push: (event.target as HTMLInputElement).checked } })} />
             {" "}Push images to the project's remote, so that everyone with the repository sees them (a project setting; off: only the machine that ran the session sees them)
           </label>}

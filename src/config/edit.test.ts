@@ -119,9 +119,9 @@ test("singleplayer is this machine's: written to its file with no commit, and a 
   assert.equal(JSON.parse(readFileSync(file, "utf8")).multiplayer, false);
   assert.ok((await edit(file, { level: 0 })).ok);
   assert.ok((await edit(file, { setupWatch: ["pnpm-lock.yaml"] }, found)).ok);
-  assert.equal(saves.get(file)?.at(-1)?.remote, null);
+  assert.equal(saves.get(file)?.at(-1)?.multiplayer, false);
   assert.ok((await edit(file, { multiplayer: true, setupWatch: ["package.json"] }, found)).ok);
-  assert.equal(saves.get(file)?.at(-1)?.remote, "origin");
+  assert.equal(saves.get(file)?.at(-1)?.multiplayer, true);
 });
 
 test("a save of a shared setting names a person: without one it is refused and nothing is written", async () => {

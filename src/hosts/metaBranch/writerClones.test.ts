@@ -382,12 +382,14 @@ test("singleplayer fetches and pushes nothing; back in multiplayer the next writ
   const origin = remote();
   let multiplayer = false;
   const a = laptop(origin, "laptop-a", "A", { shares: () => multiplayer });
+  assert.equal(a.host.info.shared, undefined);
   const made = await write(a).createWork({ title: "Kept here" });
   assert.equal(made.shared, "local");
   assert.equal((await writer(a).share()).state, "local");
   assert.equal(tryGit(origin, ["rev-parse", "--verify", "--quiet", REF]), null);
   assert.deepEqual(marked(a.clone, "pre-push"), []);
   multiplayer = true;
+  assert.equal(a.host.info.shared, true);
   await write(a).createWork({ title: "Now shared" });
   assert.equal(origin.git(["rev-parse", REF]), a.clone.git(["rev-parse", REF]));
   assert.equal(origin.git(["log", "--format=%s", REF]).split("\n").length, 2);

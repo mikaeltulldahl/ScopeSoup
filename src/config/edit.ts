@@ -261,8 +261,9 @@ export async function editConfig(file: string, change: unknown, options: EditOpt
     if (!files.machine) return { ok: false, status: 400, errors: ["machineName is missing from this machine's scopesoup.config.json: a save of the shared settings names the machine."] };
     const done = await store.save({
       repoPath: files.repoPath,
+      remote: files.remote,
       // Pushed in multiplayer only, as the private file stands after this save.
-      remote: result.config.multiplayer ? files.remote : null,
+      multiplayer: result.config.multiplayer,
       machine: files.machine,
       by: options.by,
       // Made on the settings as they stand at the save: another save may have come in since they were read.

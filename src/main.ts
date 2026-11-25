@@ -145,7 +145,7 @@ async function main(): Promise<void> {
     // Read each time: singleplayer (nothing fetched or pushed) can be switched on the Settings page.
     const repository = existsSync(configFile) ? privateWhere(configFile) : null;
     if (!repository?.machine) return;
-    const report = await shared.fetch(repository.repoPath, repository.metaRemote, repository.machine);
+    const report = await shared.fetch(repository.repoPath, repository.remote, repository.machine, repository.multiplayer);
     if (report.problem) console.log(`Fetching the shared settings (refs/scopesoup/meta): ${report.problem}`);
   };
   await fetchShared();
@@ -264,7 +264,7 @@ async function main(): Promise<void> {
     // Several machines share the main branch: only the one that holds the merge queue lease merges (decision 31). SCOPESOUP_MERGE_QUEUE=off leaves it out.
     const machine = writable?.info.machine;
     mergeQueue = machine && env.SCOPESOUP_MERGE_QUEUE !== "off" ? createMergeQueue({ git: realGit, repo: first.config.repoPath, remote: first.config.remote, machine, alone: () => !multiplayer() }) : undefined;
-    if (mergeQueue) console.log(multiplayer() ? `Merging waits for the merge queue lease on ${first.config.remote} (this machine: ${machine}).` : "Singleplayer: merging takes no lease on the remote.");
+    if (mergeQueue) console.log(multiplayer() ? `Merging waits for the merge queue lease on ${first.config.remote} (this machine: ${machine}).` : "Singleplayer: the merge queue lease is a local ref, never pushed.");
     // The batches go to remoteUrl and their pull requests to the GitHub host: refused at start when they are not one repository.
     const ciRefused = githubCiRefusal(first.config, hostSet.github?.repo) ?? undefined;
     if (ciRefused) console.log(`Merging waits for no CI: ${ciRefused}.`);
