@@ -95,6 +95,7 @@ Every machine that writes Items needs its own prefix: `A` gives ids `A-1`, `A-2`
 
 ## 4c. The setup of a fresh clone (proposed, not asked)
 
+
 Scope Soup's worktrees, clones and the merge queue's clone are fresh folders: they lack what the person's checkout has (installed dependencies, a virtual environment, generated files, submodules, a `.env` with test settings). A setup script sets one up; `setupCommand` runs it, once per folder and again when a file of `setupWatch` changes. `SCOPESOUP/docs/RUNNING.md`, "The setup of a fresh clone", is the reference.
 
 1. Run, from the install (it only reads the clone):
@@ -114,6 +115,10 @@ Scope Soup's worktrees, clones and the merge queue's clone are fresh folders: th
    ```
 
    It writes `<repoPath>/.scopesoup/scopesoup-setup.mjs`, on the `scopesoup/onboard` branch (step 6). Put its `setupCommand` and `setupWatch` into the shared settings. If the person wants no setup, leave both keys out and write no script.
+
+## 4d. A browser for a web project (offered, never installed)
+
+If the project is a web project (a `package.json` with a dev server or a front end, an `index.html`), offer in the summary (step 5), as one line the person can decline: "Give the implement and review roles a headless browser (Playwright, over MCP) to look at pages and take screenshots?" On a yes, add to the config file's `roles.implement` and `roles.review`: `"mcpServers": { "playwright": { "command": "npx", "args": ["-y", "@playwright/mcp@latest", "--headless"] } }` (on Windows `"command": "cmd"` with `"args": ["/c", "npx", ...]`). Install nothing yourself: the server downloads itself when a session first uses it. A server that needs a secret takes only the variable's name in `env`, never its value. `SCOPESOUP/docs/RUNNING.md`, `roles.<role>.mcpServers`, is the reference.
 
 ## 5. The summary and one yes
 
