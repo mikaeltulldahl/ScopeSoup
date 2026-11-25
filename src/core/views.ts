@@ -2,6 +2,7 @@
 
 import type { Actor, Assumption, BatchMemberState, DecisionOption, BatchStatus, ConflictVersions, HistoryLine, LinkType, LogWriter, OpenQuestion, Priority, ProposedPart, Ref, ParkedDraft, ParkedKind, ParkedQuestion, RunStatus, SessionRole, SessionStatus, TurnActor, UsageWindowKind, VerdictValue, WorkState } from "../model/types.ts";
 import type { BisectMark } from "./bisect.ts";
+import type { AllowanceUse, AllowanceWords } from "./allowanceBudget.ts";
 import type { ForecastPoint, UsageAttribution, UsagePlot } from "./usage.ts";
 import type { UsageForecast } from "./forecast.ts";
 import type { Progress } from "./estimates.ts";
@@ -666,6 +667,23 @@ export interface UsagePageWindow extends UsageAttribution {
   forecastLine: ForecastPoint[];
 }
 
+/** A provider's monthly allowance on the Usage page, for a provider that reports no window: the month's use against the allowance. */
+export interface AllowanceView extends AllowanceWords {
+  /** The provider's name. */
+  provider: string;
+  /** The month's start and the next reset (ISO). */
+  from: string;
+  resetsAt: string;
+  /** The plan's monthly allowance; absent when none is set. */
+  allowance?: number;
+  /** The share of the allowance kept for people's own use. */
+  reserve: number;
+  /** Used this month, in all and per role. */
+  used: number;
+  byRole: AllowanceUse["byRole"];
+  sessions: number;
+}
+
 export interface UsageView {
   now: string;
   /** "5h", "7d" or "<N>d". */
@@ -677,6 +695,8 @@ export interface UsageView {
   /** Sessions that ran in the span, and how many had token counts in their stream. */
   sessions: number;
   withTokens: number;
+  /** One per provider some role runs on that counts a monthly allowance instead of reporting windows; absent when none does. */
+  allowances?: AllowanceView[];
 }
 
 /** One turn of a person's chat with a session: the message, and the reply as far as it is written. */

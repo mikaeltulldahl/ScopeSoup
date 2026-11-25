@@ -25,6 +25,8 @@ import { createLog, errorText } from "./context.ts";
 import { afterRefine, backToImplement, emptyBranch, followDraft, followQuestions, overturnsBack, park, retryHandOver, retryPost, reviewOffAtLevel2, settle, writeAboutOthers } from "./cycle.ts";
 import { loadOwnBlockers, withOwnBlockers } from "../store/blockers.ts";
 import { decide } from "./usageCheck.ts";
+import { allowanceDecision } from "./allowance.ts";
+import type { Store } from "../store/store.ts";
 import type { UsageCheckDecision } from "./usageCheck.ts";
 import type { Job, Jobs } from "./jobs.ts";
 import { loadJobs, NO_DECISIONS, takenText } from "./jobs.ts";
@@ -78,6 +80,15 @@ export function usageReserve(config: ProjectConfig): Record<UsageWindowKind, num
     five_hour: config.settings.reserveFiveHour?.value ?? budgetReserve(config.settings.budgetReserve.value).fiveHour,
     seven_day: config.settings.reserveSevenDay?.value ?? budgetReserve(config.settings.budgetReserve.value).sevenDay,
   };
+}
+
+/**
+ * The usage check for a session of `role`: a role on a provider that counts a monthly allowance is paced by it (`allowance.ts`),
+ * every other role by Claude's windows.
+ */
+export function usageDecision(store: Store, config: ProjectConfig, role: SessionRole, at: string, running: number): UsageCheckDecision {
+  const reserve = usageReserve(config);
+  return allowanceDecision(store, config, role, at, reserve.seven_day) ?? decide({ sample: store.latestUsageSample(), now: at, reserve, runningSessions: running });
 }
 
 /** Writes an event for each number changed since the last tick, and for a change of level. */
@@ -527,15 +538,11 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
   }
 
   // 4. The budget. Paid extra usage stops what is running too.
-  const budget = (): UsageCheckDecision =>
-    decide({
-      sample: store.latestUsageSample(),
-      now: at,
-      // From level 1 the stop at the reserve is always on (nothing is dispatched at level 0).
-      reserve: usageReserve(config),
-      runningSessions: running,
-    });
-  const first = budget();
+  const budget = (role: SessionRole): UsageCheckDecision =>
+    // From level 1 the stop at the reserve is always on (nothing is dispatched at level 0).
+    usageDecision(store, config, role, at, running);
+  // Paid extra usage is Claude's: it stops what runs on any provider.
+  const first = decide({ sample: store.latestUsageSample(), now: at, reserve: usageReserve(config), runningSessions: running });
   if (first.stopRunning) {
     const stopped = running > 0 ? runner.stopAll(first.reason) : 0;
     if (stopped > 0) ctx.commit("orchestrator.budget_stop", `${first.reason} Stopped ${stopped} running session(s).`);
@@ -570,7 +577,7 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
       reasons.push("the free slot is kept for the next step of work under way");
       break;
     }
-    const decision = budget();
+    const decision = budget(step);
     if (!decision.allow) {
       reasons.push(decision.reason);
       ctx.say("orchestrator.budget_wait", decision.reason, undefined, { resumeAt: decision.resumeAt });

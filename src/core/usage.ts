@@ -21,7 +21,7 @@ export const USAGE_ROLES: readonly SessionRole[] = ["triage", "implement", "revi
  * The role a session's use is counted under. Sessions of a role since removed count where that work went: the fix role's
  * as implement, since the implementor now fixes its own change; the checklist's "check-review" as review.
  */
-function usageRole(role: string): SessionRole {
+export function usageRole(role: string): SessionRole {
   if (role === "fix") return "implement";
   return (USAGE_ROLES as readonly string[]).includes(role) ? (role as SessionRole) : "review";
 }

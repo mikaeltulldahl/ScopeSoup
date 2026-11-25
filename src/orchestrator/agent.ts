@@ -4,6 +4,7 @@
 // the board use only this. `docs/research/providers.md` is what it was shaped from.
 
 import type { ProjectConfig } from "../config/types.ts";
+import type { AllowanceWords } from "../core/allowanceBudget.ts";
 import type { SessionRole, UsageSample } from "../model/types.ts";
 
 /** A process environment. Spelled out, not `NodeJS.ProcessEnv`: the board's build reads these types without Node's. */
@@ -120,6 +121,17 @@ export interface ToolCall {
   text: string;
 }
 
+/**
+ * A provider whose plan reports no usage window but counts a monthly allowance the person sets (`allowance` on `AgentProvider`):
+ * Scope Soup paces its sessions by what they used this month (`core/allowanceBudget.ts`) instead of by readings.
+ */
+export interface AllowanceBudget extends AllowanceWords {
+  /** The allowance and the reset day (1 to 28, UTC) from the configuration; no allowance when the person set none. */
+  budget(config: ProjectConfig): { allowance?: number; resetDay: number };
+  /** What a finished session used of it, from its result record (`SessionResultRecord`); undefined when its provider said none. */
+  used(result: object): number | undefined;
+}
+
 export interface AgentProvider {
   /** Kept on each session (`Session.provider`), so its stream is read by the provider that wrote it. */
   readonly name: string;
@@ -152,6 +164,8 @@ export interface AgentProvider {
   refusedProgram(refused: string, allowedTools: readonly string[]): string | null;
 
   // --- Usage ---
+  /** Set when the plan has a monthly allowance and no window to read; see `AllowanceBudget`. */
+  readonly allowance?: AllowanceBudget;
   /**
    * Reads the plan's usage windows outside the session's stream, for a CLI whose stream does not carry them. The runner
    * calls it once a session is over, stores the reading and uses it to tell a limit hit apart. Absent: the stream has them.

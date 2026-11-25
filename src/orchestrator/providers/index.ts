@@ -5,6 +5,7 @@ import type { ProjectConfig } from "../../config/types.ts";
 import type { SessionRole } from "../../model/types.ts";
 import type { AgentProvider } from "../agent.ts";
 import { claudeProvider } from "./claude/index.ts";
+import { copilotDemo } from "./copilot/demo.ts";
 import { copilotProvider } from "./copilot/index.ts";
 
 const PROVIDERS: readonly AgentProvider[] = [claudeProvider, copilotProvider];
@@ -28,3 +29,6 @@ export function allProviders(): readonly AgentProvider[] {
 export function providerNamed(name: string | undefined): AgentProvider {
   return PROVIDERS.find((provider) => provider.name === name) ?? defaultProvider;
 }
+
+/** The demo's synthetic use of a provider that counts a monthly allowance (`providers/copilot/demo.ts`). */
+export const allowanceDemo = copilotDemo;

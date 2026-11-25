@@ -3,7 +3,7 @@
 // points, forecast line, ticks, stacking) is in src/core/usage.ts.
 
 import { useEffect, useRef, useState } from "preact/hooks";
-import type { UsagePageWindow, UsageView } from "./api.ts";
+import type { AllowanceView, UsagePageWindow, UsageView } from "./api.ts";
 import type { ConfigView } from "./api.ts";
 import { fetchConfig, fetchUsage, postConfig, useView } from "./api.ts";
 import { clockTime, span as spanWords } from "./format.ts";
@@ -460,6 +460,95 @@ function WindowBlock({ window, view }: { window: UsagePageWindow; view: UsageVie
   );
 }
 
+const requests = (n: number) => `${Number.isInteger(n) ? n : n.toFixed(1)}`;
+
+/** A provider with no window: the month's use against the plan's allowance, by role. */
+function AllowanceSection({ plan, now }: { plan: AllowanceView; now: number }) {
+  const [track, width] = useWidth();
+  const allowance = plan.allowance;
+  const limit = allowance === undefined ? undefined : 1 - plan.reserve;
+  const used = allowance === undefined ? 0 : Math.min(1, plan.used / allowance);
+  const parts = Object.fromEntries(ROLES.filter((key) => key !== "outside").map((key) => [key, allowance ? plan.byRole[key as keyof AllowanceView["byRole"]].used / allowance : 0]));
+  const bar = usageBar(parts, used, STACK, limit, undefined);
+  const percent = (share: number) => `${(share * 100).toFixed(2)}%`;
+  const place = (span: { from: number; to: number }) => ({ left: percent(span.from), width: percent(span.to - span.from) });
+  const rows = ROLES.filter((key): key is "implement" | "review" | "triage" => key !== "outside" && plan.byRole[key].sessions > 0);
+  const resetsIn = Date.parse(plan.resetsAt) - now;
+  const usedText = `${requests(plan.used)} of ${allowance}`;
+  const usedLeft = Math.min(Math.max(used * width, labelWidth(usedText) / 2), width - labelWidth(usedText) / 2);
+  const warnNow = limit !== undefined && used >= limit;
+  return (
+    <>
+      <div class="panel">
+        <div class="usage-meter">
+          <div class="usage-meter-head">
+            <b>Used this month</b>
+            <span class="muted">resets {clockTime(plan.resetsAt, now)}, in {spanWords(Math.max(0, resetsIn))}</span>
+          </div>
+          {allowance === undefined ? (
+            <p class="empty">{requests(plan.used)} {plan.unit} used this month. {plan.label} reports no limit: set <code>{plan.setting}</code> in this machine's configuration file (and the reset day beside it) to see the meter and to pace {plan.label} sessions.</p>
+          ) : (
+            <div class="usage-bar" ref={track}>
+              <div class="usage-track" role="meter" aria-valuemin={0} aria-valuemax={allowance} aria-valuenow={Math.round(plan.used)} aria-label="Used this month">
+                {bar.reserve && <div class="usage-track-reserve" style={place(bar.reserve)} />}
+                {bar.used.map((segment) => (
+                  <div key={segment.key} class="usage-seg" style={{ ...place(segment), background: COLOR[segment.key] }} title={`${LABEL[segment.key]} ${requests(Math.round(((segment.to - segment.from) * allowance) * 10) / 10)} ${plan.unit}`} />
+                ))}
+              </div>
+              <span class={`usage-used-out${warnNow ? " warn" : ""}`} style={{ left: `${usedLeft}px` }}>{usedText}</span>
+              {limit !== undefined && limit < 1 && (
+                <>
+                  <div class="usage-thumb fixed" style={{ left: percent(limit) }} title={`Reserve: Scope Soup starts no ${plan.label} session from ${requests(Math.round(limit * allowance))} ${plan.unit}`}><span /></div>
+                  <span class="usage-reserve-label flip" style={{ left: percent(limit) }}>Reserve {pct(plan.reserve)}</span>
+                </>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+      <section class="panel usage-window">
+        <h3>Who used it</h3>
+        {rows.length === 0 ? (
+          <p class="empty">No {plan.label} sessions this month.</p>
+        ) : (
+          <table class="usage-table">
+            <thead>
+              <tr>
+                <th scope="col">Who</th>
+                <th scope="col" class="num">{plan.unit}</th>
+                <th scope="col" class="num">Sessions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((key) => (
+                <tr key={key}>
+                  <th scope="row"><span class="usage-dot" style={{ background: COLOR[key] }} /> {LABEL[key]}</th>
+                  <td class="num">{requests(plan.byRole[key].used)}</td>
+                  <td class="num">{plan.byRole[key].sessions}</td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot>
+              <tr>
+                <th scope="row">In all</th>
+                <td class="num">{requests(plan.used)}</td>
+                <td class="num">{plan.sessions}</td>
+              </tr>
+            </tfoot>
+          </table>
+        )}
+        <details class="usage-how">
+          <summary>How this is counted</summary>
+          <p>
+            Each {plan.label} session's result records what it used; the month runs from the reset day (UTC) to the next. 
+            Scope Soup starts no {plan.label} session once the month's use reaches the allowance minus the reserve (the weekly share of the usage reserve). Claude's readings do not pace {plan.label} roles, and {plan.label}'s use does not pace Claude's.
+          </p>
+        </details>
+      </section>
+    </>
+  );
+}
+
 export function Usage() {
   const [span, setSpan] = useState("7d");
   const { data, error, reload } = useView(() => fetchUsage(span), `usage:${span}`);
@@ -468,6 +557,10 @@ export function Usage() {
   // The reserve position being dragged, or saved and not yet reloaded.
   const [picked, pick] = useState<number | null>(null);
   const [hint, dismissHint] = useHint();
+  // One tab per provider: Claude's windows, and each provider that counts a monthly allowance, when a role runs on it.
+  const [provider, setProvider] = useState("claude");
+  const plan = data?.allowances?.find((each) => each.provider === provider);
+  const onAllowance = plan !== undefined;
   useEffect(() => {
     if (data) pick(null);
   }, [data]);
@@ -488,16 +581,30 @@ export function Usage() {
             ))}
           </div>
         </div>
+        {data?.allowances && (
+          <div class="usage-spans" role="group" aria-label="Provider">
+            <span class="muted">Provider:</span>
+            {[{ provider: "claude", label: "Claude" }, ...data.allowances].map((each, index) => (
+              <span key={each.provider} class="usage-span">
+                {index > 0 && <span class="muted" aria-hidden="true">·</span>}
+                <button type="button" class={each.provider === provider ? "primary" : ""} aria-pressed={each.provider === provider} onClick={() => setProvider(each.provider)}>
+                  {each.label}
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
         {error && <p class="notice notice-bad" role="alert">{error}</p>}
         {!data && !error && <p class="empty">Loading…</p>}
-        {data && (
+        {data && !onAllowance && (
           <div class="usage-meters">
             {data.windows.map((window) => <Meter key={window.kind} window={window} now={now} saver={saver} picked={picked} pick={pick} hint={hint} dismissHint={dismissHint} />)}
           </div>
         )}
-        {data && <Pacing saver={saver} />}
+        {data && !onAllowance && <Pacing saver={saver} />}
       </div>
-      {data && data.windows.map((window) => <WindowBlock key={window.kind} window={window} view={data} />)}
+      {data && plan && <AllowanceSection plan={plan} now={now} />}
+      {data && !onAllowance && data.windows.map((window) => <WindowBlock key={window.kind} window={window} view={data} />)}
     </section>
   );
 }
