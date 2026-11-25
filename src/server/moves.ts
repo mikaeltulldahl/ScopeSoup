@@ -4,7 +4,8 @@
 // pick In review or Merge queue at any level when what they need is there (decision 104). A move that replaces the step that runs
 // marks the job (`interrupt`): the tick ends that session at once, as Stop does, and does not settle its result. When the Item's
 // work runs on another machine, the server writes the pick as a request on the meta ref instead (`elsewhere`), and that machine
-// decides with these same rules. The other states are the existing actions (claim, release, the state edit).
+// decides with these same rules. The other states are the existing actions (claim, release, the state edit). Implement anyway is
+// not a state but a button by triage's not-ready verdict (decision 105): the implement step now, with triage's notes as they are.
 // The rules are pure (`moveWhys`), so the server and its tests read the same ones.
 
 import type { Lane } from "../core/lanes.ts";
@@ -13,7 +14,7 @@ import type { WorkItem } from "../model/types.ts";
 import type { Job, Jobs } from "../orchestrator/jobs.ts";
 import { workBranch, workspaceKey } from "../orchestrator/paths.ts";
 
-export const MOVES = ["triage", "backlog", "in-review", "merge-queue"] as const;
+export const MOVES = ["triage", "backlog", "in-review", "merge-queue", "implement"] as const;
 export type Move = (typeof MOVES)[number];
 
 export const isMove = (value: unknown): value is Move => typeof value === "string" && (MOVES as readonly string[]).includes(value);
@@ -33,8 +34,8 @@ export interface MoveInput {
    * saves the job's `sessionId`, so this counts a session that is starting as running.
    */
   liveRole?: string;
-  /** What Triage and In review lack here, as a person reads it: the agents' program. */
-  needs?: { triage?: string; review?: string };
+  /** What Triage, In review and Implement anyway lack here, as a person reads it: the agents' program. */
+  needs?: { triage?: string; review?: string; implement?: string };
   /** The machine whose agent holds the Item's work, when it is another and a request can reach it: that machine decides the rest. */
   elsewhere?: string;
 }
@@ -69,6 +70,11 @@ export function moveWhys(input: MoveInput): MoveWhys {
   const running = runningRole(input);
   const why = (text: string | undefined) => (text === undefined ? {} : { why: text });
 
+  // Implement anyway: only over triage's own not-ready verdict (not a person's stop), on this machine's job.
+  const overrule: MoveWhys = job?.parked?.as === "not-ready" && job.parked.verdict && !closed
+    ? { implement: why(input.needs?.implement ?? off?.why ?? (job.dropAskedBy ? "back to the backlog already" : undefined)) }
+    : {};
+
   // The work runs on another machine: that machine has the job, so it decides; here only what is known everywhere refuses.
   if (input.elsewhere && !job) {
     if (closed) return { triage: { why: "reopen it first" }, "in-review": { why: "reopen it first" }, ...(level >= 4 ? { "merge-queue": { why: "reopen it first" } } : {}) };
@@ -85,7 +91,7 @@ export function moveWhys(input: MoveInput): MoveWhys {
   const queuedWhy = lane === "checking" ? "the merge queue is checking it" : "it is in the merge queue";
   // A job parked for a person (a question, an escalation, a rewrite, a restructuring) waits for their answer on the page.
   const waitsForAnswer = !!job?.parked && job.parked.as !== "queued" && job.parked.as !== "handed-over" && job.parked.retry !== "hand-over";
-  const result: MoveWhys = {};
+  const result: MoveWhys = { ...overrule };
 
   // Triage again: the old triage is dropped and the job starts at triage, ahead of new Items. A step that runs is interrupted.
   result.triage = why(
@@ -144,7 +150,7 @@ export function moveWhys(input: MoveInput): MoveWhys {
  */
 export function applyMove(jobs: Jobs, key: string, move: Move, input: MoveInput, by: string, at: string): { ok: true; reason: string } | { ok: false; why: string } {
   const said = moveWhys(input)[move];
-  if (!said) return { ok: false, why: move === "merge-queue" ? QUEUE_OFF : "nothing under way to drop" };
+  if (!said) return { ok: false, why: move === "merge-queue" ? QUEUE_OFF : move === "implement" ? "only triage's not-ready verdict can be overruled" : "nothing under way to drop" };
   if (said.why) return { ok: false, why: said.why };
   const id = input.item.ref.id;
   if (!jobs[key] && move === "triage" && !input.elsewhere) {
@@ -170,6 +176,19 @@ export function applyMove(jobs: Jobs, key: string, move: Move, input: MoveInput,
     jobs[key] = fresh;
     return { ok: true, reason: `${by} set ${id} to triage: its triage is taken again, next; the one before and the work since are dropped (the branch stays).${ends}` };
   }
+  if (move === "implement") {
+    // Triage's verdict is overruled: the implement step runs next whatever the level, with triage's notes as they are.
+    delete job.parked;
+    delete job.resume;
+    delete job.resumeWith;
+    delete job.notBefore;
+    delete job.reviewAskedBy;
+    delete job.queueAskedBy;
+    job.failures = 0;
+    job.step = "implement";
+    job.implementAskedBy = by;
+    return { ok: true, reason: `${by} overruled triage's verdict on ${id} (Implement anyway): its implement step starts next, with triage's notes as they are.` };
+  }
   Object.assign(job, interrupt);
   if (move === "backlog") {
     // The tick drops it: only it can give back this machine's claim on the host and the workspace (`dropAsked` in the tick).
@@ -189,6 +208,7 @@ export function applyMove(jobs: Jobs, key: string, move: Move, input: MoveInput,
     delete job.owes;
     // One ask at a time: the queue is not asked for any more (decision 104).
     delete job.queueAskedBy;
+    delete job.implementAskedBy;
     // Whatever the level: the tick runs a review step a person asked for (decision 104).
     job.reviewAskedBy = by;
     return { ok: true, reason: `${by} set ${id} to review: its review step starts next.${ends}` };
@@ -198,5 +218,6 @@ export function applyMove(jobs: Jobs, key: string, move: Move, input: MoveInput,
   // Whatever the level: the hand-over goes to the merge queue (decision 104).
   job.queueAskedBy = by;
   delete job.reviewAskedBy;
+  delete job.implementAskedBy;
   return { ok: true, reason: `${by} queued ${id}'s reviewed change for the merge queue: it is handed over next.${ends}` };
 }

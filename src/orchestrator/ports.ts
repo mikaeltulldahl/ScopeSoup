@@ -27,6 +27,8 @@ export interface SessionRequest {
    * and tools but without its answer schema. The reply is free text and is never read as the role's answer.
    */
   chat?: true;
+  /** The model in place of the role's (the implementor's model by size, or its step-up). */
+  model?: string;
   /** The environment variables of the resource units the session holds (taken by the caller; the runner gives them back). */
   env?: Record<string, string>;
 }

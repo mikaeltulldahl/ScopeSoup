@@ -5,8 +5,8 @@ import { isAbsolute, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { SessionRole } from "../model/types.ts";
 import { COPILOT_DEFAULT_AUTO_TIER, COPILOT_DEFAULT_MODEL, defaultClaude, defaultCopilot, defaultRoles, defaultSettings, expandScopesoup, MACHINE_NAME } from "./defaults.ts";
-import type { LabelsConfig, Level, McpServer, ProjectConfig, ProviderName, RoleConfig, SettingName, Settings } from "./types.ts";
-import { AI_LABEL_DEFAULT, EFFORT_LEVELS, LEVELS, mcpToolEntry, PROVIDER_NAMES, ROLES } from "./types.ts";
+import type { LabelsConfig, Level, McpServer, ProjectConfig, ProviderName, RoleConfig, SettingName, Settings, TaskSize } from "./types.ts";
+import { AI_LABEL_DEFAULT, EFFORT_LEVELS, LEVELS, mcpToolEntry, PROVIDER_NAMES, ROLES, TASK_SIZES } from "./types.ts";
 import { CHECK_ROLES, withCheckRules } from "./checkRule.ts";
 import { proposeCheckCommand } from "./mergeQueue.ts";
 import { migrateConfig } from "./migrate.ts";
@@ -293,7 +293,7 @@ export function validateConfig(given: unknown, baseDir: string): ConfigResult {
           err(`${where} must be an object.`);
           continue;
         }
-        unknownKeys(given, ["provider", "model", "autoTier", "effort", "maxTurns", "allowedTools", "permissionMode", "mcpServers"], where);
+        unknownKeys(given, ["provider", "model", ...(role === "implement" ? ["modelBySize"] : []), "autoTier", "effort", "maxTurns", "allowedTools", "permissionMode", "mcpServers"], where);
         const target = roles[role];
         const provider = given.provider;
         if (provider !== undefined && !PROVIDER_NAMES.includes(provider as ProviderName)) {
@@ -302,6 +302,21 @@ export function validateConfig(given: unknown, baseDir: string): ConfigResult {
         // The default models are Claude's; a Copilot role that names none runs on Fusion, with its Auto routing profile.
         const copilotRole = target.provider === "copilot";
         target.model = str(given, "model", `${where}.`, copilotRole ? COPILOT_DEFAULT_MODEL : target.model);
+        if (given.modelBySize !== undefined) {
+          const bySize = given.modelBySize;
+          if (!isObj(bySize)) err(`${where}.modelBySize must be an object, such as { "small": "haiku", "large": "opus" }.`);
+          else {
+            unknownKeys(bySize, TASK_SIZES, `${where}.modelBySize`);
+            const models: Partial<Record<TaskSize, string>> = {};
+            for (const size of TASK_SIZES) {
+              const model = bySize[size];
+              if (model === undefined) continue;
+              if (typeof model !== "string" || model.trim() === "") err(`${where}.modelBySize.${size} must be a model name.`);
+              else models[size] = model.trim();
+            }
+            if (Object.keys(models).length > 0) target.modelBySize = models;
+          }
+        }
         if (given.autoTier !== undefined) target.autoTier = str(given, "autoTier", `${where}.`, COPILOT_DEFAULT_AUTO_TIER);
         else if (copilotRole) target.autoTier = COPILOT_DEFAULT_AUTO_TIER;
         if (given.effort !== undefined) {

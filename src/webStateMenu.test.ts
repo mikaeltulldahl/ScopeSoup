@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { THEMES } from "../web/src/theme.ts";
 import type { MenuPage, Pending, StateKey } from "../web/src/stateMenu.ts";
-import { addPending, cancelPending, currentState, duePending, effectNote, requestNote, stateOptions, STATE_KEYS, toastText, UNDO_MS, withBlocker } from "../web/src/stateMenu.ts";
+import { addPending, cancelPending, currentState, duePending, effectNote, implementAnyway, implementToast, requestNote, stateOptions, STATE_KEYS, toastText, UNDO_MS, withBlocker } from "../web/src/stateMenu.ts";
 
 const theme = THEMES.default.words;
 const page = (fields: Partial<MenuPage> = {}, item: Partial<MenuPage["item"]> = {}): MenuPage => ({
@@ -128,4 +128,14 @@ test("below level 4 the server offers no Merge queue, and the menu leaves it out
   assert.equal(keys(low).includes("merge-queue"), false);
   assert.equal(keys({ ...low, lane: "queued" }).includes("merge-queue"), true);
   assert.equal(keys(page()).includes("merge-queue"), true);
+});
+
+test("Implement anyway is a button by triage's verdict, not a menu option: the server's move, waiting as In progress (decision 105)", () => {
+  assert.equal(implementAnyway(page()), undefined);
+  const offered = page({ moves: { ...page().moves, implement: {} } });
+  assert.deepEqual(implementAnyway(offered), { key: "in-progress", steps: [{ kind: "move", to: "implement" }] });
+  assert.deepEqual(implementAnyway(page({ moves: { implement: { why: "held by Bo" } } })), { key: "in-progress", why: "held by Bo", steps: [] });
+  // The menu's In progress stays a person's claim.
+  assert.deepEqual(byKey(offered)["in-progress"].steps, [{ kind: "claim" }]);
+  assert.equal(implementToast("A-2"), "A-2 → Implement anyway");
 });

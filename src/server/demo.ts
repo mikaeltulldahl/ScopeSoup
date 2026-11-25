@@ -310,6 +310,13 @@ export function seedDemo(store: Store, now: Date, dir?: string): void {
       proposal: DEMO_RESTRUCTURING,
       parked: { as: "needs-decision", reason: `${DEMO_RESTRUCTURING.reason} Accept, edit or reject it on the item page.`, at: at(-16) },
     });
+    // Triage found item 46 too large and proposed no split: a person may split it, or press Implement anyway (decision 105).
+    item(46, "Tide alerts for every harbour", { body: "Push an alert before each high tide, for any harbour, with per-harbour thresholds and quiet hours." });
+    step("t-46", 46, "triage", "opus", 12, 3);
+    job(46, {
+      triage: { ready: true, size: "large", paths: ["src/alerts", "src/harbours"], hidesDecision: false },
+      parked: { as: "not-ready", reason: "Triage: too large for one change (large means a story), and it proposed no split. Split it into smaller Items first, or answer here to have triage propose the split.", at: at(-9), verdict: true },
+    });
     item(44, "Export a harbour's table as PDF", { blockedBy: [ref("work", 52)] });
     item(47, "Offline copy of the last viewed harbour", { blockedBy: [ref("work", 44)] });
     item(55, "Rework the first-run screens", { openChildren: 3 });
@@ -561,7 +568,8 @@ export async function writeDemoConfig(dir: string, settings: MetaSettings = meta
     host: process.env.DEMO_HOST === "github" ? { kind: "github", repo: DEMO_REPO, write: true } : process.env.DEMO_HOST === "jira" ? DEMO_JIRA_HOST : { kind: "metaBranch", write: true },
     level: 4,
     bugLabels: ["bug"],
-    roles: allowanceDemo.roles,
+    // The implementor's model per triage size (decision 105).
+    roles: { ...allowanceDemo.roles, implement: { modelBySize: { small: "haiku", large: "opus" } } },
     checkCommand: ["pnpm", "run", "check"],
     setupCommand: ["node", ".scopesoup/scopesoup-setup.mjs", "--from-clone", "{{ownClone}}"],
     setupWatch: ["pnpm-lock.yaml"],

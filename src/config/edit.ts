@@ -22,6 +22,7 @@ import { metaSettings } from "./metaSettings.ts";
 import { parseShared, PRIVATE_KEYS, PRIVATE_SETTINGS, repositoryOf, SaveRefused, type SettingChange, SHARED_KEYS, SHARED_SETTINGS, SHARED_WHERE, type SharedSettings, validateFiles } from "./shared.ts";
 import { configText, writeConfigFile } from "./write.ts";
 import { recordInManifest } from "./manifest.ts";
+import { providerFor } from "../orchestrator/providers/index.ts";
 
 type Obj = Record<string, unknown>;
 
@@ -36,7 +37,8 @@ const SAFE: Record<string, true | ((value: unknown, err: (message: string) => vo
   // Numbers; validation holds them within their bounds. No reason is asked for.
   settings: (value, err) => nested(value, "settings", SETTING_NAMES, ["value"], err),
   // The model per role (null or "" removes it, so the role runs on its default model). allowedTools, permissionMode and maxTurns govern what a session may do.
-  roles: (value, err) => nested(value, "roles", ROLE_NAMES, ["model", "effort"], err),
+  // The implementor's model per size (decision 105) is saved whole; a null or empty one is "same as the role's model".
+  roles: (value, err) => nested(value, "roles", ROLE_NAMES, ["model", "effort", "modelBySize"], err),
   // What level 4 needs, saved together with `level: 4` (refused below it); validation checks their form.
   checkCommand: true,
   remoteUrl: true,
@@ -121,6 +123,13 @@ function dropClearedModels(next: Obj, change: Obj): void {
     const role = next.roles[name];
     if (!isObj(role)) continue;
     for (const key of ["model", "effort"]) if (entry[key] === null || entry[key] === "") delete role[key];
+    // The per-size models as the change gives them, whole: the sizes left empty take the role's model.
+    if (entry.modelBySize !== undefined) {
+      const given = isObj(entry.modelBySize) ? entry.modelBySize : {};
+      const kept = Object.fromEntries(Object.entries(given).filter(([size, model]) => !FORBIDDEN.includes(size) && typeof model === "string" && model.trim() !== ""));
+      if (Object.keys(kept).length > 0) role.modelBySize = kept;
+      else delete role.modelBySize;
+    }
     if (Object.keys(role).length === 0) delete next.roles[name];
   }
   if (Object.keys(next.roles).length === 0) delete next.roles;
@@ -485,7 +494,7 @@ export async function connectHost(file: string, connection: HostConnection, opti
  */
 export type ConfigView =
   | { present: false }
-  | { present: true; file: string; raw: unknown; config: ProjectConfig | null; errors: string[]; safeFields: string[]; sharedFields: string[]; sliders: Sliders; defaultModels: Readonly<Record<string, string>>; setupWatchDefault: readonly string[]; levels: LevelChoice[]; mergeQueue: MergeQueueSetup | null };
+  | { present: true; file: string; raw: unknown; config: ProjectConfig | null; errors: string[]; safeFields: string[]; sharedFields: string[]; sliders: Sliders; defaultModels: Readonly<Record<string, string>>; setupWatchDefault: readonly string[]; levels: LevelChoice[]; mergeQueue: MergeQueueSetup | null; /** The implement role's provider's known models, weakest first: the choices per size (decision 105). */ implementModels?: readonly string[] };
 
 export function readConfigView(file: string | undefined, options: EditOptions = {}): ConfigView {
   if (file === undefined) return { present: false };
@@ -504,5 +513,6 @@ export function readConfigView(file: string | undefined, options: EditOptions = 
   const mergeQueue = (levels[4]?.asks.length ?? 0) > 0 || mergeQueueCi(result.config) === "local" ? mergeQueueSetup(result.config, options.mergeQueue) : null;
   // The same test of the command as a save makes, when one is given (tests and the demo look at no PATH).
   if (mergeQueue?.checkCommand && options.checkCommandProblem) mergeQueue.checkCommandProblem = options.checkCommandProblem(mergeQueue.checkCommand, result.config.repoPath);
-  return { present: true, ...common, raw: result.combined, config: result.config, errors: [], levels, mergeQueue };
+  const implementModels = providerFor(result.config, "implement").models ?? [];
+  return { present: true, ...common, raw: result.combined, config: result.config, errors: [], levels, mergeQueue, implementModels };
 }

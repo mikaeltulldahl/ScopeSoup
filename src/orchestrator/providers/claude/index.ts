@@ -15,6 +15,7 @@ export const claudeProvider: AgentProvider = {
     shim: "Set claude.path in the project configuration to the real claude.exe (for the native install: %USERPROFILE%\\.local\\bin\\claude.exe).",
     missing: "Install it, or set claude.path in the project configuration to the full path of the .exe.",
   },
+  models: ["haiku", "sonnet", "opus"],
   keyEnv: ["ANTHROPIC_API_KEY"],
 
   launch(request) {

@@ -457,6 +457,19 @@ test("a role's effort is saved from the board, and null removes it", async () =>
   assert.deepEqual((both(file) as Record<string, any>).roles.implement, { model: "opus", allowedTools: ["Read"] });
 });
 
+test("the implementor's models per size are saved whole from the board; an empty one is the role's model, and none removes the map", async () => {
+  const file = setup({ roles: { implement: { model: "sonnet", allowedTools: ["Read"] } } });
+  const saved = await edit(file, { roles: { implement: { modelBySize: { small: "haiku", medium: "", large: "opus" } } } });
+  assert.equal(saved.ok, true);
+  assert.deepEqual((both(file) as Record<string, any>).roles.implement.modelBySize, { small: "haiku", large: "opus" });
+  // Whole: a size left out of the change goes.
+  assert.equal((await edit(file, { roles: { implement: { modelBySize: { large: "opus" } } } })).ok, true);
+  assert.deepEqual((both(file) as Record<string, any>).roles.implement.modelBySize, { large: "opus" });
+  assert.equal((await edit(file, { roles: { review: { modelBySize: { small: "haiku" } } } })).ok, false);
+  assert.equal((await edit(file, { roles: { implement: { modelBySize: null } } })).ok, true);
+  assert.deepEqual((both(file) as Record<string, any>).roles.implement, { model: "sonnet", allowedTools: ["Read"] });
+});
+
 test("a null check command or remote URL removes it below level 4 (#157); at level 4 it is refused with the reason; the setup fields are removed the same way", async () => {
   const file = setup({ checkCommand: ["node", "--test"], remoteUrl: "git@example.invalid:demo.git", setupCommand: ["node", "setup.mjs"], level: 2 });
   const removed = await edit(file, { checkCommand: null, remoteUrl: null, setupCommand: null }, found);

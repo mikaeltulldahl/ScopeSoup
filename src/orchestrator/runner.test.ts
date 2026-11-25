@@ -127,6 +127,15 @@ function fakeEvents(session: Session): Record<string, unknown>[] {
 }
 
 describe("runner", { concurrency: 4 }, () => {
+test("a model in place of the role's (the implementor's by size, decision 105) goes to the CLI and on the session", async () => {
+  const w = world("ok", { env: { FAKE_CLAUDE_OUTPUT: '{"done":true,"summary":"did it"}' } });
+  const session = await w.runner.finished((await w.runner.start(request({ model: "opus" }))).ref.id);
+  assert.equal(session.model, "opus");
+  const args = fakeEvents(session).find((event) => event.subtype === "fake")?.args as string[];
+  assert.equal(args[args.indexOf("--model") + 1], "opus");
+  await w.runner.releaseWorkspace(workspaceKey(ITEM));
+});
+
 test("a session that succeeds: worktree, arguments, stream file, store, usage", async () => {
   const w = world("ok", { env: { FAKE_CLAUDE_OUTPUT: '{"done":true,"summary":"did it"}' } });
   const started = await w.runner.start(request());

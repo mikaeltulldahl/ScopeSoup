@@ -152,6 +152,30 @@ describe("the rules", () => {
     assert.deepEqual([none[key]?.step, none[key]?.triageAskedBy], ["triage", "Ada"]);
   });
 
+  test("Implement anyway: only over triage's own not-ready verdict, at any level, as the person's ask for the implement step (decision 105)", () => {
+    const verdict = (fields: Partial<Job> = {}) => job({ step: "triage", parked: { as: "not-ready", reason: "Triage: too large for one change", at: T0, verdict: true }, ...fields });
+    // Not offered without triage's verdict: a person's own stop, another parked state, or no parked state.
+    assert.equal(moveWhys(input({ job: job({ step: "triage", parked: { as: "not-ready", reason: "A person answered: stop.", at: T0 } }) })).implement, undefined);
+    assert.equal(moveWhys(input({ job: job({ parked: { as: "needs-decision", reason: "which?", at: T0 } }) })).implement, undefined);
+    assert.equal(moveWhys(input()).implement, undefined);
+    // Offered at any level, level 0 included; refused when the program is missing or a person holds it.
+    for (const level of [0, 1, 2, 3, 4]) assert.deepEqual(moveWhys(input({ job: verdict(), level })).implement, {}, `level ${level}`);
+    assert.equal(moveWhys(input({ job: verdict(), needs: { implement: "needs claude" } })).implement!.why, "needs claude");
+    const held = { ...item, holder: { actor: { id: "bo", name: "Bo" } } };
+    assert.equal(moveWhys(input({ item: held, job: verdict() })).implement!.why, "held by Bo");
+
+    const jobs = { [key]: verdict({ reviewAskedBy: "Cy", notBefore: T0 }) };
+    const done = applyMove(jobs, key, "implement", input({ job: jobs[key], level: 1 }), "Ada", T0);
+    assert.ok(done.ok && /Ada overruled triage's verdict on 7 \(Implement anyway\)/.test(done.reason));
+    assert.deepEqual([jobs[key]!.step, jobs[key]!.parked, jobs[key]!.implementAskedBy, jobs[key]!.reviewAskedBy, jobs[key]!.notBefore, jobs[key]!.triage], ["implement", undefined, "Ada", undefined, undefined, triage]);
+    // Once it is under way, there is nothing to overrule.
+    assert.deepEqual(applyMove(jobs, key, "implement", input({ job: jobs[key] }), "Ada", T0), { ok: false, why: "only triage's not-ready verdict can be overruled" });
+    // Another pick replaces the ask.
+    Object.assign(jobs[key]!, { head: "abc" });
+    assert.equal(applyMove(jobs, key, "in-review", input({ job: jobs[key] }), "Ada", T0).ok, true);
+    assert.equal(jobs[key]!.implementAskedBy, undefined);
+  });
+
   test("an Item whose work runs on another machine: the moves are left to that machine, except what is known everywhere", () => {
     const bot = { ...item, holder: { actor: { id: "scopesoup@laptop-b", name: "scopesoup on laptop-b", bot: true }, until: "2099-01-01T00:00:00Z" } };
     const whys = moveWhys(input({ item: bot, job: undefined, elsewhere: "laptop-b" }));
@@ -229,6 +253,19 @@ describe("POST /api/item/move", () => {
     assert.equal(two.status, 409);
     assert.equal(((await two.json()) as { error: { message: string } }).error.message, "Moved; then refused: 7: the merge queue runs from level 4.");
     assert.equal(loadJobs(store)[key]?.step, "review");
+
+    // Implement anyway goes through the same pick: the seen check, the person's event, and History's words.
+    saveJobs(store, { [key]: job({ step: "triage", parked: { as: "not-ready", reason: "Triage: not ready.", at: T0, verdict: true } }) });
+    const page = (await (await fetch(`${base}/api/item?ref=${key}`)).json()) as ItemPage;
+    assert.deepEqual(page.moves?.implement, {});
+    assert.equal((await pick({ ref: key, seen: "2020-01-01T00:00:00Z", steps: [{ kind: "move", to: "implement" }] })).status, 409);
+    const anyway = await pick({ ref: key, seen: page.item.updatedAt, steps: [{ kind: "move", to: "implement" }] });
+    assert.equal(anyway.status, 200);
+    assert.deepEqual([loadJobs(store)[key]?.step, loadJobs(store)[key]?.implementAskedBy], ["implement", "Ada"]);
+    const event = store.eventsOfKinds(["person.moved"], 10)[0];
+    assert.deepEqual([event?.actor, (event?.data as { to?: string }).to], ["Ada", "implement"]);
+    const activity = (await (await fetch(`${base}/api/activity`)).json()) as { rows: { text: string; who?: string }[] };
+    assert.ok(activity.rows.some((row) => row.text === "Overruled triage: Implement anyway, on the board" && row.who === "Ada"));
   });
 });
 

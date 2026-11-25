@@ -15,7 +15,7 @@ export type Step =
   | { kind: "release" }
   | { kind: "claim" }
   | { kind: "state"; state: "todo" | "done" | "abandoned" }
-  | { kind: "move"; to: "triage" | "backlog" | "in-review" | "merge-queue" }
+  | { kind: "move"; to: "triage" | "backlog" | "in-review" | "merge-queue" | "implement" }
   | { kind: "block" };
 
 export interface StateOption {
@@ -138,12 +138,26 @@ export function requestNote(page: MenuPage, theme: ThemeWords, now: number): str
   const request = page.remote?.request;
   if (!request || request.state === "done" || now - Date.parse(request.at) > 60 * 60_000) return "";
   const step = request.steps.find((each) => each.kind === "move" || each.kind === "state");
-  const key = (step?.kind === "move" ? step.to : step?.state === "abandoned" ? "abandoned" : step?.state === "done" ? "done" : "backlog") as StateKey;
+  const key = (step?.kind === "move" ? (step.to === "implement" ? "in-progress" : step.to) : step?.state === "abandoned" ? "abandoned" : step?.state === "done" ? "done" : "backlog") as StateKey;
   const picked = `${request.who}'s ${stateLabel(key, theme)}`;
   if (request.state === "pending") return `${picked} waits for ${request.for} (at its next fetch, within a minute)`;
   if (request.state === "refused") return `${request.for} refused ${picked}: ${request.why ?? "no reason given"}`;
   return `${request.for} did not answer ${picked} within 15 minutes; it is not carried out`;
 }
+
+/**
+ * Implement anyway (decision 105): a button by triage's not-ready verdict, not a state of the menu (In progress is a person's
+ * claim). Undefined when the server offers it not (no verdict of triage to overrule); `why` when it cannot be pressed now. The
+ * pick waits with the Undo toast like the menu's, shown as In progress meanwhile.
+ */
+export function implementAnyway(page: Pick<MenuPage, "moves">): (Pick<StateOption, "why" | "steps"> & { key: StateKey }) | undefined {
+  const said = page.moves?.implement;
+  if (!said) return undefined;
+  return said.why ? { key: "in-progress", why: said.why, steps: [] } : { key: "in-progress", steps: [{ kind: "move", to: "implement" }] };
+}
+
+/** The toast's text for Implement anyway: "A-2 → Implement anyway". */
+export const implementToast = (id: string): string => `${id} → Implement anyway`;
 
 /** The toast's text before its Undo: "A-2 → Backlog · releases Ana's hold". */
 export function toastText(id: string, key: StateKey, note: string, theme: ThemeWords): string {

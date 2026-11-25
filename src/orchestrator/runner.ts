@@ -348,7 +348,9 @@ export function createRunner(deps: RunnerDeps): Runner {
   }
 
   async function startSession(request: SessionRequest): Promise<Session> {
-    const config = deps.config();
+    const given = deps.config();
+    // A model in place of the role's goes to the provider (and on the session) as the role's own.
+    const config = request.model ? { ...given, roles: { ...given.roles, [request.role]: { ...given.roles[request.role], model: request.model } } } : given;
     const provider = deps.provider?.(config, request) ?? providerFor(config, request.role);
     // A core rule: a session runs only where the CLI itself refuses the commands its role may not run.
     if (provider.commandLimit !== "allowlist") {

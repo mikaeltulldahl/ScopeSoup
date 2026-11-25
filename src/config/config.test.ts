@@ -602,3 +602,15 @@ test("labels.aiGenerated: false (the default), true (\"ai-generated\") or a labe
   const unknown = read({ other: 1, aiGenerated: false });
   assert.deepEqual(unknown.ok ? [] : unknown.errors, ['labels: unknown key "other". Known keys: aiGenerated.']);
 });
+
+test("roles.implement.modelBySize names a model per triage size; only the implement role has it (decision 105)", () => {
+  const core = { project: "p", machineName: "laptop-a", repoPath: "/srv/clone" };
+  assert.equal(good(core).roles.implement.modelBySize, undefined);
+  const config = good({ ...core, roles: { implement: { model: "sonnet", modelBySize: { small: "haiku", large: " opus " } } } });
+  assert.deepEqual([config.roles.implement.model, config.roles.implement.modelBySize], ["sonnet", { small: "haiku", large: "opus" }]);
+  assert.equal(good({ ...core, roles: { implement: { modelBySize: {} } } }).roles.implement.modelBySize, undefined);
+  assert.match(bad({ ...core, roles: { implement: { modelBySize: { huge: "opus" } } } }), /roles\.implement\.modelBySize/);
+  assert.match(bad({ ...core, roles: { implement: { modelBySize: { small: "" } } } }), /roles\.implement\.modelBySize\.small must be a model name/);
+  assert.match(bad({ ...core, roles: { implement: { modelBySize: "opus" } } }), /roles\.implement\.modelBySize must be an object/);
+  assert.match(bad({ ...core, roles: { review: { modelBySize: { small: "haiku" } } } }), /roles\.review/);
+});
