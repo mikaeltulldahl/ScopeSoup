@@ -1,14 +1,15 @@
-// Hash routing: #/ (overview), #/queue, #/items?<filters> (the list), #/settings, #/settings/stop, #/history, #/item/<refKey>.
+// Hash routing: #/ (overview), #/queue, #/items?<filters> (the list), #/settings, #/settings/history (with its History of settings open), #/settings/stop, #/history, #/item/<refKey>.
 
 import { useEffect, useRef, useState } from "preact/hooks";
 
-export type Route = { view: "overview" } | { view: "queue" } | { view: "items"; query: string } | { view: "settings" } | { view: "stop" } | { view: "history" } | { view: "usage" } | { view: "item"; key: string };
+export type Route = { view: "overview" } | { view: "queue" } | { view: "items"; query: string } | { view: "settings"; history?: true } | { view: "stop" } | { view: "history" } | { view: "usage" } | { view: "item"; key: string };
 
 export function parseRoute(hash: string): Route {
   const path = hash.replace(/^#\/?/, "");
   if (path === "items" || path.startsWith("items?")) return { view: "items", query: path.slice(6) };
   if (path === "queue") return { view: "queue" };
   if (path === "settings") return { view: "settings" };
+  if (path === "settings/history") return { view: "settings", history: true };
   if (path === "settings/stop") return { view: "stop" };
   if (path === "history") return { view: "history" };
   if (path === "usage") return { view: "usage" };

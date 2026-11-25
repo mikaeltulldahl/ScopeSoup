@@ -45,6 +45,7 @@ import type { Upgrader } from "../upgrade/upgrader.ts";
 import type { UpgradeTask, UpgradeView } from "../upgrade/view.ts";
 import { versionOf } from "../upgrade/version.ts";
 import { KEYS } from "./snapshot.ts";
+import { demoCommit, demoHistory, demoSettingsLog, demoSha, seedDemoActivity } from "./demoHistory.ts";
 
 const SUITE = "full suite";
 const reviewer = { id: "reviewer", name: "reviewer", bot: true };
@@ -170,17 +171,6 @@ export function demoAssumptionHost(store: Store): AssumptionHost {
   };
 }
 
-/** A made-up full commit id, the same for the same word. */
-function demoSha(word: string): string {
-  let hash = 2166136261;
-  for (const char of word) hash = Math.imul(hash ^ char.charCodeAt(0), 16777619) >>> 0;
-  let out = "";
-  for (let i = 0; out.length < 40; i++) {
-    hash = Math.imul(hash ^ i, 16777619) >>> 0;
-    out += (hash >>> 28).toString(16);
-  }
-  return out;
-}
 const SCOPESOUP_WRITER = { who: "scopesoup", machine: "demo", agent: true };
 const logLine = (at: string, kind: string, fields: Record<string, unknown>): LogRecord => ({ at, by: SCOPESOUP_WRITER, kind, fields });
 
@@ -440,8 +430,8 @@ export function seedDemo(store: Store, now: Date, dir?: string): void {
     elsewhere: [],
   }));
   // Level 4 at work: agents and the merge queue are started.
-  applyControl(store, "agents.start", at(-200), "demo");
-  applyControl(store, "mergeQueue.start", at(-200), "demo");
+  applyControl(store, "agents.start", at(-200), "demo", "mira");
+  applyControl(store, "mergeQueue.start", at(-200), "demo", "mira");
   store.setValue(KEYS.sync, JSON.stringify({ lastAt: at(-0.5) }));
   // 30 days of synthetic usage readings and the finished sessions that filled the windows, for the Usage page.
   const usage = demoUsage(now);
@@ -449,6 +439,8 @@ export function seedDemo(store: Store, now: Date, dir?: string): void {
     for (const each of usage.sessions) store.put(each, "demo", each.finishedAt ?? base);
     for (const sample of usage.samples) store.addUsageSample(sample);
   });
+  // Who created the Items, a draft accepted, merges, switches and an upgrade, for History.
+  seedDemoActivity(store, now, versionOf(resolve(dirname(fileURLToPath(import.meta.url)), "../..")));
 }
 
 /**
@@ -506,12 +498,14 @@ export async function writeDemoConfig(dir: string, settings: MetaSettings = meta
  * saved on the demo's page is a commit on the meta ref of the demo's own repository, so the page shows it at once.
  */
 export function demoConfigOptions(dir: string, settings: MetaSettings = metaSettings()) {
+  const started = new Date();
   return {
     programFound: () => true,
     checkCommandProblem: () => null,
     mergeQueue: { platform: "linux" as const, env: {}, remoteUrlOf: () => REMOTE_URL },
     sharedSettings: settings,
-    settingsLog: () => settings.log(join(dir, "repo")),
+    // The saves made on the demo's page, after a synthetic older history of settings.
+    settingsLog: () => demoSettingsLog(settings.log(join(dir, "repo")), started),
     // "Stop using Scope Soup" lists what a project Scope Soup ran for a while would leave; the demo has no git, so it is made up.
     offboard: async () => ({ now: new Date().toISOString(), available: true as const, plan: offboardPlan(demoFound(dir)), configFolder: dir, outFolder: defaultOutFolder(dir) }),
   };
@@ -857,6 +851,9 @@ async function main(): Promise<void> {
     items: demoItemsHost(store),
     branches: demoBranches(store),
     diff: async (item) => demoDiff(store, item, new Date()),
+    // A synthetic commit history: the demo has no repository of the project.
+    history: async (limit) => demoHistory(store, new Date(), limit),
+    commit: async (sha) => demoCommit(sha, new Date()),
     upgrade: demoUpgrader(),
   });
   const { url } = await server.start();

@@ -17,6 +17,8 @@ import { createDemoChat, demoAssumptionHost, demoConfigOptions, seedDemo, tickDe
 import { createServer } from "./server.ts";
 import { buildUsageView } from "./usage.ts";
 import { loadSnapshot } from "./snapshot.ts";
+import { activityView } from "./activity.ts";
+import { demoCommit, demoHistory, demoSettingsLog } from "./demoHistory.ts";
 
 test("the demo data covers every lane, one batch being bisected, the triages' questions and a live session", () => {
   const store = openStore(":memory:");
@@ -161,5 +163,32 @@ test("the demo's item 63 has two decisions its implementor took itself, open on 
   assert.deepEqual(sent.settled.map((each) => [each.verdict, each.work]), [["accepted", undefined], ["overturned", true]]);
   assert.equal(after.assumptions?.[2]?.settled?.work, true);
   assert.deepEqual(overturnsFor(store, refKey(ref("work", 63))).map((each) => each.answer), ["Mixed in by score"]);
+  store.close();
+});
+
+test("the demo's History has synthetic activity of every kind and a commit history linked to its Items", () => {
+  const store = openStore(":memory:");
+  const now = new Date(T0);
+  seedDemo(store, now);
+  const view = activityView(store, demoSettingsLog([], now), now);
+  const kinds = new Set(view.rows.map((row) => row.kind));
+  for (const kind of ["item", "triage", "question", "decision", "session", "merge", "batch", "switch", "upgrade", "settings"] as const) assert.ok(kinds.has(kind), kind);
+  assert.ok(view.rows.every((row, index) => index === 0 || Date.parse(view.rows[index - 1]!.at) >= Date.parse(row.at)), "newest first");
+  // Everyone pressed the switches as a person, never as "someone".
+  assert.ok(view.rows.filter((row) => row.kind === "switch").every((row) => row.who !== "someone"));
+
+  const history = demoHistory(store, now, 30);
+  assert.ok(history.available);
+  if (!history.available) return;
+  assert.equal(history.commits.length, 30);
+  assert.equal(history.more, true);
+  const tip = history.commits.find((each) => each.refs.includes("main"))!;
+  // #58's branch starts at the tip of main: named as starting there, not merged, and the tip is #33's merge.
+  assert.deepEqual([tip.item, tip.merged, tip.starts], ["demo:work:33", true, ["scopesoup/58"]]);
+  const sunrise = history.commits.find((each) => each.refs.includes("scopesoup/66"))!;
+  assert.deepEqual([sunrise.onMain, sunrise.item, sunrise.merged], [false, "demo:work:66", undefined]);
+  for (const id of ["30", "31", "33", "36"]) assert.ok(history.commits.some((each) => each.item === `demo:work:${id}` && each.merged), id);
+  const opened = demoCommit(tip.sha, now);
+  assert.ok(opened.available && opened.files.length === 1);
   store.close();
 });

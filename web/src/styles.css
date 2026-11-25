@@ -430,10 +430,36 @@ ul.md-list ul.md-list { list-style: circle; }
 .hist-subject { background: none; border: 0; padding: 0; text-align: left; font: inherit; color: inherit; cursor: pointer; overflow-wrap: anywhere; min-width: 0; }
 .hist-subject:hover { text-decoration: underline; }
 .hist-meta { display: flex; flex-wrap: wrap; gap: 2px 6px; font-size: 0.8rem; padding-left: 4px; }
-.settings-log { margin: 0 0 12px; overflow-wrap: anywhere; }
-.settings-log h4 { margin: 0 0 4px; }
-.settings-log ul { margin: 0 0 6px; padding-left: 18px; font-size: 0.85rem; }
-.settings-log li { margin: 2px 0; }
+.hist-ref-start { background: var(--sunken); color: var(--muted); border: 1px dashed var(--line); }
+.hist-commits-head { margin-top: 10px; }
+
+/* History's activity timeline: full width like the board; a row is time, kind, then the words and the Items it links to. */
+main > .panel.history-page { max-width: none; width: 100%; margin: 0; box-sizing: border-box; }
+.act { display: grid; gap: 8px; min-width: 0; }
+.act-filters { align-items: end; margin-bottom: 0; }
+.act-clear { justify-self: start; }
+.act-day h4 { margin: 8px 0 2px; font-size: 0.8rem; font-weight: 650; color: var(--muted); position: sticky; top: 0; background: var(--surface); padding: 2px 0; }
+.act-rows { list-style: none; margin: 0; padding: 0; }
+.act-row { display: grid; grid-template-columns: 3.4rem 5.6rem minmax(0, 1fr); gap: 0 8px; align-items: baseline; padding: 5px 0 5px 8px; border-top: 1px solid var(--line); border-left: 3px solid transparent; font-size: 0.87rem; }
+.act-row:first-child { border-top: 0; }
+.act-good { border-left-color: var(--done); }
+.act-bad { border-left-color: var(--blocked); }
+.act-time { color: var(--muted); font-size: 0.8rem; }
+.act-kind { font-size: 0.72rem; font-weight: 650; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); overflow-wrap: anywhere; }
+.act-body { min-width: 0; overflow-wrap: anywhere; }
+.act-who { font-weight: 650; }
+.act-agent { font-weight: 550; font-style: italic; color: var(--muted); }
+.act-item { margin-left: 8px; color: var(--accent); white-space: normal; }
+.act-gone { color: var(--muted); }
+.act-more { margin-left: 6px; font-size: 0.78rem; }
+.act-detail { margin: 2px 0 0; color: var(--muted); font-size: 0.82rem; }
+@media (max-width: 600px) { .act-row { grid-template-columns: 3.4rem minmax(0, 1fr); } .act-body { grid-column: 1 / -1; } }
+
+/* Settings: the History of settings, closed until opened. */
+.settings-history > summary { cursor: pointer; }
+.settings-history > summary h3 { display: inline; margin: 0 10px 0 2px; }
+.settings-log { margin: 0; padding-left: 18px; overflow-wrap: anywhere; font-size: 0.87rem; display: grid; gap: 4px; }
+.settings-log ul { margin: 2px 0 0; padding-left: 18px; }
 .hist-ref { background: var(--accent-soft); color: var(--accent); border-radius: 4px; padding: 0 5px; overflow-wrap: anywhere; }
 .hist-open { display: grid; gap: 6px; padding: 6px 0 0 4px; min-width: 0; }
 .hist-message { margin: 0; font-family: var(--mono); font-size: 0.82rem; white-space: pre-wrap; overflow-wrap: anywhere; }

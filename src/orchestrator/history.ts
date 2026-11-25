@@ -5,8 +5,8 @@
 import type { ProjectConfig } from "../config/types.ts";
 import { layoutLanes } from "../core/graph.ts";
 import type { CommitView, HistoryCommit, HistoryView } from "../core/views.ts";
-import type { Ref } from "../model/types.ts";
-import { refKey } from "../model/types.ts";
+import { commitLinks, linkCommit } from "../core/commitLinks.ts";
+import type { WorkItem } from "../model/types.ts";
 import { changedFiles } from "./diff.ts";
 import { BRANCH_PREFIX, workBranch } from "./paths.ts";
 import type { Git } from "./process.ts";
@@ -23,8 +23,8 @@ export interface HistoryDeps {
   config: () => ProjectConfig;
   git: Git;
   now: () => Date;
-  /** The items the board knows, to link branches and merged commits to them. */
-  works: () => { ref: Ref }[];
+  /** The items the board knows, to link branches and merged commits to them (by their logs' merged lines, ids and branches). */
+  works: () => Pick<WorkItem, "ref" | "state" | "log" | "merged">[];
 }
 
 export const isSha = (text: string) => /^[0-9a-f]{7,64}$/.test(text);
@@ -94,6 +94,7 @@ export async function projectHistory(deps: HistoryDeps, requested: number): Prom
 
   const tips = new Map<string, string[]>();
   const onMain = new Set<string>();
+  const firstParent = new Set<string>();
   const seen = new Map<string, Parsed>();
   let failure: string | null = null;
   let found = 0;
@@ -143,22 +144,16 @@ export async function projectHistory(deps: HistoryDeps, requested: number): Prom
   const more = parsed.length > limit;
   const shown = parsed.slice(0, limit);
 
-  const itemOf = new Map(deps.works().map((work) => [workBranch(work.ref), work.ref]));
-  const byId = new Map(deps.works().map((work) => [work.ref.id, work.ref]));
+  const links = commitLinks(deps.works(), (work) => workBranch(work.ref));
   const layout = layoutLanes(shown);
   const commits: HistoryCommit[] = shown.map((commit, index) => {
     const refs = tips.get(commit.sha) ?? [];
-    const branchItem = refs.map((name) => itemOf.get(name)).find((ref) => ref !== undefined);
-    const named = /\(#(\d+)\)\s*$/.exec(commit.subject);
-    const mergedItem = named ? byId.get(named[1]!) : undefined;
-    const item = branchItem ?? mergedItem;
     const isMain = onMain.has(commit.sha);
     return {
       ...commit,
       refs,
       onMain: isMain,
-      ...(item ? { item: refKey(item) } : {}),
-      ...(isMain && item ? { merged: true } : {}),
+      ...linkCommit({ sha: commit.sha, subject: commit.subject, refs, onMain: isMain, firstParent: firstParent.has(commit.sha) }, links),
       graph: layout.rows[index]!,
     };
   });
