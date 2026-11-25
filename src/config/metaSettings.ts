@@ -29,6 +29,7 @@ export interface MetaSettings extends SharedSettings {
   requests(repoPath: string): PickRequest[];
   /** Writes one line of the requests' log and pushes it, as a save does. */
   writeRequest(where: { repoPath: string; remote: string; machine: string; multiplayer?: boolean }, line: LineWrite): Promise<{ ok: true; sharing: SharingReport } | { ok: false; error: string }>;
+  share(repoPath: string, remote: string, machine: string): Promise<{ pushed: boolean; state: "local" | "shared" | "pending"; problem?: string }>;
   /** Ends every git still running (a push in flight). */
   stop(): Promise<void>;
 }
@@ -242,6 +243,11 @@ export function metaSettings(options: { now?: () => string; git?: (args: string[
 
     fetch(repoPath, remote, machine, multiplayer) {
       return writerFor(repoPath, remote, machine, multiplayer).share();
+    },
+
+    async share(repoPath, remote, machine) {
+      const report = await writerFor(repoPath, remote, machine, true).share();
+      return { pushed: report.pushes > 0 && report.state === "shared", state: report.state, ...(report.problem ? { problem: report.problem } : {}) };
     },
 
     async stop() {

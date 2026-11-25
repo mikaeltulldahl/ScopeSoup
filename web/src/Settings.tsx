@@ -1,6 +1,8 @@
 // The Settings page: the level first, as five rows with what each does and needs; then parallel sessions, the
 // usage reserve (from level 1), the age after which a triage is taken again (from level 2) and the model of each role. Everything else is file-only, with its defaults.
-// Picking level 4 while the file lacks its check command or remote URL asks for them right there, proposed by the server.
+// Everything saves when it is changed (a text field when it is left, a slider when it rests), one save at a time, with a short
+// "Saved" or the reason beside the control (#157). Picking level 4 while the file lacks its check command or remote URL asks for
+// them right there, proposed by the server; the level is saved once they are filled in.
 // The project's settings (level, check, setup, models, the triage's age) are shared by every machine: a save is
 // one commit on the meta ref, named after the person picked at the top of the board, and in effect at once (on the other
 // machines at their next fetch). Singleplayer or multiplayer, parallel sessions, the usage reserve and the remote's URL are this
@@ -11,16 +13,17 @@
 // filter and the components of new Items are edited here, and a filter that adds Items asks to confirm first (#141).
 
 import { ThemePicker } from "./ThemePicker.tsx";
-import { useEffect, useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 import { VersionPanel } from "./Version.tsx";
 import { SettingsHistory } from "./SettingsHistory.tsx";
 import type { ConfigView, ProjectConfig, ProjectView } from "./api.ts";
 import { FolderButton } from "./ProjectHeader.tsx";
-import type { AskedField, MergeQueueSetup } from "../../src/config/levels.ts";
+import type { AskedField } from "../../src/config/levels.ts";
 import type { Sliders } from "../../src/config/sliders.ts";
 import { commandText, commandWords } from "../../src/config/commandLine.ts";
 import { fetchConfig, FilterWidens, PlayersDiffer, postConfig } from "./api.ts";
 import { EFFORT_LEVELS } from "../../src/config/types.ts";
+import { commandChange, levelFourFilled, pendingFourText, resourcesReady, serialQueue, wholeNumber } from "./settingsSave.ts";
 import { ConnectDialog, type DialogKind, HOST_NAMES } from "./Connect.tsx";
 
 const ONBOARDING = "https://github.com/mikaeltulldahl/scopesoup/blob/main/docs/ONBOARDING.md";
@@ -56,14 +59,14 @@ interface Draft {
   level: number;
   settings: Record<SettingName, string>;
   roles: Record<string, { model: string; effort: string }>;
-  /** What level 4 asks for, as text: the check command as one line, the remote's URL. Saved only with level 4. */
+  /** What level 4 asks for, as text: the check command as one line, the remote's URL. */
   mergeQueue: Record<AskedField, string>;
   /** The setup of a fresh clone: the command as one line, the watched files one per line ("" for none in the file). */
   setup: { command: string; watch: string };
   /** The limited resources, as the form holds them. */
   resources: ResourceDraft[];
-  /** Agents' images: pushed to the remote or not, and the days a closed Item's are kept ("" keeps them). */
-  media: { push: boolean; keepDays: string };
+  /** Agents' images: pushed to the remote or not, and how long a closed Item's are kept: Never, or After `keepDays` (the mode is set only by the select). */
+  media: { push: boolean; keepDays: string; keepMode: "never" | "after" };
   /** Multiplayer (refs/scopesoup/* shared on the remote) or singleplayer (they stay in this clone): this machine's. */
   multiplayer: boolean;
   /** What a reviewer's `should` findings on an approved change do (decision 95). */
@@ -117,16 +120,17 @@ function pinnedRoles(raw: unknown): Set<string> {
 }
 
 /** A role's model in the draft: its own when the file sets it, "" when the role runs on its default. */
-function draftOf(config: ProjectConfig, raw: unknown, mergeQueue: MergeQueueSetup | null | undefined): Draft {
+function draftOf(config: ProjectConfig, raw: unknown, mergeQueue: { remoteUrl?: string | null } | null | undefined): Draft {
   const setting = (name: SettingName) => String(config.settings[name].value);
   const roles: Draft["roles"] = {};
   const pinned = pinnedRoles(raw);
   for (const [name] of ROLES) roles[name] = { model: pinned.has(name) ? (config.roles as Record<string, { model: string } | undefined>)[name]?.model ?? "" : "", effort: (config.roles as Record<string, { effort?: string } | undefined>)[name]?.effort ?? "" };
-  const asked = { checkCommand: mergeQueue?.checkCommand ? commandText(mergeQueue.checkCommand) : "", remoteUrl: mergeQueue?.remoteUrl ?? "" };
+  // The check command as the file holds it (what Settings proposes is a placeholder, and fills the field only when level 4 is picked).
+  const asked = { checkCommand: config.checkCommand ? commandText(config.checkCommand) : "", remoteUrl: mergeQueue?.remoteUrl ?? "" };
   // The command as the shared file holds it, with {{ownClone}} unexpanded (the configuration in use has this machine's path in it).
   const command = (raw as { setupCommand?: unknown } | null)?.setupCommand;
   const setup = { command: Array.isArray(command) ? commandText(command as string[]) : config.setupCommand ? commandText(config.setupCommand) : "", watch: (config.setupWatch ?? []).join("\n") };
-  return { level: config.level, settings: { maxParallelSessions: setting("maxParallelSessions"), budgetReserve: setting("budgetReserve"), triageMaxAgeDays: setting("triageMaxAgeDays") }, roles, mergeQueue: asked, setup, resources: resourceDrafts(config), media: { push: config.media?.push ?? false, keepDays: config.media?.keepDaysAfterClose === null || config.media?.keepDaysAfterClose === undefined ? "" : String(config.media.keepDaysAfterClose) }, multiplayer: config.multiplayer, shouldFindings: config.review?.shouldFindings ?? "fix", aiLabel: config.labels?.aiGenerated || "", jira: { filter: config.host?.kind === "jira" ? config.host.filter ?? "" : "", components: config.host?.kind === "jira" ? (config.host.components ?? []).join(", ") : "" } };
+  return { level: config.level, settings: { maxParallelSessions: setting("maxParallelSessions"), budgetReserve: setting("budgetReserve"), triageMaxAgeDays: setting("triageMaxAgeDays") }, roles, mergeQueue: asked, setup, resources: resourceDrafts(config), media: { push: config.media?.push ?? false, keepDays: config.media?.keepDaysAfterClose === null || config.media?.keepDaysAfterClose === undefined ? "" : String(config.media.keepDaysAfterClose), keepMode: config.media?.keepDaysAfterClose === null || config.media?.keepDaysAfterClose === undefined ? "never" : "after" }, multiplayer: config.multiplayer, shouldFindings: config.review?.shouldFindings ?? "fix", aiLabel: config.labels?.aiGenerated || "", jira: { filter: config.host?.kind === "jira" ? config.host.filter ?? "" : "", components: config.host?.kind === "jira" ? (config.host.components ?? []).join(", ") : "" } };
 }
 
 /** Component names as typed: comma separated, blanks dropped. */
@@ -137,55 +141,6 @@ function componentList(text: string): string[] {
 /** The watched files as the file holds them: one per line, blank lines dropped. */
 function watchLines(text: string): string[] {
   return text.split(/\r?\n/).map((line) => line.trim()).filter((line) => line !== "");
-}
-
-/** Only what differs from the configuration in use, as the server takes it. */
-function changeOf(draft: Draft, base: Draft, asks: readonly AskedField[], showsCheck: boolean): Record<string, unknown> {
-  const change: Record<string, unknown> = {};
-  if (draft.level !== base.level) change.level = draft.level;
-  // Level 4's missing needs go with it, as the file holds them: the check command as a list, run without a shell.
-  // The check command shown at level 4 is saved when it was changed, too.
-  if (draft.level === 4) {
-    if (asks.includes("checkCommand") || (showsCheck && draft.mergeQueue.checkCommand.trim() !== base.mergeQueue.checkCommand.trim())) change.checkCommand = commandWords(draft.mergeQueue.checkCommand);
-    if (asks.includes("remoteUrl")) change.remoteUrl = draft.mergeQueue.remoteUrl.trim();
-  }
-  // The setup, at any level; emptied, it is removed from the file (no setup, or the default watched files).
-  if (draft.setup.command.trim() !== base.setup.command.trim()) change.setupCommand = draft.setup.command.trim() === "" ? null : commandWords(draft.setup.command);
-  const watch = watchLines(draft.setup.watch);
-  if (JSON.stringify(watch) !== JSON.stringify(watchLines(base.setup.watch))) change.setupWatch = watch.length === 0 ? null : watch;
-  const settings: Record<string, unknown> = {};
-  for (const name of SETTINGS) {
-    if (draft.settings[name] !== base.settings[name]) settings[name] = { value: Number(draft.settings[name]) };
-  }
-  if (Object.keys(settings).length > 0) change.settings = settings;
-  const roles: Record<string, unknown> = {};
-  for (const [name, role] of Object.entries(draft.roles)) {
-    const each: Record<string, string> = {};
-    if (role.model.trim() !== "" && role.model !== base.roles[name]?.model) each.model = role.model;
-    if (role.effort !== base.roles[name]?.effort) each.effort = role.effort;
-    if (Object.keys(each).length > 0) roles[name] = each;
-  }
-  if (Object.keys(roles).length > 0) change.roles = roles;
-  if (draft.multiplayer !== base.multiplayer) change.multiplayer = draft.multiplayer;
-  if (draft.shouldFindings !== base.shouldFindings) change.review = { shouldFindings: draft.shouldFindings };
-  // A Jira host's filter and components; emptied, each is removed (every issue is an Item; new ones get no component).
-  const host: Record<string, unknown> = {};
-  if (draft.jira.filter.trim() !== base.jira.filter.trim()) host.filter = draft.jira.filter.trim() === "" ? null : draft.jira.filter.trim();
-  const components = componentList(draft.jira.components);
-  if (JSON.stringify(components) !== JSON.stringify(componentList(base.jira.components))) host.components = components.length === 0 ? null : components;
-  if (Object.keys(host).length > 0) change.host = host;
-  if (draft.aiLabel.trim() !== base.aiLabel.trim()) change.labels = { aiGenerated: draft.aiLabel.trim() === "" ? false : draft.aiLabel.trim() };
-  // Both media values together, when either differs.
-  if (draft.media.push !== base.media.push || draft.media.keepDays.trim() !== base.media.keepDays.trim()) {
-    change.media = { push: draft.media.push, keepDaysAfterClose: draft.media.keepDays.trim() === "" ? null : Number(draft.media.keepDays) };
-  }
-  // Each list whole, when it differs; an emptied list is removed from its file.
-  const lists = resourceLists(draft.resources);
-  const before = resourceLists(base.resources);
-  for (const key of ["resources", "sharedResources"] as const) {
-    if (JSON.stringify(lists[key]) !== JSON.stringify(before[key])) change[key] = lists[key].length === 0 ? null : lists[key];
-  }
-  return change;
 }
 
 /** The project's folders, each opened in the file manager by the server: your checkout, Scope Soup's clone, the configuration's folder. */
@@ -201,29 +156,81 @@ function Folders({ project }: { project: ProjectView | undefined }) {
   );
 }
 
+
+/** One control's answer to a save, shown next to it: "Saved" (fades) or the reason it was refused. */
+interface Mark {
+  text: string;
+  bad: boolean;
+  /** Stays until the save answers (does not fade). */
+  keep?: boolean;
+}
+
+/** A save: what to send, the control it came from, and what the control goes back to when the server refuses it. */
+interface Saving {
+  key: string;
+  change: Record<string, unknown>;
+  /** The draft's part to restore from the configuration in use when refused (a pick); a text field keeps what was typed. */
+  undo?: (base: Draft) => Partial<Draft>;
+  /** Shown beside the control while the save is in flight (a switch to multiplayer pushes). */
+  working?: string;
+}
+
+/** The delay of a slider's save: one save when the thumb has rested, not one per step. */
+const SLIDER_DELAY_MS = 500;
+const SAVED_SHOWN_MS = 2500;
+
 export function Settings({ project, openHistory = false }: { project?: ProjectView | undefined; openHistory?: boolean } = {}) {
   const [view, setView] = useState<ConfigView | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [saved, setSaved] = useState(false);
-  // What a save of a project setting did: saved for every machine, by whom.
-  const [committed, setCommitted] = useState<string | null>(null);
+  const draftRef = useRef<Draft | null>(null);
+  const baseRef = useRef<Draft | null>(null);
+  // Each control's answer, by its key; "Saved" fades after a moment, a reason stays until the next save of that control.
+  const [marks, setMarks] = useState<Record<string, Mark>>({});
+  // What a switch of Players did, shown until the page is left; what connecting to a host did.
+  const [playersNote, setPlayersNote] = useState<string | null>(null);
+  const [hostNote, setHostNote] = useState<string | null>(null);
   // The connect dialog open, if one is (#127).
   const [connecting, setConnecting] = useState<DialogKind | null>(null);
   // A switch to multiplayer refused because the remote's shared settings name another project or host: both sides, and the change.
   const [players, setPlayers] = useState<(PlayersDiffer["players"] & { change: Record<string, unknown> }) | null>(null);
   // A new Jira filter that adds Items, waiting for the person's yes: what it adds and removes, and the change (#141).
   const [widens, setWidens] = useState<(FilterWidens["filter"] & { change: Record<string, unknown> }) | null>(null);
+  const queue = useRef(serialQueue());
+  const timers = useRef<Record<string, number>>({});
+  const lastSent = useRef<Record<string, string>>({});
+  const slides = useRef<Record<string, Saving>>({});
+  const submitRef = useRef<((saving: Saving) => void) | null>(null);
 
   const show = (next: ConfigView) => {
     setView(next);
-    setDraft(next.present && next.config ? draftOf(next.config, next.raw, next.mergeQueue) : null);
+    const fresh = next.present && next.config ? draftOf(next.config, next.raw, next.mergeQueue) : null;
+    draftRef.current = fresh;
+    setDraft(fresh);
   };
   useEffect(() => {
     fetchConfig().then(show, (problem: unknown) => setLoadError(problem instanceof Error ? problem.message : String(problem)));
+    // Leaving the page saves a slider change that has not rested yet.
+    return () => {
+      Object.values(timers.current).forEach((timer) => window.clearTimeout(timer));
+      for (const saving of Object.values(slides.current)) submitRef.current?.(saving);
+    };
   }, []);
+
+  const mark = (key: string, next: Mark | null) => {
+    setMarks((all) => {
+      const { [key]: _gone, ...rest } = all;
+      return next ? { ...rest, [key]: next } : rest;
+    });
+    window.clearTimeout(timers.current[`mark:${key}`]);
+    if (next && !next.bad && !next.keep) timers.current[`mark:${key}`] = window.setTimeout(() => setMarks((all) => { const { [key]: _gone, ...rest } = all; return rest; }), SAVED_SHOWN_MS);
+  };
+  /** The draft's changes, at once (the render after may be later than the next event). */
+  const update = (patch: Partial<Draft>) => {
+    const next = { ...(draftRef.current as Draft), ...patch };
+    draftRef.current = next;
+    setDraft(next);
+  };
 
   if (loadError) return <p class="notice notice-bad" role="alert">{loadError}</p>;
   if (!view) return <p class="empty">Loading…</p>;
@@ -256,77 +263,165 @@ export function Settings({ project, openHistory = false }: { project?: ProjectVi
   }
 
   const base = draftOf(view.config, view.raw, view.mergeQueue);
+  baseRef.current = base;
   const hostKind = view.config.host?.kind;
   const pinned = pinnedRoles(view.raw);
   const defaultModels: Readonly<Record<string, string | undefined>> = view.defaultModels ?? {};
   const levels = view.levels ?? [];
-  const asks = draft.level === 4 ? (levels[4]?.asks ?? []) : [];
   const mergeQueue = view.mergeQueue ?? null;
-  // At level 4 with the project's own check command (not mergeQueue.ci "github"), the check question is always shown.
-  const showsCheck = draft.level === 4 && (asks.includes("checkCommand") || (view.config.mergeQueue?.ci ?? "local") === "local");
-  const run = (change: Record<string, unknown>, after?: () => void) => {
-    setBusy(true);
-    setError(null);
-    setSaved(false);
-    setCommitted(null);
-    postConfig(change).then(
+  const fourAsks: readonly AskedField[] = levels[4]?.asks ?? [];
+  // Level 4 picked but not saved yet: its fields are open, and the old level stays in effect until they are filled in.
+  const pendingFour = draft.level === 4 && base.level !== 4 && fourAsks.length > 0;
+  const asks = pendingFour ? fourAsks : [];
+  // With the project's own check command (not mergeQueue.ci "github") there is a check command to show and to change.
+  const hasCheck = mergeQueue !== null && (view.config.mergeQueue?.ci ?? "local") === "local";
+  const inLevels = pendingFour || (base.level === 4 && hasCheck);
+
+  /** Sends a save after the ones before it; its answer goes next to the control it came from. */
+  const submit = ({ key, change, undo, working }: Saving, after?: (next: ConfigView) => void) => {
+    const text = JSON.stringify(change);
+    if (lastSent.current[key] === text) return;
+    lastSent.current[key] = text;
+    mark(key, working ? { text: working, bad: false, keep: true } : null);
+    void queue.current(() => postConfig(change)).then(
       (next) => {
-        show(next);
-        setCommitted(next.shared ?? null);
-        after?.();
-        setBusy(false);
+        setView(next);
+        if (next.playersNote) setPlayersNote(next.playersNote);
+        mark(key, { text: next.shared && /not on the remote yet/.test(next.shared) ? next.shared : "Saved", bad: false });
+        after?.(next);
       },
       (problem: unknown) => {
+        delete lastSent.current[key];
         // A switch to multiplayer whose remote names another project or host waits for the person's choice.
         if (problem instanceof PlayersDiffer) setPlayers({ ...problem.players, change });
         else if (problem instanceof FilterWidens) setWidens({ ...problem.filter, change });
-        else setError(problem instanceof Error ? problem.message : String(problem));
-        setBusy(false);
+        else mark(key, { text: problem instanceof Error ? problem.message : String(problem), bad: true });
+        if (undo && baseRef.current) update(undo(baseRef.current));
       },
     );
   };
-  const change = changeOf(draft, base, asks, showsCheck);
-  const dirty = Object.keys(change).length > 0;
-  const save = (event: Event) => {
-    event.preventDefault();
-    run(change, () => setSaved(true));
+  submitRef.current = (saving) => submit(saving);
+  /** A slider: the draft follows the thumb, and one save follows when it has rested. */
+  const slide = (key: string, patch: Partial<Draft>, saving: Saving) => {
+    update(patch);
+    window.clearTimeout(timers.current[key]);
+    slides.current[key] = saving;
+    timers.current[key] = window.setTimeout(() => { delete slides.current[key]; submit(saving); }, SLIDER_DELAY_MS);
   };
-  const set = (patch: Partial<Draft>) => {
-    setSaved(false);
-    setDraft({ ...draft, ...patch });
+  /** A text field saves when it is left, or on Enter (which leaves it). */
+  const leave = (event: KeyboardEvent) => {
+    if (event.key === "Enter" && (event.target as HTMLElement).tagName === "INPUT") (event.target as HTMLInputElement).blur();
   };
-  const setSetting = (name: SettingName, value: string) => set({ settings: { ...draft.settings, [name]: value } });
-  const setAsked = (name: AskedField, value: string) => set({ mergeQueue: { ...draft.mergeQueue, [name]: value } });
-  const parallel = draft.settings.maxParallelSessions;
-  const reserve = draft.settings.budgetReserve;
-  const lookAge = draft.settings.triageMaxAgeDays;
+  const Marked = ({ k }: { k: string }) => {
+    const each = marks[k];
+    return each ? <span class={`saved-mark${each.bad ? " saved-bad" : ""}`} role={each.bad ? "alert" : "status"}>{each.text}</span> : null;
+  };
+
+  const setSettingNow = (name: SettingName, text: string, min: number, max: number) => {
+    const number = wholeNumber(text, min, max);
+    if (!number.ok) return void mark(name, { text: number.reason, bad: true });
+    if (String(number.value) === base.settings[name]) return void mark(name, null);
+    submit({ key: name, change: { settings: { [name]: { value: number.value } } }, undo: (b) => ({ settings: { ...draftRef.current!.settings, [name]: b.settings[name] } }) });
+  };
+  const setSetting = (name: SettingName, value: string) => update({ settings: { ...draftRef.current!.settings, [name]: value } });
+  const setAsked = (name: AskedField, value: string) => update({ mergeQueue: { ...draftRef.current!.mergeQueue, [name]: value } });
+  const sliderSetting = (name: SettingName, value: string) => {
+    const current = draftRef.current!;
+    slide(name, { settings: { ...current.settings, [name]: value } }, { key: name, change: { settings: { [name]: { value: Number(value) } } }, undo: (b) => ({ settings: { ...draftRef.current!.settings, [name]: b.settings[name] } }) });
+  };
+
+  const pickLevel = (level: number) => {
+    // Level 4 with a need missing opens its fields; it is saved once they are filled in.
+    if (level === 4 && fourAsks.length > 0) {
+      const current = draftRef.current!;
+      const proposed = mergeQueue?.checkCommand ? commandText(mergeQueue.checkCommand) : "";
+      update({ level, mergeQueue: { ...current.mergeQueue, checkCommand: current.mergeQueue.checkCommand || proposed } });
+      return;
+    }
+    update({ level });
+    submit({ key: "level", change: { level }, undo: (b) => ({ level: b.level }) });
+  };
+  /** The check command as typed: below level 4 it saves (emptied, it is removed); level 4 refuses it emptied, with the reason. */
+  const commitCheck = () => {
+    const text = draftRef.current!.mergeQueue.checkCommand;
+    if (pendingFour) return void commitLevelFour();
+    if (text.trim() === base.mergeQueue.checkCommand.trim()) return void mark("check", null);
+    submit({ key: "check", change: { checkCommand: commandChange(text) } });
+  };
+  const commitLevelFour = () => {
+    const current = draftRef.current!;
+    const fields = { checkCommand: current.mergeQueue.checkCommand, remoteUrl: current.mergeQueue.remoteUrl };
+    if (!levelFourFilled(fourAsks, fields)) return;
+    const change: Record<string, unknown> = { level: 4 };
+    if (fourAsks.includes("checkCommand") || fields.checkCommand.trim() !== base.mergeQueue.checkCommand.trim()) change.checkCommand = commandChange(fields.checkCommand);
+    if (fourAsks.includes("remoteUrl")) change.remoteUrl = fields.remoteUrl.trim();
+    submit({ key: "level", change });
+  };
+  const pickCandidate = (text: string) => {
+    setAsked("checkCommand", text);
+    if (pendingFour) commitLevelFour();
+    else if (text.trim() !== base.mergeQueue.checkCommand.trim()) submit({ key: "check", change: { checkCommand: commandChange(text) } });
+  };
+
+  /** Only the changed field is sent, so another machine's newer value of the other is kept. */
+  const savePush = (push: boolean) => {
+    update({ media: { ...draftRef.current!.media, push } });
+    submit({ key: "push", change: { media: { push } }, undo: (b) => ({ media: { ...draftRef.current!.media, push: b.media.push } }) });
+  };
+  const saveKeep = (patch: Partial<Draft["media"]>) => {
+    const media = { ...draftRef.current!.media, ...patch };
+    update({ media });
+    // "After" with nothing typed is allowed on the page; the save waits and says why.
+    const days = media.keepMode === "never" ? { ok: true as const, value: null } : wholeNumber(media.keepDays, 0, 3650);
+    if (!days.ok) return void mark("keepDays", { text: days.reason, bad: true });
+    submit({ key: "keepDays", change: { media: { keepDaysAfterClose: days.value } }, undo: (b) => ({ media: { ...draftRef.current!.media, keepMode: b.media.keepMode, keepDays: b.media.keepDays } }) });
+  };
+  const saveResources = (resources: ResourceDraft[], key: string) => {
+    update({ resources });
+    if (!resourcesReady(resources)) return void mark(key, { text: "Each resource needs a name and units from 1 to 64.", bad: true });
+    const lists = resourceLists(resources);
+    const before = resourceLists(base.resources);
+    const change: Record<string, unknown> = {};
+    for (const each of ["resources", "sharedResources"] as const) {
+      if (JSON.stringify(lists[each]) !== JSON.stringify(before[each])) change[each] = lists[each].length === 0 ? null : lists[each];
+    }
+    if (Object.keys(change).length === 0) return void mark(key, null);
+    submit({ key, change });
+  };
+  const saveRole = (name: string, patch: { model?: string | null; effort?: string }) => {
+    submit({ key: `role:${name}:${Object.keys(patch)[0]}`, change: { roles: { [name]: patch } } });
+  };
+  const saveHost = (patch: { filter?: string | null; components?: string[] | null }) => {
+    submit({ key: `jira:${Object.keys(patch)[0]}`, change: { host: patch } });
+  };
 
   return (
     <div class="settings">
       <ThemePicker />
       <VersionPanel />
-      <form class="panel item-form settings-form" onSubmit={save}>
+      <form class="panel item-form settings-form" onSubmit={(event) => event.preventDefault()}>
         <div class="panel-head">
           <h3>Settings</h3>
           <a class="tag-link settings-stop-link" href="#/settings/stop">Stop using Scope Soup</a>
         </div>
         <Folders project={project} />
         <p class="muted">
-          The project's settings (the level, the check, the setup, the models, the triage's age) are the same on every machine: a save takes effect at once, here and on the other machines at their next fetch, and History says who changed what.
+          Changes save as they are made (a text field when you leave it). The project's settings (the level, the check, the setup, the models, the triage's age) are the same on every machine: they take effect at once, here and on the other machines at their next fetch, and History says who changed what.
           {" "}Singleplayer or multiplayer, parallel sessions, the usage reserve and the remote's URL are this machine's own. Everything not on this page is set by hand.
         </p>
 
-        <fieldset class="levels" disabled={busy}>
-          <legend><b>Players</b>: this machine's choice</legend>
+        <fieldset class="levels">
+          <legend><b>Players</b>: this machine's choice <Marked k="players" /></legend>
           {PLAYERS.map(([multiplayer, name, text]) => (
             <label key={name} class={`level-row${draft.multiplayer === multiplayer ? " level-on" : ""}`}>
-              <input type="radio" name="players" checked={draft.multiplayer === multiplayer} onChange={() => set({ multiplayer })} />
+              <input type="radio" name="players" checked={draft.multiplayer === multiplayer} onChange={() => { update({ multiplayer }); submit({ key: "players", change: { multiplayer }, undo: (b) => ({ multiplayer: b.multiplayer }), ...(multiplayer ? { working: "Sharing…" } : {}) }); }} />
               <span>
                 <b>{name}</b>
                 <span class="level-text">{text}</span>
               </span>
             </label>
           ))}
+          {playersNote && <p class="saved-note" role="status">{playersNote}</p>}
         </fieldset>
 
         {players && (
@@ -339,40 +434,45 @@ export function Settings({ project, openHistory = false }: { project?: ProjectVi
               <dd>{players.mine.project ?? "no project name"} on {players.mine.host}</dd>
             </dl>
             <div class="form-actions">
-              <button type="button" class="primary" disabled={busy} onClick={() => { const { change: wanted } = players; setPlayers(null); run({ ...wanted, players: "join" }, () => setSaved(true)); }}>Join theirs</button>
-              <button type="button" disabled={busy} onClick={() => { const { change: wanted } = players; setPlayers(null); run({ ...wanted, players: "mine" }, () => setSaved(true)); }}>Make mine the project's</button>
-              <button type="button" disabled={busy} onClick={() => setPlayers(null)}>Cancel</button>
+              <button type="button" class="primary" onClick={() => { const { change: wanted } = players; setPlayers(null); submit({ key: "players", change: { ...wanted, players: "join" }, undo: (b) => ({ multiplayer: b.multiplayer }) }, show); }}>Join theirs</button>
+              <button type="button" onClick={() => { const { change: wanted } = players; setPlayers(null); submit({ key: "players", change: { ...wanted, players: "mine" }, undo: (b) => ({ multiplayer: b.multiplayer }) }, show); }}>Make mine the project's</button>
+              <button type="button" onClick={() => { setPlayers(null); update({ multiplayer: base.multiplayer }); }}>Cancel</button>
             </div>
             <p class="muted">Join theirs uses the remote's settings and Items: <b>this clone's settings, and its Items that were never shared, leave the board</b> and are kept only in <code>{players.backup}</code>. Make mine the project's puts this clone's settings and Items on top of the remote's: <b>it changes the project for every machine</b> (Items merge; an id taken on both sides is renumbered).</p>
           </div>
         )}
 
-        <fieldset class="levels" disabled={busy}>
-          <legend><b>Level</b>: how much Scope Soup does on its own; each level includes the ones below</legend>
+        <fieldset class="levels">
+          <legend><b>Level</b>: how much Scope Soup does on its own; each level includes the ones below <Marked k="level" /></legend>
           {levels.map((choice) => {
             // The level in use stays pickable even when a need went missing since, so the page can show it.
             // A level whose only missing needs the page asks for (level 4's check command and remote URL) can be picked.
             const off = !(choice.pickable ?? choice.blocked === null) && choice.level !== base.level;
+            const four = choice.level === 4 && pendingFour;
             return (
               <label key={choice.level} class={`level-row${off ? " level-off" : ""}${draft.level === choice.level ? " level-on" : ""}`}>
-                <input type="radio" name="level" value={String(choice.level)} checked={draft.level === choice.level} disabled={off} onChange={() => set({ level: choice.level })} />
+                <input type="radio" name="level" value={String(choice.level)} checked={draft.level === choice.level} disabled={off} onChange={() => pickLevel(choice.level)} />
                 <span>
                   <b>{choice.level} {choice.name}</b>
                   <span class="level-text">{choice.text}</span>
-                  {choice.blocked && !(choice.level === draft.level && asks.length > 0) && <span class="level-blocked">{choice.blocked}</span>}
+                  {/* red only for the level in use whose need is missing; otherwise what a level needs is said calmly */}
+                  {four
+                    ? <span class="level-needs">{pendingFourText(base.level, fourAsks, levelFourFilled(fourAsks, draft.mergeQueue))}</span>
+                    : choice.blocked && <span class={choice.level === base.level ? "level-blocked" : "level-needs"}>{choice.blocked}</span>}
                 </span>
               </label>
             );
           })}
-          {(asks.length > 0 || showsCheck) && (
+          {inLevels && (
             <div class="level-asks">
-              <p class="muted">{asks.length > 0 ? "Level 4 needs these, saved with it. Scope Soup merges through its own merge queue." : "Scope Soup merges through its own merge queue with this check."}</p>
+              <p class="muted">{pendingFour ? "Level 4 needs these. It is saved when they are filled in; Scope Soup merges through its own merge queue." : "Scope Soup merges through its own merge queue with this check."}</p>
               {/* with mergeQueue.ci "github" (file-only) no check command is asked for; the level's own text says it needs a GitHub host with writes on. */}
-              {showsCheck && (
+              {hasCheck && (
                 <div class="check-ask">
                   <label>
                     <b>What command decides a change is OK — the one you would want green before anything merges?</b>
-                    <input type="text" value={draft.mergeQueue.checkCommand} placeholder="for example: npm run check" onInput={(event) => setAsked("checkCommand", (event.target as HTMLInputElement).value)} />
+                    <input type="text" value={draft.mergeQueue.checkCommand} placeholder="for example: npm run check" onInput={(event) => setAsked("checkCommand", (event.target as HTMLInputElement).value)} onBlur={commitCheck} onKeyDown={leave} />
+                    <Marked k="check" />
                   </label>
                   {(mergeQueue?.checkCandidates?.length ?? 0) > 0 && (
                     <div class="check-candidates">
@@ -382,7 +482,7 @@ export function Settings({ project, openHistory = false }: { project?: ProjectVi
                           const text = commandText(candidate.command);
                           return (
                             <li key={text}>
-                              <button type="button" class={`candidate${draft.mergeQueue.checkCommand.trim() === text ? " candidate-on" : ""}`} onClick={() => setAsked("checkCommand", text)}>
+                              <button type="button" class={`candidate${draft.mergeQueue.checkCommand.trim() === text ? " candidate-on" : ""}`} onClick={() => pickCandidate(text)}>
                                 <code>{text}</code>
                               </button>
                               <span class="muted">{candidate.from}</span>
@@ -402,7 +502,7 @@ export function Settings({ project, openHistory = false }: { project?: ProjectVi
               {asks.includes("remoteUrl") && (
                 <label>
                   <b>Remote's URL</b>
-                  <input type="text" value={draft.mergeQueue.remoteUrl} placeholder="as git remote get-url shows it" onInput={(event) => setAsked("remoteUrl", (event.target as HTMLInputElement).value)} />
+                  <input type="text" value={draft.mergeQueue.remoteUrl} placeholder="as git remote get-url shows it" onInput={(event) => setAsked("remoteUrl", (event.target as HTMLInputElement).value)} onBlur={commitLevelFour} onKeyDown={leave} />
                   <span class="muted">
                     The repository the main branch is pushed to; Scope Soup checks the remote against it before every push.
                     {mergeQueue?.remoteUrl ? ` Read from git (remote "${mergeQueue?.remote}").` : ""}
@@ -414,20 +514,33 @@ export function Settings({ project, openHistory = false }: { project?: ProjectVi
           )}
         </fieldset>
 
+        {hasCheck && !inLevels && (
+          <div class="settings-grid">
+            <label>
+              <b>Check command</b>
+              <input type="text" value={draft.mergeQueue.checkCommand} placeholder={mergeQueue?.checkCommand ? commandText(mergeQueue.checkCommand) : "none"} onInput={(event) => setAsked("checkCommand", (event.target as HTMLInputElement).value)} onBlur={commitCheck} onKeyDown={leave} />
+              <span class="muted">What decides a change is OK; level 4 merges only on it. Empty: none (level 4 asks for one).</span>
+              <Marked k="check" />
+            </label>
+          </div>
+        )}
+
         <div class="settings-grid">
           <div class="settings-row">
             <label>
               <b>Parallel sessions</b>
-              <input type="range" min={1} max={Math.max(8, Number(parallel))} step={1} value={parallel} disabled={busy} onInput={(event) => setSetting("maxParallelSessions", (event.target as HTMLInputElement).value)} />
-              <span>{parallel} session(s) at once, of every role (1 = efficiency, more = speed)</span>
+              <input type="range" min={1} max={Math.max(8, Number(draft.settings.maxParallelSessions))} step={1} value={draft.settings.maxParallelSessions} onInput={(event) => sliderSetting("maxParallelSessions", (event.target as HTMLInputElement).value)} />
+              <span>{draft.settings.maxParallelSessions} session(s) at once, of every role (1 = efficiency, more = speed)</span>
+              <Marked k="maxParallelSessions" />
             </label>
           </div>
           {draft.level >= 1 && (
             <div class="settings-row">
               <label>
                 <b>Usage reserve</b>
-                <input type="range" min={1} max={5} step={1} value={reserve} disabled={busy} onInput={(event) => setSetting("budgetReserve", (event.target as HTMLInputElement).value)} />
-                <span>Position {reserve}: {budgetReserveText(Number(reserve), view.sliders.budgetReserve)}</span>
+                <input type="range" min={1} max={5} step={1} value={draft.settings.budgetReserve} onInput={(event) => sliderSetting("budgetReserve", (event.target as HTMLInputElement).value)} />
+                <span>Position {draft.settings.budgetReserve}: {budgetReserveText(Number(draft.settings.budgetReserve), view.sliders.budgetReserve)}</span>
+                <Marked k="budgetReserve" />
               </label>
             </div>
           )}
@@ -435,8 +548,9 @@ export function Settings({ project, openHistory = false }: { project?: ProjectVi
             <div class="settings-row">
               <label>
                 <b>Triage again after</b>
-                <input type="number" min={1} max={365} step={1} value={lookAge} disabled={busy} onInput={(event) => setSetting("triageMaxAgeDays", (event.target as HTMLInputElement).value)} />
+                <input type="number" min={1} max={365} step={1} value={draft.settings.triageMaxAgeDays} onInput={(event) => setSetting("triageMaxAgeDays", (event.target as HTMLInputElement).value)} onBlur={() => setSettingNow("triageMaxAgeDays", draftRef.current!.settings.triageMaxAgeDays, 1, 365)} onKeyDown={leave} />
                 <span>days: an Item whose triage is older is triaged again before its work starts, as it is when its text was edited, a blocker finished, or commits changed the files its triage named</span>
+                <Marked k="triageMaxAgeDays" />
               </label>
             </div>
           )}
@@ -447,13 +561,15 @@ export function Settings({ project, openHistory = false }: { project?: ProjectVi
         <div class="settings-grid">
           <label>
             <b>Setup command</b>
-            <input type="text" value={draft.setup.command} placeholder="none: nothing is set up" disabled={busy} onInput={(event) => set({ setup: { ...draft.setup, command: (event.target as HTMLInputElement).value } })} />
+            <input type="text" value={draft.setup.command} placeholder="none: nothing is set up" onInput={(event) => update({ setup: { ...draftRef.current!.setup, command: (event.target as HTMLInputElement).value } })} onBlur={() => { const command = draftRef.current!.setup.command; if (command.trim() !== base.setup.command.trim()) submit({ key: "setupCommand", change: { setupCommand: command.trim() === "" ? null : commandWords(command) } }); }} onKeyDown={leave} />
             <span class="muted">Run without a shell in each folder, for example <code>node .scopesoup/scopesoup-setup.mjs --from-clone {"{{ownClone}}"}</code>; <code>{"{{ownClone}}"}</code> is each machine's own clone. Empty: no setup.</span>
+            <Marked k="setupCommand" />
           </label>
           <label>
             <b>Watched files</b>
-            <textarea rows={3} value={draft.setup.watch} placeholder={(view.setupWatchDefault ?? []).join("\n")} disabled={busy} onInput={(event) => set({ setup: { ...draft.setup, watch: (event.target as HTMLTextAreaElement).value } })} />
+            <textarea rows={3} value={draft.setup.watch} placeholder={(view.setupWatchDefault ?? []).join("\n")} onInput={(event) => update({ setup: { ...draftRef.current!.setup, watch: (event.target as HTMLTextAreaElement).value } })} onBlur={() => { const watch = watchLines(draftRef.current!.setup.watch); if (JSON.stringify(watch) !== JSON.stringify(watchLines(base.setup.watch))) submit({ key: "setupWatch", change: { setupWatch: watch.length === 0 ? null : watch } }); }} />
             <span class="muted">One per line, relative to the repository; <code>*</code> matches inside one part of a path. The setup runs again when one of them changes. Empty: the usual lockfiles (shown faintly).</span>
+            <Marked k="setupWatch" />
           </label>
         </div>
 
@@ -463,21 +579,24 @@ export function Settings({ project, openHistory = false }: { project?: ProjectVi
           {" "}A shared resource is counted across every machine, held on the project's remote; the others are this machine's own. In the environment variables <code>{"{{unit}}"}</code> is the unit's number, from 1.
         </p>
         {draft.resources.map((resource, index) => {
-          const setResource = (patch: Partial<ResourceDraft>) => set({ resources: draft.resources.map((each, at) => (at === index ? { ...each, ...patch } : each)) });
+          const key = `resource:${index}`;
+          const setResource = (patch: Partial<ResourceDraft>) => update({ resources: draftRef.current!.resources.map((each, at) => (at === index ? { ...each, ...patch } : each)) });
+          const pickResource = (patch: Partial<ResourceDraft>) => saveResources(draftRef.current!.resources.map((each, at) => (at === index ? { ...each, ...patch } : each)), key);
+          const leaveResource = () => saveResources(draftRef.current!.resources, key);
           return (
-            <fieldset key={index} class="resource-edit" disabled={busy}>
+            <fieldset key={index} class="resource-edit">
               <div class="settings-grid">
                 <label>
                   <b>Name</b>
-                  <input type="text" value={resource.name} placeholder="for example: emulator" onInput={(event) => setResource({ name: (event.target as HTMLInputElement).value })} />
+                  <input type="text" value={resource.name} placeholder="for example: emulator" onInput={(event) => setResource({ name: (event.target as HTMLInputElement).value })} onBlur={leaveResource} onKeyDown={leave} />
                 </label>
                 <label>
                   <b>Units</b>
-                  <input type="number" min={1} max={64} step={1} value={resource.units} onInput={(event) => setResource({ units: (event.target as HTMLInputElement).value })} />
+                  <input type="number" min={1} max={64} step={1} value={resource.units} onInput={(event) => setResource({ units: (event.target as HTMLInputElement).value })} onBlur={leaveResource} onKeyDown={leave} />
                 </label>
               </div>
               <label class="resource-check">
-                <input type="checkbox" checked={resource.shared} onChange={(event) => setResource({ shared: (event.target as HTMLInputElement).checked })} />
+                <input type="checkbox" checked={resource.shared} onChange={(event) => pickResource({ shared: (event.target as HTMLInputElement).checked })} />
                 {" "}Shared by every machine (a project setting); otherwise this machine's own
               </label>
               <div class="resource-users">
@@ -487,7 +606,7 @@ export function Settings({ project, openHistory = false }: { project?: ProjectVi
                     <input
                       type="checkbox"
                       checked={resource.neededBy.includes(user)}
-                      onChange={(event) => setResource({ neededBy: (event.target as HTMLInputElement).checked ? [...resource.neededBy, user] : resource.neededBy.filter((each) => each !== user) })}
+                      onChange={(event) => pickResource({ neededBy: (event.target as HTMLInputElement).checked ? [...resource.neededBy, user] : resource.neededBy.filter((each) => each !== user) })}
                     />
                     {title}
                   </label>
@@ -495,16 +614,18 @@ export function Settings({ project, openHistory = false }: { project?: ProjectVi
               </div>
               <label>
                 <b>Environment variables</b>
-                <textarea rows={2} value={resource.env} placeholder={"one per line, for example: TEST_DB=test_{{unit}}"} onInput={(event) => setResource({ env: (event.target as HTMLTextAreaElement).value })} />
+                <textarea rows={2} value={resource.env} placeholder={"one per line, for example: TEST_DB=test_{{unit}}"} onInput={(event) => setResource({ env: (event.target as HTMLTextAreaElement).value })} onBlur={leaveResource} />
               </label>
               <div>
-                <button type="button" onClick={() => set({ resources: draft.resources.filter((_, at) => at !== index) })}>Remove {resource.name || "this resource"}</button>
+                <button type="button" onClick={() => saveResources(draftRef.current!.resources.filter((_, at) => at !== index), key)}>Remove {resource.name || "this resource"}</button>
+                {" "}<Marked k={key} />
               </div>
             </fieldset>
           );
         })}
         <div>
-          <button type="button" disabled={busy} onClick={() => set({ resources: [...draft.resources, { name: "", units: "1", shared: false, neededBy: ["implement"], env: "" }] })}>Add a resource</button>
+          <button type="button" onClick={() => update({ resources: [...draftRef.current!.resources, { name: "", units: "1", shared: false, neededBy: ["implement"], env: "" }] })}>Add a resource</button>
+          <span class="muted"> saved once it has a name</span>
         </div>
 
         <h4 id="host">Where the Items are</h4>
@@ -517,13 +638,13 @@ export function Settings({ project, openHistory = false }: { project?: ProjectVi
             // GitHub and Jira are connected only from the meta branch (or no host): between them, the way is back to the meta branch first.
             const across = (hostKind === "github" || hostKind === "jira") && hostKind !== kind;
             const why = across ? `Going between GitHub and Jira goes through the meta branch: "Move back to the meta branch" first.` : "";
-            return <button key={kind} type="button" disabled={busy || dirty || across} title={why} onClick={() => setConnecting(kind)}>Connect to {HOST_NAMES[kind]}</button>;
+            return <button key={kind} type="button" disabled={across} title={why} onClick={() => setConnecting(kind)}>Connect to {HOST_NAMES[kind]}</button>;
           })}
           {(hostKind === "github" || hostKind === "jira") && (
-            <button type="button" disabled={busy || dirty} onClick={() => setConnecting("metaBranch")}>Move back to the meta branch</button>
+            <button type="button" onClick={() => setConnecting("metaBranch")}>Move back to the meta branch</button>
           )}
-          {dirty && <span class="muted form-note">Save or undo your changes first.</span>}
         </div>
+        {hostNote && <p class="notice settings-committed" role="status">{hostNote}</p>}
 
         {view.config?.host?.kind === "jira" && (
           <>
@@ -536,14 +657,16 @@ export function Settings({ project, openHistory = false }: { project?: ProjectVi
               <div class="settings-row">
                 <label>
                   <b>Filter</b>
-                  <input type="text" value={draft.jira.filter} placeholder="none: every issue of the project is an Item" onInput={(event) => set({ jira: { ...draft.jira, filter: (event.target as HTMLInputElement).value } })} />
+                  <input type="text" value={draft.jira.filter} placeholder="none: every issue of the project is an Item" onInput={(event) => update({ jira: { ...draftRef.current!.jira, filter: (event.target as HTMLInputElement).value } })} onBlur={() => { const filter = draftRef.current!.jira.filter.trim(); if (filter !== base.jira.filter.trim()) saveHost({ filter: filter === "" ? null : filter }); }} onKeyDown={leave} />
+                  <Marked k="jira:filter" />
                 </label>
               </div>
               <div class="settings-row">
                 <label>
                   <b>Components of new Items</b>
-                  <input type="text" value={draft.jira.components} placeholder="none" onInput={(event) => set({ jira: { ...draft.jira, components: (event.target as HTMLInputElement).value } })} />
+                  <input type="text" value={draft.jira.components} placeholder="none" onInput={(event) => update({ jira: { ...draftRef.current!.jira, components: (event.target as HTMLInputElement).value } })} onBlur={() => { const components = componentList(draftRef.current!.jira.components); if (JSON.stringify(components) !== JSON.stringify(componentList(base.jira.components))) saveHost({ components: components.length === 0 ? null : components }); }} onKeyDown={leave} />
                   <span class="muted">Comma separated. A new Item outside the filter is reported on the board.</span>
+                  <Marked k="jira:components" />
                 </label>
               </div>
             </div>
@@ -555,14 +678,33 @@ export function Settings({ project, openHistory = false }: { project?: ProjectVi
           Agents may attach images to what they answer (a screenshot, a before and after of a UI change). Scope Soup keeps them in this machine's data folder and shows them on the Item page. Hosts (GitHub, Jira) get only the words "image on the board", never the picture.
         </p>
         <div class="settings-grid">
-          {!draft.multiplayer ? <p class="muted">Singleplayer: images stay on this machine.</p> : <label class="resource-check">
-            <input type="checkbox" checked={draft.media.push} disabled={busy} onChange={(event) => set({ media: { ...draft.media, push: (event.target as HTMLInputElement).checked } })} />
-            {" "}Push images to the project's remote, so that everyone with the repository sees them (a project setting; off: only the machine that ran the session sees them)
-          </label>}
           <label>
-            <b>Delete a closed Item's images after</b>
-            <input type="number" min={0} max={3650} step={1} value={draft.media.keepDays} placeholder="never: keep them" disabled={busy} onInput={(event) => set({ media: { ...draft.media, keepDays: (event.target as HTMLInputElement).value } })} />
-            <span class="muted">days, here and on the remote. Empty: they are kept, so the Item's history keeps its pictures.</span>
+            <b>Push images to the remote</b>
+            {draft.multiplayer ? (
+              <span class="check-line">
+                <input type="checkbox" checked={draft.media.push} onChange={(event) => savePush((event.target as HTMLInputElement).checked)} />
+                {" "}Everyone with the repository sees them
+              </span>
+            ) : <span class="muted">Singleplayer: images stay on this machine.</span>}
+            <span class="muted">A project setting. Off: only the machine that ran the session sees them.</span>
+            <Marked k="push" />
+          </label>
+          <label>
+            <b>Delete a closed Item's images</b>
+            <span class="check-line">
+              <select value={draft.media.keepMode} onChange={(event) => { const never = (event.target as HTMLSelectElement).value === "never"; saveKeep(never ? { keepMode: "never" } : { keepMode: "after", keepDays: draftRef.current!.media.keepDays || "30" }); }}>
+                <option value="never">Never</option>
+                <option value="after">After a number of days</option>
+              </select>
+              {draft.media.keepMode === "after" && (
+                <>
+                  <input type="number" min={0} max={3650} step={1} value={draft.media.keepDays} onInput={(event) => update({ media: { ...draftRef.current!.media, keepDays: (event.target as HTMLInputElement).value } })} onBlur={() => saveKeep({})} onKeyDown={leave} />
+                  {" "}days
+                </>
+              )}
+            </span>
+            <span class="muted">Here and on the remote. Never: the Item's history keeps its pictures.</span>
+            <Marked k="keepDays" />
           </label>
         </div>
 
@@ -570,11 +712,12 @@ export function Settings({ project, openHistory = false }: { project?: ProjectVi
         <div class="settings-grid">
           <label>
             <b>A review's "should" findings on a change it approves</b>
-            <select value={draft.shouldFindings} disabled={busy} onChange={(event) => set({ shouldFindings: (event.target as HTMLSelectElement).value as Draft["shouldFindings"] })}>
+            <select value={draft.shouldFindings} onChange={(event) => { const shouldFindings = (event.target as HTMLSelectElement).value as Draft["shouldFindings"]; update({ shouldFindings }); submit({ key: "should", change: { review: { shouldFindings } }, undo: (b) => ({ shouldFindings: b.shouldFindings }) }); }}>
               <option value="fix">Fix before merging (one more round)</option>
               <option value="draft">Merge; make them a draft Item</option>
             </select>
             <span class="muted">A project setting. A draft waits in Your turn for Approve or Deny.</span>
+            <Marked k="should" />
           </label>
         </div>
 
@@ -582,8 +725,9 @@ export function Settings({ project, openHistory = false }: { project?: ProjectVi
         <div class="settings-grid">
           <label>
             <b>Label on Items an AI made or rewrote</b>
-            <input type="text" value={draft.aiLabel} placeholder="no label" disabled={busy} onInput={(event) => set({ aiLabel: (event.target as HTMLInputElement).value })} />
+            <input type="text" value={draft.aiLabel} placeholder="no label" onInput={(event) => update({ aiLabel: (event.target as HTMLInputElement).value })} onBlur={() => { const label = draftRef.current!.aiLabel.trim(); if (label !== base.aiLabel.trim()) submit({ key: "aiLabel", change: { labels: { aiGenerated: label === "" ? false : label } } }); }} onKeyDown={leave} />
             <span class="muted">A project setting. On Items from a restructuring, a draft, an overturned decision or a triage rewrite; never removed.</span>
+            <Marked k="aiLabel" />
           </label>
         </div>
 
@@ -592,11 +736,12 @@ export function Settings({ project, openHistory = false }: { project?: ProjectVi
           {ROLES.map(([name, title]) => (
             <label key={name}>
               <b>{title}</b>
-              <input type="text" value={draft.roles[name]?.model ?? ""} placeholder={defaultModels[name] ?? ""} disabled={busy} onInput={(event) => set({ roles: { ...draft.roles, [name]: { effort: "", ...draft.roles[name], model: (event.target as HTMLInputElement).value } } })} />
+              <input type="text" value={draft.roles[name]?.model ?? ""} placeholder={defaultModels[name] ?? ""} onInput={(event) => update({ roles: { ...draftRef.current!.roles, [name]: { effort: "", ...draftRef.current!.roles[name], model: (event.target as HTMLInputElement).value } } })} onBlur={() => { const model = (draftRef.current!.roles[name]?.model ?? "").trim(); if (model !== "" && model !== base.roles[name]?.model) saveRole(name, { model }); }} onKeyDown={leave} />
+              <Marked k={`role:${name}:model`} />
               {pinned.has(name) ? (
                 <span class="muted">
                   {" "}set for the project; the default is {defaultModels[name]}{" "}
-                  <button type="button" disabled={busy || dirty} title={dirty ? "Save or undo your changes first" : ""} onClick={() => run({ roles: { [name]: { model: null } } })}>Use default</button>
+                  <button type="button" onClick={() => saveRole(name, { model: null })}>Use default</button>
                 </span>
               ) : (
                 <span class="muted"> the default: {defaultModels[name]} (type a model to set it)</span>
@@ -604,11 +749,12 @@ export function Settings({ project, openHistory = false }: { project?: ProjectVi
               {view.config?.roles[name as "implement"]?.provider !== "copilot" && (
                 <span class="muted">
                   {" "}Effort{" "}
-                  <select value={draft.roles[name]?.effort ?? ""} disabled={busy} onChange={(event) => set({ roles: { ...draft.roles, [name]: { model: "", ...draft.roles[name], effort: (event.target as HTMLSelectElement).value } } })}>
+                  <select value={draft.roles[name]?.effort ?? ""} onChange={(event) => { const effort = (event.target as HTMLSelectElement).value; update({ roles: { ...draftRef.current!.roles, [name]: { model: "", ...draftRef.current!.roles[name], effort } } }); saveRole(name, { effort }); }}>
                     <option value="">default</option>
                     {EFFORT_LEVELS.map((level) => <option key={level} value={level}>{level}</option>)}
                   </select>
                   {" "}higher effort uses more of the usage windows
+                  {" "}<Marked k={`role:${name}:effort`} />
                 </span>
               )}
               {view.config?.roles[name as "implement"]?.provider === "copilot" && (
@@ -645,18 +791,11 @@ export function Settings({ project, openHistory = false }: { project?: ProjectVi
             <p><b>The new Jira filter adds {widens.added} Item{widens.added === 1 ? "" : "s"}.</b> Nothing is saved until you say so.</p>
             <ul>{widens.lines.map((line) => <li key={line}>{line}</li>)}</ul>
             <div class="form-actions">
-              <button type="button" class="primary" disabled={busy} onClick={() => { const { change: wanted } = widens; setWidens(null); run({ ...wanted, confirm: true }, () => setSaved(true)); }}>Add them and save</button>
-              <button type="button" disabled={busy} onClick={() => setWidens(null)}>Cancel</button>
+              <button type="button" class="primary" onClick={() => { const { change: wanted } = widens; setWidens(null); submit({ key: "jira:filter", change: { ...wanted, confirm: true } }); }}>Add them and save</button>
+              <button type="button" onClick={() => { setWidens(null); update({ jira: { ...draftRef.current!.jira, filter: base.jira.filter } }); }}>Cancel</button>
             </div>
           </div>
         )}
-        <div class="form-actions">
-          <button type="submit" class="primary" disabled={busy || !dirty}>{busy ? "Saving…" : "Save"}</button>
-          <button type="button" disabled={busy || !dirty} onClick={() => set(base)}>Undo changes</button>
-          {saved && !committed && <span class="muted" role="status">Saved.</span>}
-        </div>
-        {committed && <p class="notice settings-committed" role="status">{committed}</p>}
-        {error && <pre class="notice notice-bad settings-errors" role="alert">{error}</pre>}
       </form>
       {connecting && (
         <ConnectDialog
@@ -666,8 +805,7 @@ export function Settings({ project, openHistory = false }: { project?: ProjectVi
           onConnected={(next, shared, moved) => {
             setConnecting(null);
             show(next);
-            setSaved(false);
-            setCommitted(`${moved && moved.length > 0 ? `Moved: ${moved.join("; ")}. ` : ""}${shared ?? "Connected."} Start Scope Soup again to use the new host.`);
+            setHostNote(`${moved && moved.length > 0 ? `Moved: ${moved.join("; ")}. ` : ""}${shared ?? "Connected."} Start Scope Soup again to use the new host.`);
           }}
         />
       )}

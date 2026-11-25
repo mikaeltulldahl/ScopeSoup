@@ -66,7 +66,7 @@ const SAFE: Record<string, true | ((value: unknown, err: (message: string) => vo
 const HOST_FIELDS = ["filter", "components"];
 
 /** Fields a null in the change removes from the file. */
-const REMOVABLE = ["setupCommand", "setupWatch", "resources", "sharedResources"];
+const REMOVABLE = ["setupCommand", "setupWatch", "resources", "sharedResources", "checkCommand", "remoteUrl"];
 
 /** The fields saved only with level 4. */
 const MERGE_QUEUE_FIELDS = ["checkCommand", "remoteUrl"];
@@ -350,9 +350,13 @@ export async function editConfig(file: string, change: unknown, options: EditOpt
   const nextShared = applied(shared.raw, parts.shared);
   const result = validateFiles(nextOwn, nextShared, dirname(path));
   if (!result.ok) return { ok: false, status: 400, errors: result.errors };
-  const mergeQueue = MERGE_QUEUE_FIELDS.filter((key) => Object.hasOwn(change, key));
+  // Level 4's fields are set only with level 4; a null removes one below level 4, and at level 4 it is refused (the level needs it).
+  const mergeQueue = MERGE_QUEUE_FIELDS.filter((key) => Object.hasOwn(change, key) && change[key] !== null);
   if (mergeQueue.length > 0 && result.config.level !== 4) {
     return { ok: false, status: 400, errors: [`${mergeQueue.join(" and ")} can be saved from the board only with level 4 (Autopilot). Edit the configuration, or pick level 4.`] };
+  }
+  if (result.config.level === 4 && change.checkCommand === null && mergeQueueCi(result.config) === "local") {
+    return { ok: false, status: 400, errors: ["Level 4 needs a check command: pick a lower level first to remove it."] };
   }
   // A cheap test that the check command can be started; the check itself is not run on save.
   if (Object.hasOwn(change, "checkCommand") && result.config.checkCommand) {
