@@ -150,11 +150,6 @@ export interface AgentProvider {
    * null when unsure. Decides the advice a person gets.
    */
   refusedProgram(refused: string, allowedTools: readonly string[]): string | null;
-  /**
-   * Why the CLI cannot hold a session of this role to the core rules (`docs/RULES.md`) with the role's allowedTools, or null
-   * when it can. The runner starts no session it gets a reason for. Absent: it always can.
-   */
-  refuses?(config: ProjectConfig, role: SessionRole): string | null;
 
   // --- Usage ---
   /**

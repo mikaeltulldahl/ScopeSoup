@@ -13,7 +13,7 @@ import { Overview } from "./Overview.tsx";
 import { Queue } from "./Queue.tsx";
 import { Settings } from "./Settings.tsx";
 import { StopUsing } from "./StopUsing.tsx";
-import { UpgradeNote, VersionFooter } from "./Version.tsx";
+import { BranchProtectionNote, UpgradeNote, VersionFooter } from "./Version.tsx";
 import { useRoute } from "./route.ts";
 import { StatusLine } from "./StatusLine.tsx";
 import { allPaused, switchesAt } from "./switches.ts";
@@ -110,6 +110,7 @@ function App() {
       )}
       {/* A switch that changes takes the note off on the server; read it again at once. */}
       <UpgradeNote switches={Object.values(switches).join(" ")} />
+      <BranchProtectionNote />
       {(error || failed) && <p class="notice notice-bad" role="alert">{failed ?? `Cannot reach the server: ${error}`}</p>}
       <main>
         {board && route.view !== "settings" && route.view !== "stop" && route.view !== "history" && route.view !== "usage" && route.view !== "items" && <StatusLine status={board.status} />}

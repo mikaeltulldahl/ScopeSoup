@@ -88,6 +88,7 @@ import type { AssumptionHost } from "./server/server.ts";
 import { createChat } from "./orchestrator/chat.ts";
 import { mergeQueueOn, mergeQueueStopped, pauseRemembering, roleStopped, startAgain } from "./store/control.ts";
 import { KEYS } from "./store/keys.ts";
+import { createBranchProtection } from "./server/branchProtection.ts";
 import { NEWER_STORE, STORE_VERSION } from "./store/schema.ts";
 import { openStore } from "./store/store.ts";
 import type { Store } from "./store/store.ts";
@@ -344,8 +345,20 @@ async function main(): Promise<void> {
     saveNote: (value) => store.setValue(KEYS.upgradeNote, value),
   });
 
+  // One warning on the board when the GitHub remote's main branch has no protection; nothing when it cannot be told.
+  const githubRepo = hostSet.github?.repo;
+  const branchProtection = blockingHost && githubRepo
+    ? createBranchProtection({
+      port: blockingHost.repository, repo: githubRepo, now: Date.now,
+      branch: () => config?.load().config?.mainBranch ?? "main",
+      loadDismissed: () => store.getValue(KEYS.branchProtectionDismissed),
+      saveDismissed: (value) => store.setValue(KEYS.branchProtectionDismissed, value),
+    })
+    : undefined;
+
   const server = createServer({
     upgrade: upgrader,
+    ...(branchProtection ? { branchProtection } : {}),
     store,
     project,
     ...(chat ? { chat } : {}),

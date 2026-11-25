@@ -23,6 +23,9 @@ const ONBOARDING = "https://github.com/mikaeltulldahl/scopesoup/blob/main/docs/O
 const SETTINGS = ["maxParallelSessions", "budgetReserve", "triageMaxAgeDays"] as const;
 type SettingName = (typeof SETTINGS)[number];
 
+/** What a role set to the Copilot provider is told (`COPILOT_WARNING` in src/orchestrator/providers/copilot/command.ts; the board reads no server code). */
+const COPILOT_WARNING = "Copilot's rules name a program and its first word only (such as git push), never a flag. So --no-verify and --force cannot be refused on Copilot: this role may use them on any git command it may run, and only its prompt says not to. Protect the main branch on the remote (no force push) to be safe.";
+
 /** The three roles, as the page names them. */
 const ROLES: [string, string][] = [
   ["triage", "Triage"],
@@ -433,6 +436,9 @@ export function Settings({ project }: { project?: ProjectView | undefined } = {}
                 </span>
               ) : (
                 <span class="muted"> the default: {defaultModels[name]} (type a model to set it)</span>
+              )}
+              {view.config?.roles[name as "implement"]?.provider === "copilot" && (
+                <span class="notice notice-paused copilot-warning" role="note"><b>Runs on Copilot.</b> {COPILOT_WARNING}</span>
               )}
             </label>
           ))}

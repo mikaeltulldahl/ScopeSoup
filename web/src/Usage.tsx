@@ -4,9 +4,10 @@
 
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { UsagePageWindow, UsageView } from "./api.ts";
-import { fetchUsage, useView } from "./api.ts";
+import type { ConfigView } from "./api.ts";
+import { fetchConfig, fetchUsage, postConfig, useView } from "./api.ts";
 import { clockTime, span as spanWords } from "./format.ts";
-import { stackPlot, timeTicks, usageParts } from "../../src/core/usage.ts";
+import { paceLines, resetMarks, stackPlot, timeTicks, usageParts, WINDOW_MS } from "../../src/core/usage.ts";
 import type { UsageKey, UsagePlotKey } from "../../src/core/usage.ts";
 
 /** Bottom to top in the plot, top to bottom in the table. */
@@ -46,6 +47,72 @@ function useWidth(): [{ current: HTMLDivElement | null }, number] {
     return () => observer.disconnect();
   }, []);
   return [ref, width];
+}
+
+/**
+ * The pacing settings next to the meters: parallel sessions and the usage reserve, saved with the same call as the Settings
+ * page (so a shared setting is saved for every machine and History says who changed it).
+ */
+function Pacing({ onSaved }: { onSaved: () => void }) {
+  const [view, setView] = useState<ConfigView | null>(null);
+  const [draft, setDraft] = useState<{ maxParallelSessions?: number; budgetReserve?: number }>({});
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+  useEffect(() => {
+    fetchConfig().then(setView, () => setView(null));
+  }, []);
+  if (!view || !view.present || !view.config) return null;
+  const settings = view.config.settings;
+  const level = view.config.level;
+  const parallel = draft.maxParallelSessions ?? settings.maxParallelSessions.value;
+  const position = draft.budgetReserve ?? settings.budgetReserve.value;
+  const table = view.sliders.budgetReserve;
+  const row = table[Math.min(table.length, Math.max(1, Math.round(position))) - 1];
+  const save = (name: "maxParallelSessions" | "budgetReserve", value: number) => {
+    setBusy(true);
+    setError(null);
+    setNote(null);
+    postConfig({ settings: { [name]: { value } } }).then(
+      (next) => {
+        setView(next);
+        setDraft({});
+        setNote(next.shared ?? "Saved.");
+        setBusy(false);
+        onSaved();
+      },
+      (problem: unknown) => {
+        setDraft({});
+        setError(problem instanceof Error ? problem.message : String(problem));
+        setBusy(false);
+      },
+    );
+  };
+  const range = (name: "maxParallelSessions" | "budgetReserve", value: number, min: number, max: number) => (
+    <input
+      type="range" min={min} max={max} step={1} value={value} disabled={busy}
+      onInput={(event) => setDraft({ ...draft, [name]: Number((event.target as HTMLInputElement).value) })}
+      onChange={(event) => save(name, Number((event.target as HTMLInputElement).value))}
+    />
+  );
+  return (
+    <div class="usage-pacing">
+      <label>
+        <b>Parallel sessions</b>
+        {range("maxParallelSessions", parallel, 1, Math.max(8, parallel))}
+        <span>{parallel} at once, of every role</span>
+      </label>
+      {level >= 1 && (
+        <label>
+          <b>Usage reserve</b>
+          {range("budgetReserve", position, 1, 5)}
+          <span>Position {position}{row ? `: keeps ${Math.round(row.fiveHour * 100)} % of the 5-hour window and ${Math.round(row.sevenDay * 100)} % of the week for you` : ""}</span>
+        </label>
+      )}
+      {error && <p class="notice notice-bad" role="alert">{error}</p>}
+      {note && !error && <p class="muted" role="status">{note}</p>}
+    </div>
+  );
 }
 
 function Meter({ window, now }: { window: UsagePageWindow; now: number }) {
@@ -117,6 +184,9 @@ function Plot({ window, from, to }: { window: UsagePageWindow; from: number; to:
   const limit = window.reserve === undefined ? undefined : 1 - window.reserve;
   const ticks = width > 0 ? timeTicks(from, end, Math.max(2, Math.floor(inner / 72)), (ms) => -new Date(ms).getTimezoneOffset() * 60_000) : [];
   const total = (index: number) => bands.at(-1)?.hi[index] ?? 0;
+  // Each reset in the plot (those passed, and the coming one if it is in view), and per window a pace line from 0 at its start to the reserve level at its reset.
+  const resets = resetMarks([...plot.resets, ...(window.current ? [window.current.resetsAt] : [])], from, end);
+  const pace = paceLines(resets, WINDOW_MS[window.kind], limit ?? 1);
 
   // Direct labels at the right: each band at its middle now, and the forecast at its end.
   const last = plot.points.length - 1;
@@ -177,6 +247,9 @@ function Plot({ window, from, to }: { window: UsagePageWindow; from: number; to:
             </g>
           )}
           <g clip-path={`url(#clip-${window.kind})`}>
+            {pace.map((segment) => (
+              <line key={segment.to} class="usage-pace" x1={x(segment.from)} y1={y(0)} x2={x(segment.to)} y2={y(segment.level)} />
+            ))}
             {bands.map((band) => {
               const top = times.map((at, i) => `${x(at).toFixed(1)},${y(band.hi[i]!).toFixed(1)}`);
               const bottom = times.map((at, i) => `${x(at).toFixed(1)},${y(band.lo[i]!).toFixed(1)}`).reverse();
@@ -185,6 +258,14 @@ function Plot({ window, from, to }: { window: UsagePageWindow; from: number; to:
             {times.length > 0 && <polyline class={`usage-total${times.length > inner / 3 ? " dense" : ""}`} points={times.map((at, i) => `${x(at).toFixed(1)},${y(total(i)).toFixed(1)}`).join(" ")} />}
             {line.length > 1 && <polyline class="usage-forecast" points={line.map((point) => `${x(Date.parse(point.at)).toFixed(1)},${y(point.value).toFixed(1)}`).join(" ")} />}
           </g>
+          {resets.map((reset) => (
+            <g key={reset}>
+              <line class="usage-reset" x1={x(reset)} x2={x(reset)} y1={M.top} y2={H - M.bottom} />
+              <line class="usage-reset-hit" x1={x(reset)} x2={x(reset)} y1={M.top} y2={H - M.bottom}>
+                <title>{`${TITLE[window.kind]} resets ${clockTime(new Date(reset).toISOString(), to)}`}</title>
+              </line>
+            </g>
+          ))}
           {limit !== undefined && (
             <g>
               <line class="usage-reserve" x1={M.left} x2={M.left + inner} y1={y(limit)} y2={y(limit)} />
@@ -290,7 +371,7 @@ function WindowBlock({ window, view }: { window: UsagePageWindow; view: UsageVie
 
 export function Usage() {
   const [span, setSpan] = useState("7d");
-  const { data, error } = useView(() => fetchUsage(span), `usage:${span}`);
+  const { data, error, reload } = useView(() => fetchUsage(span), `usage:${span}`);
   const now = data ? Date.parse(data.now) : Date.now();
   return (
     <section class="usage">
@@ -316,6 +397,7 @@ export function Usage() {
             {data.windows.map((window) => <Meter key={window.kind} window={window} now={now} />)}
           </div>
         )}
+        {data && <Pacing onSaved={reload} />}
       </div>
       {data && data.windows.map((window) => <WindowBlock key={window.kind} window={window} view={data} />)}
     </section>

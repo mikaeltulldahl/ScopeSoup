@@ -5,7 +5,7 @@ import { createHash } from "node:crypto";
 import { changeText } from "../../model/labels.ts";
 import type { Actor, Change, Ref, RepoLabel, Run, Runner, WorkItem } from "../../model/types.ts";
 import { refKey } from "../../model/types.ts";
-import type { AnswerWrite, Capability, ChangePort, CiPort, Cursor, ExternalCheck, Host, HostEvent, HostInfo, Page, QueueCiPort, WatchPort, WorkPort, WritePort } from "../../ports/host.ts";
+import type { AnswerWrite, Capability, ChangePort, CiPort, Cursor, ExternalCheck, Host, HostEvent, HostInfo, Page, QueueCiPort, RepositoryPort, WatchPort, WorkPort, WritePort } from "../../ports/host.ts";
 import { AlreadyAnswered, BodyChanged, COMMENT_LIMIT, NotScopeSoups, TooLarge, WorkGone, WriteLater } from "../../ports/host.ts";
 import type { Client, FetchLike } from "./client.ts";
 import { GitHubError, createClient, transient } from "./client.ts";
@@ -54,6 +54,7 @@ export interface GitHubHost extends Host {
   changes: ChangePort;
   ci: CiPort & { runners(): Promise<Runner[]> };
   watch: WatchPort;
+  repository: RepositoryPort;
   /** The open issues this one blocks (`GET .../dependencies/blocking`), for the Item page only. */
   blocking(ref: Ref): Promise<Ref[]>;
   /** The names of the repository's labels; the triage reads them for the labels a triage may propose. */
@@ -1015,6 +1016,18 @@ export function createGitHubHost(config: GitHubConfig): GitHubHost {
       return (await dependencies(ref.id, "blocking")).filter((issue) => issue.state === "open").map(issueRef);
     },
     labels: repoLabels,
+    repository: {
+      // `GET /branches/<branch>` needs only read rights and says `protected`; the protection endpoint itself needs admin rights
+      // and answers 404 for both "none" and "not allowed". Anything but a plain answer (403, 404, a rate limit, offline) is unknown.
+      async branchProtected(branch) {
+        try {
+          const found = (await client.get<{ protected?: unknown }>(r(`/branches/${branch.split("/").map(encodeURIComponent).join("/")}`))).data;
+          return typeof found.protected === "boolean" ? found.protected : null;
+        } catch {
+          return null;
+        }
+      },
+    },
     stats: client.stats,
   };
 }

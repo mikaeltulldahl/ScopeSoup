@@ -348,8 +348,6 @@ export function createRunner(deps: RunnerDeps): Runner {
     if (provider.commandLimit !== "allowlist") {
       return stillborn(request, `Refused: the agent provider ${provider.name} cannot hold a session to the role's allowedTools (it limits commands with a ${provider.commandLimit} only), and whether that is enough is a person's decision.`);
     }
-    const refusal = provider.refuses?.(config, request.role);
-    if (refusal) return stillborn(request, refusal);
     const id = newId();
     const streamPath = join(config.streamsDir, `${id}.ndjson`);
     let cwd: string;
