@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { UsageSample } from "../model/types.ts";
 import { at, ref, T0 } from "./testing.ts";
-import { attributeUsage, forecastLine, paceAt, paceLines, resetMarks, stackPlot, timeTicks, usageParts, usagePlot, WINDOW_MS } from "./usage.ts";
+import { attributeUsage, expectedAtReset, forecastLine, nearestPosition, paceAt, paceLines, resetMarks, stackPlot, timeTicks, usageBar, usageParts, usagePlot, WINDOW_MS } from "./usage.ts";
 import type { UsageSession } from "./usage.ts";
 
 const t = (minutes: number) => Date.parse(at(minutes));
@@ -222,3 +222,48 @@ test("paceLines for the 5-hour window and a level outside 0 to 1", () => {
   assert.equal(paceLines([reset], WINDOW_MS.five_hour, -1)[0]!.level, 0);
   assert.deepEqual(paceLines([], WINDOW_MS.five_hour, 0.5), []);
 });
+
+test("usageBar: the used part is split by role, the forecast follows it and turns to warning past the limit", () => {
+  const keys = ["earlier", "implement", "review"] as const;
+  const bar = usageBar({ earlier: 0.1, implement: 0.2, review: 0.1 }, 0.4, keys, 0.8, 0.9);
+  assert.deepEqual(bar.used.map((each) => [each.key, round(each.from), round(each.to)]), [["earlier", 0, 0.1], ["implement", 0.1, 0.3], ["review", 0.3, 0.4]]);
+  assert.deepEqual(bar.forecast.map((each) => [round(each.from), round(each.to), each.warn]), [[0.4, 0.8, false], [0.8, 0.9, true]]);
+  assert.deepEqual(bar.reserve, { from: 0.8, to: 1 });
+});
+
+test("usageBar: parts are scaled to the reading, and what they leave out is earlier", () => {
+  const over = usageBar({ implement: 0.6, review: 0.6 }, 0.6, ["implement", "review"], undefined, undefined);
+  assert.deepEqual(over.used.map((each) => [each.key, round(each.from), round(each.to)]), [["implement", 0, 0.3], ["review", 0.3, 0.6]]);
+  const under = usageBar({ implement: 0.2 }, 0.5, ["implement"], undefined, undefined);
+  assert.deepEqual(under.used.map((each) => [each.key, round(each.from), round(each.to)]), [["implement", 0, 0.2], ["earlier", 0.2, 0.5]]);
+  assert.deepEqual(under.forecast, []);
+  assert.equal(under.reserve, undefined);
+});
+
+test("usageBar: past the limit already, the whole forecast warns; a forecast below the used level adds nothing; no reserve gives no hatch", () => {
+  const bar = usageBar({ outside: 0.9 }, 0.9, ["outside"], 0.8, 1);
+  assert.deepEqual(bar.forecast.map((each) => [round(each.from), round(each.to), each.warn]), [[0.9, 1, true]]);
+  assert.deepEqual(usageBar({}, 0.5, [], 0.8, 0.3).forecast, []);
+  assert.equal(usageBar({}, 0.5, [], 1, 0.7).reserve, undefined);
+  assert.deepEqual(usageBar({}, 0.5, [], 1, 0.7).forecast.map((each) => each.warn), [false]);
+});
+
+test("expectedAtReset: used up is full, lasts is the expected level", () => {
+  assert.equal(expectedAtReset(0.4, undefined), undefined);
+  assert.equal(expectedAtReset(0.4, { outcome: "used_up" }), 1);
+  assert.equal(expectedAtReset(0.4, { outcome: "lasts", atReset: 0.7 }), 0.7);
+  assert.equal(expectedAtReset(0.4, { outcome: "lasts" }), 0.4);
+});
+
+test("nearestPosition: the slider position whose reserve is nearest", () => {
+  const reserves = [0, 0.1, 0.2, 0.35, 0.5];
+  assert.equal(nearestPosition(reserves, 0), 1);
+  assert.equal(nearestPosition(reserves, 0.14), 2);
+  assert.equal(nearestPosition(reserves, 0.3), 4);
+  assert.equal(nearestPosition(reserves, 0.9), 5);
+  assert.equal(nearestPosition(reserves, 0.15), 2);
+});
+
+function round(value: number): number {
+  return Math.round(value * 1e6) / 1e6;
+}
