@@ -3,6 +3,7 @@
 // event format. Its fake for tests is `fake-copilot.ts`; its recorded streams (synthetic) are in `fixtures/`.
 
 import type { AgentProvider } from "../../agent.ts";
+import { mcpText } from "../mcp.ts";
 import { ADVICE, buildLaunch, copilotConfig, copilotRules, TOKEN_ENV } from "./command.ts";
 import { replyIn, tokensIn, toolCallsIn } from "./readers.ts";
 import { createCopilotReader } from "./stream.ts";
@@ -18,6 +19,10 @@ function ruleWords(rule: string): string | null {
 const SHELL_FACTS = "One command per call, as listed: no `cd`, no chaining with `;`, `&&` or pipes, no `$(...)`; write a commit message to a file outside the tree and run `git commit -F <file>`. Never use `--no-verify`, `git push --force` or `git push -f`, and never skip a hook: nothing on this command line stops you, so you must not. Copilot also runs commands it knows to be read-only.";
 
 export function copilotCommandsText(allowedTools: readonly string[]): string {
+  return `${shellCommandsText(allowedTools)}${mcpText(allowedTools)}`;
+}
+
+function shellCommandsText(allowedTools: readonly string[]): string {
   const rules = copilotRules(allowedTools).allow;
   if (rules.includes("shell")) return `You may run any shell command. ${SHELL_FACTS}`;
   const words = rules.map(ruleWords).filter((text): text is string => text !== null);

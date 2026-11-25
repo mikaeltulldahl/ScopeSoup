@@ -1,5 +1,7 @@
 // The shell commands a role may run, in words an agent can follow, built from its `allowedTools`.
 
+import { mcpText } from "../mcp.ts";
+
 /** `Bash(git *)` is `git ...`, `Bash(pnpm check*)` is `pnpm check`. Anything that is not a `Bash(...)` entry gives null. */
 export function shellPattern(tool: string): string | null {
   const match = /^Bash\((.*)\)$/.exec(tool.trim());
@@ -38,6 +40,10 @@ export const SHELL_FACTS = "One command per call, as listed: no `cd`, no chainin
 
 /** The text for the `allowedCommands` prompt variable: the commands the role may run, from its `allowedTools`, and the shell facts. */
 export function allowedCommandsText(allowedTools: readonly string[]): string {
+  return `${shellCommandsText(allowedTools)}${mcpText(allowedTools)}`;
+}
+
+function shellCommandsText(allowedTools: readonly string[]): string {
   if (allowedTools.some((tool) => tool.trim() === "Bash" || tool.trim() === "Bash(*)")) return `You may run any shell command. ${SHELL_FACTS}`;
   const patterns = allowedTools.map(shellPattern).filter((pattern): pattern is string => pattern !== null);
   if (patterns.length === 0) return "You may not run any shell commands. Use the file tools.";
