@@ -13,8 +13,8 @@ import { FAKE_API, fakeGitHub } from "../hosts/github/fakeFetch.ts";
 import { fakeJira, FAKE_SITE } from "../hosts/jira/fakeJira.ts";
 import { CLOUD_EMAIL, CLOUD_ROBIN, cloudIssues, TOKEN } from "../hosts/jira/fixtures.ts";
 import type { LogLineInput, WorkPatch, WritePort } from "../ports/host.ts";
-import type { Ref } from "../model/types.ts";
-import { openStore } from "../store/store.ts";
+import type { Ref, WorkItem } from "../model/types.ts";
+import { openStore, type Store } from "../store/store.ts";
 import type { ConnectDeps } from "./connect.ts";
 import { createServer } from "./server.ts";
 
@@ -27,14 +27,20 @@ const OWN = { version: 1, machineName: "laptop-a", repoPath: "repo", meta: { aut
 const SHARED = { project: "demo", host: { kind: "metaBranch", write: true } };
 const JIRA_HOST = { kind: "jira", site: FAKE_SITE, project: "DEMO", deployment: "cloud", write: true };
 
-/** The meta branch's writes, recorded; `failOn` makes the close of that Item fail once. */
+/** The meta branch's writes, recorded (and kept in the store once `attach`ed, as the meta host's sync would); `failOn` makes the close of that Item fail once. */
 function metaWrites(failOn?: string) {
   const lines: { id: string; line: LogLineInput }[] = [];
   const closed: string[] = [];
   let failed = false;
+  let store: Store | undefined;
+  const keep = (item: Ref, change: (work: WorkItem) => WorkItem) => {
+    const work = store?.get<WorkItem>(item);
+    if (store && work) store.put(change(work), "sync", T0);
+  };
   const write: WritePort = {
     async appendLog(item: Ref, line: LogLineInput) {
       lines.push({ id: item.id, line });
+      keep(item, (work) => ({ ...work, log: [...(work.log ?? []), { at: T0, by: { who: line.by.who, agent: false }, kind: line.kind, fields: line.fields ?? {} }] }));
       return { work: item, shared: "local", conflict: false };
     },
     async editWork(item: Ref, patch: WorkPatch) {
@@ -43,10 +49,11 @@ function metaWrites(failOn?: string) {
         throw new Error("the meta ref moved");
       }
       if (patch.state === "abandoned") closed.push(item.id);
+      keep(item, (work) => ({ ...work, ...(patch.state ? { state: patch.state } : {}) }));
       return { work: item, shared: "local", conflict: false };
     },
   };
-  return { write, lines, closed };
+  return { write, lines, closed, attach: (to: Store) => void (store = to) };
 }
 
 /** A server on a fresh private file and in-memory shared settings, connecting through `deps`. */
@@ -200,7 +207,7 @@ describe("POST /api/connect", { concurrency: 4 }, () => {
       s.store.put(session(1, ref("work", 3)), "sync", T0);
       const plan = await s.post({ kind: "github", repo: "acme/widgets", confirm: true });
       assert.equal(plan.status, 400);
-      assert.match(plan.body.problems.join(" "), /Busy now: laptop-a, laptop-b\./);
+      assert.match(plan.body.problems.join(" "), /Busy now: laptop-a, laptop-b\. Other machines are seen only through their agents' claims on Items\./);
       assert.deepEqual(s.settings.current(), SHARED);
     } finally {
       await s.stop();
@@ -266,6 +273,60 @@ describe("POST /api/connect", { concurrency: 4 }, () => {
       assert.deepEqual(s.own(), { version: 1, machineName: "laptop-b", repoPath: "repo", jira: { email: CLOUD_EMAIL } });
       assert.deepEqual(s.settings.current(), shared);
       assert.equal(s.settings.saves, 0);
+    } finally {
+      await s.stop();
+    }
+  });
+
+  test("a move that stops after closing A-1: the retry keeps A-1's new id in A-2's text, and A-1's issue names A-2's", async () => {
+    const jira = jiraFake();
+    const before = jira.issues.size;
+    const meta = metaWrites("A-2");
+    const s = await setUp({ env: { SCOPESOUP_JIRA_TOKEN: TOKEN }, fetchImpl: jira.fetch }, { write: meta.write });
+    meta.attach(s.store);
+    try {
+      s.store.put(work("A-1", { title: "Tide table", body: "Before A-2; see `A-2` and https://example.test/A-2." }), "sync", T0);
+      s.store.put(work("A-2", { title: "Tide chart", body: "After A-1." }), "sync", T0);
+      const first = await s.post({ ...jiraBody, move: ["A-1", "A-2"], confirm: true });
+      assert.equal(first.status, 500, JSON.stringify(first.body));
+      assert.deepEqual(meta.closed, ["A-1"]);
+      // The retry: A-1 is closed on the meta branch now, named by its moved line; only A-2 is left to tick.
+      const plan = await s.post({ ...jiraBody, move: ["A-1", "A-2"] });
+      assert.deepEqual(plan.body.items?.map((item) => item.id), ["A-2"]);
+      const second = await s.post({ ...jiraBody, move: ["A-1", "A-2"], confirm: true });
+      assert.equal(second.status, 200, JSON.stringify(second.body));
+      assert.equal(jira.issues.size, before + 2);
+      const made = [...jira.issues.values()].slice(before);
+      const one = made.find((issue) => issue.fields.summary === "Tide table")!;
+      const two = made.find((issue) => issue.fields.summary === "Tide chart")!;
+      const text = (issue: typeof one) => JSON.stringify(jira.issues.get(issue.key)!.fields.description);
+      assert.match(text(two), new RegExp(`After ${one.key}\.`));
+      assert.match(text(one), new RegExp(`Before ${two.key}; see `));
+      assert.match(text(one), /A-2".*example\.test\/A-2/, "code and addresses are left alone");
+      assert.deepEqual(meta.closed, ["A-1", "A-2"]);
+    } finally {
+      await s.stop();
+    }
+  });
+
+  test("an issue made outside the Jira filter stops the move before any old Item closes; a retry finds it and makes no second", async () => {
+    const jira = jiraFake();
+    const before = jira.issues.size;
+    const meta = metaWrites();
+    const s = await setUp({ env: { SCOPESOUP_JIRA_TOKEN: TOKEN }, fetchImpl: jira.fetch }, { write: meta.write });
+    meta.attach(s.store);
+    try {
+      s.store.put(work("A-1", { title: "Tide table" }), "sync", T0);
+      const body = { ...jiraBody, filter: "labels = scopesoup", move: ["A-1"], confirm: true };
+      for (const run of [1, 2]) {
+        const done = await s.post(body);
+        assert.equal(done.status, 500, `run ${run}: ${JSON.stringify(done.body)}`);
+        assert.match(done.body.problems.join(" "), /not an Item \(host.filter is labels = scopesoup\)|falls outside host.filter/);
+        assert.match(done.body.problems.join(" "), /No old Item was closed/);
+      }
+      assert.equal(jira.issues.size, before + 1, "the retry found the issue by its marker");
+      assert.deepEqual(meta.closed, []);
+      assert.deepEqual(s.settings.current(), SHARED);
     } finally {
       await s.stop();
     }

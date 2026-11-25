@@ -25,8 +25,8 @@ export interface ConnectDeps {
 }
 
 /** The new host with writes on, for moving Items: made with the token from the environment and the deps' `fetch`. */
-export function hostFor(kind: ConnectKind, connection: HostConnection, token: string, deps: ConnectDeps, machine: string | undefined): Host {
-  const host = connection.host;
+export function hostFor(kind: ConnectKind, connection: HostConnection, token: string, deps: ConnectDeps, machine: string | undefined, options: { onOutside?: (key: string, reason: string) => void; unfiltered?: boolean } = {}): Host {
+  const host = options.unfiltered ? Object.fromEntries(Object.entries(connection.host).filter(([key]) => key !== "filter")) : connection.host;
   const fetchImpl = deps.fetchImpl ? { fetchImpl: deps.fetchImpl } : {};
   if (kind === "github") return createGitHubHost({ token, repo: String(host.repo), allowWrites: true, conventions: true, ...(machine ? { machine } : {}), ...fetchImpl, ...(deps.githubApi ? { apiUrl: deps.githubApi } : {}) });
   return createJiraHost({
@@ -34,10 +34,14 @@ export function hostFor(kind: ConnectKind, connection: HostConnection, token: st
     ...(connection.email ? { email: connection.email } : {}), ...(machine ? { machine } : {}), ...fetchImpl,
     ...(typeof host.filter === "string" ? { filter: host.filter } : {}), ...(Array.isArray(host.components) ? { components: host.components as string[] } : {}),
     log: () => undefined,
+    ...(options.onOutside ? { onOutsideFilter: options.onOutside } : {}),
   });
 }
 
-/** The machines where an agent session runs now: this one's running sessions, and agents' unexpired claims on Items (the meta ref's holders). */
+/**
+ * The machines where an agent session runs now: this one's running sessions, and agents' unexpired claims on Items (the meta ref's
+ * holders). Other machines are seen only through their claims.
+ */
 export function busyMachines(works: readonly WorkItem[], sessions: readonly Session[], machine: string | undefined, now: Date): string[] {
   const busy = new Set<string>();
   if (sessions.some((session) => session.status === "starting" || session.status === "running" || session.status === "stalled")) busy.add(machine ?? "this machine");
@@ -49,6 +53,11 @@ export function busyMachines(works: readonly WorkItem[], sessions: readonly Sess
     busy.add(at >= 0 ? holder.actor.id.slice(at + 1) : holder.actor.name);
   }
   return [...busy].sort();
+}
+
+/** Why a Connect or a Join theirs waits, naming the busy machines. */
+export function busyText(busy: readonly string[], what: string): string {
+  return `${what} waits until no agent session runs on any machine, so no session writes to the Items meanwhile. Busy now: ${busy.join(", ")}. Other machines are seen only through their agents' claims on Items. Pause the agents there and try again when their sessions have ended.`;
 }
 
 /** Join mode: the host the project already has, as the dialog would send it, with this machine's email for Jira Cloud. */

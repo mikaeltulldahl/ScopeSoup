@@ -320,7 +320,7 @@ export function Settings({ project, openHistory = false }: { project?: ProjectVi
               <button type="button" disabled={busy} onClick={() => { const { change: wanted } = players; setPlayers(null); run({ ...wanted, players: "mine" }, () => setSaved(true)); }}>Make mine the project's</button>
               <button type="button" disabled={busy} onClick={() => setPlayers(null)}>Cancel</button>
             </div>
-            <p class="muted">Join theirs keeps this clone's settings and Items under refs/scopesoup-backup/ and uses the remote's. Make mine the project's puts this clone's settings and Items on top of the remote's: <b>it changes the project for every machine</b> (Items merge; an id taken on both sides is renumbered).</p>
+            <p class="muted">Join theirs uses the remote's settings and Items: <b>this clone's settings, and its Items that were never shared, leave the board</b> and are kept only in <code>{players.backup}</code>. Make mine the project's puts this clone's settings and Items on top of the remote's: <b>it changes the project for every machine</b> (Items merge; an id taken on both sides is renumbered).</p>
           </div>
         )}
 

@@ -414,7 +414,7 @@ export const fetchMachineSetup = () => getJson<MachineSetupView>("/api/machine-s
 
 /** A refused switch to multiplayer whose remote names another project or host: both sides, for the person's choice. */
 export class PlayersDiffer extends Error {
-  players: { mine: { project: string | null; host: string }; theirs: { project: string | null; host: string } };
+  players: { mine: { project: string | null; host: string }; theirs: { project: string | null; host: string }; backup: string };
   constructor(message: string, players: PlayersDiffer["players"]) {
     super(message);
     this.players = players;

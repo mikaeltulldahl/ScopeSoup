@@ -542,6 +542,7 @@ body.dialog-open { overflow: hidden; }
 .connect-form .notice { border: 1px solid var(--line); border-radius: 6px; }
 .connect-deployment, .connect-items { display: grid; gap: 4px; border: 0; padding: 0; margin: 0; }
 .connect-items { max-height: 40vh; overflow-y: auto; }
+.connect-where { margin: 0; font-size: 0.87rem; color: var(--text); }
 .players-choice { border: 1px solid var(--line); border-radius: 6px; }
 #setup-banner button { margin-left: 8px; }
 .item-form.connect-form .resource-check { display: flex; gap: 6px; align-items: center; color: var(--text); }

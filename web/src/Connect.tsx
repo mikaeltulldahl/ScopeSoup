@@ -37,6 +37,22 @@ function bodyOf(kind: ConnectKind, fields: Fields, join: boolean, move: string[]
   };
 }
 
+/** The host the dialog would talk to, named as the person typed it, before any Check: the site's host name, or the repository. */
+function whereText(kind: ConnectKind, fields: Fields): string {
+  if (kind === "github") {
+    const repo = fields.repo.trim().replace(/^https?:\/\/github\.com\//i, "").replace(/\.git$/i, "");
+    return repo ? `Talks to github.com, repository ${repo}.` : "Talks to github.com.";
+  }
+  const site = fields.site.trim();
+  if (site === "") return "Talks to the Jira site you name.";
+  if (/^http:\/\//i.test(site)) return "An http site is refused: the token would travel unencrypted. Use its https address.";
+  try {
+    return `Talks to ${new URL(site).host}${fields.project.trim() ? `, project ${fields.project.trim().toUpperCase()}` : ""}.`;
+  } catch {
+    return "Not an address yet: write it as https://example.atlassian.net.";
+  }
+}
+
 export function ConnectDialog({ kind, join = false, host, onClose, onConnected }: {
   kind: ConnectKind;
   /** Set up this machine for the project's host (`host`, shown, not changed). */
@@ -122,6 +138,7 @@ export function ConnectDialog({ kind, join = false, host, onClose, onConnected }
             {input("components", "Components of new Items (optional)", "Board", "Comma separated. Empty: none.")}
           </>
         )}
+        {!join && <p class="connect-where" role="status">{whereText(kind, fields)}</p>}
         {!join && (
           <label class="resource-check">
             <input type="checkbox" checked={fields.write} disabled={busy} onChange={(event) => set({ write: (event.target as HTMLInputElement).checked })} />

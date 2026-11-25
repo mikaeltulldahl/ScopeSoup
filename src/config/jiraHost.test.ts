@@ -52,7 +52,8 @@ test("a Jira host with writes on takes the write settings, and any level", () =>
 
 test("a Jira host is refused above level 0 with writes off, or with a bad site, key, deployment or map; a Cloud host may lack the email", () => {
   assert.match(bad({ ...base, level: 1, host: dc }), /level is 1, but the Jira host has writes off.*Set host.write to true, or level to 0/);
-  assert.match(bad({ ...base, host: { ...dc, site: "jira.example.test" } }), /host.site .* must be an http or https address/);
+  assert.match(bad({ ...base, host: { ...dc, site: "jira.example.test" } }), /host.site .* must be an https address/);
+  assert.match(bad({ ...base, host: { ...dc, site: "http://jira.example.test" } }), /must be an https address: over http the Jira token would travel unencrypted/);
   assert.match(bad({ ...base, host: { ...dc, site: undefined } }), /host.site must be the Jira site's address/);
   assert.match(bad({ ...base, host: { ...dc, project: "demo" } }), /must be a Jira project key/);
   assert.match(bad({ ...base, host: { ...dc, deployment: "server" } }), /host.deployment must be "cloud" .* or "datacenter"/);

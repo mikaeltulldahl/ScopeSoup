@@ -46,14 +46,14 @@ import type { RemoteBranches } from "../items/remoteBranch.ts";
 import { branchCommands, farUntil, handBackItem, holdsIt, itemDetails, itemRef as itemRefOn, listItems, Refused, releaseItem, claimItem, whyNotHandBack, whyNotRelease, whyNotClaim } from "../items/service.ts";
 import type { JiraBoard } from "../items/jiraBackend.ts";
 import { connectHost, editConfig, readConfigView, type SharedSaved } from "../config/edit.ts";
-import { busyMachines, type ConnectDeps, connectionOf, HOST_NAME, hostFor, hostWhere, joinConnection, lookAtHost, TOKEN_VARIABLE } from "./connect.ts";
+import { busyMachines, busyText, type ConnectDeps, connectionOf, HOST_NAME, hostFor, hostWhere, joinConnection, lookAtHost, TOKEN_VARIABLE } from "./connect.ts";
 import { type MoveReport, moveItems, moveLines } from "../items/moveToHost.ts";
 import type { MachineSetup } from "../hostSetup.ts";
 import type { SettingsLogEntry, SharedSettings } from "../config/shared.ts";
 import { activityView } from "./activity.ts";
 import type { MergeQueueOptions } from "../config/mergeQueue.ts";
 import { addAnswer, loadAnswers } from "../store/answers.ts";
-import { applyControl } from "../store/control.ts";
+import { applyControl, pauseRemembering, startAgain } from "../store/control.ts";
 import { countWithoutTriage, withoutTriageKeys } from "./triage.ts";
 import type { ControlAction } from "../store/control.ts";
 import { itemTextHash, optionTexts } from "../core/answerReuse.ts";
@@ -1617,6 +1617,12 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
     const person = picked();
     // A switch to multiplayer whose remote names another project or host: the person's choice, "join" or "mine" (decision 95).
     const { players, ...change } = body;
+    // Join theirs replaces this clone's Items: not while an agent works on them, here or (by its claims) elsewhere.
+    if (players === "join") {
+      const snapshot = loadSnapshot(store);
+      const busy = busyMachines(snapshot.works, snapshot.sessions, options.machine, now());
+      if (busy.length > 0) return sendJson(response, 400, { error: { code: "CONFIG_REFUSED", message: busyText(busy, "Join theirs") }, errors: [busyText(busy, "Join theirs")] });
+    }
     const result = await editConfig(options.configFile, change, { ...configOptions, ...(person ? { by: person } : {}), ...(players === "join" || players === "mine" ? { players } : {}) });
     if (!result.ok) {
       return sendJson(response, result.status, { error: { code: result.status === 409 ? "PLAYERS_DIFFER" : result.status === 400 ? "CONFIG_REFUSED" : "CONFIG_WRITE_FAILED", message: result.errors.join(" ") }, errors: result.errors, ...("players" in result ? { players: result.players } : {}) });
@@ -1674,7 +1680,7 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
     const problems = [
       ...(across ? [`The project's host is ${hostWhere(current)}. Going from there to ${HOST_NAME[kind]} goes through the meta branch, and going back to the meta branch is not supported yet.`] : []),
       ...(checked && !checked.ok ? checked.errors : looked.problems),
-      ...(busy.length > 0 ? [`Connecting waits until no agent session runs on any machine, so no session writes to the Items while they move. Busy now: ${busy.join(", ")}. Pause the agents there and try again when their sessions have ended.`] : []),
+      ...(busy.length > 0 ? [busyText(busy, "Connecting")] : []),
       ...(moving.length > 0 && host.write !== true ? ['Moving Items needs writes on: tick "Let Scope Soup write", or move none.'] : []),
     ];
     const stay = open.length - moving.length;
@@ -1699,11 +1705,29 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
     let moved: MoveReport | undefined;
     if (moving.length > 0 && fromMeta) {
       const token = deps.env[TOKEN_VARIABLE[kind]] ?? "";
+      const outside = new Map<string, string>();
+      const to = hostFor(kind, connection, token, deps, options.machine, { onOutside: (key, reason) => outside.set(key, reason) });
+      // Issues an earlier run made are found by their marker in the whole project, whatever the filter says.
+      const find = kind === "jira" && typeof host.filter === "string" ? hostFor(kind, connection, token, deps, options.machine, { unfiltered: true }).work : undefined;
+      // No new session starts on this machine while the Items move; the switches are put back as they were after.
+      const actor = person ?? "board";
+      const paused = pauseRemembering(store, now().toISOString(), "connect", actor);
       try {
-        moved = await moveItems({ kind, items: moving, from: fromMeta.write, to: hostFor(kind, connection, token, deps, options.machine), by: person ?? "board" });
+        moved = await moveItems({
+          kind, items: moving, all: snapshot.works.filter((work) => work.ref.host === fromMeta.host), from: fromMeta.write, to, ...(find ? { find } : {}), by: actor,
+          // Made now: the host said so while making it. Found again: read through the filter, as the board would.
+          outside: async (made) => outside.get(made.id) ?? (find && (await to.work!.getWork(made)) === null ? `falls outside host.filter (${String(host.filter)}): Scope Soup would not read, show or touch it.` : undefined),
+          beforeClose: () => {
+            const fresh = loadSnapshot(store);
+            const still = busyMachines(fresh.works, fresh.sessions, options.machine, now());
+            return still.length > 0 ? busyText(still, "Closing the old Items") : undefined;
+          },
+        });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         return sendJson(response, 400, { error: { code: "MOVE_REFUSED", message }, problems: [message], lines, ...listed });
+      } finally {
+        startAgain(store, paused, now().toISOString(), "connect", actor);
       }
       store.appendEvent({ kind: "items.moved", actor: person ?? "board", data: { to: kind, rows: moved.rows, ...(moved.failed ? { failed: moved.failed } : {}) } }, now().toISOString());
       // Not connected while a ticked Item is not moved: running it again finishes the move, making nothing twice.

@@ -172,8 +172,11 @@ export interface SharedSettings {
    * 95). `raw` null: the remote has no meta ref (or no settings on it).
    */
   remote?(repoPath: string, remote: string): Promise<{ ok: true; raw: Record<string, unknown> | null; commit: string | null } | { ok: false; error: string }>;
-  /** "Join theirs": this clone's meta ref kept under `backup`, then moved to the remote's commit fetched by `remote`. */
-  adopt?(repoPath: string, commit: string, backup: string): Promise<void>;
+  /**
+   * "Join theirs": this clone's meta ref kept under `backup`, then moved to the remote's commit fetched by `remote`, with the
+   * writer's refs for the remote set to it. Returns an undo, for a save that fails after it.
+   */
+  adopt?(repoPath: string, remote: string, commit: string, backup: string): Promise<() => Promise<void>>;
 }
 
 /** Parses a shared read, or says why it cannot be used. */
