@@ -37,7 +37,7 @@ Scope Soup is a server with a web board that works through a project's backlog w
 | | `/ship` and `/steward` | Scope Soup |
 |---|---|---|
 | Scope | One change, in one session | A backlog of Items, kept across days |
-| Triage, restructuring, drafts | None | Level 1: size, questions, draft description, proposed restructuring |
+| Triage, restructuring, drafts | None | Level 1: size, questions, a rewrite of the description, proposed restructuring |
 | Who writes and who reviews | The same session, then a background `/code-review` | A separate implementor and a separate reviewer, each in its own worktree or clone |
 | Review rounds | One review; the watch answers comments | Rounds of findings, marked must or should, back to the implementor |
 | Merging | Never on its own; you or your auto-merge | Levels 2 and 3: the implementor merges. Level 4: Scope Soup's merge queue, in batches checked against the newest `main` |
@@ -49,7 +49,7 @@ Scope Soup is a server with a web board that works through a project's backlog w
 
 ## 4. What Scope Soup could use
 
-- **`/code-review` as the reviewer role.** It has effort tiers. Worth a trial (run headless, if the CLI allows it: not confirmed) against the reviewer prompt: findings per round, cost, how often a fix round was needed.
+- **`/code-review` as the reviewer role.** It has effort tiers. With `claude -p` it runs in the foreground and returns the findings in the answer ([`/code-review`](https://code.claude.com/docs/en/code-review-local.md)). Worth a trial against the reviewer prompt: findings per round, cost, how often a fix round was needed.
 - **The watch idea at levels 2 and 3.** Once a PR is open, something has to fix its failing checks, answer comments and merge the base branch in. Scope Soup's fix rounds do part of this inside a session. A long-lived watch on each open PR would cover the time after the implementor has finished.
 - **The same line on merging.** "Never merge unasked" matches Scope Soup's levels: only level 4 merges by itself, and only through the queue ([`docs/RULES.md`](../RULES.md)). The wording in the `/ship` docs is a good model for ours.
 
