@@ -14,6 +14,12 @@ Claude has made writing code fast. What slows a project down now is what surroun
 2. **Your attention.** Reading what the agents did, answering their questions, deciding what comes next. Scope Soup brings you questions with what was tried, the options and a recommendation, and lists only what waits for you.
 3. **The check.** Changes now arrive faster than a check can test them one at a time. Scope Soup tests reviewed changes in batches on top of the newest main, and bisects a failed batch.
 
+## Next to Claude Code's own tools
+
+Claude Code's `/ship` takes one change in your open session to a reviewed pull request, then keeps fixing its checks and answering comments. It does not merge on its own. The org-level Claude Ship products (Code Review, PR Steward) do much the same for each pull request on GitHub.
+
+Scope Soup works the backlog around them: triage, separate implementor and reviewer sessions, and a merge queue that batches. You can use them side by side. Scope Soup does not call them. See [`docs/research/ship-command.md`](docs/research/ship-command.md).
+
 ## How it works
 
 You follow one thing, the **Item**. It holds the description, the change and its diff, the review verdicts, the check results, the agent sessions and a log in plain words.
