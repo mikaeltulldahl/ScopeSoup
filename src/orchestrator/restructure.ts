@@ -1,4 +1,4 @@
-// A proposed restructuring (decision 93): triage names parts, where each goes (the Item itself, a new child, related or unlinked
+// A proposed restructuring (decision 94): triage names parts, where each goes (the Item itself, a new child, related or unlinked
 // Item, or into an existing Item) and what becomes of the Item (it keeps a part, becomes an umbrella, or is replaced). A person
 // accepts, edits or rejects it on the item page (`POST /api/proposal`); nothing is made before. What was made is kept in the job,
 // and each part's text ends with a marker line naming its part and the Item, so a retry (even on a store rebuilt from nothing)

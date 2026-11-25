@@ -943,7 +943,7 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
   }
 
   /**
-   * A person decides on a proposed restructuring (decision 93). Edit gives a person's own `parts` (each with where it goes) and
+   * A person decides on a proposed restructuring (decision 94). Edit gives a person's own `parts` (each with where it goes) and
    * `original` (what becomes of the Item), only while nothing is made. Accept and edit make the parts on the host, in order: a new
    * child, related or unlinked Item, or the parts' text added to an existing Item (once per Item, to its description as read just
    * before); then the Item keeps its part (its text narrowed, and triaged again), is parked as an umbrella, or is closed as replaced.

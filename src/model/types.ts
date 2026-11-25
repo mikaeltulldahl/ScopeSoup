@@ -521,7 +521,7 @@ export interface ParkedQuestion {
 
 /**
  * A proposed restructuring of an Item, with the reason: triage names parts, where each goes, and what becomes of the Item
- * (decision 93). Nothing is made until a person accepts. Text from an agent: data. (A proposed rewrite of the item's text was
+ * (decision 94). Nothing is made until a person accepts. Text from an agent: data. (A proposed rewrite of the item's text was
  * removed; an old one in a log is no longer an open question.)
  */
 export interface Restructuring {

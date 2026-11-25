@@ -82,7 +82,7 @@ export interface AboutOther {
   draft?: string;
 }
 
-/** A proposed restructuring (decision 93): a person accepts, edits or rejects it on the item page. */
+/** A proposed restructuring (decision 94): a person accepts, edits or rejects it on the item page. */
 export type Proposal = Restructuring;
 
 /**
