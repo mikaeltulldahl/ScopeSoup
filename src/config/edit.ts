@@ -1,6 +1,6 @@
 // Changes the configuration file from the board. Only the safe fields may change: the level,
 // parallel sessions, the usage reserve, the age of a triage and the three models; the setup of a fresh clone; and, saved with level 4 only,
-// the check command and the remote's URL that level needs; the limited resources; singleplayer or multiplayer. Everything else is
+// the check command and the remote's URL that level needs; the limited resources; singleplayer or multiplayer; a Jira host's filter and components. Everything else is
 // file-only, with its defaults.
 // A change is merged into the file as it is on disk, validated as a whole, and written atomically. A file of an older
 // format is migrated first, so a save always writes the current format, with `version`.
@@ -54,7 +54,16 @@ const SAFE: Record<string, true | ((value: unknown, err: (message: string) => vo
   labels: true,
   // Singleplayer (false) or multiplayer (true): this machine's, in its private file (decision 93).
   multiplayer: true,
+  // A Jira host's filter and the components of new Items (#141); null or empty removes one. Everything else of the host changes
+  // only through Connect.
+  host: (value, err) => {
+    if (!isObj(value)) return void err("host must be an object.");
+    for (const key of Object.keys(value)) if (!HOST_FIELDS.includes(key)) err(`host.${key} cannot be changed from the board: the host is changed with Connect. The board changes host.${HOST_FIELDS.join(" and host.")} of a Jira host.`);
+  },
 };
+
+/** The host's keys Settings may change, on a Jira host. */
+const HOST_FIELDS = ["filter", "components"];
 
 /** Fields a null in the change removes from the file. */
 const REMOVABLE = ["setupCommand", "setupWatch", "resources", "sharedResources"];
@@ -115,6 +124,15 @@ function dropClearedModels(next: Obj, change: Obj): void {
     if (Object.keys(role).length === 0) delete next.roles[name];
   }
   if (Object.keys(next.roles).length === 0) delete next.roles;
+}
+
+/** A null or empty `host.filter` or `host.components` removes it: every issue of the project is an Item, new ones get no component. */
+function dropClearedHost(next: Obj, change: Obj): void {
+  if (!isObj(change.host) || !isObj(next.host)) return;
+  for (const key of HOST_FIELDS) {
+    const given = change.host[key];
+    if (given === null || (typeof given === "string" && given.trim() === "") || (Array.isArray(given) && given.length === 0)) delete next.host[key];
+  }
 }
 
 /** A number saved from the board drops the file's reason for it, which described the old value. */
@@ -212,6 +230,7 @@ function readFiles(file: string, options: EditOptions): { ok: true; files: Files
 function applied(raw: Obj, change: Obj): Obj {
   const next = merge(raw, change) as Obj;
   dropClearedModels(next, change);
+  dropClearedHost(next, change);
   for (const key of REMOVABLE) if (Object.hasOwn(change, key) && change[key] === null) delete next[key];
   dropStaleReasons(next, change);
   return next;
@@ -324,6 +343,9 @@ export async function editConfig(file: string, change: unknown, options: EditOpt
   if (!migrated.ok) return { ok: false, status: 400, errors: migrated.errors };
   const parts = splitChange(change);
   if (join && Object.keys(parts.shared).length > 0) return { ok: false, status: 400, errors: [`Join theirs saves only the switch to multiplayer; save ${Object.keys(parts.shared).join(", ")} again after it.`] };
+  if (Object.hasOwn(parts.shared, "host") && !(isObj(shared.raw.host) && shared.raw.host.kind === "jira")) {
+    return { ok: false, status: 400, errors: ["host.filter and host.components are a Jira host's: the project's host is not Jira."] };
+  }
   const nextOwn = applied(migrated.raw, parts.own);
   const nextShared = applied(shared.raw, parts.shared);
   const result = validateFiles(nextOwn, nextShared, dirname(path));

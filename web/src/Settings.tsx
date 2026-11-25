@@ -7,7 +7,8 @@
 // machine's own. The page shows
 // the two as one: no key is in both.
 // The limited resources: a shared one is a project setting (`sharedResources`), the others this machine's (`resources`).
-// Where the Items are (the host) is a project setting too, changed only through the connect dialogs (Connect.tsx).
+// Where the Items are (the host) is a project setting too, changed only through the connect dialogs (Connect.tsx); a Jira host's
+// filter and the components of new Items are edited here, and a filter that adds Items asks to confirm first (#141).
 
 import { ThemePicker } from "./ThemePicker.tsx";
 import { useEffect, useState } from "preact/hooks";
@@ -18,7 +19,7 @@ import { FolderButton } from "./ProjectHeader.tsx";
 import type { AskedField, MergeQueueSetup } from "../../src/config/levels.ts";
 import type { Sliders } from "../../src/config/sliders.ts";
 import { commandText, commandWords } from "../../src/config/commandLine.ts";
-import { fetchConfig, PlayersDiffer, postConfig } from "./api.ts";
+import { fetchConfig, FilterWidens, PlayersDiffer, postConfig } from "./api.ts";
 import { EFFORT_LEVELS } from "../../src/config/types.ts";
 import { ConnectDialog, type DialogKind, HOST_NAMES } from "./Connect.tsx";
 
@@ -69,6 +70,8 @@ interface Draft {
   shouldFindings: "fix" | "draft";
   /** The label on Items an AI made or rewrote ("" for none). */
   aiLabel: string;
+  /** A Jira host's filter ("" for none) and the components of new Items, comma separated. */
+  jira: { filter: string; components: string };
 }
 
 /** One resource in the form: the units as typed, the environment one `NAME=value` per line. */
@@ -123,7 +126,12 @@ function draftOf(config: ProjectConfig, raw: unknown, mergeQueue: MergeQueueSetu
   // The command as the shared file holds it, with {{ownClone}} unexpanded (the configuration in use has this machine's path in it).
   const command = (raw as { setupCommand?: unknown } | null)?.setupCommand;
   const setup = { command: Array.isArray(command) ? commandText(command as string[]) : config.setupCommand ? commandText(config.setupCommand) : "", watch: (config.setupWatch ?? []).join("\n") };
-  return { level: config.level, settings: { maxParallelSessions: setting("maxParallelSessions"), budgetReserve: setting("budgetReserve"), triageMaxAgeDays: setting("triageMaxAgeDays") }, roles, mergeQueue: asked, setup, resources: resourceDrafts(config), media: { push: config.media?.push ?? false, keepDays: config.media?.keepDaysAfterClose === null || config.media?.keepDaysAfterClose === undefined ? "" : String(config.media.keepDaysAfterClose) }, multiplayer: config.multiplayer, shouldFindings: config.review?.shouldFindings ?? "fix", aiLabel: config.labels?.aiGenerated || "" };
+  return { level: config.level, settings: { maxParallelSessions: setting("maxParallelSessions"), budgetReserve: setting("budgetReserve"), triageMaxAgeDays: setting("triageMaxAgeDays") }, roles, mergeQueue: asked, setup, resources: resourceDrafts(config), media: { push: config.media?.push ?? false, keepDays: config.media?.keepDaysAfterClose === null || config.media?.keepDaysAfterClose === undefined ? "" : String(config.media.keepDaysAfterClose) }, multiplayer: config.multiplayer, shouldFindings: config.review?.shouldFindings ?? "fix", aiLabel: config.labels?.aiGenerated || "", jira: { filter: config.host?.kind === "jira" ? config.host.filter ?? "" : "", components: config.host?.kind === "jira" ? (config.host.components ?? []).join(", ") : "" } };
+}
+
+/** Component names as typed: comma separated, blanks dropped. */
+function componentList(text: string): string[] {
+  return text.split(",").map((name) => name.trim()).filter((name) => name !== "");
 }
 
 /** The watched files as the file holds them: one per line, blank lines dropped. */
@@ -160,6 +168,12 @@ function changeOf(draft: Draft, base: Draft, asks: readonly AskedField[], showsC
   if (Object.keys(roles).length > 0) change.roles = roles;
   if (draft.multiplayer !== base.multiplayer) change.multiplayer = draft.multiplayer;
   if (draft.shouldFindings !== base.shouldFindings) change.review = { shouldFindings: draft.shouldFindings };
+  // A Jira host's filter and components; emptied, each is removed (every issue is an Item; new ones get no component).
+  const host: Record<string, unknown> = {};
+  if (draft.jira.filter.trim() !== base.jira.filter.trim()) host.filter = draft.jira.filter.trim() === "" ? null : draft.jira.filter.trim();
+  const components = componentList(draft.jira.components);
+  if (JSON.stringify(components) !== JSON.stringify(componentList(base.jira.components))) host.components = components.length === 0 ? null : components;
+  if (Object.keys(host).length > 0) change.host = host;
   if (draft.aiLabel.trim() !== base.aiLabel.trim()) change.labels = { aiGenerated: draft.aiLabel.trim() === "" ? false : draft.aiLabel.trim() };
   // Both media values together, when either differs.
   if (draft.media.push !== base.media.push || draft.media.keepDays.trim() !== base.media.keepDays.trim()) {
@@ -200,6 +214,8 @@ export function Settings({ project, openHistory = false }: { project?: ProjectVi
   const [connecting, setConnecting] = useState<DialogKind | null>(null);
   // A switch to multiplayer refused because the remote's shared settings name another project or host: both sides, and the change.
   const [players, setPlayers] = useState<(PlayersDiffer["players"] & { change: Record<string, unknown> }) | null>(null);
+  // A new Jira filter that adds Items, waiting for the person's yes: what it adds and removes, and the change (#141).
+  const [widens, setWidens] = useState<(FilterWidens["filter"] & { change: Record<string, unknown> }) | null>(null);
 
   const show = (next: ConfigView) => {
     setView(next);
@@ -263,6 +279,7 @@ export function Settings({ project, openHistory = false }: { project?: ProjectVi
       (problem: unknown) => {
         // A switch to multiplayer whose remote names another project or host waits for the person's choice.
         if (problem instanceof PlayersDiffer) setPlayers({ ...problem.players, change });
+        else if (problem instanceof FilterWidens) setWidens({ ...problem.filter, change });
         else setError(problem instanceof Error ? problem.message : String(problem));
         setBusy(false);
       },
@@ -510,15 +527,25 @@ export function Settings({ project, openHistory = false }: { project?: ProjectVi
         {view.config?.host?.kind === "jira" && (
           <>
             <h4 id="jira">Jira</h4>
-            <p class="muted">Set with Connect to Jira, or in the configuration (<code>host</code>).</p>
-            <dl class="facts">
-              <dt>Project read</dt>
-              <dd>{view.config.host.project}</dd>
-              <dt>Filter</dt>
-              <dd>{view.config.host.filter ? <code>{view.config.host.filter}</code> : "none: every issue of the project is an Item"}</dd>
-              <dt>Components of new Items</dt>
-              <dd>{view.config.host.components?.join(", ") ?? "none"}</dd>
-            </dl>
+            <p class="muted">
+              Project <b>{view.config.host.project}</b>. Only issues that match the filter (JQL) are Items: Scope Soup does not read, show or touch the others.
+              {" "}A project setting, in effect from the next read on every machine. Jira checks a new filter and counts what it adds and removes before it is saved.
+            </p>
+            <div class="settings-grid">
+              <div class="settings-row">
+                <label>
+                  <b>Filter</b>
+                  <input type="text" value={draft.jira.filter} placeholder="none: every issue of the project is an Item" onInput={(event) => set({ jira: { ...draft.jira, filter: (event.target as HTMLInputElement).value } })} />
+                </label>
+              </div>
+              <div class="settings-row">
+                <label>
+                  <b>Components of new Items</b>
+                  <input type="text" value={draft.jira.components} placeholder="none" onInput={(event) => set({ jira: { ...draft.jira, components: (event.target as HTMLInputElement).value } })} />
+                  <span class="muted">Comma separated. A new Item outside the filter is reported on the board.</span>
+                </label>
+              </div>
+            </div>
           </>
         )}
 
@@ -612,6 +639,16 @@ export function Settings({ project, openHistory = false }: { project?: ProjectVi
           );
         })}
 
+        {widens && (
+          <div class="notice notice-paused players-choice" role="alert">
+            <p><b>The new Jira filter adds {widens.added} Item{widens.added === 1 ? "" : "s"}.</b> Nothing is saved until you say so.</p>
+            <ul>{widens.lines.map((line) => <li key={line}>{line}</li>)}</ul>
+            <div class="form-actions">
+              <button type="button" class="primary" disabled={busy} onClick={() => { const { change: wanted } = widens; setWidens(null); run({ ...wanted, confirm: true }, () => setSaved(true)); }}>Add them and save</button>
+              <button type="button" disabled={busy} onClick={() => setWidens(null)}>Cancel</button>
+            </div>
+          </div>
+        )}
         <div class="form-actions">
           <button type="submit" class="primary" disabled={busy || !dirty}>{busy ? "Saving…" : "Save"}</button>
           <button type="button" disabled={busy || !dirty} onClick={() => set(base)}>Undo changes</button>
