@@ -236,6 +236,20 @@ export interface Job {
   reviewedHead?: string;
   /** A person put the Item back in the backlog on the board: the tick drops the job once no session runs, and gives back its claim and workspace. */
   dropAskedBy?: string;
+  /** A person picked Triage on the board: this triage runs whatever the level (decision 104). Cleared when it is settled. */
+  triageAskedBy?: string;
+  /** A person picked In review on the board: this review step runs whatever the level (decision 104). Cleared when it is settled. */
+  reviewAskedBy?: string;
+  /**
+   * A person picked Merge queue on the board (level 4): the hand-over first reads the branch's head again, and gives the change to
+   * the queue only at the revision the reviewer approved (decision 104). Cleared by the hand-over.
+   */
+  queueAskedBy?: string;
+  /**
+   * A person's pick replaced the step that runs (decision 104): the tick ends the Item's session at once, the way Stop does, and
+   * does not settle its result; then the job goes on as the pick left it. `to` is the pick (a move, or "abandoned").
+   */
+  interrupt?: { by: string; at: string; to: string };
   /**
    * The progress guards' memory. `must` and `findings`: the `must` findings of the last review round that asked for changes
    * (their count and `findingKey`s), cleared by an approval. `mergeQueue`: the last merging failure's key (`failureKey`).
@@ -346,6 +360,41 @@ function snapshotOf(jobs: Jobs): Map<string, string> {
  * minutes while the server may release, accept or edit jobs; the save merges against this.
  */
 const baselines = new WeakMap<Jobs, Map<string, string>>();
+
+/** Whether someone else (the server: a person's pick, an answer) changed the job in the store since `jobs` was loaded or last saved. */
+export function changedInStore(store: Store, jobs: Jobs, key: string): boolean {
+  const base = baselines.get(jobs);
+  if (!base) return false;
+  const stored = readStored(store)[key];
+  return (stored === undefined ? undefined : JSON.stringify(stored)) !== base.get(key);
+}
+
+/**
+ * What someone else did to the job in the store since `jobs` was loaded or last saved: nothing, a person's pick (decision 104: it
+ * asks for an interrupt or a drop, or changes the step or what the job is parked on), or another change (an answer, a hold).
+ */
+export function changedMeanwhile(store: Store, jobs: Jobs, key: string): "none" | "picked" | "changed" {
+  if (!changedInStore(store, jobs, key)) return "none";
+  const stored = readStored(store)[key];
+  const text = baselines.get(jobs)?.get(key);
+  const was = text === undefined ? undefined : (JSON.parse(text) as Job);
+  if (!stored || !was || stored.interrupt !== undefined || stored.dropAskedBy !== undefined || stored.step !== was.step) return "picked";
+  return JSON.stringify(stored.parked) === JSON.stringify(was.parked) ? "changed" : "picked";
+}
+
+/** The job as the store has it now, made this map's (its baseline too), so the map's next save keeps it with what is added to it. */
+export function adoptStored(store: Store, jobs: Jobs, key: string): Job | undefined {
+  const stored = readStored(store)[key];
+  const base = baselines.get(jobs);
+  if (stored === undefined) {
+    delete jobs[key];
+    base?.delete(key);
+    return undefined;
+  }
+  jobs[key] = stored;
+  base?.set(key, JSON.stringify(stored));
+  return stored;
+}
 
 export function loadJobs(store: Store): Jobs {
   const jobs = readStored(store);

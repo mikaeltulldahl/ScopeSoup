@@ -81,6 +81,19 @@ export const roleOn = (store: Pick<Store, "getValue">, role: SessionRole): boole
 export const roleStopped = (store: Pick<Store, "getValue">, role: SessionRole): boolean => switchState(store, role) === "stopped";
 /** Scope Soup may merge (hand changes to the queue, drive it, push). */
 export const mergeQueueOn = (store: Pick<Store, "getValue">): boolean => mergeQueueState(store) === "started";
+/** The level from which the board shows each switch (`web/src/switches.ts`). */
+export const SWITCH_LEVEL: Record<SwitchName, number> = { triage: 1, implement: 2, review: 3, mergeQueue: 4 };
+
+/**
+ * Whether a step a person picked for a role (triage, review) may run now (decision 104). From the level that shows the
+ * role's switch, the switch decides, as for Scope Soup's own work. Below it the board has no button for it, so the hidden switch
+ * holds nothing: only Stop in force (all four switches stopped, not resumed since) does.
+ */
+export function switchOnFor(store: Pick<Store, "getValue">, name: SwitchName, level: number): boolean {
+  if (level >= SWITCH_LEVEL[name]) return switchState(store, name) === "started";
+  return !SWITCHES.every((each) => switchState(store, each) === "stopped");
+}
+
 /** Stop was pressed: a merge under way is cut off at its next safe point, before any push. Pause merge queue lets it finish. */
 export const mergeQueueStopped = (store: Pick<Store, "getValue">): boolean => mergeQueueState(store) === "stopped";
 

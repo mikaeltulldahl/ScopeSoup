@@ -64,6 +64,10 @@ export function backoffMs(failures: number, capMs: number): number {
 export async function park(ctx: Context, job: Job, as: ParkedAs, reason: string, ask?: Parameters<Actions["answerTurn"]>[1], retry?: "hand-over", byStep?: true): Promise<void> {
   const key = refKey(job.item);
   job.parked = { as, reason, at: ctx.at, ...(retry ? { retry } : {}), ...(byStep ? { byStep } : {}) };
+  // A person's ask was for the step that ended here (decision 104).
+  delete job.triageAskedBy;
+  delete job.reviewAskedBy;
+  delete job.queueAskedBy;
   // Answers to an earlier set of questions do not count for this parked Item.
   delete job.answered;
   delete job.sessionId;
@@ -578,6 +582,20 @@ async function handOver(ctx: Context, job: Job, item: WorkItem | null, askedBy?:
   // This is the hand-over that was owed, if one was: whatever happens now, it is not owed any more unless said again below.
   delete job.owes;
   if (ctx.config.level < 4) return sessionMerged(ctx, job, item, askedBy);
+  // A person's Merge queue pick was checked against the job as it was then: only the revision the reviewer approved goes to the
+  // queue. A session may have committed since (one the pick ended), so the branch's head is read again (decision 104).
+  if (job.queueAskedBy !== undefined) {
+    const head = await headOf(ctx, job);
+    const approved = job.review?.verdict === "approve" && !job.review.findings.some((finding) => finding.severity === "must");
+    if (!approved || head === null || head !== job.reviewedHead) {
+      const asker = job.queueAskedBy;
+      delete job.queueAskedBy;
+      if (head !== null) job.head = head;
+      const what = head === null ? `${job.branch} could not be read` : !approved ? "its review did not approve it" : `${job.branch} is at ${head.slice(0, 7)}, not at the revision the reviewer approved (${job.reviewedHead?.slice(0, 7) ?? "none"})`;
+      return next(ctx, job, "review", `${asker}'s Merge queue pick is not carried out: ${what}. Next: review.`);
+    }
+    delete job.queueAskedBy;
+  }
   const { runner } = ctx.deps;
   const empty = await emptyBranch(ctx, job);
   if (empty) return backToImplement(ctx, job, empty);
@@ -742,8 +760,11 @@ export async function sendBack(ctx: Context, job: Job, finding: string, what: st
     return;
   }
   if (failure) job.progress = { ...job.progress, mergeQueue: failure };
-  // The change goes back to its implementor: no hand-over is owed until a new revision is reviewed.
+  // The change goes back to its implementor: no hand-over is owed until a new revision is reviewed. A person's pick of the merge
+  // queue was for the revision it sent back; what comes next goes as the level says.
   delete job.owes;
+  delete job.queueAskedBy;
+  delete job.reviewAskedBy;
   job.fixRounds++;
   job.review = { verdict: "changes", findings: [{ severity: "must", text: finding }] };
   backToImplementor(ctx, job, `Merging failed: ${finding}\nFix it and commit.`, `${what}; nothing was pushed. Next: the implementor fixes it, round ${job.fixRounds} of ${max}.`);
@@ -876,6 +897,8 @@ async function settleStep(ctx: Context, job: Job, session: Session | null, recor
   }
 
   if (job.step === "triage") {
+    // A person's Triage pick (decision 104) was for this step.
+    delete job.triageAskedBy;
     const answer = asTriage(record.output);
     if (!answer) return failed(ctx, job, `The triage answer does not have the expected shape, has tool-call markup inside a string, or gives no reason for "not ready" or no question for "needs decision". The answer was: ${JSON.stringify(record.output ?? null).slice(0, 4000)}`);
     job.triage = answer;
@@ -957,6 +980,8 @@ async function settleStep(ctx: Context, job: Job, session: Session | null, recor
 
   if (job.step === "review") {
     delete job.shouldRound;
+    // A person's In review pick (decision 104) was for this step; what comes next goes as the level says.
+    delete job.reviewAskedBy;
     const answer = asReview(record.output);
     if (!answer) return failed(ctx, job, "The reviewer's answer does not have the expected shape, or has tool-call markup inside a string.");
     job.review = answer;

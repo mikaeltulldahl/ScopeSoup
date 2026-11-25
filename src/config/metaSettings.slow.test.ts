@@ -112,6 +112,35 @@ describe("meta settings", { concurrency: 3 }, () => {
     }
   });
 
+  test("a pick requested of another machine goes through the meta ref; that machine's answer comes back (decision 104)", async () => {
+    const { origin, a, b } = project();
+    const one = metaSettings();
+    const two = metaSettings();
+    try {
+      assert.ok((await one.save({ repoPath: a, remote: "origin", machine: "laptop-a", by: "Ada", update: () => ({ project: "tides" }) })).ok);
+      await two.fetch(b, "origin", "laptop-b");
+      const steps = [{ kind: "move", to: "backlog" }];
+      const asked = await one.writeRequest({ repoPath: a, remote: "origin", machine: "laptop-a" }, { kind: "pick", by: { who: "mira", agent: false }, fields: { id: "r-1", item: "meta:work:A-2", for: "laptop-b", seen: "2026-11-25T10:00:00.000Z", steps } });
+      assert.ok(asked.ok && asked.sharing.state === "shared");
+      assert.deepEqual(two.requests(b), []);
+      await two.fetch(b, "origin", "laptop-b");
+      const seen = two.requests(b);
+      assert.deepEqual(seen.map((request) => [request.id, request.who, request.from, request.for, request.item, request.steps, request.answer]), [["r-1", "mira", "laptop-a", "laptop-b", "meta:work:A-2", steps, undefined]]);
+      // laptop-b answers; laptop-a reads the answer after its fetch, while laptop-b saved settings meanwhile (the logs merge).
+      assert.ok((await two.writeRequest({ repoPath: b, remote: "origin", machine: "laptop-b" }, { kind: "pick-done", by: { who: "scopesoup", agent: true }, fields: { request: "r-1", done: ["moved"] } })).ok);
+      assert.ok((await one.save({ repoPath: a, remote: "origin", machine: "laptop-a", by: "Ada", update: (current) => ({ ...current, level: 2 }) })).ok);
+      await one.fetch(a, "origin", "laptop-a");
+      assert.deepEqual(one.requests(a)[0]?.answer?.done, ["moved"]);
+      assert.equal(git(origin, "show", `refs/scopesoup/meta:requests/${new Date().toISOString().slice(0, 7)}.jsonl`).trim().split(/\r?\n/).length, 2);
+      // An answer written by another machine than the one asked is not taken.
+      assert.ok((await one.writeRequest({ repoPath: a, remote: "origin", machine: "laptop-a" }, { kind: "pick", by: { who: "mira", agent: false }, fields: { id: "r-2", item: "meta:work:A-2", for: "laptop-b", seen: "x", steps } })).ok);
+      assert.ok((await one.writeRequest({ repoPath: a, remote: "origin", machine: "laptop-a" }, { kind: "pick-refused", by: { who: "scopesoup", agent: true }, fields: { request: "r-2", why: "no" } })).ok);
+      assert.equal(one.requests(a)[1]?.answer, undefined);
+    } finally {
+      await Promise.all([one.stop(), two.stop()]);
+    }
+  });
+
   test("a GitHub-host project keeps its shared settings on the meta ref, which holds nothing else", async () => {
     const { origin, a, fileA } = project();
     const settings = metaSettings();

@@ -19,6 +19,7 @@ import { useRoute } from "./route.ts";
 import { StatusLine } from "./StatusLine.tsx";
 import { Toasts } from "./Pending.tsx";
 import { allPaused, switchesAt } from "./switches.ts";
+import { mergeLane, queueShown } from "./mergeLane.ts";
 import { THEMES, taglineAt } from "./theme.ts";
 import { startThemes, useThemeId } from "./useTheme.ts";
 import "./styles.css";
@@ -78,7 +79,9 @@ function App() {
         <nav aria-label="Views">
           <a href="#/" aria-current={route.view === "overview" ? "page" : undefined}>{theme.words.startPage}</a>
           <a href="#/items" aria-current={route.view === "items" ? "page" : undefined}>{theme.words.itemMany.replace(/^./, (first) => first.toUpperCase())}</a>
-          <a href="#/queue" aria-current={route.view === "queue" ? "page" : undefined}>Merge queue</a>
+          {(!board || queueShown(level, mergeLane(board.lanes.find((lane) => lane.lane === "queued"), board.lanes.find((lane) => lane.lane === "checking"), board.queue).count)) && (
+            <a href="#/queue" aria-current={route.view === "queue" ? "page" : undefined}>Merge queue</a>
+          )}
           <a href="#/history" aria-current={route.view === "history" ? "page" : undefined}>History</a>
           <a href="#/usage" aria-current={route.view === "usage" ? "page" : undefined}>Usage</a>
           <a href="#/settings" aria-current={route.view === "settings" || route.view === "stop" ? "page" : undefined}>Settings</a>

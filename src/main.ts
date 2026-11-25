@@ -85,6 +85,9 @@ import { usageReserve } from "./orchestrator/tick.ts";
 import type { Runner } from "./orchestrator/runner.ts";
 import type { AnswerWrite, Host, WorkPatch } from "./ports/host.ts";
 import { createServer } from "./server/server.ts";
+import type { PickRequestPort, ScopeSoupServer } from "./server/server.ts";
+import { pickNeeds } from "./config/levels.ts";
+import { programFound } from "./config/program.ts";
 import { recordInManifest } from "./config/manifest.ts";
 import { planFor } from "./offboard/cli.ts";
 import { defaultOutFolder } from "./offboard/scan.ts";
@@ -149,7 +152,11 @@ async function main(): Promise<void> {
     if (!repository?.machine) return;
     const report = await shared.fetch(repository.repoPath, repository.remote, repository.machine, repository.multiplayer);
     if (report.problem) console.log(`Fetching the shared settings (refs/scopesoup/meta): ${report.problem}`);
+    // The picks other boards requested of this machine came with the fetch (decision 104).
+    await server?.carryOutRequests().catch((error: unknown) => console.log(`Carrying out the picks requested of this machine: ${error instanceof Error ? error.message : String(error)}`));
   };
+  /** Set below; the fetch carries out the picks requested of this machine once it is there. */
+  let server: ScopeSoupServer | undefined;
   await fetchShared();
   const sharedTimer = setInterval(() => void fetchShared(), 60_000);
   sharedTimer.unref();
@@ -389,7 +396,7 @@ async function main(): Promise<void> {
     })
     : undefined;
 
-  const server = createServer({
+  server = createServer({
     // This machine lacks what the project's host needs: the board asks for it ("Set up this machine").
     ...(setup ? { machineSetup: setup } : {}),
     upgrade: upgrader,
@@ -404,6 +411,7 @@ async function main(): Promise<void> {
     allowLan: env.SCOPESOUP_ALLOW_LAN === "1",
     ...(itemHost?.write ? { items: { host: itemHost.info.id, write: itemHost.write, ...(itemHost.work ? { work: itemHost.work } : {}) } } : {}),
     ...(itemHost?.info.machine ? { machine: itemHost.info.machine } : {}),
+    ...(first?.config ? { requests: pickRequests(shared, configFile, first.config.machineName) } : {}),
     ...(jiraHost ? { jiraItems: jiraBoard(jiraHost, { now: () => new Date() }) } : {}),
     ...(description ? { description } : {}),
     ...(hostEdit ? { hostEdit } : {}),
@@ -424,6 +432,7 @@ async function main(): Promise<void> {
                   reserve: usageReserve(loaded),
                   allowances: allowancePlans(loaded, usageReserve(loaded).seven_day),
                   level: loaded.level,
+                  pickNeeds: pickNeeds(loaded, programFound),
                   ...(loaded.resources ? { resources: loaded.resources } : {}),
                 }
               : { bugLabels: ["bug"] };
@@ -569,6 +578,26 @@ async function main(): Promise<void> {
   restartAfterStop = () => void stop("upgrade").then(() => process.exit(RESTART_EXIT_CODE));
   process.on("SIGINT", () => void stop("SIGINT"));
   process.on("SIGTERM", () => void stop("SIGTERM"));
+}
+
+/**
+ * The picks' requests on the meta ref (decision 104), where this machine's private file says the repository is; the shared
+ * settings' writer writes and pushes them (singleplayer: kept here, where the only machine reads them).
+ */
+function pickRequests(shared: ReturnType<typeof metaSettings>, configFile: string, machine: string): PickRequestPort {
+  return {
+    machine,
+    list: () => {
+      const repository = privateWhere(configFile);
+      return repository ? shared.requests(repository.repoPath) : [];
+    },
+    write: async (line) => {
+      const repository = privateWhere(configFile);
+      if (!repository?.machine) return { ok: false, error: "this machine's private configuration names no repository or machine" };
+      const done = await shared.writeRequest({ repoPath: repository.repoPath, remote: repository.remote, machine: repository.machine, multiplayer: repository.multiplayer }, line);
+      return done.ok ? { ok: true } : done;
+    },
+  };
 }
 
 /** Where this machine's private file says the repository is; null when the file cannot be read (the loader says why). */

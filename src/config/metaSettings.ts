@@ -11,7 +11,8 @@ import { parseLog } from "../hosts/metaBranch/log.ts";
 import { RefusedWrite } from "../hosts/metaBranch/serialize.ts";
 import { fetchRef, moveRef, networkEnvironment, remoteRef } from "../hosts/metaBranch/plumbing.ts";
 import { META_REF, SETTINGS_FILE, SETTINGS_LOG, type SettingChange, settingChanges, settingsText } from "../hosts/metaBranch/settings.ts";
-import { createWriter, type SharingReport, type Writer } from "../hosts/metaBranch/writer.ts";
+import { createWriter, type LineWrite, type SharingReport, type Writer } from "../hosts/metaBranch/writer.ts";
+import { type PickRequest, readRequests, requestsFiles } from "../hosts/metaBranch/requests.ts";
 import { SaveRefused, type SaveRequest, type SaveResult, type SettingsLogEntry, SHARED_WHERE, type SharedRead, type SharedSettings } from "./shared.ts";
 
 /** The committer of settings commits (the author is the person who saved): no one's own address. */
@@ -24,6 +25,10 @@ export interface MetaSettings extends SharedSettings {
   log(repoPath: string): SettingsLogEntry[];
   /** Fetches the meta ref and pushes what waits: the other machines' saves arrive this way. Never throws for a sharing problem. */
   fetch(repoPath: string, remote: string, machine: string, multiplayer?: boolean): Promise<SharingReport>;
+  /** The picks' requests of this month and the last on the meta ref as this clone has it (src/hosts/metaBranch/requests.ts). */
+  requests(repoPath: string): PickRequest[];
+  /** Writes one line of the requests' log and pushes it, as a save does. */
+  writeRequest(where: { repoPath: string; remote: string; machine: string; multiplayer?: boolean }, line: LineWrite): Promise<{ ok: true; sharing: SharingReport } | { ok: false; error: string }>;
   share(repoPath: string, remote: string, machine: string): Promise<{ pushed: boolean; state: "local" | "shared" | "pending"; problem?: string }>;
   /** Ends every git still running (a push in flight). */
   stop(): Promise<void>;
@@ -77,6 +82,8 @@ export function metaSettings(options: { now?: () => string; git?: (args: string[
 
   // The settings at the meta commit last read, so an unchanged ref costs one git process.
   let last: { repo: string; commit: string; read: SharedRead } | null = null;
+  // The requests at the meta commit last read, for the same reason.
+  let lastRequests: { repo: string; key: string; list: PickRequest[] } | null = null;
   const tip = (repoPath: string): string | null => {
     try {
       return git(["rev-parse", "--verify", "--quiet", `${META_REF}^{commit}`], repoPath).trim() || null;
@@ -140,6 +147,33 @@ export function metaSettings(options: { now?: () => string; git?: (args: string[
       }
       // Newest first: by time, and for the same time the later line first.
       return entries.reverse().sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
+    },
+
+    requests(repoPath) {
+      const commit = tip(repoPath);
+      if (commit === null) return [];
+      const files = requestsFiles(now());
+      const key = `${commit} ${files.join(" ")}`;
+      if (lastRequests && lastRequests.repo === repoPath && lastRequests.key === key) return lastRequests.list;
+      const texts = files.map((file) => {
+        try {
+          return git(["cat-file", "blob", `${commit}:${file}`], repoPath);
+        } catch {
+          return "";
+        }
+      });
+      const list = readRequests(texts.join("\n"));
+      lastRequests = { repo: repoPath, key, list };
+      return list;
+    },
+
+    async writeRequest(where, line) {
+      try {
+        const done = await writerFor(where.repoPath, where.remote, where.machine, where.multiplayer).appendRequest(line);
+        return { ok: true, sharing: done.sharing };
+      } catch (error) {
+        return { ok: false, error: error instanceof Error ? error.message : String(error) };
+      }
     },
 
     async remote(repoPath, remote) {

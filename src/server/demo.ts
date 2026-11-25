@@ -56,6 +56,7 @@ import { versionOf } from "../upgrade/version.ts";
 import { KEYS } from "./snapshot.ts";
 import { demoMedia } from "./demoMedia.ts";
 import { demoCommit, demoHistory, demoSettingsLog, demoSha, seedDemoActivity } from "./demoHistory.ts";
+import { memoryRequests } from "../hosts/metaBranch/requests.ts";
 
 const SUITE = "full suite";
 const reviewer = { id: "reviewer", name: "reviewer", bot: true };
@@ -330,6 +331,8 @@ export function seedDemo(store: Store, now: Date, dir?: string): void {
       });
     held(48, "Darker map tiles at night", "mira", "demo", -40);
     held(49, "Tide alarm with a gentle sound", "jonas", "laptop-b", -150);
+    // An agent on another machine runs item 62's work: a pick for it goes there as a request (decision 104).
+    item(62, "Sunrise and sunset times on the day view", { state: "doing", holder: { actor: { id: "scopesoup@laptop-b", name: "scopesoup on laptop-b", bot: true }, until: at(25) } });
     item(60, "Wind arrows on the hourly view", { state: "doing" });
     changeFor(60, "Wind arrows on the hourly view", { draft: true });
     put(session("s-60", ref("work", 60), { status: "stalled", model: "sonnet", startedAt: at(-52), lastEventAt: at(-17), lastAction: "running the browser suite" }));
@@ -938,6 +941,8 @@ async function main(): Promise<void> {
     configFile,
     ...demoConfigOptions(dir, settings),
     machine: "demo",
+    // Picks for Items whose work runs on another machine: kept in memory, and no other machine answers them in the demo.
+    requests: memoryRequests([], "demo"),
     // The demo's name and repository in the header; "Open folder" opens the demo's temporary folders.
     project: () => {
       const loaded = loader.load().config;

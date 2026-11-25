@@ -12,7 +12,7 @@ import { Dialog } from "./Dialog.tsx";
 import { ItemForm } from "./ItemForm.tsx";
 import { laneIcon, laneLabel } from "./format.ts";
 import { itemHref } from "./route.ts";
-import { MERGE_LANE, mergeLane } from "./mergeLane.ts";
+import { MERGE_LANE, mergeLane, queueShown } from "./mergeLane.ts";
 import { itemNoun, words } from "./theme.ts";
 import { useTheme } from "./useTheme.ts";
 import { postItem } from "./api.ts";
@@ -234,6 +234,7 @@ export function Overview({ board, busy, onSwitch }: { board: BoardView; busy: bo
       <div class="lanes">
         {board.lanes.map((lane) =>
           lane.lane === "checking" ? null : lane.lane === "queued" ? (
+            !queueShown(board.status.level, mergeLane(lane, board.lanes.find((each) => each.lane === "checking"), board.queue).count) ? null :
             <MergeQueueLane key={MERGE_LANE} board={board} closed={closed.includes(MERGE_LANE)} toggle={() => toggle(MERGE_LANE)} control={control(MERGE_LANE)} />
           ) : (
             <Lane key={lane.lane} lane={lane} closed={closed.includes(lane.lane)} toggle={() => toggle(lane.lane)} control={control(lane.lane)} />

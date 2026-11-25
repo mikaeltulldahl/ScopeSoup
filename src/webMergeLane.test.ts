@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { BatchMemberView, BatchView, CardView, LaneView, WaitingView } from "./core/views.ts";
-import { mergeLane } from "../web/src/mergeLane.ts";
+import { mergeLane, queueShown } from "../web/src/mergeLane.ts";
 
 const item = (n: number) => ({ key: `demo:work:${n}`, label: `#${n}`, title: `Item ${n}` });
 const card = (n: number, lane: "queued" | "checking"): CardView => ({ ...item(n), lane, actor: "queue", reason: "", tone: "waiting", unblocks: 0, needsDecision: false }) as CardView;
@@ -29,4 +29,11 @@ test("a member sent back to the queue waits below as a card, and an empty queue 
   assert.deepEqual(view.waiting.map((each) => each.label), ["#2"]);
   assert.equal(view.count, 2);
   assert.deepEqual(mergeLane(lane("queued", []), undefined, { batches: [], forming: [], waiting: [] }), { batches: [], waiting: [], count: 0 });
+});
+
+test("the merge queue shows from level 4, and below only while it holds or checks changes", () => {
+  assert.equal(queueShown(4, 0), true);
+  assert.equal(queueShown(3, 0), false);
+  assert.equal(queueShown(2, 1), true);
+  assert.equal(queueShown(undefined, 0), true, "board only");
 });

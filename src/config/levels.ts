@@ -68,6 +68,21 @@ function ownNeeds(level: Level, config: ProjectConfig, found: (command: string) 
   }
 }
 
+/**
+ * What a person's Triage and In review picks lack, whatever the level (decision 104): the agents' programs. Absent when nothing
+ * is missing.
+ */
+export function pickNeeds(config: ProjectConfig, found: (command: string) => boolean): { triage?: string; review?: string } {
+  const missing = (role: "triage" | "review"): string | undefined => {
+    const provider = providerFor(config, role);
+    const program = provider.program(config);
+    return found(program) ? undefined : `needs ${provider.label} (the program "${program}" was not found)`;
+  };
+  const triage = missing("triage");
+  const review = missing("review");
+  return { ...(triage ? { triage } : {}), ...(review ? { review } : {}) };
+}
+
 function andList(parts: string[]): string {
   return parts.length <= 1 ? (parts[0] ?? "") : `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}`;
 }

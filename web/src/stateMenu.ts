@@ -27,7 +27,7 @@ export interface StateOption {
 }
 
 /** What the menu reads of the Item page. */
-export type MenuPage = Pick<ItemPage, "lane" | "hold" | "moves" | "canEdit"> & {
+export type MenuPage = Pick<ItemPage, "lane" | "hold" | "moves" | "canEdit" | "remote"> & {
   item: Pick<ItemPage["item"], "state" | "holder" | "label">;
   sessions: { live: Pick<ItemPage["sessions"]["live"][number], "role" | "chat">[] };
 };
@@ -100,31 +100,49 @@ export function stateOptions(page: MenuPage, theme: ThemeWords): StateOption[] {
     done: edit("done", releasing),
     abandoned: edit("abandoned", releasing),
   };
-  return STATE_KEYS.map((key) => ({ key, label: stateLabel(key, theme), ...options[key] }));
+  // Below level 4 the server offers no Merge queue (decision 104): the option is not shown, unless the Item is in the queue.
+  const hidden = (key: StateKey): boolean => key === "merge-queue" && moves !== undefined && moves["merge-queue"] === undefined && currentState(page) !== "merge-queue";
+  return STATE_KEYS.filter((key) => !hidden(key)).map((key) => ({ key, label: stateLabel(key, theme), ...options[key] }));
 }
 
+/** The picks that replace the step that runs, and so end its session at once (decision 104). Done lets it finish its step. */
+const INTERRUPTS: readonly StateKey[] = ["triage", "backlog", "in-review", "merge-queue", "abandoned"];
+
 /**
- * What the pick does to work under way, for the toast, in a few words; "" for nothing. Scope Soup stops no running session
- * (`sessionRunning` in the server, the claim rules): an Item made done or abandoned lets its session finish its step and then
- * closes the job; on another machine that machine sees the change at its next fetch of the meta branch and does the same.
+ * What the pick does to work under way, for the toast, in a few words; "" for nothing. A pick that replaces the step that runs
+ * ends its session at once (`interrupt` in the tick); Done lets it finish its step, then closes the job. When the work runs on
+ * another machine, the pick goes there as a request, carried out at that machine's next fetch of the meta branch (once a minute).
  */
 export function effectNote(key: StateKey, page: MenuPage, theme: ThemeWords): string {
   const notes: string[] = [];
   const other = otherPerson(page);
   const steps = stateOptions(page, theme).find((option) => option.key === key)?.steps ?? [];
   if (other && steps.some((step) => step.kind === "release")) notes.push(key === "in-progress" ? `takes over from ${other}` : `releases ${other}'s hold`);
-  const ending = key === "done" || key === "abandoned";
   const session = liveStep(page);
-  const holder = page.item.holder;
-  const elsewhere = !session && holder?.actor.bot ? holder.actor.name : undefined;
-  const role = session ? theme.roles[session.role === "triage" ? "triage" : session.role === "review" ? "review" : "implement"] : undefined;
-  if (role || elsewhere) {
-    const who = role ? `the ${role}` : `the agent on ${elsewhere}`;
-    if (ending) notes.push(`stops after ${who}`);
+  const elsewhere = session ? undefined : page.remote?.machine;
+  // On another machine the role is told by the column: the reviewer in In review, the triage in Triage, else the implementor.
+  const runs = session?.role ?? (elsewhere ? (page.lane === "in-review" ? "review" : currentState(page) === "triage" ? "triage" : "implement") : undefined);
+  const role = runs ? theme.roles[runs === "triage" ? "triage" : runs === "review" ? "review" : "implement"] : undefined;
+  if (role) {
+    const who = `the ${role}${elsewhere ? ` on ${elsewhere}` : ""}`;
+    if (INTERRUPTS.includes(key)) notes.push(`interrupts ${who}${elsewhere ? ", within a minute" : ""}`);
+    else if (key === "done") notes.push(`stops after ${who}`);
     else if (key === "blocked") notes.push(`${who} goes on`);
-  } else if (ending && page.lane === "queued") notes.push(`leaves the ${theme.roles.queue}`);
-  else if (ending && page.lane === "checking") notes.push(`stops after the ${theme.roles.queue}'s check`);
+  } else if ((key === "done" || key === "abandoned") && page.lane === "queued") notes.push(`leaves the ${theme.roles.queue}`);
+  else if ((key === "done" || key === "abandoned") && page.lane === "checking") notes.push(`stops after the ${theme.roles.queue}'s check`);
   return notes.join(" · ");
+}
+
+/** The newest pick requested of another machine, while it is worth a line: waiting, or refused or lapsed within the hour. */
+export function requestNote(page: MenuPage, theme: ThemeWords, now: number): string {
+  const request = page.remote?.request;
+  if (!request || request.state === "done" || now - Date.parse(request.at) > 60 * 60_000) return "";
+  const step = request.steps.find((each) => each.kind === "move" || each.kind === "state");
+  const key = (step?.kind === "move" ? step.to : step?.state === "abandoned" ? "abandoned" : step?.state === "done" ? "done" : "backlog") as StateKey;
+  const picked = `${request.who}'s ${stateLabel(key, theme)}`;
+  if (request.state === "pending") return `${picked} waits for ${request.for} (at its next fetch, within a minute)`;
+  if (request.state === "refused") return `${request.for} refused ${picked}: ${request.why ?? "no reason given"}`;
+  return `${request.for} did not answer ${picked} within 15 minutes; it is not carried out`;
 }
 
 /** The toast's text before its Undo: "A-2 → Backlog · releases Ana's hold". */

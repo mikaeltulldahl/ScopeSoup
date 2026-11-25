@@ -548,6 +548,14 @@ export interface ItemPage {
    * `why` it cannot be made now. Backlog is absent when there is no work under way to drop.
    */
   moves?: Partial<Record<"triage" | "backlog" | "in-review" | "merge-queue", HoldAction>>;
+  /**
+   * Set by the server (decision 104): the machine whose agent runs the Item's work when it is another (a pick goes there as a
+   * request), and the newest pick requested for the Item, with where it stands.
+   */
+  remote?: {
+    machine?: string;
+    request?: { who: string; at: string; for: string; steps: { kind: string; to?: string; state?: string }[]; state: "pending" | "done" | "refused" | "lapsed"; why?: string };
+  };
 }
 
 /**

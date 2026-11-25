@@ -14,6 +14,7 @@ import type { ScopeSoupServer } from "./server.ts";
 import { createServer } from "./server.ts";
 import type { MoveInput } from "./moves.ts";
 import { applyMove, moveWhys } from "./moves.ts";
+import { memoryRequests } from "../hosts/metaBranch/requests.ts";
 
 const item = work(7, { title: "Tidy the dock" });
 const key = refKey(item.ref);
@@ -22,26 +23,29 @@ const job = (fields: Partial<Job> = {}): Job => ({ item: item.ref, workspace: "w
 const input = (fields: Partial<MoveInput> = {}): MoveInput => ({ item, job: job(), lane: "backlog", level: 4, mergeQueueOn: true, at: Date.parse(T0), ...fields });
 
 describe("the rules", () => {
-  test("triage again: refused while a session runs, an agent elsewhere or a person holds it, below level 1, and with no triage to drop", () => {
+  test("triage again: a running implementor is interrupted; refused while the triage runs, an agent elsewhere or a person holds it, below level 1, and with no triage to drop", () => {
     assert.deepEqual(moveWhys(input()).triage, {});
-    assert.match(moveWhys(input({ job: job({ sessionId: "s1" }) })).triage!.why!, /the implementor is on it now/);
+    assert.deepEqual(moveWhys(input({ job: job({ sessionId: "s1" }) })).triage, {});
+    assert.equal(moveWhys(input({ job: job({ sessionId: "s1", step: "triage" }) })).triage!.why, "the triage is on it now");
     const bot = { ...item, holder: { actor: { id: "scopesoup@laptop-b", name: "laptop-b", bot: true }, until: "2099-01-01T00:00:00Z" } };
     assert.equal(moveWhys(input({ item: bot, job: undefined })).triage!.why, "an agent on laptop-b is on it");
     const held = { ...item, holder: { actor: { id: "ana", name: "Ana" } } };
     assert.equal(moveWhys(input({ item: held })).triage!.why, "held by Ana");
-    assert.equal(moveWhys(input({ level: 0 })).triage!.why, "triage is off at level 0");
+    // Level 0: a person's Triage makes the job (decision 104); it needs the agent program.
+    assert.deepEqual(moveWhys(input({ level: 0, job: undefined })).triage, {});
+    assert.equal(moveWhys(input({ level: 0, job: undefined, needs: { triage: "needs Claude Code" } })).triage!.why, "needs Claude Code");
     assert.equal(moveWhys(input({ job: undefined })).triage!.why, "in line for triage already");
     assert.equal(moveWhys(input({ job: job({ step: "triage" }) })).triage!.why, "next for triage already");
     assert.equal(moveWhys(input({ item: { ...item, state: "done" } })).triage!.why, "reopen it first");
   });
 
-  test("back to the backlog: only with work under way; a person's hold is left to Release, a running session refuses it", () => {
+  test("back to the backlog: only with work under way; a person's hold is left to Release; a running session is interrupted", () => {
     assert.equal(moveWhys(input({ job: undefined })).backlog, undefined);
     assert.deepEqual(moveWhys(input()).backlog, {});
     assert.deepEqual(moveWhys(input({ item: { ...item, holder: { actor: { id: "ana", name: "Ana" } } } })).backlog, {});
-    assert.match(moveWhys(input({ job: job({ sessionId: "s1", step: "review" }) })).backlog!.why!, /the reviewer is on it now/);
+    assert.deepEqual(moveWhys(input({ job: job({ sessionId: "s1", step: "review" }) })).backlog, {});
     assert.equal(moveWhys(input({ lane: "checking" })).backlog!.why, "the merge queue is checking it");
-    assert.match(moveWhys(input({ liveRole: "implement" })).backlog!.why!, /the implementor is on it now/);
+    assert.deepEqual(moveWhys(input({ liveRole: "implement" })).backlog, {});
   });
 
   test("an Item the merge queue holds (waiting, in a batch, merged) is not sent to triage or the backlog", () => {
@@ -58,15 +62,21 @@ describe("the rules", () => {
     }
   });
 
-  test("review now: needs a revision and level 3; merge queue now: a reviewed change at level 4 with the queue running", () => {
+  test("review now: needs a revision and the program, at any level; merge queue now: a reviewed change, from level 4 only", () => {
     assert.equal(moveWhys(input())["in-review"]?.why, "nothing to review yet");
     assert.deepEqual(moveWhys(input({ job: job({ head: "abc" }), lane: "in-progress" }))["in-review"], {});
-    assert.equal(moveWhys(input({ job: job({ head: "abc" }), level: 2 }))["in-review"]!.why, "review is off below level 3");
+    for (const level of [0, 1, 2]) assert.deepEqual(moveWhys(input({ job: job({ head: "abc" }), level }))["in-review"], {}, `level ${level}`);
+    assert.equal(moveWhys(input({ job: job({ head: "abc" }), needs: { review: "needs Claude Code" } }))["in-review"]!.why, "needs Claude Code");
     assert.equal(moveWhys(input({ job: job({ head: "abc", step: "review" }) }))["in-review"]!.why, "in review already");
+    assert.equal(moveWhys(input({ job: job({ head: "abc", step: "review", sessionId: "s" }) }))["in-review"]!.why, "in review already");
+    // A running implementor's fix round is interrupted by In review.
+    assert.deepEqual(moveWhys(input({ job: job({ head: "abc", sessionId: "s" }) }))["in-review"], {});
 
     const reviewed = job({ head: "abc", reviewedHead: "abc", step: "review", review: { verdict: "approve", findings: [] }, parked: { as: "handed-over", reason: "reviewed", at: T0 } });
     assert.deepEqual(moveWhys(input({ job: reviewed, lane: "in-review" }))["merge-queue"], {});
-    assert.equal(moveWhys(input({ job: reviewed, level: 3 }))["merge-queue"]!.why, "the merge queue is off below level 4");
+    // Below level 4 the merge queue is not offered at all: it is Scope Soup's own.
+    for (const level of [0, 1, 2, 3]) assert.equal(moveWhys(input({ job: reviewed, level }))["merge-queue"], undefined, `level ${level}`);
+    assert.deepEqual(applyMove({ [key]: reviewed }, key, "merge-queue", input({ job: reviewed, level: 3 }), "Ada", T0), { ok: false, why: "the merge queue runs from level 4" });
     assert.equal(moveWhys(input({ job: reviewed, mergeQueueOn: false }))["merge-queue"]!.why, "the merge queue is paused");
     assert.equal(moveWhys(input({ job: job({ head: "abc" }) }))["merge-queue"]!.why, "not reviewed yet");
     assert.equal(moveWhys(input({ job: { ...reviewed, sentBack: "abc" } }))["merge-queue"]!.why, "the merge queue sent it back; it needs a fix");
@@ -106,7 +116,49 @@ describe("the rules", () => {
     assert.equal(applyMove(drop, key, "backlog", input(), "Ada", T0).ok, true);
     assert.equal(drop[key]?.dropAskedBy, "Ada");
     assert.equal(moveWhys(input({ job: drop[key] })).backlog!.why, "back to the backlog already");
-    assert.deepEqual(applyMove({ [key]: job({ sessionId: "s" }) }, key, "backlog", input({ job: job({ sessionId: "s" }) }), "Ada", T0), { ok: false, why: "the implementor is on it now; wait for it to finish" });
+  });
+
+  test("a move that replaces the step that runs marks the job for the tick to end that session; In review and Merge queue are marked as a person's", () => {
+    const drop = { [key]: job({ sessionId: "s" }) };
+    const dropped = applyMove(drop, key, "backlog", input({ job: drop[key] }), "Ada", T0);
+    assert.ok(dropped.ok && /The implementor's session is ended now/.test(dropped.reason));
+    assert.deepEqual([drop[key]!.dropAskedBy, drop[key]!.interrupt, drop[key]!.sessionId], ["Ada", { by: "Ada", at: T0, to: "backlog" }, "s"]);
+
+    const triaged = { [key]: job({ sessionId: "s", head: "abc" }) };
+    assert.ok(applyMove(triaged, key, "triage", input({ job: triaged[key] }), "Ada", T0).ok);
+    assert.deepEqual([triaged[key]!.step, triaged[key]!.sessionId, triaged[key]!.interrupt?.to], ["triage", "s", "triage"]);
+
+    const review = { [key]: job({ head: "abc", sessionId: "s", resumeWith: "fix it" }) };
+    assert.ok(applyMove(review, key, "in-review", input({ job: review[key], level: 1 }), "Ada", T0).ok);
+    assert.deepEqual([review[key]!.step, review[key]!.reviewAskedBy, review[key]!.interrupt?.to, review[key]!.resumeWith], ["review", "Ada", "in-review", undefined]);
+
+    // A session the store has as live (starting, before the tick saved its id) counts too.
+    const starting = { [key]: job({ head: "abc" }) };
+    assert.ok(applyMove(starting, key, "in-review", input({ job: starting[key], liveRole: "implement" }), "Ada", T0).ok);
+    assert.equal(starting[key]!.interrupt?.to, "in-review");
+
+    const queue = { [key]: job({ head: "abc", reviewedHead: "abc", step: "review", review: { verdict: "approve", findings: [] }, sessionId: "s", reviewAskedBy: "Bo" }) };
+    const queued = applyMove(queue, key, "merge-queue", input({ job: queue[key] }), "Ada", T0);
+    assert.ok(queued.ok && /The reviewer's session is ended now/.test(queued.reason));
+    // One ask at a time: the review asked for before is not asked for any more.
+    assert.deepEqual([queue[key]!.queueAskedBy, queue[key]!.reviewAskedBy, queue[key]!.interrupt?.to], ["Ada", undefined, "merge-queue"]);
+    const back = { [key]: job({ head: "abc", queueAskedBy: "Bo" }) };
+    assert.ok(applyMove(back, key, "in-review", input({ job: back[key] }), "Ada", T0).ok);
+    assert.deepEqual([back[key]!.reviewAskedBy, back[key]!.queueAskedBy], ["Ada", undefined]);
+
+    // Level 0: Triage on an Item with no job makes one, asked for by the person.
+    const none: Record<string, Job> = {};
+    assert.ok(applyMove(none, key, "triage", input({ job: undefined, level: 0 }), "Ada", T0).ok);
+    assert.deepEqual([none[key]?.step, none[key]?.triageAskedBy], ["triage", "Ada"]);
+  });
+
+  test("an Item whose work runs on another machine: the moves are left to that machine, except what is known everywhere", () => {
+    const bot = { ...item, holder: { actor: { id: "scopesoup@laptop-b", name: "scopesoup on laptop-b", bot: true }, until: "2099-01-01T00:00:00Z" } };
+    const whys = moveWhys(input({ item: bot, job: undefined, elsewhere: "laptop-b" }));
+    assert.deepEqual(whys, { triage: {}, backlog: {}, "in-review": {}, "merge-queue": {} });
+    assert.equal(moveWhys(input({ item: bot, job: undefined, elsewhere: "laptop-b", level: 3 }))["merge-queue"], undefined);
+    assert.equal(moveWhys(input({ item: { ...bot, state: "done" }, job: undefined, elsewhere: "laptop-b" })).triage!.why, "reopen it first");
+    assert.deepEqual(applyMove({}, key, "backlog", input({ item: bot, job: undefined, elsewhere: "laptop-b" }), "Ada", T0), { ok: false, why: "its work runs on laptop-b; pick it on the Item page, which asks that machine" });
   });
 });
 
@@ -133,15 +185,15 @@ describe("POST /api/item/move", () => {
     // No job here: nothing to drop, and triage is next already.
     const none = await post({ ref: key, to: "backlog" });
     assert.equal(none.status, 409);
-    saveJobs(store, { [key]: job({ head: "abc", sessionId: "s1" }) });
+    saveJobs(store, { [key]: job({ head: "abc", sessionId: "s1", step: "review" }) });
     const running = await post({ ref: key, to: "in-review" });
     assert.equal(running.status, 409);
-    assert.match(((await running.json()) as { error: { message: string } }).error.message, /the implementor is on it now/);
+    assert.match(((await running.json()) as { error: { message: string } }).error.message, /in review already/);
 
     saveJobs(store, { [key]: job({ head: "abc" }) });
     const page = (await (await fetch(`${base}/api/item?ref=${key}`)).json()) as ItemPage;
     assert.deepEqual(page.moves?.["in-review"], {});
-    assert.equal(page.moves?.["merge-queue"]?.why, "the merge queue is off below level 4");
+    assert.equal(page.moves?.["merge-queue"], undefined);
     const stale = await post({ ref: key, to: "in-review", seen: "2020-01-01T00:00:00Z" });
     assert.equal(stale.status, 409);
     assert.match(((await stale.json()) as { error: { message: string } }).error.message, /changed meanwhile/);
@@ -175,7 +227,117 @@ describe("POST /api/item/move", () => {
     saveJobs(store, { [key]: job({ head: "abc" }) });
     const two = await pick({ ref: key, seen, steps: [{ kind: "move", to: "in-review" }, { kind: "move", to: "merge-queue" }] });
     assert.equal(two.status, 409);
-    assert.equal(((await two.json()) as { error: { message: string } }).error.message, "Moved; then refused: 7: the merge queue is off below level 4.");
+    assert.equal(((await two.json()) as { error: { message: string } }).error.message, "Moved; then refused: 7: the merge queue runs from level 4.");
     assert.equal(loadJobs(store)[key]?.step, "review");
   });
+});
+
+describe("a pick for an Item whose work runs on another machine (decision 104)", () => {
+  const held = { ...item, holder: { actor: { id: "scopesoup@laptop-b", name: "scopesoup on laptop-b", bot: true }, until: "2099-01-01T00:00:00Z" } };
+  let lines: string[];
+  let storeA: Store;
+  let storeB: Store;
+  let serverA: ScopeSoupServer;
+  let serverB: ScopeSoupServer;
+  let baseA: string;
+  /** The clock of both machines, in milliseconds. */
+  let clock = Date.parse(T0);
+  before(async () => {
+    // One requests' log, as if both machines fetched the meta ref at once.
+    lines = [];
+    storeA = openStore(":memory:");
+    storeB = openStore(":memory:");
+    storeA.put(held, "sync", T0);
+    storeB.put(held, "sync", T0);
+    const common = { now: () => new Date(clock), port: 0, heartbeatMs: 20, configFile: "scopesoup.config.json", planning: () => ({ bugLabels: [], level: 2 }) };
+    serverA = createServer({ ...common, store: storeA, requests: memoryRequests(lines, "laptop-a", () => new Date(clock).toISOString()) });
+    serverB = createServer({ ...common, store: storeB, requests: memoryRequests(lines, "laptop-b", () => new Date(clock).toISOString()) });
+    baseA = (await serverA.start()).url;
+    await serverB.start();
+  });
+  after(async () => {
+    await Promise.all([serverA.stop(), serverB.stop()]);
+    storeA.close();
+    storeB.close();
+  });
+  const pageA = async () => (await (await fetch(`${baseA}/api/item?ref=${key}`)).json()) as ItemPage;
+  const pickA = (body: unknown) => fetch(`${baseA}/api/item/pick`, { method: "POST", headers: { "Content-Type": "application/json", "X-ScopeSoup-Person": "mira" }, body: JSON.stringify(body) });
+
+  test("is written as a request, carried out by that machine through the same code, and its answer shows on the first board", async () => {
+    // laptop-b runs the implementor on it.
+    saveJobs(storeB, { [key]: job({ sessionId: "s1" }) });
+    const before = await pageA();
+    assert.equal(before.remote?.machine, "laptop-b");
+    assert.deepEqual(before.moves?.backlog, {});
+    const asked = await pickA({ ref: key, seen: before.item.updatedAt, steps: [{ kind: "move", to: "backlog" }] });
+    assert.equal(asked.status, 202);
+    assert.equal(((await asked.json()) as { requested: { for: string } }).requested.for, "laptop-b");
+    assert.equal(lines.length, 1);
+    const line = JSON.parse(lines[0]!) as Record<string, unknown>;
+    assert.deepEqual([line.kind, line.for, line.item, line.seen, (line.by as { who: string; machine: string }).who, (line.by as { machine: string }).machine], ["pick", "laptop-b", key, before.item.updatedAt, "mira", "laptop-a"]);
+    assert.equal(loadJobs(storeA)[key], undefined, "nothing changes on the board's own machine");
+    assert.equal((await pageA()).remote?.request?.state, "pending");
+
+    // laptop-b fetches: the pick is made there, as mira, and the running session is marked to be ended.
+    assert.equal(await serverB.carryOutRequests(), 1);
+    assert.equal(await serverB.carryOutRequests(), 0, "once");
+    const jobB = loadJobs(storeB)[key]!;
+    assert.deepEqual([jobB.dropAskedBy, jobB.interrupt?.by, jobB.interrupt?.to], ["mira", "mira", "backlog"]);
+    assert.equal(storeB.eventsOfKinds(["person.moved"], 10)[0]?.actor, "mira");
+    const answer = JSON.parse(lines[1]!) as Record<string, unknown>;
+    assert.deepEqual([answer.kind, (answer.by as { machine: string }).machine, answer.done], ["pick-done", "laptop-b", ["moved"]]);
+    assert.equal((await pageA()).remote?.request?.state, "done");
+  });
+
+  test("a pick that machine refuses is written back with why; one nobody answered in time lapses and is never carried out", async () => {
+    saveJobs(storeB, { [key]: job({ head: "abc" }) });
+    const asked = await pickA({ ref: key, seen: held.updatedAt, steps: [{ kind: "move", to: "merge-queue" }] });
+    assert.equal(asked.status, 202);
+    assert.equal(await serverB.carryOutRequests(), 1);
+    const refused = (await pageA()).remote?.request;
+    assert.deepEqual([refused?.state, refused?.why], ["refused", "7: the merge queue runs from level 4."]);
+    assert.equal(loadJobs(storeB)[key]?.owes, undefined);
+
+    // A request written 70 minutes ago by its own clock (laptop-b was off): it lapsed.
+    const write = (id: string, at: number, by = { who: "mira", agent: false }) => memoryRequests(lines, "laptop-a", () => new Date(at).toISOString()).write({ kind: "pick", by, fields: { id, item: key, for: "laptop-b", seen: held.updatedAt, steps: [{ kind: "move", to: "backlog" }] } });
+    await write("old-1", clock - 70 * 60_000);
+    assert.equal(await serverB.carryOutRequests(), 0);
+    assert.equal((await pageA()).remote?.request?.state, "lapsed");
+    assert.equal(loadJobs(storeB)[key]?.dropAskedBy, undefined);
+  });
+
+  test("a request lapses 15 minutes after this machine first saw it, whatever the writer's clock; one dated ahead is refused; an agent's line is no request", async () => {
+    saveJobs(storeB, { [key]: job() });
+    // laptop-a's clock is 10 minutes behind: by its time the request is old already, by laptop-b's first sight it is new.
+    await write2("skewed", clock - 10 * 60_000);
+    // laptop-b was busy: it reads it, but carries it out only later, past 15 minutes from its first sight.
+    assert.equal((await pageA()).remote?.request?.state, "pending");
+    clock += 16 * 60_000;
+    assert.equal((await pageA()).remote?.request?.state, "lapsed");
+    clock -= 16 * 60_000;
+
+    // Dated 5 minutes ahead of laptop-b's clock: refused, with why.
+    await write2("ahead", clock + 5 * 60_000);
+    assert.equal(await serverB.carryOutRequests(), 2);
+    const refused = readAnswers().get("ahead");
+    assert.match(String(refused?.why), /dated 5 minutes ahead of this machine's clock/);
+
+    // A line an agent wrote is not a request: never carried out, and not shown.
+    await write2("forged", clock, { who: "scopesoup", agent: true });
+    assert.equal(await serverB.carryOutRequests(), 0);
+    assert.equal(readAnswers().has("forged"), false);
+  });
+
+  test("a request taken is never carried out twice, even by a restarted server on the same store", async () => {
+    saveJobs(storeB, { [key]: job() });
+    await write2("once", clock);
+    const again = createServer({ store: storeB, now: () => new Date(clock), port: 0, configFile: "scopesoup.config.json", planning: () => ({ bugLabels: [], level: 2 }), requests: memoryRequests(lines, "laptop-b", () => new Date(clock).toISOString()) });
+    // The first server takes it (its answer is not written yet, as if it stopped there): the store remembers it.
+    storeB.setValue("pickRequests.taken", JSON.stringify(["once"]));
+    assert.equal(await again.carryOutRequests(), 0);
+    assert.equal(loadJobs(storeB)[key]?.dropAskedBy, undefined);
+  });
+
+  const write2 = (id: string, at: number, by = { who: "mira", agent: false }) => memoryRequests(lines, "laptop-a", () => new Date(at).toISOString()).write({ kind: "pick", by, fields: { id, item: key, for: "laptop-b", seen: held.updatedAt, steps: [{ kind: "move", to: "backlog" }] } });
+  const readAnswers = () => new Map(lines.map((line) => JSON.parse(line) as Record<string, unknown>).filter((line) => line.kind === "pick-refused" || line.kind === "pick-done").map((line) => [String(line.request), line]));
 });

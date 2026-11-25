@@ -110,7 +110,7 @@ const hint = (board: boolean, command: string): string => (board ? "" : `: ${com
 /** Whether this person holds the item now. */
 export const holdsIt = (backend: Who, item: WorkItem, now: Date): boolean => isMe(backend, item) && live(item, now);
 
-const agentWorking = (item: WorkItem, name: string): string => `${wording(item)} is held by ${name}, an agent that is working on it. Scope Soup stops nothing that runs: wait for it, or pause Scope Soup on its board.`;
+const agentWorking = (item: WorkItem, name: string): string => `${wording(item)} is held by ${name}, an agent that is working on it. Claim does not take it from the agent: wait for it, or pick a state for it on its board (Backlog, for one) to interrupt the agent.`;
 
 /**
  * Why this person cannot claim the item now; nothing when they can (or hold it already). The same words refuse `item claim`
