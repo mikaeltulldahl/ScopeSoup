@@ -20,7 +20,7 @@ Enforced on the command line: every session is refused `git push --force*`, `git
 
 ## Levels
 
-One setting, `level`, says how much Scope Soup does. Each level includes the ones below. The default is 0, and nothing runs until a switch is resumed on its lane. The details are in `docs/RUNNING.md`, "Levels".
+One setting, `level`, says how much Scope Soup does. Each level includes the ones below. The default is 0, and Scope Soup starts nothing of its own until a switch is resumed on its lane. The details are in `docs/RUNNING.md`, "Levels".
 
 | Level | Scope Soup does |
 |---|---|
@@ -32,7 +32,7 @@ One setting, `level`, says how much Scope Soup does. Each level includes the one
 
 There is no level above 4: no change waits for a person's approval. A project that wants a person to merge stays below level 4 and says so in its `CLAUDE.md`.
 
-A level change is an event with the level it came from and went to.
+The level limits only what Scope Soup does on its own: a person's pick of an Item's state works at any level (`docs/RUNNING.md`, "The State menu"). A level change is an event with the level it came from and went to.
 
 ## Always on with the levels: the usage stop and claims
 
