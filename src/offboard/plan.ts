@@ -108,7 +108,7 @@ export interface Found {
   /** The repository on GitHub, or null when the project is not on GitHub (nothing to look at there). */
   github: { repo: string; labels: string[]; pulls: FoundPull[] } | { repo: string; problem: string } | null;
   /** Project files on the main branch holding something of Scope Soup's: the path and what. */
-  projectFiles: { path: string; change: "claude-md-section" | "plugin-settings" | "setup-script" }[];
+  projectFiles: { path: string; change: "claude-md-section" | "readme-line" | "plugin-settings" | "setup-script" }[];
   /** Folders and files on this machine, the config folder last. */
   folders: FoundFolder[];
   /** The `.v*` copies kept by format migrations. */
@@ -214,6 +214,7 @@ function githubGroup(found: Found): PlanEntry[] {
 
 const PROJECT_TEXT: Record<Found["projectFiles"][number]["change"], string> = {
   "claude-md-section": "the Scope Soup section",
+  "readme-line": "the \"Open the Scope Soup board\" part",
   "plugin-settings": "the Scope Soup plugin lines",
   "setup-script": "the setup script (Scope Soup's setup of a fresh clone)",
 };

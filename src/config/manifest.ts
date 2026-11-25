@@ -33,7 +33,7 @@ export function thingKey(thing: ManifestThing): string {
 }
 
 const isText = (value: unknown): value is string => typeof value === "string" && value.length > 0 && value.length <= 4096;
-const CHANGES: readonly string[] = ["claude-md-section", "plugin-settings", "setup-script"];
+const CHANGES: readonly string[] = ["claude-md-section", "readme-line", "plugin-settings", "setup-script"];
 
 /** One line, or null when it is not an entry this Scope Soup knows (skipped, never fatal). */
 export function parseEntry(line: string): ManifestEntry | null {

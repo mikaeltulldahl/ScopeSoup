@@ -148,11 +148,12 @@ export function buildRelease(options: ReleaseOptions): string {
   cpSync(webDist, join(out, "web", "dist"), { recursive: true });
   // The MIT licence asks for its notice in every copy.
   cpSync(join(root, "LICENSE"), join(out, "LICENSE"));
-  // What the onboarding skill reads from the install: the reference and the CLAUDE.md section.
+  // What the onboarding skill reads from the install: the reference, the CLAUDE.md section and the README line.
   mkdirSync(join(out, "docs"), { recursive: true });
   cpSync(join(root, "docs", "RUNNING.md"), join(out, "docs", "RUNNING.md"));
   mkdirSync(join(out, "plugins", "scopesoup"), { recursive: true });
   cpSync(join(root, "plugins", "scopesoup", "claude-md-section.md"), join(out, "plugins", "scopesoup", "claude-md-section.md"));
+  cpSync(join(root, "plugins", "scopesoup", "readme-line.md"), join(out, "plugins", "scopesoup", "readme-line.md"));
   const version = options.version ?? versionOf(root);
   writeFileSync(join(out, "package.json"), JSON.stringify({
     name: "scopesoup", version, license: "MIT", private: true, type: "module", engines: { node: ">=22.18" },

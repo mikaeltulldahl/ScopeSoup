@@ -35,7 +35,7 @@ test("a release holds sources without tests, prompts, the web app and the start 
     assert.ok(!existsSync(join(out, "src", "release.test.ts")));
     assert.ok(!existsSync(join(out, "node_modules")));
     // What the onboarding skill reads from the install.
-    for (const file of ["plugins/scopesoup/claude-md-section.md", "docs/RUNNING.md"]) {
+    for (const file of ["plugins/scopesoup/claude-md-section.md", "plugins/scopesoup/readme-line.md", "docs/RUNNING.md"]) {
       assert.ok(existsSync(join(out, file)), file);
     }
     const pkg = JSON.parse(readFileSync(join(out, "package.json"), "utf8")) as { scripts: Record<string, string> };
