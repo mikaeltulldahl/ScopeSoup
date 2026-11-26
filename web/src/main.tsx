@@ -5,7 +5,7 @@ import { fetchBoard, post, usePerson, useView } from "./api.ts";
 import { Dialog } from "./Dialog.tsx";
 import { PersonPicker } from "./PersonPicker.tsx";
 import { ProjectHeader, useProjectTab } from "./ProjectHeader.tsx";
-import { History } from "./History.tsx";
+import { ActivityPage, CommitsPage } from "./History.tsx";
 import { Usage } from "./Usage.tsx";
 import { Item } from "./Item.tsx";
 import { ItemList } from "./ItemList.tsx";
@@ -90,7 +90,8 @@ function App() {
           {(!board || queueShown(level, mergeLane(board.lanes.find((lane) => lane.lane === "queued"), board.lanes.find((lane) => lane.lane === "checking"), board.queue).count)) && (
             <a href="#/queue" aria-current={route.view === "queue" ? "page" : undefined}>Merge queue</a>
           )}
-          <a href="#/history" aria-current={route.view === "history" ? "page" : undefined}>History</a>
+          <a href="#/activity" aria-current={route.view === "activity" ? "page" : undefined}>Activity</a>
+          <a href="#/commits" aria-current={route.view === "commits" ? "page" : undefined}>Commits</a>
           <a href="#/usage" aria-current={route.view === "usage" ? "page" : undefined}>Usage</a>
           <a class="cog" href="#/settings" title="Settings" aria-label="Settings" aria-current={route.view === "settings" || route.view === "stop" ? "page" : undefined}>
             <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -142,14 +143,15 @@ function App() {
       <MachineSetupNote />
       {(error || failed) && <p class="notice notice-bad" role="alert">{failed ?? `Cannot reach the server: ${error}`}</p>}
       <main>
-        {board && route.view !== "settings" && route.view !== "stop" && route.view !== "history" && route.view !== "usage" && route.view !== "items" && <StatusLine status={board.status} />}
-        {!board && !error && route.view !== "settings" && route.view !== "stop" && route.view !== "history" && route.view !== "usage" && route.view !== "items" && <p class="empty">Loading…</p>}
+        {board && route.view !== "settings" && route.view !== "stop" && route.view !== "activity" && route.view !== "commits" && route.view !== "usage" && route.view !== "items" && <StatusLine status={board.status} />}
+        {!board && !error && route.view !== "settings" && route.view !== "stop" && route.view !== "activity" && route.view !== "commits" && route.view !== "usage" && route.view !== "items" && <p class="empty">Loading…</p>}
         {board && route.view === "overview" && <Overview board={board} busy={busy} onSwitch={act} />}
         {board && route.view === "queue" && <Queue board={board} />}
         {route.view === "items" && <ItemList key={route.query} query={route.query} />}
         {route.view === "settings" && <Settings project={board?.project} openHistory={route.history === true} />}
         {route.view === "stop" && <StopUsing stopped={allStopped} busy={busy} onStop={() => act("/api/stop")} />}
-        {route.view === "history" && <History />}
+        {route.view === "activity" && <ActivityPage />}
+        {route.view === "commits" && <CommitsPage />}
         {route.view === "usage" && <Usage />}
       </main>
       <VersionFooter />

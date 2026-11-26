@@ -474,7 +474,6 @@ ul.md-list ul.md-list { list-style: circle; }
 .hist-subject:hover { text-decoration: underline; }
 .hist-meta { display: flex; flex-wrap: wrap; gap: 2px 6px; font-size: 0.8rem; padding-left: 4px; }
 .hist-ref-start { background: var(--sunken); color: var(--muted); border: 1px dashed var(--line); }
-.hist-commits-head { margin-top: 10px; }
 
 /* History's activity timeline: full width like the board; a row is time, kind, then the words and the Items it links to. */
 main > .panel.history-page { max-width: none; width: 100%; margin: 0; box-sizing: border-box; }
