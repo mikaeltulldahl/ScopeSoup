@@ -488,6 +488,8 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
       // Before the job moves on (and frees its clone): the remote's main moved only fast-forward, whoever pushed.
       const main = await watchMain(ctx, job, `after the ${job.step} session for ${item?.ref.id ?? key}`);
       await settle(ctx, job, session, readSessionResult(store, job.sessionId), item, main);
+      // Settled away (a triage dropped because its Item was closed meanwhile): its job, workspace and branch are seen to already.
+      if (!jobs[key]) continue;
     }
     // A person settled the triage's rewrite: triage's other verdicts follow, without a session.
     if (!job.sessionId && !job.parked && job.step === "triage" && job.rewrite?.settled) await afterRewrite(ctx, job);

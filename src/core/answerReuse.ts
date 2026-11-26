@@ -136,3 +136,55 @@ export function heldUntil(answers: readonly RecordedAnswer[], item: Ref): string
     return said?.kind === "hold" && said.held === item.id;
   });
 }
+
+/** The question a triage's `duplicateOf` link becomes; `duplicatePair` reads the two Item ids back from it. */
+export function duplicateQuestion(self: string, other: string, title: string, reason?: string): string {
+  const why = reason?.trim();
+  return `Triage found ${self} a duplicate of ${other} "${title}".${why ? ` Its reason: ${/[.!?]$/.test(why) ? why : `${why}.`}` : ""} Which one closes?`;
+}
+
+/** The two Item ids of a question as `duplicateQuestion` writes it (the asking Item first), or null for any other question. */
+export function duplicatePair(question: string): [string, string] | null {
+  const found = /^Triage found (\S+) a duplicate of (\S+) "[\s\S]*"\.[\s\S]* Which one closes\?$/.exec(question.trim());
+  return found ? [found[1]!, found[2]!] : null;
+}
+
+/** The answer to a duplicate question that keeps both Items. */
+export const KEEP_BOTH = "Keep both";
+
+/** The answer to a duplicate question that closes `closed` as a duplicate of `of`. */
+export const closeAnswer = (closed: string, of: string): string => `Close ${closed} as a duplicate of ${of}`;
+
+/**
+ * The newest answer to a duplicate question about `a` and `b` (asked on either of them, in either direction) when it stands: "Keep
+ * both", or a close that took effect (`isClosed` says the Item it named is closed). A close that did not happen (the write failed, or
+ * the Item was left open as busy), or anything else a person wrote, does not settle the pair. A later answer replaces an earlier one.
+ */
+export function duplicateSettled(answers: readonly RecordedAnswer[], a: Ref, b: Ref, isClosed: (id: string) => boolean): RecordedAnswer | undefined {
+  // Not findLast: the web build's lib has no ES2023.
+  const newest = [...answers].reverse().find((answer) => {
+    if (answer.subject.host !== a.host) return false;
+    const pair = duplicatePair(answer.question ?? "");
+    return pair !== null && ((pair[0] === a.id && pair[1] === b.id) || (pair[0] === b.id && pair[1] === a.id));
+  });
+  if (!newest) return undefined;
+  if (pickedLabel(newest.answer, KEEP_BOTH)) return newest;
+  for (const [closed, of] of [[a.id, b.id], [b.id, a.id]] as const) if (pickedLabel(newest.answer, closeAnswer(closed, of)) && isClosed(closed)) return newest;
+  return undefined;
+}
+
+const escaped = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/** True when `text` names the Item `id` (`A-3`, `#12`, `12`) as a word of its own. */
+const mentions = (text: string, id: string): boolean => new RegExp(`(?:^|[^\\p{L}\\p{N}-])#?${escaped(id)}(?![\\p{L}\\p{N}])`, "u").test(text);
+
+/**
+ * True when an agent's question (its text and options) reads as asking which of the two Items `a` and `b` to keep: it names one of
+ * them with words of duplicates or of one staying open, or names both with closing. Scope Soup asks that itself (`duplicateQuestion`).
+ */
+export function asksAboutDuplicate(question: { question: string; options: readonly DecisionOption[] }, a: string, b: string): boolean {
+  const text = [question.question, ...question.options.map(optionText)].join(" ");
+  const names = [a, b].filter((id) => mentions(text, id)).length;
+  if (names >= 1 && /duplicat|\b(?:stays?|kept|keeps?|remains?|leaves?)(?: \S+)? open\b|\bwhich (?:one|of (?:the|them|these|those))\b/i.test(text)) return true;
+  return names === 2 && /\b(?:close[sd]?|closing)\b/i.test(text);
+}
