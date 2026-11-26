@@ -34,7 +34,8 @@ import { explainOrder, voteForPlace, voteLimits } from "../orchestrator/score.ts
 import { setVote, voteInStore } from "../store/votes.ts";
 import { isSha } from "../orchestrator/history.ts";
 import { readMergeQueueNote } from "../orchestrator/mergeQueueLease.ts";
-import { answerQuestion, answerRefusal, rewriteRefusal, keepsRecommendations, loadJobs, questionsSettled, releaseJob, parkedRewrite, resumesStep, saveJobs, settleRewrite } from "../orchestrator/jobs.ts";
+import { adoptWritten, answerQuestion, answerRefusal, rewriteRefusal, keepsRecommendations, loadJobs, questionsSettled, releaseJob, parkedRewrite, resumesStep, saveJobs, settleRewrite } from "../orchestrator/jobs.ts";
+import { readProposedRewrites, writeProposedRewrites } from "../orchestrator/aboutOthers.ts";
 import { applyMove, isMove, MOVES, moveWhys, ROLE_WORDS, runningRole } from "./moves.ts";
 import { holdStands } from "../model/people.ts";
 import type { PickRequest, RequestStep } from "../hosts/metaBranch/requests.ts";
@@ -1160,6 +1161,84 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
     if (written || replaced) await options.syncNow?.();
     options.onRefresh?.();
     return sendJson(response, 200, result);
+  }
+
+  /**
+   * A person decides a rewrite of an Item's description that another Item's triage proposed with no question (decision 110):
+   * `{ ref, at, action, text? }`, `at` naming the proposal the page showed. It never touches the Item's job. Accept writes the rewrite
+   * as the description, Edit a person's `text`, both as an accepted triage rewrite is written (the meta branch's `edited` line, GitHub's
+   * body; elsewhere the text is kept as an answer the agents use) and counted as the text the Item's triage saw; Reject drops it.
+   * Refusals: 409 NO_REWRITE (none, or another one now), 409 BODY_CHANGED (Accept after the description was edited), 400 WRITE_REFUSED.
+   */
+  async function proposedRewriteRequest(request: IncomingMessage, response: ServerResponse): Promise<void> {
+    let body: Record<string, unknown>;
+    try {
+      body = await readJson(request);
+    } catch (error) {
+      return sendError(response, 400, "BAD_BODY", error instanceof Error ? error.message : "The body is not JSON.");
+    }
+    const { ref, at: shown, action, text } = body;
+    if (typeof ref !== "string" || typeof shown !== "string" || (action !== "accept" && action !== "edit" && action !== "reject")) {
+      return sendError(response, 400, "BAD_FIELD", 'Give { "ref": "host:work:id", "at": "when the proposed rewrite was made", "action": "accept" | "edit" | "reject", "text"?: "with edit" }.');
+    }
+    if (action === "edit" && (typeof text !== "string" || text.trim() === "")) return sendError(response, 400, "BAD_FIELD", "Edit gives the description as text that is not empty.");
+    const item = loadSnapshot(store).works.find((work) => refKey(work.ref) === ref);
+    if (!item) return sendError(response, 404, "ITEM_NOT_FOUND", `No item ${ref}.`);
+    const subject = item.ref;
+    const proposal = readProposedRewrites(store)[ref];
+    if (!proposal || proposal.at !== shown) return sendError(response, 409, "NO_REWRITE", `No such proposed rewrite waits on ${ref} (any more): reload the item.`);
+    const current = (item.body ?? "").trim();
+    if (action === "accept" && current !== proposal.original) return sendError(response, 409, "BODY_CHANGED", `The description of ${subject.id} was edited since the rewrite was written: edit or reject it with the new text in view.`);
+    const newText = action === "accept" ? proposal.text : action === "edit" ? (text as string).trim() : undefined;
+    const via = `rewrite by ${proposal.askedBy}`;
+    const aiLabel = newText !== undefined ? options.aiLabel?.() : undefined;
+    const addLabel = aiLabel && !(item.labels ?? []).some((name) => name.toLowerCase() === aiLabel.toLowerCase()) ? aiLabel : undefined;
+    const write = items?.write;
+    const writable = !!write?.editWork && subject.host === items!.host;
+    const describable = !writable && options.description !== undefined && subject.host === options.description.host;
+    let written = false;
+    let kept = false;
+    if (newText !== undefined && newText !== current) {
+      try {
+        if (writable) {
+          const patch: WorkPatch = { body: newText, ...(addLabel ? { labels: [...item.labels, addLabel] } : {}) };
+          const done = await write!.editWork!(subject, patch);
+          if (write!.appendLog) await write!.appendLog(done.work, { kind: "edited", by: by(), fields: { changed: ["description", ...(addLabel ? ["labels"] : [])], via, was: current } });
+          written = true;
+        } else if (describable) {
+          if (!(await options.description!.replace(subject, newText))) throw new Error(`Scope Soup cannot write the description of ${subject.id} on ${subject.host}.`);
+          written = true;
+          if (addLabel && options.labels && subject.host === options.labels.host) await options.labels.change(subject, { add: [addLabel], remove: [] }).catch(() => null);
+        } else kept = true;
+      } catch (error) {
+        return sendError(response, 400, "WRITE_REFUSED", error instanceof Error ? error.message : String(error));
+      }
+    }
+    const at = now().toISOString();
+    const settled = action === "accept" ? "accepted" : action === "edit" ? "edited" : "rejected";
+    const outcome = store.tx(() => {
+      const proposed = readProposedRewrites(store);
+      if (proposed[ref]?.at !== shown) return false;
+      delete proposed[ref];
+      writeProposedRewrites(store, proposed);
+      if (kept) addAnswer(store, { subject, answer: `${action === "edit" ? "Edited and accepted" : "Accepted"} the ${via}. Use this description instead of the one written above (the item is edited on its host, not here):\n${newText}`, by: by().who, at, question: `Proposed ${via}` });
+      // Scope Soup wrote the text: the Item's triage counts it as the text it saw, so its work goes on.
+      const jobs = loadJobs(store);
+      const job = jobs[ref];
+      if (newText !== undefined && job?.triaged) {
+        job.triaged = adoptWritten(job.triaged, [newText, inertText(newText)]);
+        saveJobs(store, jobs);
+      }
+      store.appendEvent({ kind: `orchestrator.rewrite_${settled}`, subject: ref, actor: by().who, data: { reason: `A person ${settled} the ${via} of ${subject.id}'s description; its work goes on as it is.`, original: proposal.original, text: newText ?? proposal.text, askedBy: proposal.askedBy } }, at);
+      return true;
+    });
+    if (!outcome) {
+      options.onRefresh?.();
+      return sendError(response, 409, "NO_REWRITE", `Another decision on the proposed rewrite of ${ref} came first: reload the item.${written ? " The description was written already." : ""}`);
+    }
+    if (written) await options.syncNow?.();
+    options.onRefresh?.();
+    return sendJson(response, 200, { recorded: true, settled, ...(written ? { written: true } : {}) });
   }
 
   /**
@@ -2306,7 +2385,7 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
   };
 
   /** The POST endpoints that record who did it; the board names its picked person, or the request is refused. */
-  const NEEDS_PERSON = new Set(["/api/answer", "/api/answers", "/api/proposal", "/api/rewrite", "/api/start-over", "/api/chat", "/api/decisions", "/api/item/edit", "/api/item/vote", "/api/item/resolve", "/api/item/media/delete", "/api/item-draft", "/api/item/move", "/api/item/pick"]);
+  const NEEDS_PERSON = new Set(["/api/answer", "/api/answers", "/api/proposal", "/api/rewrite", "/api/proposed-rewrite", "/api/start-over", "/api/chat", "/api/decisions", "/api/item/edit", "/api/item/vote", "/api/item/resolve", "/api/item/media/delete", "/api/item-draft", "/api/item/move", "/api/item/pick"]);
 
   /** The Item a request names by its key, as the store has it. */
   const workByKey = (key: string): WorkItem | undefined => loadSnapshot(store).works.find((work) => refKey(work.ref) === key);
@@ -2408,6 +2487,7 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
         if (path === "/api/answers") return answers(request, response);
         if (path === "/api/proposal") return proposal(request, response);
         if (path === "/api/rewrite") return rewriteRequest(request, response);
+        if (path === "/api/proposed-rewrite") return proposedRewriteRequest(request, response);
         if (path === "/api/item-draft") return itemDraft(request, response);
         if (path === "/api/start-over") return startOver(request, response);
         if (path === "/api/chat") return chatSend(request, response);

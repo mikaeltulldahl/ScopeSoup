@@ -322,6 +322,9 @@ function draft(situation: Situation, ctx: TurnContext): Draft {
   }
   if (parked && parked.as !== "queued") return parkedTurn(parked, situation);
   if (item.needsDecision) return { actor: "anyone", tone: "yours", waits: "1 question", reason: "Answer the question: the item needs a decision" };
+  // Another Item's triage proposed a rewrite of the description (decision 110): a person's turn while nothing else runs on the Item.
+  const proposed = (lane === "backlog" || lane === "blocked") && !situation.session ? ctx.index.snapshot.proposedRewrites?.find((each) => refKey(each.subject) === refKey(item.ref)) : undefined;
+  if (proposed) return { actor: "anyone", tone: "yours", since: proposed.at, waits: "a rewrite to accept", reason: `Accept, edit or reject the rewrite of the description by ${proposed.askedBy}` };
   if (lane === "backlog" || lane === "blocked") return backlogTurn(situation, ctx);
   if (lane === "in-progress" || !change) return progressTurn(situation, ctx);
   if (lane === "in-review") return reviewTurn(situation, change, ctx);

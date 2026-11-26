@@ -6,7 +6,7 @@ import type { BoardView, DiffFile, DiffView, ItemPage, RoundRow, SessionDetailsV
 import { Fragment } from "preact";
 import type { ComponentChildren } from "preact";
 import { useEffect, useId, useState } from "preact/hooks";
-import { fetchChat, fetchDiff, fetchItem, fetchItemBranch, fetchItems, fetchSession, postAnswers, postChat, postRewrite, postEdit, postHandBack, postOpenDiff, postProposal, postRelease, postResolve, postStartOver, postClaim, postMediaDelete, useNow, usePerson, useView } from "./api.ts";
+import { fetchChat, fetchDiff, fetchItem, fetchItemBranch, fetchItems, fetchSession, postAnswers, postChat, postRewrite, postEdit, postHandBack, postOpenDiff, postProposal, postProposedRewrite, postRelease, postResolve, postStartOver, postClaim, postMediaDelete, useNow, usePerson, useView } from "./api.ts";
 import { actorClass, actorWords, Mention, VoteButtons } from "./Card.tsx";
 import { placeText, statusText } from "./cardText.ts";
 import { ItemForm } from "./ItemForm.tsx";
@@ -1003,6 +1003,53 @@ function RewritePanel({ page, rewrite, reload, primary }: { page: ItemPage; rewr
   );
 }
 
+/**
+ * A rewrite of the description that another Item's triage proposed with no question (decision 110), next to the description.
+ * Accept, Edit or Reject decides it; the Item's work goes on meanwhile, and none of them starts a triage.
+ */
+function ProposedRewritePanel({ page, proposed, reload, primary }: { page: ItemPage; proposed: NonNullable<ItemPage["proposedRewrite"]>; reload: () => void; primary: boolean }) {
+  const main = primary ? "primary" : undefined;
+  const [editing, setEditing] = useState(false);
+  const [text, setText] = useState(proposed.text);
+  const { busy, error, send } = useSend();
+  // Someone edited the description since the rewrite was written: Accept is refused; Edit or Reject decides with it in view.
+  const changed = (page.item.body ?? "").trim() !== proposed.original.trim();
+  const decide = (action: "accept" | "edit" | "reject") => send(() => postProposedRewrite(page.item.key, proposed.at, action, action === "edit" ? text : undefined).then(reload));
+  return (
+    <section class="panel panel-yours">
+      <h3>Rewrite of the description by {proposed.askedBy}</h3>
+      <div class="rewrite-compare">
+        <div class="version">
+          <p class="muted num">Change to the description (before, then the rewrite)</p>
+          <RewriteDiff before={proposed.original} after={proposed.text} />
+        </div>
+        {changed && (
+          <div class="version">
+            <p class="muted num">Now (changed since the rewrite was written)</p>
+            <pre class="version-text">{page.item.body?.trim() || "(no description)"}</pre>
+          </div>
+        )}
+      </div>
+      {editing ? (
+        <div class="answer">
+          <label for="proposed-rewrite-text">Your version of the description</label>
+          <textarea id="proposed-rewrite-text" rows={10} value={text} onInput={(event) => setText((event.target as HTMLTextAreaElement).value)} disabled={busy} />
+          <button type="button" class={main} onClick={() => decide("edit")} disabled={busy || text.trim() === ""}>{busy ? "Saving…" : "Accept my version"}</button>{" "}
+          <button type="button" onClick={() => setEditing(false)} disabled={busy}>Cancel</button>
+        </div>
+      ) : (
+        <p>
+          <button type="button" class={main} onClick={() => decide("accept")} disabled={busy || changed}>{busy ? "Working…" : "Accept the rewrite"}</button>{" "}
+          <button type="button" onClick={() => setEditing(true)} disabled={busy}>Edit</button>{" "}
+          <button type="button" onClick={() => decide("reject")} disabled={busy}>Reject</button>
+        </p>
+      )}
+      <p class="muted">{page.canEdit ? "Accept writes the rewrite as the item's description; the old text stays in the item's history." : "This host's items are edited on the host: accepting gives the rewrite to the agents in place of the host's text."} Reject keeps the description. The work on it goes on either way.</p>
+      {error && <p class="error">{error}</p>}
+    </section>
+  );
+}
+
 const LINK_WORDS: Record<string, string> = { blockedBy: "Blocked by", blocks: "Blocks", duplicateOf: "Duplicate of", conflictsWith: "Conflicts with", related: "Related" };
 
 /** The triage's links to other Items, in the Item section. Only "blocked by" acted on anything; the rest is for reading. */
@@ -1273,6 +1320,7 @@ function Body({ page, reload, resources }: { page: ItemPage; reload: () => void;
   const openDecisions = page.assumptions.some((decision) => !decision.settled) && page.canSettle === true;
   const asking = [
     page.parked?.rewrite ? "rewrite" : "",
+    page.proposedRewrite ? "proposed-rewrite" : "",
     questionsAsk ? "questions" : "",
     openDecisions ? "decisions" : "",
     page.proposal ? "restructure" : "",
@@ -1427,6 +1475,7 @@ function Body({ page, reload, resources }: { page: ItemPage; reload: () => void;
 
       {/* What waits for you, each with the orange border while it is open. */}
       {page.parked?.rewrite && <RewritePanel key={page.parked.at} page={page} rewrite={page.parked.rewrite} reload={reload} primary={primary === "rewrite"} />}
+      {page.proposedRewrite && <ProposedRewritePanel key={page.proposedRewrite.at} page={page} proposed={page.proposedRewrite} reload={reload} primary={primary === "proposed-rewrite"} />}
 
       {showQuestions && <QuestionsPanel note={page.media && imagesInQuestions ? <MediaNote media={page.media} error={mediaError} /> : null} key={`${page.parked?.at ?? ""}:${questions.map((question) => question.id).join(",")}`} page={page} questions={questions} now={now} reload={reload} primary={primary === "questions"} />}
 
