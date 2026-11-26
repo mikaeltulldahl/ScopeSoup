@@ -308,7 +308,8 @@ test("a new item starts from the remote's newest main", async () => {
   assert.equal(session.status, "succeeded");
   const cwd = workspacePath(w.config, slotName(1));
   assert.equal(readFileSync(join(cwd, "merged.txt"), "utf8"), "from the host\n");
-  assert.equal(existsSync(join(repo, "merged.txt")), false);
+  // Scope Soup's own clone is on main and clean, so its main follows the remote there (no agent works in that tree).
+  assert.equal(existsSync(join(repo, "merged.txt")), true);
   assert.match(String(fakeEvents(session).find((event) => event.subtype === "fake")?.prompt), / from origin\/main, the newest main\./);
   assert.deepEqual(await w.runner.changedPaths("scopesoup/42"), []);
   assert.equal(w.store.eventsAfter(0, 1000).some((event) => event.kind === "orchestrator.fetch_failed"), false);
@@ -365,6 +366,30 @@ test("a local main with commits no other branch holds is not reset, and that is 
   const left = w.store.eventsAfter(0, 1000).filter((event) => event.kind === "orchestrator.main_not_moved");
   assert.equal(left.length, 1);
   assert.match(JSON.stringify(left[0]?.data), /no other branch has/);
+});
+
+test("a checked-out stale main is fast-forwarded when clean, and left with an event when a tracked file has changes", async () => {
+  for (const dirty of [false, true]) {
+    const w = world("ok");
+    const repo = join(w.dir, "repo");
+    const remote = join(w.dir, "remote.git");
+    gitIn(w.dir, "init", "-q", "--bare", "-b", "main", remote);
+    gitIn(repo, "remote", "add", "origin", remote);
+    gitIn(repo, "push", "-q", "origin", "main");
+    const other = join(w.dir, "other");
+    gitIn(w.dir, "clone", "-q", "-c", "core.autocrlf=false", remote, other);
+    writeFileSync(join(other, "merged.txt"), "from the host\n");
+    gitIn(other, "add", ".");
+    gitIn(other, "commit", "-q", "-m", "merged on host");
+    gitIn(other, "push", "-q", "origin", "main");
+    const head = gitIn(other, "rev-parse", "HEAD").trim();
+    const stale = gitIn(repo, "rev-parse", "main").trim();
+    if (dirty) writeFileSync(join(repo, "README.md"), "edited\n");
+    assert.equal((await w.runner.finished((await w.runner.start(request())).ref.id)).status, "succeeded");
+    assert.equal(gitIn(repo, "rev-parse", "main").trim(), dirty ? stale : head);
+    assert.equal(readFileSync(join(repo, "README.md"), "utf8"), dirty ? "edited\n" : "synthetic\n");
+    assert.equal(w.store.eventsAfter(0, 1000).filter((event) => event.kind === "orchestrator.main_not_moved").length, dirty ? 1 : 0);
+  }
 });
 
 test("a clone with no remote still starts the session, and the failed fetch is logged once", async () => {

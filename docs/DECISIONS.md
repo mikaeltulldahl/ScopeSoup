@@ -333,7 +333,7 @@ Owner decisions of 2026-11-21 from epic GF-283, written down here with the docs 
 
 | # | Topic | Decision |
 |---|---|---|
-| 106 | The clone's local main follows the remote's at each fetch before a session | A months-old local `main` in Scope Soup's clone misled a triage agent (`git log main`). After the fetch the local main branch is moved to `<remote>/<main>` (`followRemoteMain`), for worktrees and pool clones alike, because both go through `freshBase`. Only a ref is moved: a main checked out in a worktree is left (no working tree is touched), and so is one with commits no other branch or remote branch holds (a reset would lose them); each is one `orchestrator.main_not_moved` event per reason. Nothing is ever pushed. Rejected: deleting the local main (a clone with no remote falls back to it). |
+| 107 | The clone's local main follows the remote's at each fetch before a session | A months-old local `main` in Scope Soup's clone misled a triage agent (`git log main`). After the fetch the local main branch is moved to `<remote>/<main>` (`followRemoteMain`), for worktrees and pool clones alike, because both go through `freshBase`. A main checked out in a worktree (Scope Soup's own clone sits on main) is fast-forwarded there with `merge --ff-only` when its tracked files are clean; otherwise, and for one with commits no other branch or remote branch holds (a reset would lose them); each is one `orchestrator.main_not_moved` event per reason. Nothing is ever pushed. Rejected: deleting the local main (a clone with no remote falls back to it). |
 
 ## Facts established by research (not decisions)
 

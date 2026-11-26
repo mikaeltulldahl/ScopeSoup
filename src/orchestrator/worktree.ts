@@ -24,7 +24,7 @@ export async function baseRef(git: Git, repoPath: string, mainBranch: string, re
 
 /**
  * Moves the repository's local main branch to the remote's (as last fetched), so that nothing reading `git log main` in Scope
- * Soup's own clone sees a stale one. Only a ref is moved, never a working tree: a main checked out in any worktree is left, and so
+ * Soup's own clone sees a stale one. Only a ref is moved (or a clean checkout fast-forwarded), and so
  * is a main with commits that no other branch holds (a reset would lose them). Never throws. Returns why the branch was not moved,
  * or null when it is at the remote's main afterwards or there is nothing to move.
  */
@@ -36,8 +36,21 @@ export async function followRemoteMain(git: Git, repoPath: string, mainBranch: s
     const target = await git(["rev-parse", "--verify", "--quiet", `${tracking}^{commit}`], repoPath);
     if (was.code !== 0 || target.code !== 0 || was.stdout.trim() === target.stdout.trim()) return null;
     const listed = await git(["worktree", "list", "--porcelain"], repoPath);
-    if (listed.stdout.split("\n").some((line) => line.trim() === `branch ${local}`)) {
-      return `the local ${mainBranch} is checked out in a worktree, so it is left at ${was.stdout.trim().slice(0, 7)} while ${remote}/${mainBranch} is at ${target.stdout.trim().slice(0, 7)}`;
+    let holder: string | null = null;
+    let at = "";
+    for (const line of listed.stdout.split("\n")) {
+      if (line.startsWith("worktree ")) at = line.slice("worktree ".length).trim();
+      else if (line.trim() === `branch ${local}`) holder = at;
+    }
+    if (holder !== null) {
+      // Checked out (Scope Soup's own clone sits on main): fast-forwarded there, only when the tree has no tracked change and main is behind.
+      const dirty = await git(["status", "--porcelain", "--untracked-files=no"], holder);
+      const behind = await git(["merge-base", "--is-ancestor", local, tracking], holder);
+      if (dirty.code === 0 && dirty.stdout.trim() === "" && behind.code === 0) {
+        const merged = await git(["merge", "--ff-only", "--quiet", tracking], holder);
+        if (merged.code === 0) return null;
+      }
+      return `the local ${mainBranch} is checked out in ${holder} with changes or commits of its own, so it is left at ${was.stdout.trim().slice(0, 7)} while ${remote}/${mainBranch} is at ${target.stdout.trim().slice(0, 7)}`;
     }
     // Commits only main holds: any other branch or remote branch (the remote's main included) that has them makes the move lossless.
     const only = await git(["rev-list", "-1", local, "--not", tracking, `--exclude=${mainBranch}`, "--branches", "--remotes"], repoPath);
