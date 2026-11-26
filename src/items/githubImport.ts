@@ -16,6 +16,7 @@ import type { LineWrite, Writer } from "../hosts/metaBranch/writer.ts";
 import { priorityFromLabels } from "../model/priority.ts";
 import type { WorkState } from "../model/types.ts";
 import { farUntil } from "./service.ts";
+import { plural } from "../model/plural.ts";
 
 /** The header key that says where an Item came from. Optional: an older Scope Soup keeps it and ignores it (decision 63). */
 export const IMPORTED_FROM = "importedFrom";
@@ -377,10 +378,10 @@ export function reportText(report: ImportReport, repo: string, dryRun: boolean):
     lines.push([`#${row.number}`.padEnd(7), what.padEnd(12), row.id.padEnd(8), row.state.padEnd(10), row.held ? "held by you " : "", row.title].join(" ").replace(/\s+$/, ""));
   }
   const summary = dryRun
-    ? `Dry run: ${fresh.length} of ${report.rows.length} issue(s) from ${repo} would be imported${before.length > 0 ? `; ${before.length} were imported before` : ""}. Nothing was written.`
+    ? `Dry run: ${fresh.length} of ${plural(report.rows.length, "issue")} from ${repo} would be imported${before.length > 0 ? `; ${before.length} were imported before` : ""}. Nothing was written.`
     : fresh.length === 0
-      ? `Nothing new to import from ${repo}: all ${report.rows.length} issue(s) were imported before.`
-      : `Imported ${fresh.length} issue(s) from ${repo} in one meta commit${report.commit ? ` (${report.commit.slice(0, 9)})` : ""}${before.length > 0 ? `; ${before.length} were imported before` : ""}. GitHub was not changed.`;
+      ? `Nothing new to import from ${repo}: all ${plural(report.rows.length, "issue")} were imported before.`
+      : `Imported ${plural(fresh.length, "issue")} from ${repo} in one meta commit${report.commit ? ` (${report.commit.slice(0, 9)})` : ""}${before.length > 0 ? `; ${before.length} were imported before` : ""}. GitHub was not changed.`;
   lines.push(summary);
   if (!report.login) lines.push("Note: GitHub did not say whose token this is, so no issue is held by you; assignees are named in each Item's text.");
   if (!dryRun && fresh.length > 0 && report.shared === "pending") lines.push(`Not shared with the remote yet${report.problem ? ` (${report.problem})` : ""}; it goes with the next round.`);

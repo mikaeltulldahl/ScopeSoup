@@ -330,7 +330,7 @@ test("accepting a rewritten history: only this machine's own unshared commits go
   assert.equal(b.clone.git(["rev-parse", backup]), before);
   assert.match(printed[1] ?? "", /^Took the fetched history [0-9a-f]{12} as the remote's\.$/);
   // No item moved, nothing left out: b had one own unshared commit, and only that went on top.
-  assert.deepEqual(printed.slice(2), ["Put 1 of this machine's unshared commit(s) on top of it.", "Pushed: the remote has it all.", "Lines the accepted history removed stay removed."]);
+  assert.deepEqual(printed.slice(2), ["Put 1 of this machine's unshared commit on top of it.", "Pushed: the remote has it all.", "Lines the accepted history removed stay removed."]);
   assert.deepEqual(origin.git(["ls-tree", "--name-only", `${REF}:items`]).split("\n"), ["A-1", "B-1"]);
   assert.deepEqual(origin.git(["ls-tree", "--name-only", `${REF}:items/A-1`]).split("\n"), ["item.md"]);
   assert.deepEqual(parseLog(show(origin, "items/B-1/log.jsonl")).entries.map((entry) => entry.by.who), ["sam"]);

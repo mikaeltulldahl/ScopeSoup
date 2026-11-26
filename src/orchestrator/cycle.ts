@@ -38,6 +38,7 @@ import { fileDrafts } from "./drafts.ts";
 import { reviewSettings } from "../config/types.ts";
 import { busyWhy, isOpenItem, keepAboutOthers, linkedItem as namedItem, readWaitingAbouts, writeWaitingAbouts } from "./aboutOthers.ts";
 import { workBranch, workspaceKey } from "./paths.ts";
+import { plural } from "../model/plural.ts";
 
 
 const CONTINUE_MS = 1000;
@@ -784,7 +785,7 @@ export function reviewOffAtLevel2(ctx: Context, job: Job): void {
 export async function sendBack(ctx: Context, job: Job, finding: string, what: string, failure?: string): Promise<void> {
   const max = persistenceLimits(ctx.config.settings.persistence.value).maxFixRounds;
   if (job.fixRounds >= max) {
-    await park(ctx, job, "escalated", `${what} after ${job.fixRounds} round(s) back to the implementor; the limit is ${max}. Nothing was pushed. ${finding}`, "escalation");
+    await park(ctx, job, "escalated", `${what} after ${plural(job.fixRounds, "round")} back to the implementor; the limit is ${max}. Nothing was pushed. ${finding}`, "escalation");
     return;
   }
   // The same failing check (or conflict) as at the merge before: the same failure twice in a row ends the run.
@@ -839,7 +840,7 @@ async function writeSession(ctx: Context, job: Job, session: Session, record: Se
     // An answer refused for its markup: the markup is not written to the host.
     typeof output.summary === "string" && hasMarkup(output.summary) ? "The answer had tool-call markup inside its summary and was not taken."
     : typeof output.summary === "string" && output.summary.trim() ? output.summary
-    : typeof output.verdict === "string" ? `${output.verdict}, ${Array.isArray(output.findings) ? output.findings.length : 0} finding(s)`
+    : typeof output.verdict === "string" ? `${output.verdict}, ${plural(Array.isArray(output.findings) ? output.findings.length : 0, "finding")}`
     : triage ? triageWords(output)
     // A failed setup's line says where and how, never its output (it is on the board, on this machine).
     : session.setupFailed ? setupHostText(ctx, session)
@@ -1060,7 +1061,7 @@ async function settleStep(ctx: Context, job: Job, session: Session | null, recor
         job.shouldRound = true;
         return backToImplementor(
           ctx, job, `The reviewer approves, and asks for these smaller changes before the merge:\n${formatFindings(should)}\nFix them and commit.`,
-          `The review approves with ${should.length} \`should\` finding(s). Next: the implementor fixes them before the merge (review.shouldFindings "fix"); this round is not counted toward the limit of rounds.`,
+          `The review approves with ${plural(should.length, "\`should\` finding")}. Next: the implementor fixes them before the merge (review.shouldFindings "fix"); this round is not counted toward the limit of rounds.`,
         );
       }
       if (should.length > 0) draftShould(ctx, job, item, should);
@@ -1072,13 +1073,13 @@ async function settleStep(ctx: Context, job: Job, session: Session | null, recor
     const max = persistenceLimits(ctx.config.settings.persistence.value).maxFixRounds;
     if (job.fixRounds >= max) {
       const open = answer.findings.map((finding) => finding.text).join(" / ") || "none listed";
-      return park(ctx, job, "escalated", `The review still asks for changes after ${job.fixRounds} round(s) back to the implementor; the limit is ${max}. Open findings: ${open}`, "escalation");
+      return park(ctx, job, "escalated", `The review still asks for changes after ${plural(job.fixRounds, "round")} back to the implementor; the limit is ${max}. Open findings: ${open}`, "escalation");
     }
     // A round that got nowhere ends the run before the limit.
     const stuck = noProgress(job.progress, must);
     if (stuck) {
       const open = answer.findings.map((finding) => finding.text).join(" / ") || "none listed";
-      return park(ctx, job, "escalated", `${stuck} After ${job.fixRounds} round(s) back to the implementor (the limit is ${max}). Open findings: ${open}`, "escalation");
+      return park(ctx, job, "escalated", `${stuck} After ${plural(job.fixRounds, "round")} back to the implementor (the limit is ${max}). Open findings: ${open}`, "escalation");
     }
     job.progress = { ...job.progress, must: must.length, findings: must.map(findingKey) };
     job.fixRounds++;
@@ -1088,7 +1089,7 @@ async function settleStep(ctx: Context, job: Job, session: Session | null, recor
     const ask = asks ? `A finding marked "${ASK_PERSON}" is a decision you took that should have been a question: stop and ask it in \`question\`, and change nothing for it yet. ` : "";
     return backToImplementor(
       ctx, job, `The reviewer asked for these changes:\n${formatFindings(answer.findings)}\n${ask}Fix ${asks ? "the others" : "them"} and commit.`,
-      `The review asks for changes (${answer.findings.length} finding(s)). Next: the implementor fixes them, round ${job.fixRounds} of ${max}.`,
+      `The review asks for changes (${plural(answer.findings.length, "finding")}). Next: the implementor fixes them, round ${job.fixRounds} of ${max}.`,
     );
   }
 }
@@ -1124,7 +1125,7 @@ function keepDrafts(ctx: Context, job: Job, role: "triage" | "implementor" | "re
  */
 function draftShould(ctx: Context, job: Job, item: WorkItem | null, should: readonly Finding[]): void {
   const listed = should.map((finding) => clipText(`${finding.file ? `${finding.file}: ` : ""}${finding.text.trim()}`, 300)).join(" / ");
-  ctx.commit("orchestrator.should_drafted", `The review approved with ${should.length} \`should\` finding(s); they become a draft for a person, and the merge goes on: ${listed}`, refKey(job.item), { findings: should.length });
+  ctx.commit("orchestrator.should_drafted", `The review approved with ${plural(should.length, "\`should\` finding")}; they become a draft for a person, and the merge goes on: ${listed}`, refKey(job.item), { findings: should.length });
   keepDrafts(ctx, job, "reviewer", [shouldDraft(item ?? { ref: job.item, title: job.item.id }, should)]);
 }
 
@@ -1461,7 +1462,7 @@ export async function writeAboutOthers(ctx: Context): Promise<void> {
         const waiting = readWaitingAbouts(store);
         delete waiting[key];
         writeWaitingAbouts(store, waiting);
-        ctx.commit("orchestrator.about_other_dropped", `${entries.length} set(s) of questions from other Items waited for ${item ? `${item.ref.id}, which is now ${item.state}` : "an Item that is no longer in the store"}: dropped.`, key, { sets: entries.length });
+        ctx.commit("orchestrator.about_other_dropped", `${plural(entries.length, "set")} of questions from other Items waited for ${item ? `${item.ref.id}, which is now ${item.state}` : "an Item that is no longer in the store"}: dropped.`, key, { sets: entries.length });
       });
       continue;
     }
@@ -1490,14 +1491,14 @@ export async function writeAboutOthers(ctx: Context): Promise<void> {
     job.rewriteRounds = round;
     job.rewrite = { original, text: rewrite, questions, round, askedBy };
     const reason = questions.length > 0
-      ? `Asked by ${askedBy.join(" and ")}: ${rewrite !== original ? "a rewrite of the description and " : ""}${questions.length} question(s) about ${item.ref.id} wait for an answer: ${questions.map((each, index) => `${index + 1}. ${each.question}`).join(" ")}`
+      ? `Asked by ${askedBy.join(" and ")}: ${rewrite !== original ? "a rewrite of the description and " : ""}${plural(questions.length, "question")} about ${item.ref.id} ${questions.length === 1 ? "waits" : "wait"} for an answer: ${questions.map((each, index) => `${index + 1}. ${each.question}`).join(" ")}`
       : `Rewrite by ${askedBy.join(" and ")}: a rewrite of ${item.ref.id}'s description waits for a person to accept, edit or reject.`;
     store.tx(() => {
       const waiting = readWaitingAbouts(store);
       delete waiting[key];
       writeWaitingAbouts(store, waiting);
       ctx.jobs[key] = job;
-      ctx.commit("orchestrator.about_other_written", `Wrote on ${item.ref.id} what ${askedBy.join(" and ")} asked: ${questions.length} question(s)${rewrite !== original ? " and a rewrite" : ""}.`, key, { askedBy, questions: questions.length });
+      ctx.commit("orchestrator.about_other_written", `Wrote on ${item.ref.id} what ${askedBy.join(" and ")} asked: ${plural(questions.length, "question")}${rewrite !== original ? " and a rewrite" : ""}.`, key, { askedBy, questions: questions.length });
     });
     if (holds) await park(ctx, job, "needs-decision", reason, "decision");
     else await parkFresh(ctx, job, reason);

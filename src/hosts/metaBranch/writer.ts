@@ -50,6 +50,7 @@ import {
 } from "./plumbing.ts";
 import type { ItemInput } from "./serialize.ts";
 import { RefusedWrite, canonicalItem, serializeItem, serializeLogLine } from "./serialize.ts";
+import { plural } from "../../model/plural.ts";
 
 /** The refs one round works from, read together: see `heads` in `createMetaWriter`. */
 interface Heads {
@@ -804,7 +805,7 @@ export function createWriter(config: WriterConfig): Writer {
     // Nothing of this machine's goes on top of a format this Scope Soup does not write (newer, or unreadable).
     if (own.length > 0) {
       const refused = writeProblem(await formatAt(await treeOf(onto)));
-      if (refused) throw new RefusedHistory(`The remote's ${ref} cannot take this machine's ${own.length} unshared commit(s); they stay here and are not pushed. ${refused}`);
+      if (refused) throw new RefusedHistory(`The remote's ${ref} cannot take this machine's ${plural(own.length, "unshared commit")}; they stay here and are not pushed. ${refused}`);
     }
     let tip = onto;
     const conflicts: string[] = [];
@@ -888,7 +889,7 @@ export function createWriter(config: WriterConfig): Writer {
       throw new RefusedHistory(
         shared === null
           ? `${ref} here has commits this machine did not make (${own.foreign.length}, the first ${own.foreign[0]?.slice(0, 12)}), and nothing was shared from here before: the two histories are unrelated, and Scope Soup does not guess which commits are its own. Nothing was pushed.`
-          : `${ref} has ${own.foreign.length} unshared commit(s) this machine did not make (the first ${own.foreign[0]?.slice(0, 12)}); Scope Soup puts only its own commits on top again. Nothing was pushed.`,
+          : `${ref} has ${plural(own.foreign.length, "unshared commit")} this machine did not make (the first ${own.foreign[0]?.slice(0, 12)}); Scope Soup puts only its own commits on top again. Nothing was pushed.`,
       );
     }
     const done = await replay(seen, shared, own.commits, local);
@@ -915,7 +916,7 @@ export function createWriter(config: WriterConfig): Writer {
       }
       if (report.pushes >= pushAttempts) {
         report.state = "pending";
-        report.problem = `The remote refused ${report.refusedPushes} push(es) because it kept moving; gave up after ${pushAttempts}. The commits stay here and go with the next push.`;
+        report.problem = `The remote refused ${plural(report.refusedPushes, "push", "pushes")} because it kept moving; gave up after ${pushAttempts}. The commits stay here and go with the next push.`;
         return;
       }
       report.pushes++;

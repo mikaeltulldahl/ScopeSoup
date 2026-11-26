@@ -13,6 +13,7 @@ import type { Context } from "./context.ts";
 import type { AboutOther, Decision, Job } from "./jobs.ts";
 import { changedRewrite, sameText } from "./jobs.ts";
 import type { ProposedRewriteView } from "../core/snapshot.ts";
+import { plural } from "../model/plural.ts";
 
 /** Questions (and a rewrite) waiting to be written on another Item. Agent text: data. */
 export interface WaitingAbout {
@@ -148,7 +149,7 @@ export function keepAboutOthers(ctx: Context, job: Job, role: "triage" | "implem
     const other = linkedItem(store, job.item, entry.item);
     if (!other || !isOpenItem(other)) {
       const why = other ? `it is ${other.state}` : "there is no such open Item other than its own";
-      ctx.commit("orchestrator.about_other_dropped", `The ${role === "triage" ? "triage" : "implementor"} of ${job.item.id} asked about ${JSON.stringify(entry.item.slice(0, 60))}, but ${why}: ${entry.questions.length} question(s)${entry.rewrite ? " and a rewrite" : ""} dropped.`, subject, { item: entry.item.slice(0, 200) });
+      ctx.commit("orchestrator.about_other_dropped", `The ${role === "triage" ? "triage" : "implementor"} of ${job.item.id} asked about ${JSON.stringify(entry.item.slice(0, 60))}, but ${why}: ${plural(entry.questions.length, "question")}${entry.rewrite ? " and a rewrite" : ""} dropped.`, subject, { item: entry.item.slice(0, 200) });
       continue;
     }
     // Whitespace alone, or the Verification field appended again, is no change (decision 110).
@@ -179,7 +180,7 @@ export function keepAboutOthers(ctx: Context, job: Job, role: "triage" | "implem
       const waiting = readWaitingAbouts(store);
       waiting[key] = [...(waiting[key] ?? []), { askedBy, from: subject, questions, ...(rewrite ? { rewrite } : {}), at: ctx.at }];
       writeWaitingAbouts(store, waiting);
-      ctx.commit("orchestrator.about_other_kept", `${askedBy[0]!.toUpperCase()}${askedBy.slice(1)} asked ${questions.length} question(s)${rewrite ? " and gave a rewrite of its description" : ""} about ${other.ref.id}; Scope Soup writes them there once no session runs on it and nobody holds it.`, key, { from: subject, questions: questions.length, rewrite: rewrite !== undefined });
+      ctx.commit("orchestrator.about_other_kept", `${askedBy[0]!.toUpperCase()}${askedBy.slice(1)} asked ${plural(questions.length, "question")}${rewrite ? " and gave a rewrite of its description" : ""} about ${other.ref.id}; Scope Soup writes them there once no session runs on it and nobody holds it.`, key, { from: subject, questions: questions.length, rewrite: rewrite !== undefined });
     });
   }
 }

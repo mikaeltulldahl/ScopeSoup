@@ -43,6 +43,7 @@ import { awaitsImplement, triagedText, recheckPromptText, staleTriage, startRech
 import { loadSlots } from "./slots.ts";
 import { dropOverturns, readOverturns } from "./overturns.ts";
 import { setupPromptLine } from "./setup.ts";
+import { plural } from "../model/plural.ts";
 
 export type { TickDeps } from "./context.ts";
 
@@ -564,10 +565,10 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
     // Steps waiting for a paused role are not work to stay awake for either.
     report.queued = Math.max(0, queuedCount - heldForClone - waitsFor.triage - waitsFor.implement - waitsFor.review - report.started.length);
     if (report.started.length === 0) {
-      const paused = off.map((role) => `${SWITCH_WORDS[role]} ${role === "implement" ? "are" : "is"} paused${waitsFor[role] > 0 ? ` (${waitsFor[role]} item(s) wait for ${role === "implement" ? "them" : "it"})` : ""}`);
+      const paused = off.map((role) => `${SWITCH_WORDS[role]} ${role === "implement" ? "are" : "is"} paused${waitsFor[role] > 0 ? ` (${plural(waitsFor[role], "item")} ${waitsFor[role] === 1 ? "waits" : "wait"} for ${role === "implement" ? "them" : "it"})` : ""}`);
       // The merge queue is no role: its switch holds the hand-over of reviewed changes (and the queue's own work) from level 4.
       const queueWaits = level >= 4 && !mergeQueueOn(store) ? Object.values(jobs).filter((job) => job.owes === "hand-over" || (job.parked?.as === "queued" && job.queued !== undefined)).length : 0;
-      if (queueWaits > 0) paused.push(`${SWITCH_WORDS.mergeQueue} is paused (${queueWaits} item(s) wait for it)`);
+      if (queueWaits > 0) paused.push(`${SWITCH_WORDS.mergeQueue} is paused (${plural(queueWaits, "item")} ${queueWaits === 1 ? "waits" : "wait"} for it)`);
       const all = [...paused, ...reasons];
       report.idle = `Nothing was started because ${all.length > 0 ? all.join("; ") : "no item is ready"}.`;
       ctx.say("orchestrator.idle", report.idle, undefined, { running });
@@ -590,15 +591,15 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
   const stoppedRoles = ROLES.filter((role) => control[role] === "stopped");
   if (stoppedRoles.length > 0 && running > 0) {
     const stopped = runner.stopAll("Stopped: a person pressed Stop.", stoppedRoles.length === ROLES.length ? undefined : stoppedRoles);
-    if (stopped > 0) ctx.commit("orchestrator.stopped", `Stop was pressed. Ended ${stopped} running session(s).`);
+    if (stopped > 0) ctx.commit("orchestrator.stopped", `Stop was pressed. Ended ${plural(stopped, "running session")}.`);
   }
   // Only the roles this level uses are named (at level 0 none runs anyway).
   const used = ROLES.filter((role) => STEP_LEVEL[role] <= Math.max(level, 1));
   if (ROLES.every((role) => control[role] !== "started") && !personWork) {
     const names = used.map((role) => SWITCH_WORDS[role]);
     const list = names.length > 1 ? `${names.slice(0, -1).join(", ")} and ${names.at(-1)}` : names[0] ?? "";
-    if (stoppedRoles.length === ROLES.length) reasons.push(`Stop was pressed: ${list} ${names.length > 1 ? "are" : "is"} stopped (press Resume on their lanes to go on)`);
-    else reasons.push(`${list} ${names.length > 1 ? "are" : "is"} paused (press Resume on their lanes to go on)${running > 0 ? `; ${running} running session(s) finish their step` : ""}`);
+    if (stoppedRoles.length === ROLES.length) reasons.push(`Stop was pressed: ${list} ${names.length > 1 ? "are" : "is"} stopped (press Resume all to go on)`);
+    else reasons.push(`${list} ${names.length > 1 ? "are" : "is"} paused (press Resume all to go on)${running > 0 ? `; ${plural(running, "running session")} ${running === 1 ? "finishes its" : "finish their"} step` : ""}`);
     report.paused = true;
     return finish();
   }
@@ -651,7 +652,7 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
     waiting.push({ item, job });
   }
   if (above.length > 0) {
-    reasons.push(`${above.length} item(s) wait at a step above ${levelName(level)} (${above.slice(0, 5).join(", ")}${above.length > 5 ? ", ..." : ""})`);
+    reasons.push(`${plural(above.length, "item")} ${above.length === 1 ? "waits" : "wait"} at a step above ${levelName(level)} (${above.slice(0, 5).join(", ")}${above.length > 5 ? ", ..." : ""})`);
   }
   waiting.sort((a, b) => compare(a.item, b.item));
   const changes = store.list<Change>("change");
@@ -674,7 +675,7 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
   const first = decide({ sample: store.latestUsageSample(), now: at, reserve: usageReserve(config), runningSessions: running });
   if (first.stopRunning) {
     const stopped = running > 0 ? runner.stopAll(first.reason) : 0;
-    if (stopped > 0) ctx.commit("orchestrator.budget_stop", `${first.reason} Stopped ${stopped} running session(s).`);
+    if (stopped > 0) ctx.commit("orchestrator.budget_stop", `${first.reason} Stopped ${plural(stopped, "running session")}.`);
   }
 
   // 5. Dispatch into free slots.
@@ -699,7 +700,7 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
       continue;
     }
     if (running >= slots) {
-      reasons.push(`all ${slots} session slot(s) are in use`);
+      reasons.push(slots === 1 ? "the 1 session slot is in use" : `all ${slots} session slots are in use`);
       break;
     }
     if (!entry.job && running + reserved >= slots) {
@@ -890,6 +891,6 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
     ctx.commit("orchestrator.started", `Started ${label} because ${why}. ${decision.reason}${stepped}`, key, { role: step, session: session.ref.id, model: session.model });
   }
 
-  if (running > 0 && report.started.length === 0) reasons.unshift(`${running} session(s) are running`);
+  if (running > 0 && report.started.length === 0) reasons.unshift(`${plural(running, "session")} ${running === 1 ? "is" : "are"} running`);
   return finish();
 }

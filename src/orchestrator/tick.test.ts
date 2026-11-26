@@ -304,7 +304,7 @@ test("ready items: todo, not blocked, not held, no decision pending, no open cha
   const { ready, held } = readyItems(items, [change], jobs, new Date(T0).toISOString());
   assert.deepEqual(ready.map((entry) => entry.ref.id), ["1", "6", "10"]);
   assert.deepEqual(held.map((entry) => `${entry.item.ref.id}: ${entry.reason}`), [
-    "3: blocked by 1", "4: blocked by 99", "5: held by Ada", "7: waits for a decision by a person", "8: has 2 open child item(s)",
+    "3: blocked by 1", "4: blocked by 99", "5: held by Ada", "7: waits for a decision by a person", "8: has 2 open child items",
     "11: an open change already covers it", "12: already in work (implement)", "13: held by Ada",
   ]);
 });
@@ -351,7 +351,7 @@ test("level 1 (Triage): only triage starts, a stated size gets its triage too, a
   await w.run();
   assert.equal(w.job("1")?.step, "implement");
   assert.deepEqual(roles(w), ["triage", "triage"]);
-  assert.ok(w.reasons("orchestrator.idle").some((reason) => /1 item\(s\) wait at a step above level 1 \(Triage\) \(1 at implement\)/.test(reason)));
+  assert.ok(w.reasons("orchestrator.idle").some((reason) => /1 item waits at a step above level 1 \(Triage\) \(1 at implement\)/.test(reason)));
 });
 
 test("level 2 (Implement): triage and implement start, a stated size skips triage, and the session's own merge without review finishes it", async () => {
@@ -517,7 +517,7 @@ test("Pause agents: a running session finishes its step and is settled, and noth
   assert.deepEqual(w.runner.stops, [], "Pause agents ends no session");
   assert.equal(paused.paused, true);
   assert.equal(paused.running, 1);
-  assert.match(paused.idle ?? "", /because triage and implementors are paused \(press Resume on their lanes to go on\); 1 running session\(s\) finish their step/);
+  assert.match(paused.idle ?? "", /because triage and implementors are paused \(press Resume all to go on\); 1 running session finishes its step/);
 
   // The session finishes: its answer is settled and the item moves to its next step, which does not start.
   w.runner.end("1", "succeeded", TRIAGE_OK);
@@ -546,7 +546,7 @@ describe("each role's switch", { concurrency: 4 }, () => {
     assert.deepEqual(roles(w), ["triage", "implement"], "the triage under way was settled; 2 gets no triage");
     assert.deepEqual(w.runner.stops, [], "pausing ends nothing");
     const idle = await w.run();
-    assert.match(idle.idle ?? "", /^Nothing was started because triage is paused \(1 item\(s\) wait for it\)/);
+    assert.match(idle.idle ?? "", /^Nothing was started because triage is paused \(1 item waits for it\)/);
     assert.equal(idle.paused, undefined, "the other roles go on");
     press(w, "triage.start");
     w.clock.ms += 1000;
@@ -563,7 +563,7 @@ describe("each role's switch", { concurrency: 4 }, () => {
     const idle = await step(w, "1", "succeeded", TRIAGE_OK);
     assert.deepEqual(roles(w), ["triage", "triage"], "1's implement step waits");
     assert.equal(w.job("1")?.step, "implement");
-    assert.match(idle.idle ?? "", /because implementors are paused \(1 item\(s\) wait for them\)/);
+    assert.match(idle.idle ?? "", /because implementors are paused \(1 item waits for them\)/);
     assert.equal(idle.queued, 0, "a step waiting for a paused role is not work to stay awake for");
     press(w, "implement.start");
     w.clock.ms += 1000;
@@ -580,7 +580,7 @@ describe("each role's switch", { concurrency: 4 }, () => {
     const idle = await step(w, "1", "succeeded", IMPLEMENT_OK);
     assert.deepEqual(roles(w), ["triage", "implement"]);
     assert.equal(w.job("1")?.step, "review");
-    assert.match(idle.idle ?? "", /^Nothing was started because review is paused \(1 item\(s\) wait for it\)/);
+    assert.match(idle.idle ?? "", /^Nothing was started because review is paused \(1 item waits for it\)/);
     w.store.put(item("2"), "sync", at(w));
     w.clock.ms += 1000;
     await w.run();
@@ -733,7 +733,7 @@ test("dispatch order and slots: triages oldest first; the rest waits for a slot"
   // What the keep-awake decision reads: two running, the third item ready but without a slot.
   assert.deepEqual([report.running, report.queued, report.paused], [2, 1, undefined]);
   const again = await w.run();
-  assert.equal(again.idle, "Nothing was started because 2 session(s) are running; all 2 session slot(s) are in use.");
+  assert.equal(again.idle, "Nothing was started because 2 sessions are running; all 2 session slots are in use.");
   assert.equal(w.reasons("orchestrator.idle").at(-1), again.idle);
 });
 
@@ -1161,7 +1161,7 @@ test("review rounds are bounded", async () => {
   await step(w, "1", "succeeded", { done: true, summary: "Tried." });
   await step(w, "1", "succeeded", REVIEW_CHANGES);
   assert.equal(w.job("1")?.parked?.as, "escalated");
-  assert.match(w.reasons("orchestrator.escalated")[0] ?? "", /still asks for changes after 1 round\(s\) back to the implementor; the limit is 1\. Open findings: Off by one\./);
+  assert.match(w.reasons("orchestrator.escalated")[0] ?? "", /still asks for changes after 1 round back to the implementor; the limit is 1\. Open findings: Off by one\./);
   assert.deepEqual(w.runner.requests.map((request) => request.role), ["triage", "implement", "review", "implement", "review"]);
 });
 
@@ -1227,7 +1227,7 @@ test("progress: a review round that does not lower the must findings escalates b
   const job = w.job("1");
   assert.equal(job?.parked?.as, "escalated");
   assert.equal(job?.fixRounds, 1);
-  assert.match(w.reasons("orchestrator.escalated")[0] ?? "", /^The review round left 2 `must` finding\(s\), not fewer than the 2 of the round before: a round that gets nowhere ends the run\. After 1 round\(s\) back to the implementor \(the limit is 4\)\. Open findings: Wrong time zone\. \/ Name is unclear\./);
+  assert.match(w.reasons("orchestrator.escalated")[0] ?? "", /^The review round left 2 `must` findings, not fewer than the 2 of the round before: a round that gets nowhere ends the run\. After 1 round back to the implementor \(the limit is 4\)\. Open findings: Wrong time zone\. \/ Name is unclear\./);
   assert.deepEqual(roles(w), ["triage", "implement", "review", "implement", "review"]);
 });
 
@@ -1240,7 +1240,7 @@ test("progress: fewer must findings go on; the same finding twice in a row escal
   await step(w, "1", "succeeded", { done: true, summary: "Tried again." });
   await step(w, "1", "succeeded", musts("name  is UNCLEAR."));
   assert.equal(w.job("1")?.parked?.as, "escalated");
-  assert.match(w.reasons("orchestrator.escalated")[0] ?? "", /^The review gives the same finding as the round before: name {2}is UNCLEAR\. The same failure twice in a row ends the run\. After 2 round\(s\)/);
+  assert.match(w.reasons("orchestrator.escalated")[0] ?? "", /^The review gives the same finding as the round before: name {2}is UNCLEAR\. The same failure twice in a row ends the run\. After 2 rounds/);
 });
 
 test("should findings with review.shouldFindings \"fix\" (the default): back to the implementor once, not counted as a round; what is left after it becomes a draft", async () => {
@@ -1562,7 +1562,7 @@ test("maxParallelSessions: no more sessions run at once than the setting, whatev
     await w.run();
     const again = await w.run();
     assert.equal(w.runner.requests.length, limit);
-    assert.match(again.idle ?? "", /all \d session slot\(s\) are in use/);
+    assert.match(again.idle ?? "", /(all 2 session slots are|the 1 session slot is) in use/);
   }
 });
 
@@ -2279,7 +2279,7 @@ test("merging by queue: the idle reason says the merge queue is paused while an 
   w.store.setValue(KEYS.mergeQueue, "paused");
   await step(w, "1", "succeeded", REVIEW_OK);
   const idle = await w.run();
-  assert.match(idle.idle ?? "", /the merge queue is paused \(1 item\(s\) wait for it\)/);
+  assert.match(idle.idle ?? "", /the merge queue is paused \(1 item waits for it\)/);
   w.store.setValue(KEYS.mergeQueue, "started");
   const after = await w.run();
   assert.doesNotMatch(after.idle ?? "", /merge queue is paused/);
@@ -4171,13 +4171,13 @@ test("a triage puts a question and a rewrite on another backlog Item, which park
   assert.equal(job.parked?.as, "needs-decision");
   assert.equal(job.step, "triage");
   assert.deepEqual(job.rewrite, { original: "Wind units.", text: ABOUT_REWRITE, questions: [{ ...ABOUT_Q, question: "Knots or metres per second? (asked by triage of 1)" }], round: 1, askedBy: ["triage of 1"] });
-  assert.match(job.parked?.reason ?? "", /^Asked by triage of 1: a rewrite of the description and 1 question\(s\) about 2 wait for an answer: 1\. Knots or metres per second\? \(asked by triage of 1\)/);
+  assert.match(job.parked?.reason ?? "", /^Asked by triage of 1: a rewrite of the description and 1 question about 2 waits for an answer: 1\. Knots or metres per second\? \(asked by triage of 1\)/);
   // Its own triage did not start; item 1 went on to implement.
   assert.deepEqual(w.runner.requests.map((request) => `${request.role} ${request.subject.id}`), ["triage 1", "implement 1"]);
   assert.ok(w.calls.includes("answerTurn 2 decision"));
   const page = buildItemPage(loadSnapshot(w.store), refKey(ref("2")), new Date(w.clock.ms))!;
   assert.equal(page.parked?.rewrite?.text, ABOUT_REWRITE);
-  assert.deepEqual(w.reasons("orchestrator.about_other_written"), ["Wrote on 2 what triage of 1 asked: 1 question(s) and a rewrite."]);
+  assert.deepEqual(w.reasons("orchestrator.about_other_written"), ["Wrote on 2 what triage of 1 asked: 1 question and a rewrite."]);
 
   // Answering works as for triage's own rewrite: accepting it triages Item 2 again, with the answer in its prompt.
   assert.deepEqual(answerRewrite(w, "2", ["Knots"]), { settled: "accepted" });
@@ -4356,7 +4356,7 @@ test("questions about an unknown or closed Item, or the asker's own, are dropped
   await step(w, "1", "succeeded", { ...TRIAGE_OK, aboutOthers: [{ item: "99", questions: [ABOUT_Q] }, { item: "2", questions: [ABOUT_Q] }, { item: "1", questions: [ABOUT_Q] }] });
   const dropped = w.reasons("orchestrator.about_other_dropped");
   assert.equal(dropped.length, 3);
-  assert.match(dropped[0]!, /asked about "99", but there is no such open Item other than its own: 1 question\(s\) dropped/);
+  assert.match(dropped[0]!, /asked about "99", but there is no such open Item other than its own: 1 question dropped/);
   assert.match(dropped[1]!, /asked about "2", but it is done/);
   assert.equal(w.store.getValue("orchestrator.aboutOthers") ?? "{}", "{}");
   assert.equal(w.job("1")?.step, "implement");

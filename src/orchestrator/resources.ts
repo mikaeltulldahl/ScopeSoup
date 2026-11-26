@@ -14,6 +14,7 @@ import type { ResourcesView } from "../core/views.ts";
 import { KEYS } from "../store/keys.ts";
 import type { Store } from "../store/store.ts";
 import type { MergeQueue } from "./mergeQueue.ts";
+import { plural } from "../model/plural.ts";
 
 /** The holder name of the merge queue's check. A session's holder is its Item's refKey. */
 export const CHECK_HOLDER = "check";
@@ -142,7 +143,7 @@ export function createResources(deps: ResourcesDeps): Resources {
     const here = state.held.filter((each) => each.resource === resource.name).map((each) => each.label);
     const there = others.map((each) => each.machine);
     const by = [...here, ...there.map((machine) => `${machine}${machine.startsWith("unknown") ? "" : " (another machine)"}`)];
-    return { why: `all ${resource.units} unit(s) of ${resource.name} are held${by.length > 0 ? `: ${by.join(", ")}` : ""}` };
+    return { why: `all ${plural(resource.units, "unit")} of ${resource.name} ${resource.units === 1 ? "is" : "are"} held${by.length > 0 ? `: ${by.join(", ")}` : ""}` };
   }
 
   return {

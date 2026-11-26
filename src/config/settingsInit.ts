@@ -12,6 +12,7 @@ import { findConfig } from "./locate.ts";
 import { recordInManifest } from "./manifest.ts";
 import { type MetaSettings, metaSettings } from "./metaSettings.ts";
 import { repositoryOf, SaveRefused, SHARED_WHERE, validateFiles } from "./shared.ts";
+import { plural } from "../model/plural.ts";
 
 const USAGE = "Usage: pnpm settings:init <settings.json> --as <your name> [--config <this machine's scopesoup.config.json>]";
 
@@ -30,7 +31,7 @@ export async function initSettings(sharedFile: string, privateFile: string, by: 
   const where = repositoryOf(privateRaw, dirname(privateFile));
   if (!where.machine) return { ok: false, lines: [`${privateFile} has no machineName: the commit names this machine.`] };
   const checked = validateFiles(privateRaw, sharedRaw, dirname(privateFile));
-  if (!checked.ok) return { ok: false, lines: [`${sharedFile} with ${privateFile} is not valid. ${checked.errors.length} problem(s):`, ...checked.errors.map((error) => `- ${error}`)] };
+  if (!checked.ok) return { ok: false, lines: [`${sharedFile} with ${privateFile} is not valid. ${plural(checked.errors.length, "problem")}:`, ...checked.errors.map((error) => `- ${error}`)] };
   const fetched = await settings.fetch(where.repoPath, where.remote, where.machine, where.multiplayer);
   if (fetched.problem) return { ok: false, lines: [`The meta ref could not be fetched from ${where.remote}, so nothing was written (the project may have shared settings there already): ${fetched.problem}`] };
   if (settings.read(where.repoPath).ok) {

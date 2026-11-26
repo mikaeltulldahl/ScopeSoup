@@ -17,6 +17,7 @@ import { readIssues } from "../items/githubImport.ts";
 import { fromGitHub, fromJira, githubOldHost, jiraOldHost, type OldHost, type SourceItem } from "../items/moveToMeta.ts";
 import type { Session, WorkItem } from "../model/types.ts";
 import type { Host } from "../ports/host.ts";
+import { plural } from "../model/plural.ts";
 
 export type ConnectKind = "github" | "jira";
 /** What the dialogs connect to: GitHub or Jira (#127), or back to the meta branch (#134). */
@@ -194,7 +195,7 @@ export async function lookAtHost(kind: ConnectKind, connection: HostConnection, 
       problems: [],
       lines: [
         `${variable} is set and signs in to ${site} as ${me.displayName ?? "the token's account"}.`,
-        `${issues.length} open issue(s) of ${project}${host.filter ? " within the filter" : ""} would be the Items.`,
+        `${plural(issues.length, "open issue")} of ${project}${host.filter ? " within the filter" : ""} would be the Items.`,
       ],
     };
   } catch (error) {

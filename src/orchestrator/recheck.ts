@@ -9,6 +9,7 @@ import type { Context } from "./context.ts";
 import { errorText } from "./context.ts";
 import { watchMain } from "./mainGuard.ts";
 import type { Triaged, TriagedText, Job, Recheck, TriageAnswer } from "./jobs.ts";
+import { plural } from "../model/plural.ts";
 
 /** The most commits a triage that runs again is shown; it is told how many there were in all. */
 export const MAX_COMMITS = 20;
@@ -144,7 +145,7 @@ export function recheckPromptText(job: Job): string {
     "</previous-triage>",
   ];
   if (recheck.commits.length > 0) {
-    lines.push(`<commits-since note="${recheck.commitCount} commit(s) on the main branch since then touch those paths${recheck.commitCount > recheck.commits.length ? `; the newest ${recheck.commits.length} are listed` : ""}; read them with git show">`);
+    lines.push(`<commits-since note="${plural(recheck.commitCount, "commit")} on the main branch since then ${recheck.commitCount === 1 ? "touches" : "touch"} those paths${recheck.commitCount > recheck.commits.length ? `; the newest ${recheck.commits.length} ${recheck.commits.length === 1 ? "is" : "are"} listed` : ""}; read them with git show">`);
     for (const commit of recheck.commits) lines.push(`${commit.sha.slice(0, 12)} ${commit.subject}`);
     lines.push("</commits-since>");
   }
