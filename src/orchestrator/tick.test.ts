@@ -3260,6 +3260,72 @@ test("closing the duplicate in triage's direction closes this Item; closing the 
   assert.deepEqual(roles(h), ["triage", "implement"]);
 });
 
+/** Triage of 1 found it a duplicate of 2, and a person answered `answer`; the tick that follows. */
+async function closeOtherWith(other: Partial<WorkItem>, prepare: (w: World) => void = () => {}) {
+  const w = world(config(), [item("1"), item("2", { title: "Tide units", ...other })]);
+  const closed = fakeCloseDuplicate(w);
+  w.store.addUsageSample(usage(0.1, 0.1));
+  await w.run();
+  await step(w, "1", "succeeded", DUPLICATE);
+  prepare(w);
+  assert.deepEqual(answerRewrite(w, "1", ["Close 2 as a duplicate of 1"]), { settled: "accepted" });
+  w.clock.ms += 60_000;
+  await w.run();
+  return { w, closed, left: w.reasons("orchestrator.duplicate_left_open")[0] ?? "" };
+}
+
+test("the other Item is not closed when work would be lost: commits ahead on its branch, a job past triage, or marked doing", async () => {
+  // Blocked or waiting with a branch left over: its commits count.
+  const ahead = await closeOtherWith({ state: "waiting" }, (w) => {
+    w.runner.commitsAhead = async (branch) => (branch.endsWith("2") ? 2 : 0);
+  });
+  assert.deepEqual(ahead.closed, []);
+  assert.match(ahead.left, /but its branch \S+ has 2 commits ahead of main: close it on the host yourself/);
+  // A branch that is not there (only triage ran) holds nothing: closed.
+  const none = await closeOtherWith({ state: "waiting" }, (w) => {
+    w.runner.commitsAhead = async () => {
+      throw new Error("no such branch");
+    };
+  });
+  assert.deepEqual(none.closed, ["2 of 1"]);
+  // Without a way to count commits, a parked job past triage counts as work.
+  const parked = await closeOtherWith({ state: "waiting" }, (w) => {
+    const jobs = loadJobs(w.store);
+    jobs[refKey(ref("2"))] = { ...jobs[refKey(ref("1"))]!, item: ref("2"), branch: "scopesoup/2", step: "implement", parked: { as: "escalated", reason: "Failed.", at: new Date(w.clock.ms).toISOString() } } as never;
+    saveJobs(w.store, jobs);
+  });
+  assert.deepEqual(parked.closed, []);
+  assert.match(parked.left, /its implement work may have commits on its branch/);
+  // Someone works on it outside Scope Soup: no hold stored, no job, but doing.
+  const doing = await closeOtherWith({ state: "doing" });
+  assert.deepEqual(doing.closed, []);
+  assert.match(doing.left, /it is marked doing/);
+});
+
+test("several duplicates: every 'close the other' answer closes its Item; with 'close this Item' too, the others are left open and said so", async () => {
+  const links = [{ type: "duplicateOf" as const, item: "2", reason: "Same ask." }, { type: "duplicateOf" as const, item: "3", reason: "Same ask." }];
+  const w = world(config(), [item("1"), item("2", { state: "waiting" }), item("3", { state: "waiting" })]);
+  const closed = fakeCloseDuplicate(w);
+  w.store.addUsageSample(usage(0.1, 0.1));
+  await w.run();
+  await step(w, "1", "succeeded", { ...TRIAGE, questions: [], links });
+  assert.deepEqual(answerRewrite(w, "1", ["Close 2 as a duplicate of 1", "Close 3 as a duplicate of 1"]), { settled: "accepted" });
+  w.clock.ms += 60_000;
+  await w.run();
+  assert.deepEqual(closed, ["2 of 1", "3 of 1"]);
+
+  const m = world(config(), [item("1"), item("2", { state: "waiting" }), item("3", { state: "waiting" })]);
+  const mixed = fakeCloseDuplicate(m);
+  m.store.addUsageSample(usage(0.1, 0.1));
+  await m.run();
+  await step(m, "1", "succeeded", { ...TRIAGE, questions: [], links });
+  assert.deepEqual(answerRewrite(m, "1", ["Close 1 as a duplicate of 2", "Close 3 as a duplicate of 1"]), { settled: "accepted" });
+  m.clock.ms += 60_000;
+  await m.run();
+  assert.deepEqual(mixed, ["1 of 2"]);
+  assert.match(m.reasons("orchestrator.duplicate_left_open")[0] ?? "", /close 3 as a duplicate of 1, but also "Close 1 as a duplicate of 2", so 3 is left open/);
+});
+
 const CONFLICT = { type: "conflictsWith" as const, item: "2", reason: "Both change the tide table." };
 
 test("a conflictsWith link recommends going on with both; accepting starts the work, and a later round does not ask again", async () => {

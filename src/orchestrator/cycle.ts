@@ -1416,7 +1416,13 @@ export async function afterRewrite(ctx: Context, job: Job): Promise<void> {
   delete job.rewriteRounds;
   // Questions and a rewrite from agents of other Items: once settled, this Item is triaged again with the answers.
   if (rewrite?.askedBy) return next(ctx, job, "triage", `A person settled what ${rewrite.askedBy.join(" and ")} asked about ${job.item.id}${rewrite.settled ? ` (the rewrite ${rewrite.settled})` : ""}. Next: triage again, with the answers.`);
-  if (rewrite?.stop && rewrite.holdFor && (await holdUntilDone(ctx, job, rewrite.holdFor))) return;
+  const others = rewrite?.closeOther ?? [];
+  // This Item stops (held, or closed itself): the other Items a person said to close as its duplicates are left open, and said so.
+  const leaveOthers = (): void => {
+    for (const other of others) ctx.commit("orchestrator.duplicate_left_open", `A person answered to close ${other.id} as a duplicate of ${job.item.id}, but also "${rewrite!.stop}", so ${other.id} is left open: close it on the host yourself if it should go.`, refKey(other), { duplicateOf: refKey(job.item) });
+  };
+  if (rewrite?.stop && rewrite.holdFor && (await holdUntilDone(ctx, job, rewrite.holdFor))) return leaveOthers();
+  if (rewrite?.stop && !rewrite.holdFor) leaveOthers();
   if (rewrite?.stop && rewrite.duplicateOf && ctx.deps.actions.closeDuplicate) {
     // Closed on the host, written through; a failure is `orchestrator.host_write_failed`, and the Item parked as before.
     const key = refKey(job.item);
@@ -1433,16 +1439,40 @@ export async function afterRewrite(ctx: Context, job: Job): Promise<void> {
     }
   }
   if (rewrite?.stop && !rewrite.holdFor) return park(ctx, job, "not-ready", `A person answered: ${rewrite.stop}. Scope Soup closes nothing itself; answer here to look at it again.`, "not-ready");
-  const closed = rewrite?.closeOther ? await closeOtherDuplicate(ctx, job, rewrite.closeOther) : "";
+  let closed = "";
+  for (const other of others) closed += await closeOtherDuplicate(ctx, job, other);
   if (!job.triage) return next(ctx, job, "implement", `The rewrite is settled.${closed} Next: implement.`);
   return afterTriage(ctx, job, job.triage, `${rewrite?.settled ? ` A person ${rewrite.settled} the rewrite.` : ""}${closed}`);
 }
 
 /**
  * A person answered to close the other Item as a duplicate of this one, which goes on. It is closed on the host when the host can and
- * its work is not under way (`workingWhy`, or a job of Scope Soup's that is not parked); else it is left open and the person told.
+ * nothing would be lost (`otherBusy`); else it is left open and the person told.
  * Its parked job, if any, closes on the next tick, as for any abandoned Item. The words for this Item's own event.
  */
+/**
+ * Why closing this Item now could lose work, or null: its work is under way (`workingWhy`), a job of Scope Soup's runs on it, someone
+ * works on it outside Scope Soup (`doing` with no job), or its branch has commits ahead of the main branch (a job's, or one left
+ * after it went to Blocked). Without a way to count them, any job past triage counts. A branch that is not there holds nothing.
+ */
+async function otherBusy(ctx: Context, work: WorkItem): Promise<string | null> {
+  const job = ctx.jobs[refKey(work.ref)];
+  const working = workingWhy(ctx, work, job);
+  if (working) return working;
+  if (job && !job.parked) return "a job of Scope Soup's runs on it";
+  if (!job && work.state === "doing") return "it is marked doing, so someone may be working on it";
+  const { runner } = ctx.deps;
+  if (!runner.commitsAhead) return job && job.step !== "triage" ? `its ${job.step} work may have commits on its branch` : null;
+  const branch = job?.branch ?? workBranch(work.ref);
+  let ahead = 0;
+  try {
+    ahead = await runner.commitsAhead(branch);
+  } catch {
+    return null;
+  }
+  return ahead > 0 ? `its branch ${branch} has ${ahead} commit${ahead === 1 ? "" : "s"} ahead of ${ctx.config.mainBranch}` : null;
+}
+
 async function closeOtherDuplicate(ctx: Context, job: Job, other: Ref): Promise<string> {
   const self = job.item.id;
   const work = ctx.deps.store.get<WorkItem>(other);
@@ -1453,8 +1483,7 @@ async function closeOtherDuplicate(ctx: Context, job: Job, other: Ref): Promise<
   };
   const close = ctx.deps.actions.closeDuplicate;
   if (!close) return left(`writes to ${other.host} are off`);
-  const otherJob = ctx.jobs[refKey(other)];
-  const busy = workingWhy(ctx, work, otherJob) ?? (otherJob && !otherJob.parked ? "a job of Scope Soup's runs on it" : null);
+  const busy = await otherBusy(ctx, work);
   if (busy) return left(busy);
   try {
     if (!(await close(other, job.item))) return left(`Scope Soup cannot close it on ${other.host}`);
