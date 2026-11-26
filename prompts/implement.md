@@ -8,7 +8,7 @@ Title: {{itemTitle}}
 {{itemBody}}
 
 Verification: {{verification}}
-</item>{{history}}
+</item>{{history}}{{linked}}
 
 {{allowedCommands}} {{media}}
 

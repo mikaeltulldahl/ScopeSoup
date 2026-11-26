@@ -12,14 +12,16 @@ import { KEYS } from "../store/keys.ts";
 import type { Level, ProjectConfig } from "../config/types.ts";
 import { levelName, mediaShared } from "../config/types.ts";
 import { mediaPromptText } from "../core/media.ts";
-import type { Change, RecordedAnswer, Ref, RepoLabel, Session, SessionRole, UsageWindowKind, WorkItem } from "../model/types.ts";
+import type { Change, LinkType, RecordedAnswer, Ref, RepoLabel, Session, SessionRole, UsageWindowKind, WorkItem } from "../model/types.ts";
 import { labelsPromptText } from "../model/labels.ts";
 import { refKey } from "../model/types.ts";
 import { providerFor } from "./providers/index.ts";
 import { loadVotes, withVotes } from "../store/votes.ts";
-import { busyFiles, compareItems, foreignChanges, readyItems, waitsForSameFiles } from "./candidates.ts";
+import { busyItems, compareItems, foreignChanges, readyItems, sameFilesWait } from "./candidates.ts";
 import { sameFilesWords } from "../core/sameFiles.ts";
 import { earlierText } from "../core/earlier.ts";
+import { LINKED_TYPES, linkedText } from "../core/linked.ts";
+import { linkedItem } from "./aboutOthers.ts";
 import type { Context, TickDeps } from "./context.ts";
 import type { ClaimResult } from "./ports.ts";
 import { createLog, errorText } from "./context.ts";
@@ -308,8 +310,19 @@ export function finishText(config: ProjectConfig, job: Job): string {
   return `When you judge it done, commit on ${job.branch} and stop; do not merge.`;
 }
 
+/** The Items the job's triage linked its Item to, and those the host says block it, each once with the first link that named it. */
+export function linkedWorks(store: Store, item: WorkItem, job: Job): { type: LinkType; item: WorkItem }[] {
+  const found: { type: LinkType; item: WorkItem }[] = [];
+  const add = (type: LinkType, work: WorkItem | null | undefined) => {
+    if (work && refKey(work.ref) !== refKey(item.ref) && !found.some((each) => refKey(each.item.ref) === refKey(work.ref))) found.push({ type, item: work });
+  };
+  for (const link of job.triage?.links ?? []) if (LINKED_TYPES.includes(link.type)) add(link.type, linkedItem(store, item.ref, link.item));
+  for (const blocker of item.blockedBy) add("blockedBy", store.get<WorkItem>(blocker));
+  return found;
+}
+
 /** Every variable a role template may use (the Item, where the session works, and the commands it may run). */
-export function promptVars(config: ProjectConfig, item: WorkItem, job: Job, answers: readonly RecordedAnswer[] = [], repoLabels: RepoLabel[] | null = null): Record<string, string> {
+export function promptVars(config: ProjectConfig, item: WorkItem, job: Job, answers: readonly RecordedAnswer[] = [], repoLabels: RepoLabel[] | null = null, linked: readonly { type: LinkType; item: WorkItem }[] = []): Record<string, string> {
   // What earlier sessions on the Item did, with the answers given since (decision 112); the answers it shows are not listed twice.
   const earlier = earlierText(item.log ?? item.hostRecord?.log ?? [], answers, { role: job.step });
   const decided = answersText(answers.filter((answer) => !earlier.shown.includes(answer)), refKey(item.ref));
@@ -335,6 +348,8 @@ export function promptVars(config: ProjectConfig, item: WorkItem, job: Job, answ
     // What changed since the triage before, when the triage is taken again.
     recheck: recheckPromptText(job),
     history: earlier.text,
+    // The titles and descriptions of the Items linked to this one (decision 115); empty when there are none.
+    linked: linkedText(linked),
     // Where to save images for the board, and who sees them (`media.push`).
     media: mediaPromptText(mediaShared(config)),
   };
@@ -668,8 +683,10 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
   queuedCount = queue.length;
   // The waits for resources are said again by this dispatch, for the Items that still wait.
   deps.resources?.clearSessionWaits();
-  // Items in progress or in review, with the paths their triage named: an Item whose named paths overlap waits (core/sameFiles.ts).
-  let busy = busyFiles(jobs);
+  // Busy Items (in progress, in review, or a change not yet on main), with the paths and links their triage named: an Item whose
+  // named paths overlap, or that is linked to one with `conflictsWith`, waits (core/sameFiles.ts).
+  let busy = busyItems(jobs);
+  const allAnswers = knownAnswers(store);
   for (const entry of queue) {
     const key = refKey(entry.item.ref);
     // An item that states its own size (a `size:small` or `size:medium` label), with nothing waiting on an answer, skips the first
@@ -716,11 +733,11 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
       }
     }
 
-    // Its first implement step waits while an Item in progress or in review changes the same files; the next Item may start.
+    // Its first implement step waits while a busy Item changes the same files or may conflict with it; the next Item may start.
     if (entry.job && step === "implement") {
-      const sameFiles = waitsForSameFiles(entry.job, busy);
-      if (sameFiles.length > 0) {
-        reasons.push(`${entry.item.ref.id} ${sameFilesWords(sameFiles)}`);
+      const wait = sameFilesWait(entry.job, busy, allAnswers);
+      if (wait) {
+        reasons.push(`${entry.item.ref.id} ${sameFilesWords(wait.waitsFor, wait.mayConflict)}`);
         continue;
       }
     }
@@ -829,7 +846,7 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
         if (step === "implement") startedAs = { level: config.level, mayMerge: mayMerge(config, job) };
         session = await runner.start({
           role: step, subject: job.item, attempt: job.failures + 1, workspace: job.workspace, branch: job.branch,
-          vars: promptVars(config, entry.item, job, answers, repoLabels), ...implementorMessage(job, decided),
+          vars: promptVars(config, entry.item, job, answers, repoLabels, step === "implement" ? linkedWorks(store, entry.item, job) : []), ...implementorMessage(job, decided),
           ...(chosen && chosen.model !== config.roles.implement.model ? { model: chosen.model } : {}),
           ...(Object.keys(units.env).length > 0 ? { env: units.env } : {}),
         });
@@ -862,7 +879,7 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
     jobs[key] = target;
     target.sessionId = session.ref.id;
     if (step === "implement" && startedAs) target.sessionStart = startedAs;
-    if (step === "implement") busy = busyFiles(jobs);
+    if (step === "implement") busy = busyItems(jobs);
     delete target.notBefore;
     delete target.resume;
     delete target.answerArrived;
