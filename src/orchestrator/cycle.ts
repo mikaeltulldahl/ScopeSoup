@@ -660,6 +660,21 @@ export function pullRequestIn(merged: string | undefined): string | null {
  * After a person's answer to that (`askedBy`), a branch still not merged goes on as the level says (`afterAnswer`).
  */
 async function sessionMerged(ctx: Context, job: Job, item: WorkItem | null, askedBy?: string): Promise<void> {
+  await settleSessionMerge(ctx, job, item, askedBy, false);
+}
+
+/**
+ * The implementor merged although the level now is one where it only commits (the level was raised while it worked): when the
+ * remote's main holds what it merged, the Item is done as after a level 2 merge. Returns false, with nothing written, when
+ * it cannot be shown, so the answer is settled as the level says.
+ */
+async function mergedUnderEarlierLevel(ctx: Context, job: Job, item: WorkItem | null, allowed: boolean): Promise<boolean> {
+  return settleSessionMerge(ctx, job, item, undefined, allowed ? "allowed" : "forbidden");
+}
+
+/** `late`: only finish the Item when main holds the merge; otherwise return false and write nothing. */
+async function settleSessionMerge(ctx: Context, job: Job, item: WorkItem | null, askedBy: string | undefined, mode: false | "allowed" | "forbidden"): Promise<boolean> {
+  const late = mode !== false;
   const { runner, actions } = ctx.deps;
   const key = refKey(job.item);
   const main = ctx.config.mainBranch;
@@ -679,16 +694,29 @@ async function sessionMerged(ctx: Context, job: Job, item: WorkItem | null, aske
     // work started, and carries the branch's files as the head has them.
     if (contains !== true && said && job.base && onBase !== true && runner.squashed) squash = await runner.squashed(job.branch, said, job.base, head, tip);
   } catch (error) {
+    if (late) return false;
     await park(ctx, job, "escalated", `The implementor said ${job.branch} is done, but Scope Soup could not read whether ${name} contains it: ${errorText(error)} Answer here to look again.`, "escalation", "hand-over");
-    return;
+    return true;
   }
   // The head was in main before the work started: nothing was committed, whatever the answer says.
   if (onBase === true) {
+    if (late) return false;
     await failed(ctx, job, `The implementer reported the work done, but ${job.branch} has no commits over ${name} as it was when the work started (${job.base!.slice(0, 7)}).`);
-    return;
+    return true;
+  }
+  const merged = contains === true ? head : squash;
+  if (late && !merged) return false;
+  if (merged && mode === "forbidden") {
+    // Its instructions said to commit and stop: a merge nobody reviewed, or at level 4 one the merge queue's check never saw.
+    delete job.merged;
+    await park(
+      ctx, job, "escalated",
+      `The implementor merged ${job.branch} to ${main} (${name} contains ${merged.slice(0, 7)}) although its instructions said to commit and stop, not to merge: its session started at level ${job.sessionStart?.level ?? "?"}, where nothing merges before review, and the level is ${ctx.config.level} now. The change is on ${main} without the review or the merge queue's check. Look at it; close the Item if it is fine, or answer here to have it looked at again.`,
+      "escalation",
+    );
+    return true;
   }
   await writeRevision(ctx, job);
-  const merged = contains === true ? head : squash;
   if (merged) {
     job.merged = merged;
     const how = contains === true
@@ -696,26 +724,30 @@ async function sessionMerged(ctx: Context, job: Job, item: WorkItem | null, aske
       : `${name} at ${tip.slice(0, 7)} contains ${merged.slice(0, 7)}, a squash of its head ${head.slice(0, 7)} (the same files, new since ${job.base!.slice(0, 7)})`;
     ctx.commit(
       "orchestrator.merged",
-      `${job.branch} is merged: ${how}. The implementing session merged it${said ? ` (it says: ${clipText(said, 200)})` : ""}.`,
+      `${job.branch} is merged: ${how}. The implementing session merged it${late ? ` under the level its session started with (started at level ${job.sessionStart?.level ?? "?"}, the level is now ${ctx.config.level})` : ""}${said ? ` (it says: ${clipText(said, 200)})` : ""}.`,
       key, { sha: merged, main: tip, by: "session", ...(contains === true ? {} : { squashed: head }) },
     );
     await ctx.act("write the merge to the item's log", key, () => actions.appendLog(job.item, "merged", { sha: merged, target: main }));
     await park(ctx, job, "queued", `Merged to ${main} by the implementing session: ${name} contains ${merged.slice(0, 7)}.`);
     await closeMerged(ctx, job, merged);
-    return;
+    return true;
   }
   const pr = pullRequestIn(said);
   if (pr) {
     await park(ctx, job, "handed-over", `The implementing session opened a pull request instead of merging: ${pr} . ${name} does not contain ${job.branch} yet; merging the pull request is a person's call.`, "handover");
-    return;
+    return true;
   }
-  if (askedBy) return afterAnswer(ctx, job, name, askedBy);
+  if (askedBy) {
+    afterAnswer(ctx, job, name, askedBy);
+    return true;
+  }
   const where = (item ? itemRepository(ctx.deps.store, ctx.config, item.ref) : null) ?? (ctx.config.workspaces.kind === "pool" ? null : ctx.config.repoPath);
   await park(
     ctx, job, "escalated",
     `The implementor said the work is done, but ${name} (at ${tip.slice(0, 7)}) does not contain ${job.branch} (at ${head.slice(0, 7)}), and its answer names no pull request${said ? ` (it said: ${clipText(said, 200)})` : ""}. The change is not lost: ${whereIsIt(ctx.config.remote, job.branch, null, where)} Answer here once it is merged, and Scope Soup looks again.`,
     "escalation", "hand-over",
   );
+  return true;
 }
 
 /**
@@ -952,6 +984,14 @@ async function settleStep(ctx: Context, job: Job, session: Session | null, recor
       // An overturn that arrived while it worked goes back to it before the hand-over.
       if (overturnsBack(ctx, job)) return;
       return handOver(ctx, job, item);
+    }
+    // The level was raised while it worked, so it merged under the level its session started with (decision 108): if main holds
+    // what it merged, the Item is done as after a level 2 merge, not "nothing to change".
+    if (answer.mergedAs && !merging) {
+      if (await mergedUnderEarlierLevel(ctx, job, item, job.sessionStart?.mayMerge === true)) {
+        delete job.resumeWith;
+        return;
+      }
     }
     // A round for the review's `should` findings (review.shouldFindings "fix") that committed nothing: the approved change goes on,
     // and the findings become a draft.

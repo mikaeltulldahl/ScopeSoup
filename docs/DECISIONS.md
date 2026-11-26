@@ -341,6 +341,12 @@ Owner decisions of 2026-11-21 from epic GF-283, written down here with the docs 
 |---|---|---|
 | 107 | The clone's local main follows the remote's at each fetch before a session | A months-old local `main` in Scope Soup's clone misled a triage agent (`git log main`). After the fetch the local main branch is moved to `<remote>/<main>` (`followRemoteMain`), for worktrees and pool clones alike, because both go through `freshBase`. A main checked out in a worktree (Scope Soup's own clone sits on main) is fast-forwarded there with `merge --ff-only` when its tracked files are clean; otherwise, and for one with commits no other branch or remote branch holds (a reset would lose them); each is one `orchestrator.main_not_moved` event per reason. Nothing is ever pushed. Rejected: deleting the local main (a clone with no remote falls back to it). |
 
+## Made on 2026-11-26: a level raised mid-work (#169)
+
+| # | Topic | Decision |
+|---|---|---|
+| 108 | A session's merge stands when the level changes during it (#169) | The implement prompt's finish is fixed when the session starts, so a level change applies to work that starts after it (said by the Level setting). When an implementor's answer names `mergedAs` and the remote's main contains the branch head, or the squash commit it names, at a level where it would only have committed, Scope Soup finishes the Item as for a level 2 merge (`merged` line, close on the host) and the `orchestrator.merged` event says it merged under the level its session started with, before the level was changed. No review follows. Without that proof, an empty branch is still "nothing to change" for a person. |
+
 ## Facts established by research (not decisions)
 
 - A program can read the subscription's usage: `claude -p --output-format stream-json` emits a `rate_limit_event` carrying the 5-hour and weekly windows with utilisation and reset time. Tested once, on CLI 2.1.327. See `docs/research/usage-and-headless.md`.
