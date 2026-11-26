@@ -1,7 +1,7 @@
 // Reusing an answer: a question that comes back after re-triage, reworded, about the same
 // decision on an Item whose text has not changed. Pure.
 
-import type { DecisionOption, RecordedAnswer, WorkItem } from "../model/types.ts";
+import type { DecisionOption, RecordedAnswer, Ref, WorkItem } from "../model/types.ts";
 import { optionText, refKey } from "../model/types.ts";
 
 /** A hash of the text of an Item that its decisions rest on: the title, the description and the verification. */
@@ -59,6 +59,7 @@ export function reusableAnswer(
   item: WorkItem,
   asked: { question: string; options: readonly DecisionOption[] },
 ): RecordedAnswer | undefined {
+  if (conflictPair(asked.question)) return undefined;
   const key = refKey(item.ref);
   const hash = itemTextHash(item);
   const options = optionTexts(asked.options);
@@ -66,7 +67,72 @@ export function reusableAnswer(
     const answer = answers[index]!;
     if (refKey(answer.subject) !== key || answer.textHash !== hash || !answer.question) continue;
     if (answer.question.startsWith("Proposed rewrite:")) continue;
+    // A conflict between two Items is decided per pair (`pairAnswer`), whatever the text.
+    if (conflictPair(answer.question)) continue;
     if (sameDecision({ question: asked.question, options }, { question: answer.question, ...(answer.options ? { options: answer.options } : {}) })) return answer;
   }
   return undefined;
+}
+
+/** The answer to a conflict question that lets both Items go on. */
+export const GO_ON_WITH_BOTH = "Go on with both";
+
+/** The answer to a conflict question that holds `held` until `until` is done. */
+export const holdAnswer = (held: string, until: string): string => `Hold ${held} until ${until} is done`;
+
+/** The question a triage's `conflictsWith` link becomes; `conflictPair` reads the two Item ids back from it. */
+export function conflictQuestion(self: string, other: string, title: string): string {
+  return `${self} conflicts with ${other} "${title}". Go on with both, or hold ${self} until ${other} is done?`;
+}
+
+/** The two Item ids of a question exactly as `conflictQuestion` writes it (the asking Item first), or null for any other question. */
+export function conflictPair(question: string): [string, string] | null {
+  const found = /^(\S+) conflicts with (\S+) "[\s\S]*"\. Go on with both, or hold (\S+) until (\S+) is done\?$/.exec(question.trim());
+  return found && found[3] === found[1] && found[4] === found[2] ? [found[1]!, found[2]!] : null;
+}
+
+/** An answer that picks `label`: the label itself, or the label with its description (`label: description`), as pickers send it. */
+function pickedLabel(answer: string, label: string): boolean {
+  const given = answer.trim().toLowerCase();
+  const wanted = label.toLowerCase();
+  return given === wanted || given.startsWith(`${wanted}:`);
+}
+
+/** What the newest answer about a conflict between two Items said: go on, hold one of them (`held`), or something else (null). */
+export type PairAnswer = { kind: "go-on" } | { kind: "hold"; held: string; until: string };
+
+/**
+ * The newest answer to a conflict question about `a` and `b`, asked on either of them, whatever the Items' text: a later answer
+ * replaces an earlier one. Null when there is none, or it was neither "go on" nor a hold (the person said something else).
+ */
+export function pairAnswer(answers: readonly RecordedAnswer[], a: Ref, b: Ref): PairAnswer | null {
+  for (let index = answers.length - 1; index >= 0; index -= 1) {
+    const answer = answers[index]!;
+    if (answer.subject.host !== a.host) continue;
+    const pair = conflictPair(answer.question ?? "");
+    if (!pair || !((pair[0] === a.id && pair[1] === b.id) || (pair[0] === b.id && pair[1] === a.id))) continue;
+    if (pickedLabel(answer.answer, GO_ON_WITH_BOTH)) return { kind: "go-on" };
+    if (pickedLabel(answer.answer, holdAnswer(pair[0], pair[1]))) return { kind: "hold", held: pair[0], until: pair[1] };
+    return null;
+  }
+  return null;
+}
+
+/** True when the newest answer about a conflict between `a` and `b` was to go on with both. */
+export function wentOnWithBoth(answers: readonly RecordedAnswer[], a: Ref, b: Ref): boolean {
+  return pairAnswer(answers, a, b)?.kind === "go-on";
+}
+
+/** The ids of the Items a person said to hold `item` until they are done (the newest answer about each pair is a hold of `item`). */
+export function heldUntil(answers: readonly RecordedAnswer[], item: Ref): string[] {
+  const others = new Set<string>();
+  for (const answer of answers) {
+    if (answer.subject.host !== item.host) continue;
+    const pair = conflictPair(answer.question ?? "");
+    if (pair && (pair[0] === item.id || pair[1] === item.id)) others.add(pair[0] === item.id ? pair[1] : pair[0]);
+  }
+  return [...others].filter((other) => {
+    const said = pairAnswer(answers, item, { ...item, id: other });
+    return said?.kind === "hold" && said.held === item.id;
+  });
 }
