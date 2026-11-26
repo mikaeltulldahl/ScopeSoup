@@ -120,6 +120,8 @@ interface World {
   queue?: QueueDriver;
   /** The fake `closeMerged`: what it answers (or "throw"), and the closes it was asked for. */
   closeResult: "closed" | "by-hand" | "not-needed" | "throw";
+  /** The fake host closes nothing itself on a merge (meta branch): Scope Soup does. */
+  closesItself?: boolean;
   closes: string[];
   run(): ReturnType<typeof tick>;
   /** The dependencies `run` passes to the tick, for a test that adds one. */
@@ -226,6 +228,9 @@ function world(cfg: ProjectConfig | ConfigSource, items: WorkItem[] = []): World
     async answerTurn(target, kind, reason) {
       hostWrites.push(`answerTurn ${target.id} ${kind} ${reason ?? ""}`);
       calls.push(`answerTurn ${target.id} ${kind}`);
+    },
+    get closesItself() {
+      return out.closesItself ? (true as const) : undefined;
     },
     async closeMerged(target, merged) {
       out.closes.push(`${target.id} ${merged.sha} ${merged.batch ?? "-"}`);
@@ -4729,4 +4734,25 @@ test("a session a pick could not end is waited for 2 minutes, then the job goes 
   await w.run();
   assert.match(w.reasons("orchestrator.interrupt_failed")[0] ?? "", /still there 2 minutes after Ada's pick ended it/);
   assert.match(w.reasons("orchestrator.job_dropped")[0] ?? "", /Ada put 1 back in the backlog/);
+});
+
+test("meta branch: a handed-over change a person merged is logged as merged and the Item is closed", async () => {
+  const w = await handedOver();
+  w.closesItself = true;
+  await w.run();
+  assert.equal(w.closes.length, 0);
+  w.runner.main = MAIN_MERGED;
+  await w.run();
+  assert.deepEqual(w.closes, [`1 ${HEAD} -`]);
+  assert.match(w.calls.join("\n"), /appendLog 1 merged/);
+  assert.equal(w.events("orchestrator.item_closed").length, 1);
+  await w.run();
+  assert.equal(w.closes.length, 1);
+});
+
+test("GitHub: a handed-over change a person merged is left to the host to close", async () => {
+  const w = await handedOver();
+  w.runner.main = MAIN_MERGED;
+  await w.run();
+  assert.equal(w.closes.length, 0);
 });
