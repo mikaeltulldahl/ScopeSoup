@@ -1,11 +1,11 @@
 // Which work items are ready to start, and in what order. Pure.
 
-import type { Change, Ref, WorkItem } from "../model/types.ts";
+import type { Change, RecordedAnswer, Ref, WorkItem } from "../model/types.ts";
 import { holdStands } from "../model/people.ts";
 import { refKey } from "../model/types.ts";
 import type { Job, Jobs } from "./jobs.ts";
 import type { NamedFiles } from "../core/sameFiles.ts";
-import { sameFilesAs } from "../core/sameFiles.ts";
+import { mayConflictWith, sameFilesAs } from "../core/sameFiles.ts";
 import { awaitsImplement } from "./recheck.ts";
 
 export interface Readiness {
@@ -81,31 +81,39 @@ export function planOrder(items: WorkItem[], changes: Change[], jobs: Jobs, now:
   return [...readiness.ready.sort(compare), ...held.sort(compare), ...rest.sort(compare)];
 }
 
-/** The paths a job's triage named, when it named any. */
-function named(job: Job): NamedFiles | null {
-  const paths = (job.triage?.paths ?? []).filter((path) => path.trim());
-  return paths.length > 0 ? { item: job.item, paths } : null;
-}
-
 /**
- * The Items in progress or in review, with the paths their triage named: a running or started implement step, or a
- * review. Parked jobs wait for a person and hold nothing back; a merged one is over.
+ * The busy Items, with the paths and links their triage named: a running or started implement step, a review, or a change that
+ * exists and is not on main yet (in the merge queue, handed over, or parked for a person after a revision was written). A job
+ * parked before any change exists (a triage question, a rewrite, not ready) holds nothing back; a merged one is over.
  */
-export function busyFiles(jobs: Jobs): NamedFiles[] {
+export function busyItems(jobs: Jobs): NamedFiles[] {
   return Object.values(jobs).flatMap((job) => {
-    if (job.parked || job.merged !== undefined) return [];
-    const busy = job.step === "review" || (job.step === "implement" && (job.sessionId !== undefined || !awaitsImplement(job)));
-    const files = busy ? named(job) : null;
-    return files ? [files] : [];
+    if (job.merged !== undefined) return [];
+    const busy = job.parked
+      ? job.parked.as === "queued" || job.parked.as === "handed-over" || job.head !== undefined || job.queued !== undefined
+      : job.step === "review" || (job.step === "implement" && (job.sessionId !== undefined || !awaitsImplement(job)));
+    if (!busy) return [];
+    const paths = (job.triage?.paths ?? []).filter((path) => path.trim());
+    return [{ item: job.item, paths, ...(job.triage?.links?.length ? { links: job.triage.links } : {}) }];
   });
 }
 
+/** What a job waits for before its first implement step: busy Items that change the same files, and busy ones linked to it with `conflictsWith`. */
+export interface SameFilesWait {
+  waitsFor: Ref[];
+  /** Linked with `conflictsWith` (not also in `waitsFor`), with no "Go on with both" for the pair. */
+  mayConflict: Ref[];
+}
+
 /**
- * The busy Items a job waits for before its first implement step: those whose named paths overlap its own. None for a job
- * that is not about to start implementing, or whose triage named no paths.
+ * The busy Items a job waits for before its first implement step (`busyItems`): those whose named paths overlap its own, and those
+ * linked to it with `conflictsWith` by either triage, unless a person said to go on with both. Null for a job that is not about to
+ * start implementing, or that waits for none.
  */
-export function waitsForSameFiles(job: Job, busy: readonly NamedFiles[]): Ref[] {
-  if (job.sessionId !== undefined || !awaitsImplement(job)) return [];
-  const files = named(job);
-  return files ? sameFilesAs(files, busy) : [];
+export function sameFilesWait(job: Job, busy: readonly NamedFiles[], answers: readonly RecordedAnswer[]): SameFilesWait | null {
+  if (job.sessionId !== undefined || !awaitsImplement(job)) return null;
+  const self: NamedFiles = { item: job.item, paths: (job.triage?.paths ?? []).filter((path) => path.trim()), ...(job.triage?.links ? { links: job.triage.links } : {}) };
+  const waitsFor = sameFilesAs(self, busy);
+  const mayConflict = mayConflictWith(self, busy, answers).filter((ref) => !waitsFor.some((each) => refKey(each) === refKey(ref)));
+  return waitsFor.length + mayConflict.length > 0 ? { waitsFor, mayConflict } : null;
 }

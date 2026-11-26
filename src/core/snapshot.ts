@@ -70,8 +70,8 @@ export interface Snapshot {
   /** The triage's typed links per Item (from Scope Soup's store). */
   links?: { subject: Ref; links: ItemLinkAnswer[] }[];
   answers?: RecordedAnswer[];
-  /** Triaged Items whose first implement step waits for Items in progress or in review that change the same files (core/sameFiles.ts). Absent when none waits. */
-  sameFiles?: { subject: Ref; waitsFor: Ref[] }[];
+  /** Triaged Items whose first implement step waits for busy Items that change the same files, or are linked with `conflictsWith` (`mayConflict`; core/sameFiles.ts). Absent when none waits. */
+  sameFiles?: { subject: Ref; waitsFor: Ref[]; mayConflict?: Ref[] }[];
   /** The merge queue's health. Absent when no queue has run. */
   queue?: QueueHealth;
   /** Rewrites of open Items' descriptions that another Item's triage gave with no question, for a person (decision 110). Absent when none. */

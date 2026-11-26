@@ -16,7 +16,8 @@ import { openStore } from "../store/store.ts";
 import type { Store } from "../store/store.ts";
 import { KEYS } from "../store/keys.ts";
 import { setRolesForTest } from "../store/control.ts";
-import { itemTextHash } from "../core/answerReuse.ts";
+import { conflictQuestion, GO_ON_WITH_BOTH, itemTextHash } from "../core/answerReuse.ts";
+import { addAnswer } from "../store/answers.ts";
 import type { Actions, AgentRunner, SessionRequest } from "./ports.ts";
 import { adoptWritten, loadJobs, saveJobs } from "./jobs.ts";
 import type { Job } from "./jobs.ts";
@@ -433,5 +434,66 @@ describe("Items that change the same files", { concurrency: 4 }, () => {
     await w.run();
     assert.equal(w.requests.filter((request) => request.subject.id === "2").length, 0);
     assert.deepEqual(loadSnapshot(w.store).sameFiles, [{ subject: ref("2"), waitsFor: [ref("1")] }]);
+  });
+
+  test("an Item in the merge queue holds back one whose paths overlap until its change is merged", async () => {
+    const w = world(config({ level: 3 }), [item("1"), item("2")]);
+    const jobs = loadJobs(w.store);
+    const at = new Date(T0).toISOString();
+    jobs[refKey(ref("1"))] = { ...waitingJob("1", ["src/a.ts"]), head: "3".repeat(40), queued: "3".repeat(40), parked: { as: "queued", reason: "In the merge queue.", at } };
+    jobs[refKey(ref("2"))] = waitingJob("2", ["src/a.ts"]);
+    w.store.tx(() => saveJobs(w.store, jobs));
+    await w.run();
+    assert.equal(w.requests.filter((request) => request.subject.id === "2").length, 0);
+    assert.deepEqual(loadSnapshot(w.store).sameFiles, [{ subject: ref("2"), waitsFor: [ref("1")] }]);
+    const merged = loadJobs(w.store);
+    merged[refKey(ref("1"))]!.merged = "4".repeat(40);
+    w.store.tx(() => saveJobs(w.store, merged));
+    w.clock.ms += 1000;
+    await w.run();
+    assert.deepEqual(w.requests.map((request) => `${request.role} ${request.subject.id}`), ["implement 2"]);
+  });
+
+  test("an Item parked for a person before any change exists holds nothing back", async () => {
+    const w = world(config({ level: 3 }), [item("1"), item("2")]);
+    const jobs = loadJobs(w.store);
+    jobs[refKey(ref("1"))] = { ...waitingJob("1", ["src/a.ts"]), parked: { as: "needs-decision", reason: "Old or new?", at: new Date(T0).toISOString() } };
+    jobs[refKey(ref("2"))] = waitingJob("2", ["src/a.ts"]);
+    w.store.tx(() => saveJobs(w.store, jobs));
+    await w.run();
+    assert.deepEqual(w.requests.map((request) => `${request.role} ${request.subject.id}`), ["implement 2"]);
+  });
+
+  test("a conflictsWith link holds the Item back while the other is busy, until a person says to go on with both", async () => {
+    const w = world(config({ level: 3, settings: { maxParallelSessions: { value: 2 } } }), [item("1"), item("2")]);
+    // A usage reading, so more than one session may start at once.
+    w.store.addUsageSample({
+      at: new Date(T0).toISOString(), status: "allowed",
+      windows: [{ kind: "five_hour", utilization: 0.1, resetsAt: new Date(T0 + 2 * 3600_000).toISOString() }, { kind: "seven_day", utilization: 0.1, resetsAt: new Date(T0 + 3 * DAY).toISOString() }],
+    });
+    const jobs = loadJobs(w.store);
+    jobs[refKey(ref("1"))] = { ...waitingJob("1", ["src/a.ts"]), step: "review", head: "3".repeat(40) };
+    const second = waitingJob("2", ["web/b.ts"]);
+    jobs[refKey(ref("2"))] = { ...second, triage: { ...second.triage!, links: [{ type: "conflictsWith", item: "#1" }] } };
+    w.store.tx(() => saveJobs(w.store, jobs));
+    await w.run();
+    assert.equal(w.requests.filter((request) => request.subject.id === "2").length, 0);
+    assert.deepEqual(loadSnapshot(w.store).sameFiles, [{ subject: ref("2"), waitsFor: [], mayConflict: [ref("1")] }]);
+    addAnswer(w.store, { subject: ref("2"), question: conflictQuestion("2", "1", "Item 1"), answer: GO_ON_WITH_BOTH, by: "Ada", at: new Date(T0).toISOString() });
+    w.clock.ms += 1000;
+    await w.run();
+    assert.deepEqual(w.requests.filter((request) => request.subject.id === "2").map((request) => request.role), ["implement"]);
+  });
+
+  test("a conflictsWith link the busy Item's triage made holds back the Item it names", async () => {
+    const w = world(config({ level: 3 }), [item("1"), item("2")]);
+    const jobs = loadJobs(w.store);
+    const first = waitingJob("1", ["src/a.ts"]);
+    jobs[refKey(ref("1"))] = { ...first, step: "review", head: "3".repeat(40), triage: { ...first.triage!, links: [{ type: "conflictsWith", item: "2" }] } };
+    jobs[refKey(ref("2"))] = waitingJob("2", ["web/b.ts"]);
+    w.store.tx(() => saveJobs(w.store, jobs));
+    await w.run();
+    assert.equal(w.requests.filter((request) => request.subject.id === "2").length, 0);
+    assert.deepEqual(loadSnapshot(w.store).sameFiles, [{ subject: ref("2"), waitsFor: [], mayConflict: [ref("1")] }]);
   });
 });

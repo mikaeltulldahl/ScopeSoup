@@ -185,9 +185,9 @@ function backlogTurn(situation: Situation, ctx: TurnContext): Draft {
   if (item.state === "waiting") return { actor: "nobody", tone: "blocked", reason: `waiting on the host (status "${item.hostState}")` };
   // A held item is not waiting for a free slot here: a person works on it, or another machine's agent does.
   if (item.holder && holdStands(item.holder, ctx.now.getTime())) return heldTurn(item, ctx);
-  // Triaged, and its paths overlap those of an Item in progress or in review: it waits for that one, not for a slot.
+  // Triaged, and its paths overlap those of a busy Item, or it may conflict with one: it waits for that one, not for a slot.
   const sameFiles = ctx.index.snapshot.sameFiles?.find((each) => refKey(each.subject) === refKey(item.ref));
-  if (sameFiles) return { actor: "nobody", tone: "waiting", reason: sameFilesWords(sameFiles.waitsFor) };
+  if (sameFiles) return { actor: "nobody", tone: "waiting", reason: sameFilesWords(sameFiles.waitsFor, sameFiles.mayConflict) };
   if (ctx.index.snapshot.paused) return { actor: "nobody", tone: "blocked", reason: "ready, but agents are paused (Resume on the lanes)" };
   if (ctx.index.snapshot.usage?.status === "rejected") return { actor: "nobody", tone: "blocked", reason: `ready, but the usage limit is reached${resetWords(ctx)}` };
   // Its next step is the triage and triage is paused: it waits for that switch, not for a slot. (A stated size skips the triage from level 2.)

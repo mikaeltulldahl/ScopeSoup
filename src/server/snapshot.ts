@@ -4,7 +4,7 @@ import type { Snapshot, RunnerState, SyncState } from "../core/snapshot.ts";
 import type { Batch, Change, CreatedPart, ProposedPart, Ref, Parked, ParkedQuestion, Run, Session, WorkItem } from "../model/types.ts";
 import { refKey } from "../model/types.ts";
 import { loadJobs, jobQuestions, resumesStep } from "../orchestrator/jobs.ts";
-import { busyFiles, waitsForSameFiles } from "../orchestrator/candidates.ts";
+import { busyItems, sameFilesWait } from "../orchestrator/candidates.ts";
 import { markedParts, partLinked } from "../orchestrator/restructure.ts";
 import { readQueueHealth } from "../orchestrator/queueHealth.ts";
 import { openProposedRewrites } from "../orchestrator/aboutOthers.ts";
@@ -70,13 +70,14 @@ export function loadSnapshot(store: Store): Snapshot {
     // The triage's typed links, for the Item page.
     links: Object.values(loadJobs(store)).flatMap((job) => (job.triage?.links?.length ? [{ subject: job.item, links: job.triage.links }] : [])),
     merged: Object.values(loadJobs(store)).filter((job) => job.merged !== undefined).map((job) => job.item),
-    // The triaged Items that wait for an Item in progress or in review that changes the same files.
+    // The triaged Items that wait for a busy Item that changes the same files or may conflict with it.
     ...(() => {
       const jobs = loadJobs(store);
-      const busy = busyFiles(jobs);
+      const busy = busyItems(jobs);
+      const answers = knownAnswers(store);
       const sameFiles = Object.values(jobs).flatMap((job) => {
-        const waitsFor = waitsForSameFiles(job, busy);
-        return waitsFor.length > 0 ? [{ subject: job.item, waitsFor }] : [];
+        const wait = sameFilesWait(job, busy, answers);
+        return wait ? [{ subject: job.item, waitsFor: wait.waitsFor, ...(wait.mayConflict.length > 0 ? { mayConflict: wait.mayConflict } : {}) }] : [];
       });
       return sameFiles.length > 0 ? { sameFiles } : {};
     })(),
