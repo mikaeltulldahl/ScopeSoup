@@ -166,6 +166,7 @@ export function toWork(scope: MetaScope, read: ReadItem, openChildren: number): 
     };
     if (fields.body) work.body = fields.body;
     if (fields.parent) work.parent = workRef(scope, fields.parent);
+    if (fields.duplicateOf && fields.state === "abandoned") work.duplicateOf = workRef(scope, fields.duplicateOf);
     if (fields.verification) work.verification = fields.verification;
     if (fields.priority) work.priority = fields.priority;
     if (fields.vote) work.vote = fields.vote;

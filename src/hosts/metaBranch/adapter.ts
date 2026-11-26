@@ -93,6 +93,9 @@ function patched(current: ItemFields, patch: WorkPatch, idOf: (ref: Ref) => stri
   else if (patch.priority !== undefined) next.priority = patch.priority;
   if (patch.vote === 0) delete next.vote;
   else if (patch.vote !== undefined) next.vote = patch.vote;
+  if (patch.duplicateOf !== undefined) next.duplicateOf = idOf(patch.duplicateOf);
+  // Only an abandoned item is a duplicate: a reopen drops it.
+  if (next.state !== "abandoned") delete next.duplicateOf;
   return next;
 }
 
