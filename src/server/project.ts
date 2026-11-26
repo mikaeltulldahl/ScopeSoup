@@ -18,6 +18,8 @@ export interface ProjectInfo {
   name: string;
   repository: string | null;
   github: string | null;
+  /** The remote, for a hover: "owner/name" on GitHub, else the remote's URL (without credentials), else the remote's name. */
+  remote: string;
   folders: Partial<Record<FolderName, string>>;
 }
 
@@ -79,7 +81,7 @@ export function projectInfo(config: ProjectConfig, configFile: string, remoteUrl
   const folders: Partial<Record<FolderName, string>> = { clone: config.repoPath, config: dirname(configFile) };
   const checkout = config.ownClone ?? config.realPaths[0];
   if (checkout !== undefined) folders.checkout = checkout;
-  if (config.host?.kind === "github") return { name: config.project, repository: config.host.repo, github: githubPage(config.host.repo), folders };
+  if (config.host?.kind === "github") return { name: config.project, repository: config.host.repo, github: githubPage(config.host.repo), remote: config.host.repo, folders };
   let url = config.remoteUrl ?? "";
   if (url === "") {
     try {
@@ -89,7 +91,13 @@ export function projectInfo(config: ProjectConfig, configFile: string, remoteUrl
     }
   }
   const found = repositoryFromUrl(url);
-  return { name: config.project, repository: found?.name ?? config.remote, github: found?.github ?? null, folders };
+  const remote = found?.github ? found.name : url.trim() !== "" ? withoutCredentials(url.trim()) : config.remote;
+  return { name: config.project, repository: found?.name ?? config.remote, github: found?.github ?? null, remote, folders };
+}
+
+/** A remote's URL without the user and password of `scheme://user:password@host/...`, which are not for the board. */
+export function withoutCredentials(url: string): string {
+  return url.replace(/^([a-z][a-z0-9+.-]*:\/\/)[^@/\s]*@/i, "$1");
 }
 
 /** Whether a path is an absolute folder that is there. */
@@ -108,7 +116,8 @@ export function projectView(info: ProjectInfo, folderThere: (path: string) => bo
     const path = info.folders[name];
     return path !== undefined && folderThere(path);
   });
-  return { name: info.name, repository: info.repository, github: info.github, folders };
+  const checkout = info.folders.checkout;
+  return { name: info.name, repository: info.repository, github: info.github, folders, ...(folders.includes("checkout") && checkout !== undefined ? { checkoutPath: checkout } : {}), remote: info.remote };
 }
 
 /** The file manager's program for a platform: Explorer, Finder (`open`), or `xdg-open`. */

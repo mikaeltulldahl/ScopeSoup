@@ -1,7 +1,8 @@
 // Which project the board belongs to: the browser tab's title and icon, and the project's colour.
 // Pure, so src/webProject.test.ts can test it without a browser.
 
-import type { FolderName } from "../../src/core/views.ts";
+import { PROJECT_NAME_MAX } from "../../src/core/views.ts";
+import type { FolderName, ProjectView } from "../../src/core/views.ts";
 import { DEFAULT_THEME, THEMES } from "./theme.ts";
 import type { ThemeId } from "./theme.ts";
 
@@ -29,3 +30,18 @@ export const FOLDER_WORDS: Readonly<Record<FolderName, { label: string; title: s
   clone: { label: "Scope Soup's copy of the project", title: "Opens Scope Soup's own copy of the project, where its agents work, in the file manager; leave it to Scope Soup" },
   config: { label: "Scope Soup's settings folder", title: "Opens the folder with this machine's Scope Soup settings (scopesoup.config.json), in the file manager" },
 };
+
+/** The hover of the header's folder button: where it goes, and the remote the project lives on. */
+export function checkoutHover(project: Pick<ProjectView, "checkoutPath" | "remote">): string {
+  const open = project.checkoutPath ? `Open ${project.checkoutPath}` : FOLDER_WORDS.checkout.title;
+  return project.remote ? `${open}
+Remote: ${project.remote}` : open;
+}
+
+/** A typed project name for saving: trimmed, or the reason it cannot be one. `same` when it is the current name (nothing to save). */
+export function checkRename(typed: string, current: string): { name: string } | { same: true } | { problem: string } {
+  const name = typed.trim();
+  if (name === "") return { problem: "The project needs a name." };
+  if (name.length > PROJECT_NAME_MAX) return { problem: `The name can be at most ${PROJECT_NAME_MAX} characters.` };
+  return name === current ? { same: true } : { name };
+}

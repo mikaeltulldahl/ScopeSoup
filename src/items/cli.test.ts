@@ -218,7 +218,7 @@ test("through the server: the same commands, and it refuses an item an agent ses
   cleanups.push(() => store.close());
   let synced = 0;
   const branches = remoteBranches(realGit, () => ({ repo: dir, remote: "origin", mainBranch: "main" }));
-  const server: ScopeSoupServer = createServer({ store, port: 0, items: { host: "metaBranch", write: host.write!, work: host.work }, branches, machine: "laptop-a", syncNow: async () => void synced++, project: () => ({ name: "tides", repository: "origin", github: null, folders: {} }) });
+  const server: ScopeSoupServer = createServer({ store, port: 0, items: { host: "metaBranch", write: host.write!, work: host.work }, branches, machine: "laptop-a", syncNow: async () => void synced++, project: () => ({ name: "tides", repository: "origin", github: null, remote: "origin", folders: {} }) });
   const where = await server.start();
   cleanups.push(() => server.stop());
 

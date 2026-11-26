@@ -132,7 +132,7 @@ test("GET /api/health answers ok, the store's seq and the injected time", async 
 
 test("GET /api/health names the project the server serves, without paths", async () => {
   const own = openStore(":memory:");
-  const server = createServer({ store: own, port: 0, project: () => ({ name: "tides", repository: "harbour/tides", github: null, folders: { config: "/home/someone/soup" } }) });
+  const server = createServer({ store: own, port: 0, project: () => ({ name: "tides", repository: "harbour/tides", github: null, remote: "origin", folders: { config: "/home/someone/soup" } }) });
   const where = await server.start();
   try {
     const body = (await (await fetch(`${where.url}/api/health`)).json()) as { project?: unknown };

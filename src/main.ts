@@ -345,7 +345,7 @@ async function main(): Promise<void> {
     if (loaded) return projectInfo(loaded, configFile, remoteUrlOf);
     // Board only: the host's repository names the project; there are no folders to open.
     const repo = hostSet.github?.repo;
-    if (repo) return { name: repo.split("/").pop() ?? repo, repository: repo, github: githubPage(repo), folders: {} };
+    if (repo) return { name: repo.split("/").pop() ?? repo, repository: repo, github: githubPage(repo), remote: repo, folders: {} };
     return null;
   };
   // The update check, Get latest and Go back. The launcher owns the restart: Scope Soup exits with RESTART_EXIT_CODE.

@@ -2467,7 +2467,7 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
         const snapshot = loadSnapshot(store);
         const without = withoutTriageNow(snapshot);
         const project = projectNow();
-        return sendJson(response, 200, { ...boardNow(), ...(project ? { project: projectView(project) } : {}), canWrite: items?.write.createWork !== undefined, ...((drafts) => (drafts.length > 0 ? { drafts } : {}))(draftViews(store, snapshot.works, options.restructure ?? [])), people: knownPeople(snapshot.works, loadAnswers(store), options.jiraItems?.host), ...(Object.keys(peopleNames(snapshot.works, options.jiraItems?.host)).length > 0 ? { peopleNames: peopleNames(snapshot.works, options.jiraItems?.host) } : {}), ...(without > 0 ? { withoutTriage: without } : {}) });
+        return sendJson(response, 200, { ...boardNow(), ...(project ? { project: { ...projectView(project), ...(options.configFile !== undefined ? { renamable: true } : {}) } } : {}), canWrite: items?.write.createWork !== undefined, ...((drafts) => (drafts.length > 0 ? { drafts } : {}))(draftViews(store, snapshot.works, options.restructure ?? [])), people: knownPeople(snapshot.works, loadAnswers(store), options.jiraItems?.host), ...(Object.keys(peopleNames(snapshot.works, options.jiraItems?.host)).length > 0 ? { peopleNames: peopleNames(snapshot.works, options.jiraItems?.host) } : {}), ...(without > 0 ? { withoutTriage: without } : {}) });
       }
       if (path === "/api/items") return sendJson(response, 200, (({ snapshot, notTriaged }) => buildItemList(snapshot, parseListQuery(url.searchParams), now(), picked(), notTriaged))(triageView()));
       // The item commands' list: who holds what, as one person sees it (`?as=name`).
