@@ -215,7 +215,7 @@ test("a check that needs a resource held by a session waits without pausing the 
   await w.driver.drain(w.sink);
   assert.deepEqual(checks(w), []);
   assert.equal(w.driver.pausedWhy(), null);
-  assert.deepEqual(w.notes.filter((note) => note.startsWith("orchestrator.queue_resource_wait")), ["orchestrator.queue_resource_wait: The check of batch 1 waits: all 1 unit(s) of rig are held: implement for 9."]);
+  assert.deepEqual(w.notes.filter((note) => note.startsWith("orchestrator.queue_resource_wait")), ["orchestrator.queue_resource_wait: The check of batch 1 waits: all 1 unit of rig is held: implement for 9."]);
   await w.driver.drain(w.sink);
   assert.equal(w.notes.filter((note) => note.startsWith("orchestrator.queue_resource_wait")).length, 1);
   await w.resources.give("test:work:9");

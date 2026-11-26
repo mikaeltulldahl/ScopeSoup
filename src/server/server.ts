@@ -81,6 +81,7 @@ import { buildUsageView, parseSpan } from "./usage.ts";
 import type { AllowancePlan } from "../orchestrator/allowance.ts";
 import { isFolder, isFolderName, openFolder, projectView } from "./project.ts";
 import type { FolderOpener, ProjectInfo } from "./project.ts";
+import { plural } from "../model/plural.ts";
 
 export interface ServerOptions {
   store: Store;
@@ -2142,8 +2143,8 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
         ...looked.lines,
         `Host: ${target}${host.write ? "" : ", read-only"}, for every machine (one commit to the shared settings${person ? ` by ${person}` : ""}).`,
         ...(connection.email !== undefined ? [`Saves jira.email (${connection.email}) on this machine only.`] : []),
-        ...(moving.length > 0 ? [`Moves ${moving.length} Item(s) to ${target}: ${moving.map((work) => work.ref.id).join(", ")}. Each becomes an issue with its text and history; the old Item is closed, naming it.`] : []),
-        ...(fromMeta ? [stay > 0 ? `The other ${stay} open Item(s) stay on the meta branch, off the board.` : moving.length > 0 ? "No open Item stays behind." : "There are no open Items to move."] : []),
+        ...(moving.length > 0 ? [`Moves ${plural(moving.length, "Item")} to ${target}: ${moving.map((work) => work.ref.id).join(", ")}. Each becomes an issue with its text and history; the old Item is closed, naming it.`] : []),
+        ...(fromMeta ? [stay > 0 ? `The other ${plural(stay, "open Item")} ${stay === 1 ? "stays" : "stay"} on the meta branch, off the board.` : moving.length > 0 ? "No open Item stays behind." : "There are no open Items to move."] : []),
         `Other machines then need ${kind === "jira" ? `SCOPESOUP_JIRA_TOKEN${host.deployment === "datacenter" ? "" : " and a Jira email"}` : "SCOPESOUP_GITHUB_TOKEN"} ("Set up this machine for ${HOST_NAME[kind]}") before their agents start.`,
         "Then restart Scope Soup.",
       ];
@@ -2244,7 +2245,7 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
       try {
         source = sourceOf(from, token, deps, options.machine);
         open = await source.list();
-        lines.push(`${variable} is set and reads ${open.length} open issue(s) of ${where}.`);
+        lines.push(`${variable} is set and reads ${plural(open.length, "open issue")} of ${where}.`);
       } catch (error) {
         unread = true;
         source = undefined;
@@ -2264,11 +2265,11 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
       `This machine: ${part}`,
       ...(moving.length > 0
         ? [
-          `Moves ${moving.length} issue(s) to the meta branch: ${moving.map((issue) => issue.id).join(", ")}. Their text comes along; their comments go to the Items' logs.`,
+          `Moves ${plural(moving.length, "issue")} to the meta branch: ${moving.map((issue) => issue.id).join(", ")}. Their text comes along; their comments go to the Items' logs.`,
           `Then each gets a comment on ${hostName} naming its new Item and is ${marked}.`,
         ]
         : []),
-      ...(source && !unread ? [stay > 0 ? `The other ${stay} open issue(s) stay on ${where}, off the board.` : moving.length > 0 ? "No open issue stays behind." : "There are no open issues to move."] : []),
+      ...(source && !unread ? [stay > 0 ? `The other ${plural(stay, "open issue")} ${stay === 1 ? "stays" : "stay"} on ${where}, off the board.` : moving.length > 0 ? "No open issue stays behind." : "There are no open issues to move."] : []),
       `Other machines then need their own name, email and id prefix ("Set up this machine for the meta branch") before their agents start.`,
       `Agents here stay paused: restart Scope Soup, then press Start.`,
     );

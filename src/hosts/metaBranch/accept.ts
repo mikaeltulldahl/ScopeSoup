@@ -16,7 +16,7 @@ export function describeAccept(report: AcceptReport, ref: string): string[] {
   const lines = [
     report.backup ? `Saved this machine's ${ref} as ${report.backup} (to go back: git update-ref ${ref} ${report.backup}).` : `There was no ${ref} here before.`,
     `Took the fetched history ${report.accepted.slice(0, 12)} as the remote's.`,
-    `Put ${report.replayed} of this machine's unshared commit(s) on top of it.`,
+    `Put ${report.replayed} of this machine's unshared ${report.replayed === 1 ? "commit" : "commits"} on top of it.`,
   ];
   if (report.notReplayed.length > 0) lines.push(`Not put on top, because this machine did not make them (they are in the backup): ${report.notReplayed.map((id) => id.slice(0, 12)).join(", ")}.`);
   for (const move of report.renamed) lines.push(`This machine's new item ${move.from} is now ${move.to}: the accepted history has another item ${move.from}.`);

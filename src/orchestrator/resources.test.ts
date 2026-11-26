@@ -42,7 +42,7 @@ describe("resources", { concurrency: 4 }, () => {
     // Work that does not need it is not held back.
     assert.deepEqual(await resources.take("fake:work:3", "review for 3", "review"), { ok: true, env: {} });
     const waits = await resources.take(CHECK_HOLDER, "the check of batch 1", "check");
-    assert.deepEqual(waits, { ok: false, why: "all 1 unit(s) of rig are held: implement for 1", resource: "rig", first: true });
+    assert.deepEqual(waits, { ok: false, why: "all 1 unit of rig is held: implement for 1", resource: "rig", first: true });
     assert.equal((await resources.take(CHECK_HOLDER, "the check of batch 1", "check") as { first: boolean }).first, false);
     // A session's wait is said again by every dispatch; the check's stays.
     await resources.take("fake:work:2", "implement for 2", "implement");
@@ -136,7 +136,7 @@ describe("resources", { concurrency: 4 }, () => {
     assert.equal(requests[1]?.env, undefined);
     assert.deepEqual(resourcesView(cfg.resources ?? [], readResourceState(store)).resources[0]?.waiting.map((each) => each.who), ["triage for 2"]);
     const waits = store.eventsAfter(0, 1000).filter((event) => event.kind === "orchestrator.resource_wait");
-    assert.match((waits[0]?.data as { reason: string }).reason, /triage for 2 "Item 2" waits: all 1 unit\(s\) of rig are held: triage for 1/);
+    assert.match((waits[0]?.data as { reason: string }).reason, /triage for 2 "Item 2" waits: all 1 unit of rig is held: triage for 1/);
 
     // Item 1's triage ends: the runner gives its unit back (as the real runner does, however it ended), and item 2's starts.
     const first = sessions.get("1")!;

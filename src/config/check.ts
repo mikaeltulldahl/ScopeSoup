@@ -12,6 +12,7 @@ import { metaSettings } from "./metaSettings.ts";
 import { CONFIG_VERSION } from "./migrate.ts";
 import { recommendations } from "./recommend.ts";
 import { fileSettings, parseShared, repositoryOf, SHARED_WHERE, type SharedSettings, validateFiles } from "./shared.ts";
+import { plural } from "../model/plural.ts";
 
 export interface CheckResult {
   ok: boolean;
@@ -39,7 +40,7 @@ export function checkConfigFile(file: string, readFile: (path: string) => string
   if (!read.ok) return { ok: false, lines: [read.error] };
   const result = validateFiles(raw, read.raw, dirname(path));
   if (!result.ok) {
-    return { ok: false, lines: [`${path} with ${SHARED_WHERE} is not valid. ${result.errors.length} problem(s):`, ...result.errors.map((error) => `- ${error}`)] };
+    return { ok: false, lines: [`${path} with ${SHARED_WHERE} is not valid. ${plural(result.errors.length, "problem")}:`, ...result.errors.map((error) => `- ${error}`)] };
   }
   const { config } = result;
   const lines = [

@@ -156,7 +156,7 @@ describe("POST /api/connect", { concurrency: 4 }, () => {
       assert.deepEqual(plan.body.problems, []);
       const text = plan.body.lines.join("\n");
       assert.match(text, new RegExp(`signs in to ${FAKE_SITE} as ${CLOUD_ROBIN.displayName}`));
-      assert.match(text, new RegExp(`${cloudIssues().filter((issue) => issue.fields.status?.statusCategory?.key !== "done").length} open issue\\(s\\) of DEMO would be the Items`));
+      assert.match(text, new RegExp(`${cloudIssues().filter((issue) => issue.fields.status?.statusCategory?.key !== "done").length} open issues of DEMO would be the Items`));
 
       const done = await s.post({ ...jiraBody, confirm: true });
       assert.equal(done.status, 200, JSON.stringify(done.body));
@@ -232,8 +232,8 @@ describe("POST /api/connect", { concurrency: 4 }, () => {
       const plan = await s.post({ ...jiraBody, move: ["1", "2"] });
       assert.deepEqual(plan.body.problems, []);
       assert.deepEqual(plan.body.items?.map((item) => item.id), ["1", "2", "3"]);
-      assert.match(plan.body.lines.join("\n"), /Moves 2 Item\(s\) to Jira \(project DEMO\): 1, 2\./);
-      assert.match(plan.body.lines.join("\n"), /The other 1 open Item\(s\) stay on the meta branch/);
+      assert.match(plan.body.lines.join("\n"), /Moves 2 Items to Jira \(project DEMO\): 1, 2\./);
+      assert.match(plan.body.lines.join("\n"), /The other 1 open Item stays on the meta branch/);
 
       // The first run stops at closing Item 2: nothing is connected yet.
       const first = await s.post({ ...jiraBody, move: ["1", "2"], confirm: true });
@@ -362,9 +362,9 @@ describe("POST /api/connect back to the meta branch (#134)", { concurrency: 4 },
       assert.deepEqual(plan.body.problems, []);
       assert.deepEqual(plan.body.items?.map((item) => item.id), ["#1", "#2", "#3"]);
       const text = plan.body.lines.join("\n");
-      assert.match(text, /Moves 2 issue\(s\) to the meta branch: #1, #2\./);
+      assert.match(text, /Moves 2 issues to the meta branch: #1, #2\./);
       assert.match(text, /a comment on GitHub naming its new Item and is closed there as not planned/);
-      assert.match(text, /The other 1 open issue\(s\) stay on GitHub Issues \(harbour\/tides\)/);
+      assert.match(text, /The other 1 open issue stays on GitHub Issues \(harbour\/tides\)/);
       assert.match(text, /Set up this machine for the meta branch/);
       assert.equal(meta.items.size, 0, "a plan writes nothing");
       assert.deepEqual(s.settings.current(), GITHUB);

@@ -254,6 +254,25 @@ test("worktrees are reused across Items; the setup runs once per worktree, again
   assert.deepEqual(runs, [slot, slot, workspacePath(w.config, slotName(2))]);
 });
 
+test("a session has a record while its folder is prepared, and the failed one keeps that record", async () => {
+  let release: () => void = () => undefined;
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  const runSetup: RunCheck = async () => {
+    await gate;
+    return { outcome: "failed", code: 1, tail: "synthetic", ms: 1 };
+  };
+  const w = world("ok", { raw: { setupCommand: ["node", "setup.mjs"] }, runSetup });
+  const pending = w.runner.start(request());
+  await until(() => w.store.list<Session>("session").length > 0, "the record of the session under preparation");
+  const [during] = w.store.list<Session>("session");
+  assert.deepEqual([during!.status, during!.role, during!.subject], ["starting", "implement", ITEM]);
+  release();
+  const session = await pending;
+  assert.equal(session.ref.id, during!.ref.id);
+  assert.equal(session.status, "failed");
+  assert.equal(w.store.list<Session>("session").length, 1);
+});
+
 test("a failed setup starts no agent: the session is marked as the setup's failure, with the setup's reason", async () => {
   const runSetup: RunCheck = async () => ({ outcome: "failed", code: 1, tail: "npm ERR! synthetic failure", ms: 300 });
   const w = world("ok", { raw: { setupCommand: ["node", "setup.mjs"] }, runSetup });

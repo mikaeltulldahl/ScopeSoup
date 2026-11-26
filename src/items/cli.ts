@@ -33,6 +33,7 @@ import { MOVED_LABEL, moveIssues, moveText } from "./githubMove.ts";
 import type { Backend, Details, ListFilter, NewItem, Row } from "./service.ts";
 import { remoteBranches } from "./remoteBranch.ts";
 import { createItem, detailsText, handBackItem, itemDetails, listItems, Refused, releaseItem, rowText, claimItem } from "./service.ts";
+import { plural } from "../model/plural.ts";
 
 type Env = Record<string, string | undefined>;
 
@@ -465,7 +466,7 @@ async function runImport(
     }
     if (!values.yes) {
       const what = onGitHub === "close" ? `label them ${MOVED_LABEL}, comment the Item on each and close them as not planned` : `label them ${MOVED_LABEL} and comment the Item on each`;
-      const answer = await (deps.ask as (question: string) => Promise<string>)(`Change ${open.length} open issue(s) on GitHub ${repo}: ${what}? Pull requests are not touched. Type yes to go on: `);
+      const answer = await (deps.ask as (question: string) => Promise<string>)(`Change ${plural(open.length, "open issue")} on GitHub ${repo}: ${what}? Pull requests are not touched. Type yes to go on: `);
       if (!/^\s*y(es)?\s*$/i.test(answer)) {
         deps.out("GitHub was left as it is.");
         return 0;

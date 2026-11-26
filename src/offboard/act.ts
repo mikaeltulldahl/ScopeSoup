@@ -14,6 +14,7 @@ import type { Git } from "../orchestrator/process.ts";
 import type { OffboardPlan, PlanEntry } from "./plan.ts";
 import { strippedFile } from "./projectFiles.ts";
 import type { OffboardGitHub, OffboardSetup } from "./scan.ts";
+import { plural } from "../model/plural.ts";
 
 export interface ActOptions {
   git: Git;
@@ -74,7 +75,7 @@ export async function exportItems(git: Git, setup: Pick<OffboardSetup, "repoPath
     "# Exported from Scope Soup",
     "",
     `The Items and shared settings of \`${META_REF}\` at commit ${sha}, exported when Scope Soup was offboarded.`,
-    `\`items/<id>.md\` is each Item as Scope Soup kept it (a header between \`---\` lines, then the description), followed by its log. ${ids.length} Item(s).`,
+    `\`items/<id>.md\` is each Item as Scope Soup kept it (a header between \`---\` lines, then the description), followed by its log. ${plural(ids.length, "Item")}.`,
     "",
   ].join("\n"));
   return written;

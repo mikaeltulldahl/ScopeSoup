@@ -47,7 +47,7 @@ describe("shared resources", { concurrency: 2 }, () => {
     assert.equal((await b.resources.take("fake:work:7", "implement for 7", "implement")).ok, true);
     const waits = await a.resources.take("fake:work:1", "implement for 1", "implement");
     assert.equal(waits.ok, false);
-    assert.match((waits as { why: string }).why, /all 1 unit\(s\) of seat are held: laptop-b \(another machine\)/);
+    assert.match((waits as { why: string }).why, /all 1 unit of seat is held: laptop-b \(another machine\)/);
     // The board shows the other machine as the holder, and what waits here.
     const view = resourcesView(a.config.resources ?? [], readResourceState(a.store)).resources[0]!;
     assert.deepEqual(view.held.map((each) => `${each.unit} ${each.who} ${each.elsewhere === true}`), ["1 laptop-b true"]);
