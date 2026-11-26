@@ -259,12 +259,19 @@ function Commits() {
   );
 }
 
-export function History() {
+export function ActivityPage() {
   return (
     <section class="panel history-page">
-      <h3>History</h3>
+      <h3>Activity</h3>
       <Activity />
-      <h3 class="hist-commits-head">Commits</h3>
+    </section>
+  );
+}
+
+export function CommitsPage() {
+  return (
+    <section class="panel history-page">
+      <h3>Commits</h3>
       <Commits />
     </section>
   );
