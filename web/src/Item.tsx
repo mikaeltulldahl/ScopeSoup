@@ -938,7 +938,8 @@ function RewritePanel({ page, rewrite, reload, primary }: { page: ItemPage; rewr
   const [text, setText] = useState(rewrite.text);
   const [labelText, setLabelText] = useState(labelChangeText(rewrite.labels));
   const { busy, error, send } = useSend();
-  const keeps = answers.every((answer, index) => answer.trim() === recommended[index]!.trim());
+  // A stopping answer (hold for a conflict, close as a duplicate) keeps the rewrite too: it does not change the description.
+  const keeps = answers.every((answer, index) => answer.trim() === recommended[index]!.trim() || (rewrite.questions[index]!.stopsOn !== undefined && answer.trim() === rewrite.questions[index]!.stopsOn!.trim()));
   const filled = answers.every((answer) => answer.trim() !== "");
   // Someone edited the description since the rewrite was written; Accept is refused; Edit or Reject decides with it in view.
   const changed = (page.item.body ?? "").trim() !== rewrite.original.trim();

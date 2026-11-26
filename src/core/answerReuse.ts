@@ -1,7 +1,7 @@
 // Reusing an answer: a question that comes back after re-triage, reworded, about the same
 // decision on an Item whose text has not changed. Pure.
 
-import type { DecisionOption, RecordedAnswer, WorkItem } from "../model/types.ts";
+import type { DecisionOption, RecordedAnswer, Ref, WorkItem } from "../model/types.ts";
 import { optionText, refKey } from "../model/types.ts";
 
 /** A hash of the text of an Item that its decisions rest on: the title, the description and the verification. */
@@ -69,4 +69,33 @@ export function reusableAnswer(
     if (sameDecision({ question: asked.question, options }, { question: answer.question, ...(answer.options ? { options: answer.options } : {}) })) return answer;
   }
   return undefined;
+}
+
+/** The answer to a conflict question that lets both Items go on. */
+export const GO_ON_WITH_BOTH = "Go on with both";
+
+/** The question a triage's `conflictsWith` link becomes; `conflictPair` reads the two Item ids back from it. */
+export function conflictQuestion(self: string, other: string, title: string): string {
+  return `${self} conflicts with ${other} "${title}". Go on with both, or hold ${self} until ${other} is done?`;
+}
+
+/** The two Item ids a conflict question is about, or null for any other question. */
+export function conflictPair(question: string): [string, string] | null {
+  const found = /^(\S+) conflicts with (\S+) "/.exec(question.trim());
+  return found ? [found[1]!, found[2]!] : null;
+}
+
+/**
+ * True when the newest answer to a conflict question about `a` and `b`, asked on either of them, was to go on with both. The
+ * memory is per pair, whatever the Items' text: a later answer (a hold) replaces it.
+ */
+export function wentOnWithBoth(answers: readonly RecordedAnswer[], a: Ref, b: Ref): boolean {
+  for (let index = answers.length - 1; index >= 0; index -= 1) {
+    const answer = answers[index]!;
+    if (answer.subject.host !== a.host) continue;
+    const pair = conflictPair(answer.question ?? "");
+    if (!pair || !((pair[0] === a.id && pair[1] === b.id) || (pair[0] === b.id && pair[1] === a.id))) continue;
+    return answer.answer.trim().toLowerCase().startsWith(GO_ON_WITH_BOTH.toLowerCase());
+  }
+  return false;
 }

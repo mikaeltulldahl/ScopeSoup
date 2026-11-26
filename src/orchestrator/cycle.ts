@@ -5,10 +5,10 @@
 // reviewed change through the merge queue; no change waits for a person's approval.
 // Every other end parks the Item with a reason: needs a decision, not ready, escalated.
 
-import type { LabelChange, Ref, RepoLabel, Session, WorkItem } from "../model/types.ts";
+import type { LabelChange, RecordedAnswer, Ref, RepoLabel, Session, WorkItem } from "../model/types.ts";
 import { changeText, isEmptyChange, keepProposal } from "../model/labels.ts";
 import { optionText, refKey, restructuringWords } from "../model/types.ts";
-import { reusableAnswer } from "../core/answerReuse.ts";
+import { conflictQuestion, GO_ON_WITH_BOTH, reusableAnswer, wentOnWithBoth } from "../core/answerReuse.ts";
 import { blockersOnHost, loadOwnBlockers, setOwnBlockers } from "../store/blockers.ts";
 import { answersText, knownAnswers } from "../store/answers.ts";
 import { persistenceLimits } from "../config/persistence.ts";
@@ -1110,10 +1110,17 @@ function parkVerdict(ctx: Context, job: Job, reason: string): Promise<void> {
 /** The Item a triage's link names (`#12`, `12`, `A-3` or a ref key), on the subject's own host; null when the store has none. */
 const linkedItem = (ctx: Context, subject: Ref, name: string): WorkItem | null => namedItem(ctx.deps.store, subject, name);
 
+/** Closed, or Done on the board: its change merged (also while the host still shows it open). Nothing to ask about it. */
+const finishedItem = (ctx: Context, work: WorkItem): boolean =>
+  !isOpenItem(work) || (work.merged !== undefined && work.merged.reopened === undefined) || ctx.jobs[refKey(work.ref)]?.merged !== undefined;
+
 /**
- * A duplicate or a conflict the triage found becomes a question for a person; Scope Soup closes nothing by itself. Where the host can close a duplicate (GitHub), the answer closes it there.
+ * A duplicate or a conflict the triage found becomes a question for a person; Scope Soup closes nothing by itself. Where the host can
+ * close a duplicate (GitHub), the answer closes it there. A conflict recommends going on with both (whichever lands second merges);
+ * holding makes this Item blocked by the other. No question about an Item that is closed or Done, nor about a pair a person already
+ * said to go on with (`wentOnWithBoth`, from the answers on either Item).
  */
-function linkQuestions(ctx: Context, job: Job, links: readonly ItemLinkAnswer[]): Decision[] {
+function linkQuestions(ctx: Context, job: Job, links: readonly ItemLinkAnswer[], answers: readonly RecordedAnswer[]): Decision[] {
   const self = job.item.id;
   const closes = ctx.deps.actions.closeDuplicate !== undefined;
   const questions: Decision[] = [];
@@ -1121,18 +1128,32 @@ function linkQuestions(ctx: Context, job: Job, links: readonly ItemLinkAnswer[])
   for (const link of links) {
     if (link.type !== "duplicateOf" && link.type !== "conflictsWith") continue;
     const other = linkedItem(ctx, job.item, link.item);
-    if (!other || !isOpenItem(other) || seen.has(`${link.type} ${other.ref.id}`)) continue;
+    if (!other || finishedItem(ctx, other) || seen.has(`${link.type} ${other.ref.id}`)) continue;
     seen.add(`${link.type} ${other.ref.id}`);
-    const stop = link.type === "duplicateOf" ? `Close ${self} as a duplicate of ${other.ref.id}` : `Hold ${self} until ${other.ref.id} is settled`;
+    if (link.type === "duplicateOf") {
+      const stop = `Close ${self} as a duplicate of ${other.ref.id}`;
+      questions.push({
+        question: `Close ${self} as a duplicate of ${other.ref.id} "${other.title}"?`,
+        options: [{ label: stop, description: closes ? `Scope Soup closes ${self} on the host as a duplicate of ${other.ref.id}.` : `${self} parked as not ready; close it on the host yourself. Scope Soup closes nothing.` }, { label: "Keep both", description: `Work on ${self} as it is.` }],
+        recommendation: stop,
+        ...(link.reason ? { context: link.reason } : {}),
+        stopsOn: stop,
+        duplicateOf: other.ref,
+      });
+      continue;
+    }
+    if (wentOnWithBoth(answers, job.item, other.ref)) continue;
+    const hold = `Hold ${self} until ${other.ref.id} is done`;
     questions.push({
-      question: link.type === "duplicateOf" ? `Close ${self} as a duplicate of ${other.ref.id} "${other.title}"?` : `${self} conflicts with ${other.ref.id} "${other.title}". Hold ${self} until that is settled?`,
-      options: link.type === "duplicateOf"
-        ? [{ label: stop, description: closes ? `Scope Soup closes ${self} on the host as a duplicate of ${other.ref.id}.` : `${self} parked as not ready; close it on the host yourself. Scope Soup closes nothing.` }, { label: "Keep both", description: `Work on ${self} as it is.` }]
-        : [{ label: stop, description: `${self} parked as not ready until you answer again.` }, { label: "Go on with both", description: `Work on ${self} as it is.` }],
-      recommendation: stop,
+      question: conflictQuestion(self, other.ref.id, other.title),
+      options: [
+        { label: GO_ON_WITH_BOTH, description: `Work on ${self} as it is. Touching the same files is normal: whichever lands second merges.` },
+        { label: hold, description: `${self} waits in Blocked until ${other.ref.id} is done; then its triage runs again.` },
+      ],
+      recommendation: GO_ON_WITH_BOTH,
       ...(link.reason ? { context: link.reason } : {}),
-      stopsOn: stop,
-      ...(link.type === "duplicateOf" ? { duplicateOf: other.ref } : {}),
+      stopsOn: hold,
+      holdFor: other.ref,
     });
   }
   return questions;
@@ -1169,6 +1190,36 @@ async function writeBlocksLinks(ctx: Context, subject: Ref, links: readonly Item
   }
 }
 
+/** The Item is blocked (its blockers written): the claim and the worktree go, the job closes, and it waits in Blocked. */
+async function waitBlocked(ctx: Context, job: Job, blockers: readonly Ref[], said: string): Promise<void> {
+  const { actions, runner } = ctx.deps;
+  const key = refKey(job.item);
+  if (actions.claims) await ctx.act("release the claim", key, () => actions.release(job.item, `blocked by ${blockers.map((each) => each.id).join(", ")}`));
+  await ctx.act("remove the worktree", key, () => runner.releaseWorkspace(job.workspace));
+  delete ctx.jobs[key];
+  ctx.commit("orchestrator.blocked", said, key, { blockedBy: blockers.map(refKey) });
+}
+
+/**
+ * A person answered to hold this Item until a conflicting one is done: it becomes blocked by that Item, as a triage's `blockedBy` link
+ * makes it (Scope Soup's own blocker added, and the item's `blockedBy` field where Scope Soup writes items; on GitHub an issue
+ * dependency, and a write that fails parks it as escalated). Once that one is done its triage runs again.
+ */
+async function holdUntilDone(ctx: Context, job: Job, other: Ref): Promise<void> {
+  const { store, actions } = ctx.deps;
+  const key = refKey(job.item);
+  const said = `A person answered to hold ${job.item.id} until ${other.id} is done`;
+  if (blockersOnHost(job.item)) {
+    const problem = await writeBlockers(ctx, job.item, [other], `write ${job.item.id} blocked by ${other.id}`);
+    if (problem) return park(ctx, job, "escalated", `${said}, but the dependency could not be written on ${job.item.host}: ${problem} Nothing is kept instead. Add it there, or answer here to look again.`, "escalation");
+  } else {
+    const own = loadOwnBlockers(store)[key] ?? [];
+    if (!own.some((each) => refKey(each) === refKey(other))) setOwnBlockers(store, job.item, [...own, other], ACTOR, ctx.at, `${said}.`);
+    if (actions.addBlockers) await ctx.act("write the blockers to the item", key, () => actions.addBlockers!(job.item, [other]));
+  }
+  return waitBlocked(ctx, job, [other], `${said}: it waits in Blocked, and its triage runs again once ${other.id} is done.`);
+}
+
 /**
  * The triage's answer with a rewrite. A `blockedBy` link to an open Item is acted on at once: it is recorded as Scope Soup's
  * own blocker (and written to the item's `blockedBy` field where Scope Soup writes items; on GitHub, only written as an issue
@@ -1178,7 +1229,7 @@ async function writeBlocksLinks(ctx: Context, subject: Ref, links: readonly Item
  * other verdicts follow at once.
  */
 async function triage(ctx: Context, job: Job, answer: TriageAnswer, item: WorkItem | null): Promise<void> {
-  const { store, actions, runner } = ctx.deps;
+  const { store, actions } = ctx.deps;
   const key = refKey(job.item);
   const links = answer.links ?? [];
   const blockers: WorkItem[] = [];
@@ -1203,14 +1254,10 @@ async function triage(ctx: Context, job: Job, answer: TriageAnswer, item: WorkIt
         return park(ctx, job, "escalated", `The triage found ${job.item.id} blocked by ${names}, but the dependency could not be written on ${job.item.host}: ${problem} Nothing is kept instead. Add it there, or answer here to look again.`, "escalation");
       }
     } else if (actions.addBlockers) await ctx.act("write the blockers to the item", key, () => actions.addBlockers!(job.item, refs));
-    if (actions.claims) await ctx.act("release the claim", key, () => actions.release(job.item, `blocked by ${names}`));
-    await ctx.act("remove the worktree", key, () => runner.releaseWorkspace(job.workspace));
-    delete ctx.jobs[key];
-    ctx.commit("orchestrator.blocked", `Triage: ${job.item.id} is blocked by ${names}. It waits in Blocked, and its triage runs again once ${blockers.length > 1 ? "they are" : "it is"} done.`, key, { blockedBy: refs.map(refKey) });
-    return;
+    return waitBlocked(ctx, job, refs, `Triage: ${job.item.id} is blocked by ${names}. It waits in Blocked, and its triage runs again once ${blockers.length > 1 ? "they are" : "it is"} done.`);
   }
   const answers = knownAnswers(store);
-  const questions = [...(answer.decisions ?? []), ...linkQuestions(ctx, job, links)]
+  const questions = [...(answer.decisions ?? []), ...linkQuestions(ctx, job, links, answers)]
     .filter((question) => question.question.trim() && !(item && reusableAnswer(answers, item, question)));
   const original = item?.body?.trim() ?? "";
   const rewrite = (answer.rewrite ?? "").trim();
@@ -1246,8 +1293,8 @@ async function proposedLabels(ctx: Context, job: Job, answer: TriageAnswer, item
 }
 
 /**
- * A person settled the triage's rewrite (`settleRewrite`): an answer that stops the Item (close as a duplicate, hold for a
- * conflict) parked it as not ready; otherwise triage's other verdicts follow.
+ * A person settled the triage's rewrite (`settleRewrite`): a hold for a conflict makes the Item blocked by the other one; a close as a
+ * duplicate closes it where the host can, else parks it as not ready; otherwise triage's other verdicts follow.
  */
 export async function afterRewrite(ctx: Context, job: Job): Promise<void> {
   const rewrite = job.rewrite;
@@ -1255,6 +1302,7 @@ export async function afterRewrite(ctx: Context, job: Job): Promise<void> {
   delete job.rewriteRounds;
   // Questions and a rewrite from agents of other Items: once settled, this Item is triaged again with the answers.
   if (rewrite?.askedBy) return next(ctx, job, "triage", `A person settled what ${rewrite.askedBy.join(" and ")} asked about ${job.item.id}${rewrite.settled ? ` (the rewrite ${rewrite.settled})` : ""}. Next: triage again, with the answers.`);
+  if (rewrite?.stop && rewrite.holdFor) return holdUntilDone(ctx, job, rewrite.holdFor);
   if (rewrite?.stop && rewrite.duplicateOf && ctx.deps.actions.closeDuplicate) {
     // Closed on the host, written through; a failure is `orchestrator.host_write_failed`, and the Item parked as before.
     const key = refKey(job.item);
