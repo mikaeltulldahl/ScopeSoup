@@ -11,7 +11,8 @@ import { knownAnswers } from "../store/answers.ts";
 import type { Store } from "../store/store.ts";
 import type { Context } from "./context.ts";
 import type { AboutOther, Decision, Job } from "./jobs.ts";
-import { changedRewrite } from "./jobs.ts";
+import { changedRewrite, sameText } from "./jobs.ts";
+import type { ProposedRewriteView } from "../core/snapshot.ts";
 
 /** Questions (and a rewrite) waiting to be written on another Item. Agent text: data. */
 export interface WaitingAbout {
@@ -45,6 +46,52 @@ export function readWaitingAbouts(store: Store): WaitingAbouts {
 export function writeWaitingAbouts(store: Store, waiting: WaitingAbouts): void {
   for (const key of Object.keys(waiting)) if (waiting[key]!.length === 0) delete waiting[key];
   store.setValue(KEY, JSON.stringify(waiting));
+}
+
+/**
+ * A rewrite of an Item's description that another Item's triage gave with no question (decision 110). It never touches that Item's
+ * job: it waits here, by the Item's ref key, for a person's Accept, Edit or Reject (`POST /api/proposed-rewrite`). A newer one for the
+ * same Item replaces it. Agent text: data.
+ */
+export interface ProposedRewrite {
+  /** "triage of A-3". */
+  askedBy: string;
+  /** The asker's Item, by ref key. */
+  from: string;
+  /** The description the rewrite was compared with. */
+  original: string;
+  text: string;
+  at: string;
+}
+
+const PROPOSED = "orchestrator.proposedRewrites";
+
+export function readProposedRewrites(store: Store): Record<string, ProposedRewrite> {
+  const text = store.getValue(PROPOSED);
+  if (!text) return {};
+  try {
+    const parsed = JSON.parse(text) as unknown;
+    return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed) ? (parsed as Record<string, ProposedRewrite>) : {};
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * The proposed rewrites a person may still decide: their Item is open, and its description does not read as the rewrite already
+ * (whitespace aside). One whose Item was edited since stays, shown with the description as it is now; Accept is then refused.
+ */
+export function openProposedRewrites(store: Store): ProposedRewriteView[] {
+  const works = new Map(store.list<WorkItem>("work").map((work) => [refKey(work.ref), work]));
+  return Object.entries(readProposedRewrites(store)).flatMap(([key, each]) => {
+    const work = works.get(key);
+    return work && isOpenItem(work) && !sameText(work.body ?? "", each.text) ? [{ subject: work.ref, askedBy: each.askedBy, original: each.original, text: each.text, at: each.at }] : [];
+  });
+}
+
+/** Writes the map; call it in the transaction that writes the event. */
+export function writeProposedRewrites(store: Store, proposed: Record<string, ProposedRewrite>): void {
+  store.setValue(PROPOSED, JSON.stringify(proposed));
 }
 
 /** The Item a name from an agent points at (`#12`, `12`, `A-3` or a ref key), on the subject's own host; null when the store has none, or it is the subject itself. */
@@ -118,6 +165,16 @@ export function keepAboutOthers(ctx: Context, job: Job, role: "triage" | "implem
       continue;
     }
     const key = refKey(other.ref);
+    if (questions.length === 0 && rewrite) {
+      // Only a rewrite: proposed on that Item for a person, and its job is left as it is (decision 110).
+      store.tx(() => {
+        const proposed = readProposedRewrites(store);
+        proposed[key] = { askedBy, from: subject, original: (other.body ?? "").trim(), text: rewrite, at: ctx.at };
+        writeProposedRewrites(store, proposed);
+        ctx.commit("orchestrator.rewrite_proposed", `${askedBy[0]!.toUpperCase()}${askedBy.slice(1)} proposed a rewrite of ${other.ref.id}'s description, with no question: it waits for a person to accept, edit or reject it, and ${other.ref.id}'s work goes on as it is.`, key, { from: subject });
+      });
+      continue;
+    }
     store.tx(() => {
       const waiting = readWaitingAbouts(store);
       waiting[key] = [...(waiting[key] ?? []), { askedBy, from: subject, questions, ...(rewrite ? { rewrite } : {}), at: ctx.at }];

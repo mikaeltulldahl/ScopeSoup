@@ -74,11 +74,6 @@ export interface Rewrite {
    * person settles them, this Item is triaged again with the answers.
    */
   askedBy?: string[];
-  /**
-   * With `askedBy` and no question (only a rewrite): what the Item's job was doing before, null when it had none. Once settled the
-   * job goes back to that step (parked again as it was), or goes away, and no triage starts by itself (decision 110).
-   */
-  resumes?: { step: Job["step"]; parked?: NonNullable<Job["parked"]> } | null;
 }
 
 const squash = (text: string): string => text.replace(/\s+/g, " ").trim();

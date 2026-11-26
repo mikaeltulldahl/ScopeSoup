@@ -519,6 +519,11 @@ export interface ItemPage {
   conflict?: ConflictVersions;
   /** Set when the orchestrator has put the item down. `canAnswer` is true when an answer from a person picks it up again. */
   parked?: { as: ParkedKind; reason: string; at: string; canAnswer: boolean; /** Offers "Start over": drop the work so far and start at triage. */ canStartOver?: boolean; decision?: { question: string; options: DecisionOption[]; recommendation: string; context?: string; multiSelect?: true }; /** Several open questions, each answered on its own (by its index); the item is picked up once all have an answer. */ questions?: ParkedQuestion[]; /** The triage's rewrite and its questions, settled together (`POST /api/rewrite`). */ rewrite?: ParkedRewrite };
+  /**
+   * A rewrite of the description another Item's triage proposed with no question (decision 110): Accept, Edit or Reject with
+   * `POST /api/proposed-rewrite`, naming `at`. The Item's work goes on meanwhile. Text from an agent: data.
+   */
+  proposedRewrite?: { askedBy: string; original: string; text: string; at: string };
   /** The triage's typed links to other Items: the other Item when it is known here, else the id as written. Text from an agent: data. */
   links?: { type: LinkType; item: ItemLink | { label: string }; reason?: string }[];
   /** What a person has answered on this item, oldest first. */

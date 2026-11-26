@@ -22,6 +22,7 @@ import type { MergeQueue } from "./mergeQueue.ts";
 import { createLoop } from "./loop.ts";
 import { workspaceKey } from "./paths.ts";
 import { answerQuestion, asImplement, asTriage, loadJobs, jobQuestions, releaseJob, resumesStep, saveJobs, settleRewrite } from "./jobs.ts";
+import { readProposedRewrites } from "./aboutOthers.ts";
 import { loadOwnBlockers, setOwnBlockers } from "../store/blockers.ts";
 import { buildItemPage } from "../core/item-page.ts";
 import { addAnswer } from "../store/answers.ts";
@@ -4147,36 +4148,35 @@ test("a cross-Item rewrite that changes only whitespace is dropped, not written 
   assert.notEqual(w.job("2")?.parked?.as, "needs-decision");
 });
 
-test("accepting a cross-Item rewrite with no question starts no triage: the Item goes on as it was (decision 110)", async () => {
+test("a cross-Item rewrite with no question is proposed on that Item and leaves its job exactly as it is (decision 110)", async () => {
   const w = world(config(), [item("1", { body: "Tide table units." }), item("2", { body: "Wind units." }), item("3", { body: "Gusts." })]);
   w.store.addUsageSample(usage(0.1, 0.1));
   const at = new Date(w.clock.ms).toISOString();
+  const later = new Date(w.clock.ms + 3600_000).toISOString();
   w.store.tx(() => {
     const jobs = loadJobs(w.store);
-    jobs[refKey(ref("2"))] = {
-      item: ref("2"), workspace: workspaceKey(ref("2")), branch: "scopesoup/2", step: "triage", failures: 0, fixRounds: 0, startedAt: at,
-      triage: { ready: false, notReadyReason: "Which source?", size: "small", paths: [], hidesDecision: false },
-      parked: { as: "not-ready", reason: "Triage: not ready. Which source?", at, verdict: true },
-    };
+    // Approved and to be merged, waiting for its merge turn; and one in a backoff wait after a failed attempt.
+    jobs[refKey(ref("2"))] = { item: ref("2"), workspace: workspaceKey(ref("2")), branch: "scopesoup/2", step: "implement", failures: 0, fixRounds: 1, startedAt: at, merge: true, notBefore: later, agentSession: "agent-2" };
+    jobs[refKey(ref("3"))] = { item: ref("3"), workspace: workspaceKey(ref("3")), branch: "scopesoup/3", step: "implement", failures: 1, fixRounds: 0, startedAt: at, notBefore: later };
     saveJobs(w.store, jobs);
   });
+  const before = { two: structuredClone(w.job("2")), three: structuredClone(w.job("3")) };
   await w.run();
   await step(w, "1", "succeeded", { ...TRIAGE_OK, aboutOthers: [{ item: "2", questions: [], rewrite: ABOUT_REWRITE }, { item: "3", questions: [], rewrite: "Gusts in knots." }] });
-  const two = w.job("2")!;
-  assert.equal(two.parked?.as, "needs-decision");
-  assert.deepEqual(two.rewrite?.resumes, { step: "triage", parked: { as: "not-ready", reason: "Triage: not ready. Which source?", at, verdict: true } });
-  assert.equal(w.job("3")?.rewrite?.resumes, null);
-  assert.match(w.job("3")?.parked?.reason ?? "", /^Rewrite by triage of 1: a rewrite of 3's description waits/);
-
-  assert.deepEqual(answerRewrite(w, "2", [], "accept"), { settled: "accepted" });
-  assert.deepEqual(answerRewrite(w, "3", [], "reject"), { settled: "rejected" });
+  w.clock.ms += 1000;
   await w.run();
-  // Item 2 is parked again as triage left it, and may still be overruled; item 3 had no job and has none again.
-  assert.deepEqual([w.job("2")?.parked?.as, w.job("2")?.parked?.verdict, w.job("2")?.step], ["not-ready", true, "triage"]);
-  assert.match(w.job("2")?.parked?.reason ?? "", /^Triage: not ready\. Which source\? \(A person accepted the rewrite of 2's description by triage of 1, which asked nothing: no new triage for it\.\)$/);
-  assert.match(w.reasons("orchestrator.job_closed").at(-1) ?? "", /^A person rejected the rewrite of 3's description by triage of 1, which asked nothing: no new triage for it\. It had no work under way/);
-  assert.equal(w.reasons("orchestrator.step").some((reason) => /Next: triage again/.test(reason)), false);
-  assert.equal(w.runner.requests.some((request) => request.role === "triage" && request.subject.id === "2"), false);
+  assert.deepEqual(w.job("2"), before.two);
+  assert.deepEqual(w.job("3"), before.three);
+  const proposed = readProposedRewrites(w.store);
+  assert.deepEqual(Object.keys(proposed).sort(), [refKey(ref("2")), refKey(ref("3"))]);
+  assert.deepEqual({ ...proposed[refKey(ref("2"))], at: "" }, { askedBy: "triage of 1", from: refKey(ref("1")), original: "Wind units.", text: ABOUT_REWRITE, at: "" });
+  assert.deepEqual(w.reasons("orchestrator.about_other_written"), []);
+  assert.match(w.reasons("orchestrator.rewrite_proposed")[0] ?? "", /^Triage of 1 proposed a rewrite of 2's description, with no question: it waits for a person/);
+  assert.equal(w.runner.requests.some((request) => request.role === "triage" && request.subject.id !== "1"), false);
+  // The Item page shows it to decide (POST /api/proposed-rewrite; src/server/proposedRewrite.test.ts).
+  const page = buildItemPage(loadSnapshot(w.store), refKey(ref("2")), new Date(w.clock.ms))!;
+  assert.equal(page.proposedRewrite?.text, ABOUT_REWRITE);
+  assert.equal(page.parked, undefined);
 });
 
 test("an implementor puts a question on an Item with paused work, which keeps its branch and session", async () => {

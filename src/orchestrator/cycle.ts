@@ -14,7 +14,7 @@ import { answersText, knownAnswers } from "../store/answers.ts";
 import { persistenceLimits } from "../config/persistence.ts";
 import type { Context } from "./context.ts";
 import { ACTOR, errorText } from "./context.ts";
-import type { AskedText, Decision, ItemLinkAnswer, Job, ParkedAs, ReviewAnswer, Rewrite, TakenDecision, TriageAnswer } from "./jobs.ts";
+import type { AskedText, Decision, ItemLinkAnswer, Job, ParkedAs, ReviewAnswer, TakenDecision, TriageAnswer } from "./jobs.ts";
 import { ASK_PERSON, asImplement, asReview, asTriage, formatFindings, hasMarkup, recoverFields, keepsRecommendations, picks, questionsSettled, releaseIn, parkedRewrite, changedRewrite } from "./jobs.ts";
 import { providerFor } from "./providers/index.ts";
 import type { Actions, SessionResultRecord } from "./ports.ts";
@@ -1352,21 +1352,7 @@ export async function afterRewrite(ctx: Context, job: Job): Promise<void> {
   delete job.rewrite;
   delete job.rewriteRounds;
   // Questions and a rewrite from agents of other Items: once settled, this Item is triaged again with the answers.
-  if (rewrite?.askedBy && rewrite.questions.length > 0) return next(ctx, job, "triage", `A person settled what ${rewrite.askedBy.join(" and ")} asked about ${job.item.id}${rewrite.settled ? ` (the rewrite ${rewrite.settled})` : ""}. Next: triage again, with the answers.`);
-  // Only a rewrite from another Item's triage: settling it starts no triage (decision 110). The Item goes on as it was.
-  if (rewrite?.askedBy) {
-    const settled = `A person ${rewrite.settled ?? "settled"} the rewrite of ${job.item.id}'s description by ${rewrite.askedBy.join(" and ")}, which asked nothing: no new triage for it.`;
-    const was = rewrite.resumes;
-    if (!was) {
-      delete ctx.jobs[refKey(job.item)];
-      ctx.commit("orchestrator.job_closed", `${settled} It had no work under way, and has none now.`, refKey(job.item));
-      return;
-    }
-    if (!was.parked) return next(ctx, job, was.step, `${settled} Next: ${was.step}, as before.`);
-    job.step = was.step;
-    const ask = was.parked.as === "escalated" ? "escalation" : was.parked.as === "needs-decision" ? "decision" : "not-ready";
-    return park(ctx, job, was.parked.as, `${was.parked.reason} (${settled})`, ask, undefined, { ...(was.parked.byStep ? { byStep: true } : {}), ...(was.parked.verdict ? { verdict: true } : {}) });
-  }
+  if (rewrite?.askedBy) return next(ctx, job, "triage", `A person settled what ${rewrite.askedBy.join(" and ")} asked about ${job.item.id}${rewrite.settled ? ` (the rewrite ${rewrite.settled})` : ""}. Next: triage again, with the answers.`);
   if (rewrite?.stop && rewrite.holdFor && (await holdUntilDone(ctx, job, rewrite.holdFor))) return;
   if (rewrite?.stop && rewrite.duplicateOf && ctx.deps.actions.closeDuplicate) {
     // Closed on the host, written through; a failure is `orchestrator.host_write_failed`, and the Item parked as before.
@@ -1435,20 +1421,9 @@ export async function writeAboutOthers(ctx: Context): Promise<void> {
     const askedBy = [...new Set(entries.map((each) => each.askedBy))];
     const questions = entries.flatMap((each) => each.questions);
     const original = item.body?.trim() ?? "";
-    // Compared with the description as it is now: whitespace alone, or the Verification field appended again, is no change.
+    // Compared with the description as it is now: whitespace alone, or the Verification field appended again, is no change. Entries
+    // here have questions: a rewrite alone is a proposed rewrite (`keepAboutOthers`), which leaves the job alone.
     const rewrite = changedRewrite([...entries].reverse().find((each) => each.rewrite)?.rewrite, item.body, item.verification) || original;
-    if (questions.length === 0 && rewrite === original) {
-      store.tx(() => {
-        const waiting = readWaitingAbouts(store);
-        delete waiting[key];
-        writeWaitingAbouts(store, waiting);
-        ctx.commit("orchestrator.about_other_dropped", `${askedBy.join(" and ")} rewrote ${item.ref.id}'s description as it is now (whitespace aside), with no question: nothing to write.`, key, { sets: entries.length });
-      });
-      continue;
-    }
-    // Only a rewrite: once settled, the Item goes on as it was, with no triage (decision 110).
-    const resumes: Rewrite["resumes"] = questions.length > 0 ? undefined
-      : existing ? { step: existing.step, ...(existing.parked ? { parked: existing.parked } : {}) } : null;
     // A job parked before gave back its claim and workspace then; one between steps holds them still.
     const holds = existing !== undefined && !existing.parked;
     const job: Job = existing ?? { item: item.ref, workspace: workspaceKey(item.ref), branch: workBranch(item.ref), step: "triage", failures: 0, fixRounds: 0, startedAt: ctx.at };
@@ -1459,7 +1434,7 @@ export async function writeAboutOthers(ctx: Context): Promise<void> {
     for (const field of ["decision", "proposal", "rewrite", "notBefore", "resume", "recheck", "triaging", "answered", "merge", "answerArrived"] as const) delete job[field];
     const round = (job.rewriteRounds ?? 0) + 1;
     job.rewriteRounds = round;
-    job.rewrite = { original, text: rewrite, questions, round, askedBy, ...(resumes !== undefined ? { resumes } : {}) };
+    job.rewrite = { original, text: rewrite, questions, round, askedBy };
     const reason = questions.length > 0
       ? `Asked by ${askedBy.join(" and ")}: ${rewrite !== original ? "a rewrite of the description and " : ""}${questions.length} question(s) about ${item.ref.id} wait for an answer: ${questions.map((each, index) => `${index + 1}. ${each.question}`).join(" ")}`
       : `Rewrite by ${askedBy.join(" and ")}: a rewrite of ${item.ref.id}'s description waits for a person to accept, edit or reject.`;

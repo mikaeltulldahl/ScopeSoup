@@ -182,6 +182,8 @@ export function buildItemPage(snapshot: Snapshot, ref: Ref | string, now: Date, 
     const canAnswer = parked.as === "needs-decision" || parked.as === "not-ready" || parked.as === "escalated";
     page.parked = { as: parked.as, reason: parked.reason, at: parked.at, canAnswer, ...(parked.canStartOver ? { canStartOver: true } : {}), ...(parked.decision ? { decision: parked.decision } : {}), ...(parked.questions && parked.questions.length > 0 ? { questions: parked.questions } : {}), ...(parked.rewrite ? { rewrite: parked.rewrite } : {}) };
   }
+  const proposedRewrite = (snapshot.proposedRewrites ?? []).find((each) => refKey(each.subject) === key);
+  if (proposedRewrite) page.proposedRewrite = { askedBy: proposedRewrite.askedBy, original: proposedRewrite.original, text: proposedRewrite.text, at: proposedRewrite.at };
   const links = (snapshot.links ?? []).find((each) => refKey(each.subject) === key)?.links ?? [];
   if (links.length > 0) {
     page.links = links.map((link) => {

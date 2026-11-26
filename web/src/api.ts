@@ -183,6 +183,13 @@ export async function postRewrite(ref: string, parkedAt: string, answers: string
   return { rerun: body?.rerun === true, ...(body?.settled ? { settled: body.settled } : {}) };
 }
 
+/** A person's decision on a rewrite another Item's triage proposed with no question (decision 110), naming the one shown by its `at`. */
+export async function postProposedRewrite(ref: string, at: string, action: "accept" | "edit" | "reject", text?: string): Promise<void> {
+  const response = await call("/api/proposed-rewrite", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ref, at, action, ...(text !== undefined ? { text } : {}) }) });
+  const body = (await response.json().catch(() => null)) as { error?: { message?: string } } | null;
+  if (!response.ok) throw new Error(body?.error?.message ?? `The server answered ${response.status}.`);
+}
+
 /**
  * A person's decision on a proposed restructuring: accept it, accept it with a person's own `parts` and `original` (edit), or reject it.
  */

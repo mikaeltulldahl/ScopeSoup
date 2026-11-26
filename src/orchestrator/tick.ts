@@ -462,11 +462,7 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
       await settle(ctx, job, session, readSessionResult(store, job.sessionId), item, main);
     }
     // A person settled the triage's rewrite: triage's other verdicts follow, without a session.
-    if (!job.sessionId && !job.parked && job.step === "triage" && job.rewrite?.settled) {
-      await afterRewrite(ctx, job);
-      // Only another Item's rewrite, on an Item that had no job: the job is gone again.
-      if (!jobs[key]) continue;
-    }
+    if (!job.sessionId && !job.parked && job.step === "triage" && job.rewrite?.settled) await afterRewrite(ctx, job);
     // Below level 2 nothing is built, so nothing is handed over either: the hand-over waits for the level to come back.
     if (job.owes && merging && config.level >= 2 && !job.parked && !job.sessionId && item && item.state !== "done" && item.state !== "abandoned") {
       // The item holds no clone: it was parked for a person and the clone was freed (a failed hand-over a person retries), or the record was rebuilt from
