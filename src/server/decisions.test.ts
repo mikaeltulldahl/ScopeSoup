@@ -194,7 +194,7 @@ test("a triage's rewrite: keeping the recommendation accepts it in one action, t
     item: subject, workspace: "w", branch: `scopesoup/${subject.id}`, step: "triage", failures: 0, fixRounds: 0, startedAt: at,
     triage: { ready: true, size: "small", paths: [], hidesDecision: true, decision: question, decisions: [question], rewrite: "Show the tide table in metres." },
     rewrite: { original: "Tide table units.", text: "Show the tide table in metres.", questions: [question], round: 1 }, rewriteRounds: 1,
-    parked: { as: "needs-decision", reason: "Triage, round 1: a rewrite of the description and 1 question(s) wait for an answer: 1. Metric or imperial?", at },
+    parked: { as: "needs-decision", reason: "Triage, round 1: a rewrite of the description and 1 question waits for an answer: 1. Metric or imperial?", at },
   };
   store.tx(() => saveJobs(store, { ...loadJobs(store), [ref]: job }));
 

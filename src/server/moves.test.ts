@@ -270,6 +270,28 @@ describe("POST /api/item/move", () => {
   });
 });
 
+describe("Implement anyway answers the not-ready question the log holds open", () => {
+  test("an answer line naming the question is written to the Item's log, so the card stops asking", async () => {
+    const asked = { at: "2026-11-20T10:00:00Z", by: { id: "scopesoup", name: "scopesoup", bot: true }, question: "Triage: not ready.", options: [] };
+    const waiting = { ...item, needsDecision: true, openQuestions: [asked] };
+    const store = openStore(":memory:");
+    store.put(waiting, "sync", T0);
+    saveJobs(store, { [key]: job({ step: "triage", parked: { as: "not-ready", reason: "Triage: not ready.", at: T0, verdict: true } }) });
+    const written: { kind: string; fields: Record<string, unknown> }[] = [];
+    const write = { appendLog: async (_ref: unknown, line: { kind: string; fields: Record<string, unknown> }) => { written.push(line); return { shared: true }; } };
+    const server = createServer({ store, now: () => new Date(T0), port: 0, heartbeatMs: 20, configFile: "scopesoup.config.json", planning: () => ({ bugLabels: [], level: 3 }), items: { host: item.ref.host, write: write as never } });
+    try {
+      const base = (await server.start()).url;
+      const response = await fetch(`${base}/api/item/move`, { method: "POST", headers: { "Content-Type": "application/json", "X-ScopeSoup-Person": "Ada" }, body: JSON.stringify({ ref: key, to: "implement" }) });
+      assert.equal(response.status, 200);
+      assert.deepEqual(written.map((line) => [line.kind, line.fields.to]), [["answer", asked.at]]);
+    } finally {
+      await server.stop();
+      store.close();
+    }
+  });
+});
+
 describe("a pick for an Item whose work runs on another machine (decision 104)", () => {
   const held = { ...item, holder: { actor: { id: "scopesoup@laptop-b", name: "scopesoup on laptop-b", bot: true }, until: "2099-01-01T00:00:00Z" } };
   let lines: string[];

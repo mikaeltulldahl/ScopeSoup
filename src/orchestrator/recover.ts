@@ -79,7 +79,7 @@ export function jobFromHost(item: WorkItem): Job | null {
     // The rounds so far are the rewrite comments.
     job.rewriteRounds = Math.max(record!.rewriteRounds, rewrite.round);
     const said = questions.length > 0
-      ? `Triage, round ${rewrite.round}: a rewrite of the description and ${questions.length} question(s) wait for an answer: ${questions.map((each, index) => `${index + 1}. ${each.question}`).join(" ")}`
+      ? `Triage, round ${rewrite.round}: a rewrite of the description and ${questions.length === 1 ? "1 question waits" : `${questions.length} questions wait`} for an answer: ${questions.map((each, index) => `${index + 1}. ${each.question}`).join(" ")}`
       : `Triage, round ${rewrite.round}: a rewrite of the description waits for a person to accept, edit or reject.`;
     const note = rewrite.bodyKnown ? "" : " The description the rewrite read is no longer known: the current one is shown as the original.";
     const ids = rewrite.questions.flatMap((question) => (question.id ? [question.id] : []));

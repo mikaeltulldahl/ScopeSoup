@@ -15,7 +15,7 @@ import { persistenceLimits } from "../config/persistence.ts";
 import type { Context } from "./context.ts";
 import { ACTOR, errorText } from "./context.ts";
 import type { AskedText, Decision, ItemLinkAnswer, Job, ParkedAs, ReviewAnswer, TakenDecision, TriageAnswer } from "./jobs.ts";
-import { ASK_PERSON, asImplement, asReview, asTriage, formatFindings, hasMarkup, recoverFields, keepsRecommendations, picks, questionsSettled, releaseIn, parkedRewrite } from "./jobs.ts";
+import { ASK_PERSON, asImplement, asReview, asTriage, formatFindings, hasMarkup, recoverFields, keepsRecommendations, picks, questionsSettled, releaseIn, parkedRewrite, changedRewrite } from "./jobs.ts";
 import { providerFor } from "./providers/index.ts";
 import type { Actions, SessionResultRecord } from "./ports.ts";
 import type { QuestionWrite } from "../ports/host.ts";
@@ -1364,16 +1364,17 @@ async function triage(ctx: Context, job: Job, answer: TriageAnswer, item: WorkIt
   const questions = [...(answer.decisions ?? []), ...linkQuestions(ctx, job, links, answers)]
     .filter((question) => question.question.trim() && !(item && reusableAnswer(answers, item, question)));
   const original = item?.body?.trim() ?? "";
-  const rewrite = (answer.rewrite ?? "").trim();
+  // A rewrite that changes only whitespace, or only appends the Verification field again, changes nothing.
+  const rewrite = changedRewrite(answer.rewrite, original, item?.verification);
   const { change: labels, dropped } = await proposedLabels(ctx, job, answer, item);
   const droppedNote = dropped.length > 0 ? ` The triage named label${dropped.length > 1 ? "s" : ""} the repository does not have, dropped: ${dropped.join(", ")}.` : "";
-  if (questions.length === 0 && (rewrite === "" || rewrite === original) && isEmptyChange(labels)) return afterTriage(ctx, job, answer, ` The rewrite keeps the description as it is.${droppedNote}`);
+  if (questions.length === 0 && rewrite === "" && isEmptyChange(labels)) return afterTriage(ctx, job, answer, ` The rewrite keeps the description as it is.${droppedNote}`);
   const round = (job.rewriteRounds ?? 0) + 1;
   job.rewriteRounds = round;
   job.rewrite = { original, text: rewrite || original, questions, round, ...(!isEmptyChange(labels) ? { labels } : {}), ...(dropped.length > 0 ? { droppedLabels: dropped } : {}) };
   const labelNote = isEmptyChange(labels) ? "" : ` Labels: ${changeText(labels)}.`;
   const reason = questions.length > 0
-    ? `Triage, round ${round}: a rewrite of the description and ${questions.length} question(s) wait for an answer: ${questions.map((each, index) => `${index + 1}. ${each.question}`).join(" ")}${labelNote}${droppedNote}`
+    ? `Triage, round ${round}: a rewrite of the description and ${questions.length === 1 ? "1 question waits" : `${questions.length} questions wait`} for an answer: ${questions.map((each, index) => `${index + 1}. ${each.question}`).join(" ")}${labelNote}${droppedNote}`
     : `Triage, round ${round}: a rewrite of the description waits for a person to accept, edit or reject.${labelNote}${droppedNote}`;
   return park(ctx, job, "needs-decision", reason, "decision");
 }
@@ -1474,7 +1475,9 @@ export async function writeAboutOthers(ctx: Context): Promise<void> {
     const askedBy = [...new Set(entries.map((each) => each.askedBy))];
     const questions = entries.flatMap((each) => each.questions);
     const original = item.body?.trim() ?? "";
-    const rewrite = [...entries].reverse().find((each) => each.rewrite)?.rewrite ?? original;
+    // Compared with the description as it is now: whitespace alone, or the Verification field appended again, is no change. Entries
+    // here have questions: a rewrite alone is a proposed rewrite (`keepAboutOthers`), which leaves the job alone.
+    const rewrite = changedRewrite([...entries].reverse().find((each) => each.rewrite)?.rewrite, item.body, item.verification) || original;
     // A job parked before gave back its claim and workspace then; one between steps holds them still.
     const holds = existing !== undefined && !existing.parked;
     const job: Job = existing ?? { item: item.ref, workspace: workspaceKey(item.ref), branch: workBranch(item.ref), step: "triage", failures: 0, fixRounds: 0, startedAt: ctx.at };

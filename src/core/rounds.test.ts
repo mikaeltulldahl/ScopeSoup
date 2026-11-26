@@ -130,6 +130,15 @@ describe("the Rounds rows", { concurrency: 4 }, () => {
     assert.match(rows[3]!.found ?? "", /^Merged to main as aaaaaaa/);
   });
 
+  test("a rewrite's parked line already counts its questions, so no second count is put before it", () => {
+    const reason = "Triage, round 1: a rewrite of the description and 2 questions wait for an answer: 1. A? 2. B?";
+    const log = [
+      line(1, "question", { question: reason, options: [], parked: "needs-decision" }),
+      line(1, "session", { role: "triage", model: "haiku", outcome: "succeeded", summary: "x", size: "medium", sessionId: "s1" }),
+    ];
+    assert.equal(buildRounds({ log })[0]!.found, `Ready, medium. ${reason}`);
+  });
+
   test("a triage that asks questions, a failed session, a live one", () => {
     const log = [
       line(1, "question", { question: "Which datum?", options: ["A", "B"], parked: "needs-decision" }),

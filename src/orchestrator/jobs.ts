@@ -76,6 +76,36 @@ export interface Rewrite {
   askedBy?: string[];
 }
 
+const squash = (text: string): string => text.replace(/\s+/g, " ").trim();
+
+/** Whether two texts are the same when every run of whitespace counts as one space (a paragraph break, a trailing space). */
+export function sameText(a: string, b: string): boolean {
+  return squash(a) === squash(b);
+}
+
+const VERIFICATION_LABEL = /(^|\n)[ \t]*(?:#{1,6}[ \t]*)?(?:\*\*|__)?verification(?:\*\*|__)?[ \t]*:?[ \t]*(?:\*\*|__)?/gi;
+
+/** The text without a last "Verification: ..." part (a heading or a label) that repeats the Item's verification; else the text. */
+export function withoutVerification(text: string, verification: string | undefined): string {
+  const wanted = squash(verification ?? "");
+  if (!wanted) return text;
+  for (const found of [...text.matchAll(VERIFICATION_LABEL)].reverse()) {
+    if (squash(text.slice(found.index + found[0].length)) === wanted) return text.slice(0, found.index).trimEnd();
+  }
+  return text;
+}
+
+/**
+ * A triage's rewrite of a description as it is kept, or "" when it changes nothing: whitespace does not count, and a Verification
+ * part the rewrite appended that repeats the Item's verification field (a separate field) is cut first, unless the description has it.
+ */
+export function changedRewrite(rewrite: string | undefined, body: string | undefined, verification: string | undefined): string {
+  const original = (body ?? "").trim();
+  let text = (rewrite ?? "").trim();
+  if (withoutVerification(original, verification) === original) text = withoutVerification(text, verification);
+  return text === "" || sameText(text, original) ? "" : text;
+}
+
 /**
  * Questions an agent asks about another Item than its own (`aboutOthers` in its answer), and from triage a rewrite of that Item's
  * description. Scope Soup writes them on that Item (`aboutOthers.ts`). Agent text: data.
@@ -668,12 +698,18 @@ function withContext(decision: Decision, context: unknown): Decision {
   return decision;
 }
 
+/** The board marks the recommended option itself, so a trailing "(recommended)" the model wrote in a label is dropped. */
+export function withoutRecommendedMark(label: string): string {
+  const stripped = label.replace(/\s*\(\s*recommended\s*\)\s*$/i, "").trim();
+  return stripped || label;
+}
+
 function asDecision(value: unknown): Decision | undefined {
   if (!isObj(value) || typeof value.question !== "string" || !value.question.trim()) return undefined;
   return withContext({
     question: value.question,
-    options: asOptions(value.options),
-    recommendation: typeof value.recommendation === "string" ? value.recommendation : "",
+    options: asOptions(value.options).map((option) => (typeof option === "string" ? withoutRecommendedMark(option) : { ...option, label: withoutRecommendedMark(option.label) })),
+    recommendation: typeof value.recommendation === "string" ? withoutRecommendedMark(value.recommendation) : "",
     ...(value.multiSelect === true ? { multiSelect: true as const } : {}),
   }, value.context);
 }
