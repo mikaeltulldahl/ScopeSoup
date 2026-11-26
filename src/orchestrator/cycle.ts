@@ -15,7 +15,7 @@ import { persistenceLimits } from "../config/persistence.ts";
 import type { Context } from "./context.ts";
 import { ACTOR, errorText } from "./context.ts";
 import type { AskedText, Decision, ItemLinkAnswer, Job, ParkedAs, ReviewAnswer, TakenDecision, TriageAnswer } from "./jobs.ts";
-import { ASK_PERSON, asImplement, asReview, asTriage, formatFindings, hasMarkup, recoverFields, keepsRecommendations, picks, questionsSettled, releaseIn, parkedRewrite, changedRewrite } from "./jobs.ts";
+import { ASK_PERSON, asImplement, asReview, asTriage, formatFindings, hasMarkup, recoverFields, keepsRecommendations, picks, questionsSettled, releaseIn, parkedRewrite, changedRewrite, sameText } from "./jobs.ts";
 import { providerFor } from "./providers/index.ts";
 import type { Actions, SessionResultRecord } from "./ports.ts";
 import type { QuestionWrite } from "../ports/host.ts";
@@ -886,7 +886,7 @@ function triageWords(output: Record<string, unknown>): string {
   return [
     output.ready ? `Ready${size}.` : `Not ready${size}.${reason}`,
     ...(asked > 0 ? [`${asked} question${asked === 1 ? "" : "s"} for a person.`] : []),
-    ...(parts > 0 ? [`Proposes a restructuring into ${parts} parts.`] : []),
+    ...(parts > 0 ? [`Proposes a restructuring into ${plural(parts, "part")}.`] : []),
   ].join(" ");
 }
 
@@ -1412,11 +1412,52 @@ async function triage(ctx: Context, job: Job, answer: TriageAnswer, item: WorkIt
   const round = (job.rewriteRounds ?? 0) + 1;
   job.rewriteRounds = round;
   job.rewrite = { original, text: rewrite || original, questions, round, ...(!isEmptyChange(labels) ? { labels } : {}), ...(dropped.length > 0 ? { droppedLabels: dropped } : {}) };
-  const labelNote = isEmptyChange(labels) ? "" : ` Labels: ${changeText(labels)}.`;
-  const reason = questions.length > 0
+  return park(ctx, job, "needs-decision", rewriteReason(job.rewrite), "decision");
+}
+
+/** The parked reason of a triage's rewrite and its questions. */
+function rewriteReason(rewrite: NonNullable<Job["rewrite"]>): string {
+  const { round, questions, labels, droppedLabels: dropped = [] } = rewrite;
+  const labelNote = !labels || isEmptyChange(labels) ? "" : ` Labels: ${changeText(labels)}.`;
+  const droppedNote = dropped.length > 0 ? ` The triage named label${dropped.length > 1 ? "s" : ""} the repository does not have, dropped: ${dropped.join(", ")}.` : "";
+  return questions.length > 0
     ? `Triage, round ${round}: a rewrite of the description and ${questions.length === 1 ? "1 question waits" : `${questions.length} questions wait`} for an answer: ${questions.map((each, index) => `${index + 1}. ${each.question}`).join(" ")}${labelNote}${droppedNote}`
     : `Triage, round ${round}: a rewrite of the description waits for a person to accept, edit or reject.${labelNote}${droppedNote}`;
-  return park(ctx, job, "needs-decision", reason, "decision");
+}
+
+/**
+ * Duplicate questions parked on this Item about a pair a person settled since (on the other Item: "Keep both", or a close that took
+ * effect, `duplicatePairSettled`) are withdrawn, each with an event: answering them could only contradict that answer, and the
+ * recommended one may close the one Item left (decision 118). Their comments on the host are withdrawn and what is left is asked
+ * again; with nothing left (no other question, a rewrite that changes nothing, no labels), the Item goes on from triage's other
+ * verdicts as if the question were answered "Keep both". True when the job is no longer parked as it was.
+ */
+export async function withdrawSettledDuplicates(ctx: Context, job: Job): Promise<boolean> {
+  const rewrite = parkedRewrite(job);
+  if (!rewrite || rewrite.askedBy || !rewrite.questions.some((question) => question.duplicateOf)) return false;
+  const { store } = ctx.deps;
+  const answers = knownAnswers(store);
+  const key = refKey(job.item);
+  const withdrawn = rewrite.questions.filter((question) => {
+    const settled = question.duplicateOf && duplicatePairSettled(store, job.item, question.duplicateOf, answers);
+    if (!settled) return false;
+    ctx.commit("orchestrator.question_withdrawn", `A person answered which of ${job.item.id} and ${question.duplicateOf!.id} closes at ${settled.at} ("${clipText(settled.answer.trim(), 300)}"): the duplicate question on ${job.item.id} is withdrawn.`, key, { duplicateOf: refKey(question.duplicateOf!) });
+    return true;
+  });
+  if (withdrawn.length === 0) return false;
+  rewrite.questions = rewrite.questions.filter((question) => !withdrawn.includes(question));
+  if ((job.parked!.rewrite?.questions.length ?? 0) > 0) await questionsDeleted(ctx, job.item, []);
+  if (rewrite.questions.length > 0 || !sameText(rewrite.text, rewrite.original) || (rewrite.labels && !isEmptyChange(rewrite.labels))) {
+    await park(ctx, job, "needs-decision", rewriteReason(rewrite), "decision");
+    return true;
+  }
+  delete job.rewrite;
+  delete job.parked;
+  job.failures = 0;
+  const settled = " The duplicate question was withdrawn, and nothing else waits for an answer.";
+  if (job.triage) await afterTriage(ctx, job, job.triage, settled);
+  else next(ctx, job, "implement", `${settled.trim()} Next: implement.`);
+  return true;
 }
 
 /**
@@ -1477,6 +1518,14 @@ export async function afterRewrite(ctx: Context, job: Job): Promise<void> {
   const leaveOthers = (): void => {
     for (const other of others) ctx.commit("orchestrator.duplicate_left_open", `A person answered to close ${other.id} as a duplicate of ${job.item.id}, but also "${rewrite!.stop}", so ${other.id} is left open: close it on the host yourself if it should go.`, refKey(other), { duplicateOf: refKey(job.item) });
   };
+  // The Item it duplicates was closed meanwhile (a person answered on that one): closing this one too would close both, so it goes on
+  // as if a person had kept it (decision 118).
+  const partner = rewrite?.stop && rewrite.duplicateOf ? ctx.deps.store.get<WorkItem>(rewrite.duplicateOf) : undefined;
+  if (partner?.state === "abandoned") {
+    ctx.commit("orchestrator.duplicate_close_skipped", `A person answered "${rewrite!.stop}", but ${partner.ref.id} is closed already${partner.duplicateOf ? ` as a duplicate of ${partner.duplicateOf.id}` : ""}: ${job.item.id} is not closed, and its work goes on.`, refKey(job.item), { duplicateOf: refKey(partner.ref) });
+    delete rewrite!.stop;
+    delete rewrite!.duplicateOf;
+  }
   if (rewrite?.stop && rewrite.holdFor && (await holdUntilDone(ctx, job, rewrite.holdFor))) return leaveOthers();
   if (rewrite?.stop && !rewrite.holdFor) leaveOthers();
   if (rewrite?.stop && rewrite.duplicateOf && ctx.deps.actions.closeDuplicate) {

@@ -25,7 +25,7 @@ import { linkedItem } from "./aboutOthers.ts";
 import type { Context, TickDeps } from "./context.ts";
 import type { ClaimResult } from "./ports.ts";
 import { createLog, errorText } from "./context.ts";
-import { afterRewrite, backToImplement, emptyBranch, followRewrite, followQuestions, overturnsBack, park, retryHandOver, retryPost, reviewOffAtLevel2, settle, writeAboutOthers } from "./cycle.ts";
+import { afterRewrite, backToImplement, emptyBranch, followRewrite, followQuestions, overturnsBack, park, retryHandOver, retryPost, reviewOffAtLevel2, settle, withdrawSettledDuplicates, writeAboutOthers } from "./cycle.ts";
 import { loadOwnBlockers, withOwnBlockers } from "../store/blockers.ts";
 import { decide } from "./usageCheck.ts";
 import { allowanceDecision } from "./allowance.ts";
@@ -517,6 +517,8 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
       await retryHandOver(ctx, job, item);
       continue;
     }
+    // A duplicate question parked here about a pair a person settled on the other Item is withdrawn (decision 118).
+    if (item && item.state !== "done" && item.state !== "abandoned" && (await withdrawSettledDuplicates(ctx, job))) continue;
     // The question comments it is parked on were answered or deleted on GitHub.
     if (job.parked?.questions && item && (await followQuestions(ctx, job, item))) continue;
     // The rewrite's question comments were answered by replies, or deleted.

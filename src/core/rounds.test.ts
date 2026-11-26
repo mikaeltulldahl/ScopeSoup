@@ -31,6 +31,15 @@ function escalatedCycle(): LogRecord[] {
 }
 
 describe("the Rounds rows", { concurrency: 4 }, () => {
+  test("a proposed restructuring is said in words, whatever the number of parts", () => {
+    const proposed = (proposal: Record<string, unknown>) => buildRounds({ log: [
+      line(0, "question", { question: "Triage proposes to restructure the Item.", parked: "needs-decision", proposal }),
+      line(0, "session", { role: "triage", model: "haiku", outcome: "succeeded", ready: true, sessionId: "s1" }),
+    ] })[0]!.found;
+    assert.equal(proposed({ original: "replaced", parts: [{ title: "T", goes: "into", into: "A-18" }] }), "Proposes a restructuring: 1 into A-18; the Item is closed as replaced.");
+    assert.equal(proposed({ original: "replaced", parts: [] }), "Proposes a restructuring: no other part; the Item is closed as replaced.");
+  });
+
   test("a cycle that escalates at the round limit: one row per step, the findings with their severity, and why it escalated", () => {
     const rows = buildRounds({ log: escalatedCycle() });
     assert.deepEqual(rows.map((row) => [row.step, row.model ?? null]), [

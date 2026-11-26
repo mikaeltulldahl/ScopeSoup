@@ -3520,6 +3520,58 @@ test("a duplicate answer stands when it was Keep both or its close took effect: 
   assert.match(kept.reasons("orchestrator.question_dropped")[0] ?? "", /^Triage found 2 a duplicate of 1, but a person answered which of the two closes at \S+ \("Keep both"\): not asked again\.$/);
 });
 
+/** 1 and 2 triaged as duplicates of each other, so each is parked with Scope Soup's duplicate question about the pair. */
+async function bothDuplicates(extra: Partial<typeof TRIAGE_OK> & { rewrite?: string } = {}) {
+  const w = world(config({ settings: { maxParallelSessions: { value: 2, reason: "test" } } }), [item("1", { title: "Tide units" }), item("2", { title: "Tide units too" })]);
+  const closed = fakeCloseDuplicate(w);
+  w.store.addUsageSample(usage(0.1, 0.1));
+  await w.run();
+  w.runner.end("1", "succeeded", { ...TRIAGE_OK, rewrite: "", ...extra, links: [{ type: "duplicateOf", item: "2", reason: "Same ask." }] });
+  await step(w, "2", "succeeded", { ...TRIAGE_OK, rewrite: "", links: [{ type: "duplicateOf", item: "1", reason: "Same ask." }] });
+  assert.equal(w.job("1")?.rewrite?.questions.length, 1);
+  assert.equal(w.job("2")?.rewrite?.questions.length, 1);
+  return { w, closed };
+}
+
+test("a pair settled on one Item withdraws the duplicate question still open on the other, which then goes on without being closed", async () => {
+  const { w, closed } = await bothDuplicates();
+  assert.deepEqual(answerRewrite(w, "2", ["Close 2 as a duplicate of 1"]), { settled: "accepted" });
+  w.clock.ms += 60_000;
+  await w.run();
+  assert.deepEqual(closed, ["2 of 1"]);
+  await w.run();
+  assert.match(w.reasons("orchestrator.question_withdrawn")[0] ?? "", /^A person answered which of 1 and 2 closes at \S+ \("Close 2 as a duplicate of 1"\): the duplicate question on 1 is withdrawn\.$/);
+  assert.equal(w.job("1")?.rewrite, undefined);
+  assert.equal(w.job("1")?.parked, undefined);
+  assert.equal(w.job("1")?.step, "implement");
+  assert.equal(w.store.get<WorkItem>(ref("1"))?.state, "todo");
+
+  // "Keep both" settles it too; with a rewrite still to accept, the Item stays parked on that alone.
+  const kept = await bothDuplicates({ rewrite: REWRITE });
+  answerRewrite(kept.w, "2", ["Keep both"]);
+  kept.w.clock.ms += 60_000;
+  await kept.w.run();
+  assert.equal(kept.w.reasons("orchestrator.question_withdrawn").length, 1);
+  assert.deepEqual(kept.w.job("1")?.rewrite?.questions, []);
+  assert.equal(kept.w.job("1")?.parked?.as, "needs-decision");
+  assert.match(kept.w.job("1")?.parked?.reason ?? "", /^Triage, round 1: a rewrite of the description waits for a person to accept, edit or reject\.$/);
+  assert.deepEqual(kept.closed, []);
+});
+
+test("an answer that would close an Item whose duplicate is closed already is not carried out: the Item goes on", async () => {
+  const { w, closed } = await bothDuplicates();
+  answerRewrite(w, "2", ["Close 2 as a duplicate of 1"]);
+  w.clock.ms += 60_000;
+  await w.run();
+  // 1 is answered after 2 was closed, before a tick withdrew its question.
+  answerRewrite(w, "1", ["Close 1 as a duplicate of 2"]);
+  await w.run();
+  assert.deepEqual(closed, ["2 of 1"]);
+  assert.match(w.reasons("orchestrator.duplicate_close_skipped")[0] ?? "", /^A person answered "Close 1 as a duplicate of 2", but 2 is closed already as a duplicate of 1: 1 is not closed, and its work goes on\.$/);
+  assert.equal(w.store.get<WorkItem>(ref("1"))?.state, "todo");
+  assert.equal(w.job("1")?.step, "implement");
+});
+
 test("a waiting rewrite whose which-duplicate questions are all dropped is only proposed, and the Item's work goes on", async () => {
   const w = world(config({ settings: { maxParallelSessions: { value: 2, reason: "test" } } }), [item("1"), item("2", { title: "Tide units", body: "Wind units." })]);
   w.store.addUsageSample(usage(0.1, 0.1));
