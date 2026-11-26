@@ -544,6 +544,9 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
     report.queued = Math.max(0, queuedCount - heldForClone - waitsFor.triage - waitsFor.implement - waitsFor.review - report.started.length);
     if (report.started.length === 0) {
       const paused = off.map((role) => `${SWITCH_WORDS[role]} ${role === "implement" ? "are" : "is"} paused${waitsFor[role] > 0 ? ` (${waitsFor[role]} item(s) wait for ${role === "implement" ? "them" : "it"})` : ""}`);
+      // The merge queue is no role: its switch holds the hand-over of reviewed changes (and the queue's own work) from level 4.
+      const queueWaits = level >= 4 && !mergeQueueOn(store) ? Object.values(jobs).filter((job) => job.owes === "hand-over" || (job.parked?.as === "queued" && job.queued !== undefined)).length : 0;
+      if (queueWaits > 0) paused.push(`${SWITCH_WORDS.mergeQueue} is paused (${queueWaits} item(s) wait for it)`);
       const all = [...paused, ...reasons];
       report.idle = `Nothing was started because ${all.length > 0 ? all.join("; ") : "no item is ready"}.`;
       ctx.say("orchestrator.idle", report.idle, undefined, { running });
