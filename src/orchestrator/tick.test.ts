@@ -26,7 +26,7 @@ import { readProposedRewrites } from "./aboutOthers.ts";
 import { loadOwnBlockers, setOwnBlockers } from "../store/blockers.ts";
 import { buildItemPage } from "../core/item-page.ts";
 import { addAnswer } from "../store/answers.ts";
-import { conflictPair, heldUntil, itemTextHash, reusableAnswer, wentOnWithBoth } from "../core/answerReuse.ts";
+import { asksAboutDuplicate, conflictPair, duplicateQuestion, heldUntil, itemTextHash, reusableAnswer, wentOnWithBoth } from "../core/answerReuse.ts";
 import { dryActions } from "./ports.ts";
 import type { Actions, AgentRunner, ClaimResult, SessionRequest } from "./ports.ts";
 import type { Notice, QueueDriver, QueueSink } from "./queueDriver.ts";
@@ -3386,6 +3386,102 @@ test("once a person answered which duplicate closes, neither Scope Soup's questi
   assert.deepEqual(w.job("2")?.rewrite?.questions.map((each) => each.question), [QUESTION.question]);
   assert.match(w.reasons("orchestrator.about_other_dropped")[0] ?? "", /^Triage of 2 asked 1 which duplicate to keep: Which one should stay open, 1 or 2\? Not asked: a person answered which of 2 and 1 closes at \S+ \("Keep both"\)\.$/);
   assert.deepEqual(w.reasons("orchestrator.about_other_kept"), []);
+});
+
+test("an agent's question counts as asking which duplicate to keep only when it names one of the pair with words of duplicates or staying open", () => {
+  const asks = (question: string, options: string[] = []) => asksAboutDuplicate({ question, options }, "1", "2");
+  assert.equal(asks("Which one should stay open, 1 or 2?"), true);
+  assert.equal(asks("Is 2 a duplicate of this one?"), true);
+  assert.equal(asks("Close 1 or 2?"), true);
+  assert.equal(asks("Keep the 2 retries?"), false);
+  assert.equal(asks("Close the 2 file handles?"), false);
+  assert.equal(asks("Is this a duplicate of the parser work?"), false);
+  assert.equal(asks("Knots or metres?", ["Keep 2 open: it is older"]), true);
+});
+
+test("a duplicate answer stands when it was Keep both or its close took effect: a close left undone does not stop the question, and a skip is said", async () => {
+  const at = new Date(T0).toISOString();
+  const asked = duplicateQuestion("1", "2", "Tide units", "Same.");
+  const triageOf2 = async (answer: string) => {
+    const w = world(config(), [item("1", { state: "waiting" }), item("2", { title: "Tide units" })]);
+    addAnswer(w.store, { subject: ref("1"), answer, by: "Ada", at, question: asked });
+    w.store.addUsageSample(usage(0.1, 0.1));
+    await w.run();
+    await step(w, "2", "succeeded", { ...TRIAGE, links: [{ type: "duplicateOf", item: "1", reason: "Same." }] });
+    return w;
+  };
+  // Nothing closed 2 (writes are off): the person's close did not happen, so 2's triage asks again.
+  const undone = await triageOf2("Close 2 as a duplicate of 1");
+  assert.equal(undone.job("2")?.rewrite?.questions.length, 2);
+  const kept = await triageOf2("Keep both");
+  assert.deepEqual(kept.job("2")?.rewrite?.questions.map((each) => each.question), [QUESTION.question]);
+  assert.match(kept.reasons("orchestrator.question_dropped")[0] ?? "", /^Triage found 2 a duplicate of 1, but a person answered which of the two closes at \S+ \("Keep both"\): not asked again\.$/);
+});
+
+test("a waiting rewrite whose which-duplicate questions are all dropped is only proposed, and the Item's work goes on", async () => {
+  const w = world(config({ settings: { maxParallelSessions: { value: 2, reason: "test" } } }), [item("1"), item("2", { title: "Tide units", body: "Wind units." })]);
+  w.store.addUsageSample(usage(0.1, 0.1));
+  await w.run();
+  await step(w, "1", "succeeded", { ...TRIAGE_OK, aboutOthers: [{ item: "2", questions: [KEEP_WHICH], rewrite: ABOUT_REWRITE }] });
+  assert.equal(w.reasons("orchestrator.about_other_kept").length, 1);
+  // Meanwhile a person settled the pair on another question.
+  addAnswer(w.store, { subject: ref("2"), answer: "Keep both", by: "Ada", at: new Date(w.clock.ms).toISOString(), question: duplicateQuestion("2", "1", "T", "Same.") });
+  await step(w, "2", "succeeded", TRIAGE_OK);
+  assert.match(w.reasons("orchestrator.about_other_dropped").at(-1) ?? "", /^Triage of 1 asked 2 which duplicate to keep: .* Not asked: a person answered which of 1 and 2 closes/);
+  assert.equal(readProposedRewrites(w.store)[refKey(ref("2"))]?.text, ABOUT_REWRITE);
+  assert.equal(w.reasons("orchestrator.about_other_written").length, 0);
+  assert.equal(w.job("2")?.step, "implement");
+});
+
+test("an implementor whose Item was closed as a duplicate drops only what it asked that duplicate; when done, everything it said is kept", async () => {
+  const draft = { title: "Tidy the parser", description: "Found it while reading.", verification: "It is done." };
+  const answer = { done: true, summary: "Did it.", aboutOthers: [{ item: "2", questions: [ABOUT_Q] }, { item: "3", questions: [ABOUT_Q] }], drafts: [draft] };
+  const run = async (closed: Partial<WorkItem>) => {
+    const w = world(config(), [item("1"), item("2", { state: "waiting" }), item("3", { state: "waiting" })]);
+    w.store.addUsageSample(usage(0.1, 0.1));
+    await w.run();
+    await step(w, "1", "succeeded", TRIAGE_OK);
+    assert.equal(roles(w).at(-1), "implement");
+    w.store.put({ ...w.store.get<WorkItem>(ref("1"))!, ...closed }, "sync", new Date(w.clock.ms).toISOString());
+    await step(w, "1", "succeeded", answer);
+    return w;
+  };
+  const duplicate = await run({ state: "abandoned", duplicateOf: ref("2") });
+  assert.deepEqual(duplicate.reasons("orchestrator.result_dropped"), ["1 was closed as a duplicate of 2 while its implementor worked: what it asked about 2 is dropped."]);
+  assert.deepEqual(duplicate.reasons("orchestrator.about_other_kept").map((reason) => /about (\d+);/.exec(reason)?.[1]), ["3"]);
+  assert.equal(openDrafts(duplicate.store).length, 1);
+  const done = await run({ state: "done" });
+  assert.deepEqual(done.reasons("orchestrator.result_dropped"), []);
+  assert.deepEqual(done.reasons("orchestrator.about_other_kept").map((reason) => /about (\d+);/.exec(reason)?.[1]), ["2", "3"]);
+  assert.equal(openDrafts(done.store).length, 1);
+});
+
+test("a dropped triage keeps its job's branch when it holds a built revision or commits ahead of main", async () => {
+  const drop = async (prepare: (w: World) => void) => {
+    const w = world(config(), [item("1")]);
+    w.store.addUsageSample(usage(0.1, 0.1));
+    await w.run();
+    prepare(w);
+    w.store.put({ ...w.store.get<WorkItem>(ref("1"))!, state: "abandoned" }, "sync", new Date(w.clock.ms).toISOString());
+    await step(w, "1", "succeeded", TRIAGE_OK);
+    return { deleted: w.runner.deleted, said: w.reasons("orchestrator.result_dropped")[0] ?? "" };
+  };
+  const plain = await drop((w) => {
+    w.runner.commitsAhead = async () => 0;
+  });
+  assert.deepEqual(plain.deleted, ["scopesoup/1"]);
+  const built = await drop((w) => {
+    const jobs = loadJobs(w.store);
+    jobs[refKey(ref("1"))]!.head = "a".repeat(40);
+    saveJobs(w.store, jobs);
+  });
+  assert.deepEqual(built.deleted, []);
+  assert.match(built.said, /Its branch scopesoup\/1 is kept: it holds a built revision \(aaaaaaa\)\.$/);
+  const ahead = await drop((w) => {
+    w.runner.commitsAhead = async () => 2;
+  });
+  assert.deepEqual(ahead.deleted, []);
+  assert.match(ahead.said, /it has 2 commits ahead of main\.$/);
 });
 
 const CONFLICT = { type: "conflictsWith" as const, item: "2", reason: "Both change the tide table." };

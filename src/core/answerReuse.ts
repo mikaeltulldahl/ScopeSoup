@@ -149,13 +149,27 @@ export function duplicatePair(question: string): [string, string] | null {
   return found ? [found[1]!, found[2]!] : null;
 }
 
-/** The newest answer to a duplicate question about `a` and `b`, asked on either of them in either direction, whatever it said. */
-export function duplicateAnswer(answers: readonly RecordedAnswer[], a: Ref, b: Ref): RecordedAnswer | undefined {
-  return answers.findLast((answer) => {
+/** The answer to a duplicate question that keeps both Items. */
+export const KEEP_BOTH = "Keep both";
+
+/** The answer to a duplicate question that closes `closed` as a duplicate of `of`. */
+export const closeAnswer = (closed: string, of: string): string => `Close ${closed} as a duplicate of ${of}`;
+
+/**
+ * The newest answer to a duplicate question about `a` and `b` (asked on either of them, in either direction) when it stands: "Keep
+ * both", or a close that took effect (`isClosed` says the Item it named is closed). A close that did not happen (the write failed, or
+ * the Item was left open as busy), or anything else a person wrote, does not settle the pair. A later answer replaces an earlier one.
+ */
+export function duplicateSettled(answers: readonly RecordedAnswer[], a: Ref, b: Ref, isClosed: (id: string) => boolean): RecordedAnswer | undefined {
+  const newest = answers.findLast((answer) => {
     if (answer.subject.host !== a.host) return false;
     const pair = duplicatePair(answer.question ?? "");
     return pair !== null && ((pair[0] === a.id && pair[1] === b.id) || (pair[0] === b.id && pair[1] === a.id));
   });
+  if (!newest) return undefined;
+  if (pickedLabel(newest.answer, KEEP_BOTH)) return newest;
+  for (const [closed, of] of [[a.id, b.id], [b.id, a.id]] as const) if (pickedLabel(newest.answer, closeAnswer(closed, of)) && isClosed(closed)) return newest;
+  return undefined;
 }
 
 const escaped = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -164,11 +178,12 @@ const escaped = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, "\
 const mentions = (text: string, id: string): boolean => new RegExp(`(?:^|[^\\p{L}\\p{N}-])#?${escaped(id)}(?![\\p{L}\\p{N}])`, "u").test(text);
 
 /**
- * True when an agent's question (its text and options) reads as asking which of two duplicates to keep: it speaks of a duplicate,
- * or names `other` together with closing or keeping open. Scope Soup asks that itself (`duplicateQuestion`).
+ * True when an agent's question (its text and options) reads as asking which of the two Items `a` and `b` to keep: it names one of
+ * them with words of duplicates or of one staying open, or names both with closing. Scope Soup asks that itself (`duplicateQuestion`).
  */
-export function asksAboutDuplicate(question: { question: string; options: readonly DecisionOption[] }, other: string): boolean {
+export function asksAboutDuplicate(question: { question: string; options: readonly DecisionOption[] }, a: string, b: string): boolean {
   const text = [question.question, ...question.options.map(optionText)].join(" ");
-  if (/duplicat/i.test(text)) return true;
-  return mentions(text, other) && /\b(?:close[sd]?|closing|open|keep|kept|stay|fold(?:ed)?)\b/i.test(text);
+  const names = [a, b].filter((id) => mentions(text, id)).length;
+  if (names >= 1 && /duplicat|\b(?:stays?|kept|keeps?|remains?|leaves?)(?: \S+)? open\b|\bwhich (?:one|of (?:the|them|these|those))\b/i.test(text)) return true;
+  return names === 2 && /\b(?:close[sd]?|closing)\b/i.test(text);
 }

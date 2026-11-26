@@ -3,10 +3,10 @@
 // written (`writeAboutOthers` in cycle.ts), once no session runs on it and nobody holds it. Until then they wait here, in the
 // store, by the other Item's ref key. Kept apart from the jobs, as overturns are, so the asker's job and the other Item's never race.
 
-import type { Ref, WorkItem } from "../model/types.ts";
+import type { RecordedAnswer, Ref, WorkItem } from "../model/types.ts";
 import { refKey } from "../model/types.ts";
 import { holdStands } from "../model/people.ts";
-import { asksAboutDuplicate, duplicateAnswer, itemTextHash, optionTexts, reusableAnswer, sameDecision } from "../core/answerReuse.ts";
+import { asksAboutDuplicate, duplicateSettled, itemTextHash, optionTexts, reusableAnswer, sameDecision } from "../core/answerReuse.ts";
 import { knownAnswers } from "../store/answers.ts";
 import type { Store } from "../store/store.ts";
 import type { Context } from "./context.ts";
@@ -138,13 +138,18 @@ export function askedBefore(ctx: Context, other: WorkItem, question: Decision): 
 /**
  * Why an agent's question about which of `asker` and `other` to keep is not asked, or null: Scope Soup asks that itself
  * (`duplicateQuestion`), so it is dropped when the asker's triage reports one a duplicate of the other (`reported`), or a person
- * already answered the duplicate question about the pair (whatever they picked: asking again could only contradict it).
+ * already settled the duplicate question about the pair (`duplicatePairSettled`): asking again could only contradict it.
  */
 export function duplicateAsked(ctx: Context, asker: Ref, other: Ref, question: Decision, reported: boolean): string | null {
-  if (!asksAboutDuplicate(question, asker.id) && !asksAboutDuplicate(question, other.id)) return null;
-  const answered = duplicateAnswer(knownAnswers(ctx.deps.store), asker, other);
+  if (!asksAboutDuplicate(question, asker.id, other.id)) return null;
+  const answered = duplicatePairSettled(ctx.deps.store, asker, other);
   if (answered) return `a person answered which of ${asker.id} and ${other.id} closes at ${answered.at} ("${clip(answered.answer.trim(), 300)}")`;
   return reported ? `Scope Soup asks which of ${asker.id} and ${other.id} closes itself` : null;
+}
+
+/** The person's answer that settled which of `a` and `b` closes: "Keep both", or a close that took effect (`duplicateSettled`). */
+export function duplicatePairSettled(store: Store, a: Ref, b: Ref, answers: readonly RecordedAnswer[] = knownAnswers(store)): RecordedAnswer | undefined {
+  return duplicateSettled(answers, a, b, (id) => store.get<WorkItem>({ ...a, id })?.state === "abandoned");
 }
 
 /** The Items a triage answer reports this one a duplicate of, by ref key. */
@@ -196,13 +201,7 @@ export function keepAboutOthers(ctx: Context, job: Job, role: "triage" | "implem
     }
     const key = refKey(other.ref);
     if (questions.length === 0 && rewrite) {
-      // Only a rewrite: proposed on that Item for a person, and its job is left as it is (decision 110).
-      store.tx(() => {
-        const proposed = readProposedRewrites(store);
-        proposed[key] = { askedBy, from: subject, original: (other.body ?? "").trim(), text: rewrite, at: ctx.at };
-        writeProposedRewrites(store, proposed);
-        ctx.commit("orchestrator.rewrite_proposed", `${askedBy[0]!.toUpperCase()}${askedBy.slice(1)} proposed a rewrite of ${other.ref.id}'s description, with no question: it waits for a person to accept, edit or reject it, and ${other.ref.id}'s work goes on as it is.`, key, { from: subject });
-      });
+      store.tx(() => proposeRewrite(ctx, other, askedBy, subject, rewrite));
       continue;
     }
     store.tx(() => {
@@ -212,6 +211,19 @@ export function keepAboutOthers(ctx: Context, job: Job, role: "triage" | "implem
       ctx.commit("orchestrator.about_other_kept", `${askedBy[0]!.toUpperCase()}${askedBy.slice(1)} asked ${plural(questions.length, "question")}${rewrite ? " and gave a rewrite of its description" : ""} about ${other.ref.id}; Scope Soup writes them there once no session runs on it and nobody holds it.`, key, { from: subject, questions: questions.length, rewrite: rewrite !== undefined });
     });
   }
+}
+
+/**
+ * Only a rewrite of `other`'s description from another Item's triage: proposed there for a person, and its job is left as it is
+ * (decision 110). Call it in a transaction.
+ */
+export function proposeRewrite(ctx: Context, other: WorkItem, askedBy: string, from: string, rewrite: string): void {
+  const { store } = ctx.deps;
+  const key = refKey(other.ref);
+  const proposed = readProposedRewrites(store);
+  proposed[key] = { askedBy, from, original: (other.body ?? "").trim(), text: rewrite, at: ctx.at };
+  writeProposedRewrites(store, proposed);
+  ctx.commit("orchestrator.rewrite_proposed", `${askedBy[0]!.toUpperCase()}${askedBy.slice(1)} proposed a rewrite of ${other.ref.id}'s description, with no question: it waits for a person to accept, edit or reject it, and ${other.ref.id}'s work goes on as it is.`, key, { from });
 }
 
 /**
