@@ -321,7 +321,8 @@ function draft(situation: Situation, ctx: TurnContext): Draft {
     if ((item.children ?? 0) > 0) return allPartsDoneTurn(item);
   }
   if (parked && parked.as !== "queued") return parkedTurn(parked, situation);
-  if (item.needsDecision) return { actor: "anyone", tone: "yours", waits: "1 question", reason: "Answer the question: the item needs a decision" };
+  // An open question in the item's own record does not take the turn from a session that works on the Item.
+  if (item.needsDecision && !(situation.session && isLive(situation.session))) return { actor: "anyone", tone: "yours", waits: "1 question", reason: "Answer the question: the item needs a decision" };
   // Another Item's triage proposed a rewrite of the description (decision 110): a person's turn while nothing else runs on the Item.
   const proposed = (lane === "backlog" || lane === "blocked") && !situation.session ? ctx.index.snapshot.proposedRewrites?.find((each) => refKey(each.subject) === refKey(item.ref)) : undefined;
   if (proposed) return { actor: "anyone", tone: "yours", since: proposed.at, waits: "a rewrite to accept", reason: `Accept, edit or reject the rewrite of the description by ${proposed.askedBy}` };

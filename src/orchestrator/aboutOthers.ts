@@ -135,6 +135,16 @@ export function askedBefore(ctx: Context, other: WorkItem, question: Decision): 
   return found ? `a person answered it there at ${found.at} ("${clip(found.answer.trim(), 300)}")` : null;
 }
 
+/** Who already proposed this rewrite of `other`'s description (whitespace aside), or null: its own triage, or another Item's. */
+function proposedThere(store: Store, job: Job | undefined, other: WorkItem, rewrite: string): string | null {
+  const key = refKey(other.ref);
+  if (job?.rewrite && sameText(job.rewrite.text, rewrite)) return job.rewrite.askedBy ? `${job.rewrite.askedBy.join(" and ")} proposed` : "its own triage proposed";
+  const proposed = readProposedRewrites(store)[key];
+  if (proposed && sameText(proposed.text, rewrite)) return `${proposed.askedBy} proposed`;
+  const waiting = (readWaitingAbouts(store)[key] ?? []).find((entry) => entry.rewrite !== undefined && sameText(entry.rewrite, rewrite));
+  return waiting ? `${waiting.askedBy} proposed` : null;
+}
+
 /**
  * Keeps an answer's questions about other Items, each naming who asked, until they are written on that Item. An unknown or closed
  * Item (or the asker's own) is dropped with an event; so is a rewrite that changes nothing with no question, and a question already
@@ -152,8 +162,13 @@ export function keepAboutOthers(ctx: Context, job: Job, role: "triage" | "implem
       ctx.commit("orchestrator.about_other_dropped", `The ${role === "triage" ? "triage" : "implementor"} of ${job.item.id} asked about ${JSON.stringify(entry.item.slice(0, 60))}, but ${why}: ${plural(entry.questions.length, "question")}${entry.rewrite ? " and a rewrite" : ""} dropped.`, subject, { item: entry.item.slice(0, 200) });
       continue;
     }
-    // Whitespace alone, or the Verification field appended again, is no change (decision 110).
-    const rewrite = changedRewrite(entry.rewrite, other.body, other.verification) || undefined;
+    // Whitespace alone, or the Verification field appended again, is no change (decision 110); nor is a rewrite already proposed there.
+    let rewrite = changedRewrite(entry.rewrite, other.body, other.verification) || undefined;
+    const repeated = rewrite !== undefined ? proposedThere(store, ctx.jobs[refKey(other.ref)], other, rewrite) : null;
+    if (repeated) {
+      ctx.commit("orchestrator.about_other_dropped", `Triage of ${job.item.id} rewrote ${other.ref.id}'s description as ${repeated} already: the rewrite is dropped.`, subject, { item: refKey(other.ref), again: true });
+      rewrite = undefined;
+    }
     const questions: Decision[] = [];
     for (const each of entry.questions) {
       const question = { ...each, question: `${each.question.trim()} (asked by ${askedBy})` };
@@ -162,7 +177,7 @@ export function keepAboutOthers(ctx: Context, job: Job, role: "triage" | "implem
       else ctx.commit("orchestrator.about_other_dropped", `${askedBy[0]!.toUpperCase()}${askedBy.slice(1)} asked about ${other.ref.id} again: ${clip(each.question.trim(), 300)} Not asked again: ${why}.`, subject, { item: refKey(other.ref), again: true });
     }
     if (questions.length === 0 && !rewrite) {
-      if (entry.questions.length === 0) ctx.commit("orchestrator.about_other_dropped", `Triage of ${job.item.id} rewrote ${other.ref.id}'s description as it already is (whitespace aside), with no question: nothing to write.`, subject, { item: refKey(other.ref) });
+      if (entry.questions.length === 0 && !repeated) ctx.commit("orchestrator.about_other_dropped", `Triage of ${job.item.id} rewrote ${other.ref.id}'s description as it already is (whitespace aside), with no question: nothing to write.`, subject, { item: refKey(other.ref) });
       continue;
     }
     const key = refKey(other.ref);

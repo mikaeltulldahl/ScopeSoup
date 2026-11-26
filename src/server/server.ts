@@ -34,7 +34,7 @@ import { explainOrder, voteForPlace, voteLimits } from "../orchestrator/score.ts
 import { setVote, voteInStore } from "../store/votes.ts";
 import { isSha } from "../orchestrator/history.ts";
 import { readMergeQueueNote } from "../orchestrator/mergeQueueLease.ts";
-import { adoptWritten, answerQuestion, answerRefusal, rewriteRefusal, keepsRecommendations, loadJobs, questionsSettled, releaseJob, parkedRewrite, resumesStep, saveJobs, settleRewrite } from "../orchestrator/jobs.ts";
+import { adoptWritten, answerQuestion, awaitWritten, answerRefusal, rewriteRefusal, keepsRecommendations, loadJobs, questionsSettled, releaseJob, parkedRewrite, resumesStep, saveJobs, settleRewrite } from "../orchestrator/jobs.ts";
 import { readProposedRewrites, writeProposedRewrites } from "../orchestrator/aboutOthers.ts";
 import { applyMove, isMove, MOVES, moveWhys, ROLE_WORDS, runningRole } from "./moves.ts";
 import { holdStands } from "../model/people.ts";
@@ -1238,8 +1238,10 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
       // Scope Soup wrote the text: the Item's triage counts it as the text it saw, so its work goes on.
       const jobs = loadJobs(store);
       const job = jobs[ref];
-      if (newText !== undefined && job?.triaged) {
-        job.triaged = adoptWritten(job.triaged, [newText, inertText(newText)]);
+      if (newText !== undefined && job && (job.triaged || written)) {
+        if (job.triaged) job.triaged = adoptWritten(job.triaged, [newText, inertText(newText)]);
+        // Its next step starts on the text written, not on the one the store reads until the next sync.
+        if (written) awaitWritten(store, job, subject, [newText, inertText(newText)]);
         saveJobs(store, jobs);
       }
       store.appendEvent({ kind: `orchestrator.rewrite_${settled}`, subject: ref, actor: by().who, data: { reason: `A person ${settled} the ${via} of ${subject.id}'s description; its work goes on as it is.`, original: proposal.original, text: newText ?? proposal.text, askedBy: proposal.askedBy } }, at);

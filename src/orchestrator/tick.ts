@@ -42,6 +42,7 @@ import { readSessionResult } from "./runner.ts";
 import { driveQueue } from "./queueMerge.ts";
 import { checkHoldings, readHoldings, WorkNotFound } from "./workspaces.ts";
 import { awaitsImplement, triagedText, recheckPromptText, staleTriage, startRecheck } from "./recheck.ts";
+import { itemTextHash } from "../core/answerReuse.ts";
 import { loadSlots } from "./slots.ts";
 import { dropOverturns, readOverturns } from "./overturns.ts";
 import { setupPromptLine } from "./setup.ts";
@@ -657,6 +658,14 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
     if (STEP_LEVEL[job.step] > level && !personAsked(job, job.step)) {
       above.push(`${item.ref.id} at ${job.step}`);
       continue;
+    }
+    // The description a person accepted is written on the host, and the store reads it after the next sync: no step starts on the old text.
+    if (job.writing) {
+      if (itemTextHash(item) === job.writing.from) {
+        reasons.push(`${item.ref.id} waits: the description written at a person's Accept is not read back from ${item.ref.host} yet`);
+        continue;
+      }
+      delete job.writing;
     }
     if (job.notBefore && Date.parse(job.notBefore) > Date.parse(at)) {
       reasons.push(`${item.ref.id} waits until ${job.notBefore} before its ${job.step} step`);

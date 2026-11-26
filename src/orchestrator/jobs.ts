@@ -261,8 +261,13 @@ export interface Job {
   proposal?: Proposal;
   /** The triage's rewrite description and its questions, parked for a person, or settled and about to go on. */
   rewrite?: Rewrite;
-  /** Rounds of the rewrite loop so far, kept while the triage runs again with the answers. */
+  /** Rounds of the rewrite loop so far on this job: each new rewrite counts up from it. */
   rewriteRounds?: number;
+  /**
+   * A person accepted or edited a rewrite and Scope Soup wrote it on the host, but the store still reads the Item's text from before
+   * (`from`, by `itemTextHash`) until the next sync: no step starts on that old text. Cleared once the text in the store is another.
+   */
+  writing?: { from: string };
   implement?: ImplementAnswer;
   /** Every decision the implementor recorded on this job so far, oldest first: the reviewer is shown them. */
   taken?: TakenDecision[];
@@ -668,7 +673,10 @@ export function settleRewrite(store: Store, item: Ref, answers: readonly string[
   }
   const settled = action === "accept" ? "accepted" : action === "edit" ? "edited" : "rejected";
   rewrite.settled = settled;
-  if (settled !== "rejected" && job.triaged && written.length > 0) job.triaged = adoptWritten(job.triaged, written);
+  if (settled !== "rejected" && written.length > 0) {
+    if (job.triaged) job.triaged = adoptWritten(job.triaged, written);
+    awaitWritten(store, job, item, written);
+  }
   const stop = rewrite.questions.find((question, index) => question.stopsOn !== undefined && picks(answers[index], question.stopsOn));
   if (stop) rewrite.stop = stop.stopsOn;
   if (stop?.duplicateOf) rewrite.duplicateOf = stop.duplicateOf;
@@ -679,6 +687,19 @@ export function settleRewrite(store: Store, item: Ref, answers: readonly string[
   saveJobs(store, jobs);
   store.appendEvent({ kind: `orchestrator.rewrite_${settled}`, subject: key, actor, data: { reason: `A person ${settled} the triage's rewrite (round ${rewrite.round}).${said ? ` Answered: ${said}.` : ""}`, round: rewrite.round, original: rewrite.original, text: rewrite.text } }, at);
   return { settled };
+}
+
+/**
+ * Scope Soup wrote `bodies` (one text, in the forms it may have been written in) as the Item's description: while the store still
+ * reads another text, the job waits for it (`Job.writing`). A store that reads it already needs no wait.
+ */
+export function awaitWritten(store: Store, job: Job, item: Ref, bodies: readonly string[]): void {
+  const current = store.get<WorkItem>(item);
+  if (!current) return;
+  const hashes = bodies.map((body) => itemTextHash({ title: current.title, body, verification: current.verification }));
+  const from = itemTextHash(current);
+  if (hashes.includes(from)) delete job.writing;
+  else job.writing = { from };
 }
 
 /**

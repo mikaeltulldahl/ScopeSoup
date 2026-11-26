@@ -1409,12 +1409,12 @@ async function proposedLabels(ctx: Context, job: Job, answer: TriageAnswer, item
 
 /**
  * A person settled the triage's rewrite (`settleRewrite`): a hold for a conflict makes the Item blocked by the other one; a close as a
- * duplicate closes it where the host can, else parks it as not ready; otherwise triage's other verdicts follow.
+ * duplicate closes it where the host can, else parks it as not ready; a not-ready verdict whose rewrite or questions were settled is
+ * triaged again; otherwise triage's other verdicts follow.
  */
 export async function afterRewrite(ctx: Context, job: Job): Promise<void> {
   const rewrite = job.rewrite;
   delete job.rewrite;
-  delete job.rewriteRounds;
   // Questions and a rewrite from agents of other Items: once settled, this Item is triaged again with the answers.
   if (rewrite?.askedBy) return next(ctx, job, "triage", `A person settled what ${rewrite.askedBy.join(" and ")} asked about ${job.item.id}${rewrite.settled ? ` (the rewrite ${rewrite.settled})` : ""}. Next: triage again, with the answers.`);
   const others = rewrite?.closeOther ?? [];
@@ -1443,6 +1443,19 @@ export async function afterRewrite(ctx: Context, job: Job): Promise<void> {
   let closed = "";
   for (const other of others) closed += await closeOtherDuplicate(ctx, job, other);
   if (!job.triage) return next(ctx, job, "implement", `The rewrite is settled.${closed} Next: implement.`);
+  // Not ready, and a person answered its questions or took a new description: that is what it asked for, so its verdict is not
+  // parked again as it was. The triage runs again on the Item as it is now, with the answers.
+  const answered = rewrite !== undefined && rewrite.questions.length > 0;
+  const rewritten = rewrite?.settled === "accepted" || rewrite?.settled === "edited";
+  if (!job.triage.ready && !job.triage.restructure && rewrite && (answered || rewritten)) {
+    const settled = rewritten ? `${rewrite.settled} the rewrite${answered ? " with the answers to its questions" : ""}` : "answered its questions";
+    job.recheck = {
+      reasons: [`a person ${settled} after it said the Item was not ready`],
+      previous: job.triage, previousAt: job.triaged?.at ?? job.startedAt, commits: [], commitCount: 0, finished: [],
+      ...(rewritten && job.triaged ? { text: { title: job.triaged.title, body: rewrite.original, verification: job.triaged.verification } } : {}),
+    };
+    return next(ctx, job, "triage", `A person ${settled} after triage said ${job.item.id} was not ready.${closed} Next: triage again, with the answers.`);
+  }
   return afterTriage(ctx, job, job.triage, `${rewrite?.settled ? ` A person ${rewrite.settled} the rewrite.` : ""}${closed}`);
 }
 
