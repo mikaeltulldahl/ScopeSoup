@@ -13,9 +13,13 @@ function statusOf(b: QueueBatch): BatchStatus {
 function probesOf(b: QueueBatch): BisectProbe[] {
   const byPrefix = new Map<number, BisectProbe>();
   for (const p of b.probes) {
-    const probe: BisectProbe = { prefix: p.prefix, status: p.status };
+    const probe: BisectProbe = { prefix: p.prefix, status: p.status, startedAt: p.startedAt };
     const run = p.run ?? byPrefix.get(p.prefix)?.run;
     if (run) probe.run = run;
+    if (p.finishedAt) probe.finishedAt = p.finishedAt;
+    if (p.ms !== undefined) probe.ms = p.ms;
+    if (p.reused) probe.reused = true;
+    if (p.kind === "rerun") probe.rerun = true;
     byPrefix.set(p.prefix, probe);
   }
   return [...byPrefix.values()];

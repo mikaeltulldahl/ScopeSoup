@@ -1,6 +1,6 @@
 // Lanes are derived, never dragged: from the item, its changes, live sessions and batches.
 
-import type { Batch, BatchMember, Change, Session, Verdict, WorkItem } from "../model/types.ts";
+import type { Batch, BatchMember, Change, Ref, Session, Verdict, WorkItem } from "../model/types.ts";
 import { refKey } from "../model/types.ts";
 import type { Index } from "./snapshot.ts";
 
@@ -69,6 +69,12 @@ export function isApproved(change: Change, index: Index): boolean {
   return passes.length > 0;
 }
 
+/** Parked for a person (a question, a hand-over, an escalation, not ready): not waiting in the merge queue, whatever its verdicts. */
+export function parkedForPerson(work: Ref, index: Index): boolean {
+  const parked = index.parkedByWork.get(refKey(work));
+  return parked !== undefined && parked.as !== "queued";
+}
+
 function currentChange(item: WorkItem, index: Index): Change | undefined {
   const changes = [...(index.changesByWork.get(refKey(item.ref)) ?? [])].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   return changes.find((change) => change.state === "open") ?? changes.find((change) => change.state === "merged");
@@ -129,7 +135,8 @@ export function situate(item: WorkItem, index: Index): Situation {
   }
   if (working || found || change.draft) return { ...situation, lane: "in-progress" };
   if (session?.role === "review" && isLive(session)) return { ...situation, lane: "in-review" };
-  return { ...situation, lane: situation.approved && !handedOver ? "queued" : "in-review" };
+  // Parked for a person (a question from a fix round after review, say): it waits in review for them, not in the queue.
+  return { ...situation, lane: situation.approved && !parkedForPerson(item.ref, index) ? "queued" : "in-review" };
 }
 
 export function laneOf(item: WorkItem, index: Index): Lane | null {
