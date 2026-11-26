@@ -51,6 +51,22 @@ test("a merged item is closed with a comment naming the commit and the batch; wi
   assert.equal(await readOnly.closeMerged!(item.ref, { sha: "abc", target: "main" }), "by-hand");
 });
 
+test("on the meta branch a merged item is marked done by Scope Soup itself", async () => {
+  const w = world();
+  const patches: { work: Ref; state?: string }[] = [];
+  const host: Host = {
+    info: { id: "local", capabilities: new Set(["write"]), whoami: async () => ({ id: "me", name: "me" }) },
+    write: { async appendLog() { return { shared: "local" } as never; }, async editWork(work, patch) { patches.push({ work, ...(patch.state ? { state: patch.state } : {}) }); return {} as never; } },
+  };
+  const result = validateConfig({ project: "tides", machineName: "laptop-a", repoPath: "/srv/clone" }, "/srv/scopesoup");
+  if (!result.ok) assert.fail(result.errors.join("\n"));
+  const actions = createHostActions({ host, git: async () => ({ code: 0, stdout: "", stderr: "" }), config: () => result.config, store: w.store });
+  assert.equal(actions.closesItself, true);
+  const local: Ref = { host: "local", kind: "work", id: "1" };
+  assert.equal(await actions.closeMerged!(local, { sha: "abc", target: "main" }), "closed");
+  assert.deepEqual(patches, [{ work: local, state: "done" }]);
+});
+
 test("items of another host are left alone", async () => {
   const w = world();
   const local: Ref = { host: "local", kind: "work", id: "1" };

@@ -128,6 +128,8 @@ export function createHostActions(deps: HostActionsDeps): Actions {
   const wasSha = (item: Ref): string => sha256((deps.store.get<WorkItem>(item)?.body ?? "").trim());
 
   return {
+    // The meta branch: nothing closes an Item when its change merges but Scope Soup (decision 114).
+    ...(!write?.closeWork && write?.appendLog && write.editWork ? { closesItself: true as const } : {}),
     // A host that keeps a log per item gets the lines. On GitHub a claim is a comment and the `scopesoup:claimed` label.
     ...(claimMachine ? { claimant: `${SCOPESOUP.who}@${claimMachine}` } : {}),
     // Claims are written by themselves where other machines can see them: a shared meta branch, or claim comments on GitHub.
@@ -174,6 +176,12 @@ export function createHostActions(deps: HostActionsDeps): Actions {
 
     async closeMerged(item, merged) {
       if (!mine(item)) return "not-needed";
+      // The meta branch has no issue to close: Scope Soup marks the Item done itself (decision 114).
+      if (!write?.closeWork && write?.appendLog && write.editWork) {
+        await write.editWork(item, { state: "done" });
+        await reread(item);
+        return "closed";
+      }
       if (!write?.closeWork) return write?.appendLog ? "not-needed" : "by-hand";
       const where = `${merged.target} as ${merged.sha.slice(0, 7)}${merged.batch !== undefined ? ` in batch ${merged.batch}` : ""}`;
       // The comment carries the `merged` marker where the host reads it back (GitHub).
