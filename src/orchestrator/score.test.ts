@@ -9,7 +9,7 @@ import { voteWords } from "../model/vote.ts";
 import { openStore } from "../store/store.ts";
 import { loadVotes, setVote, withVotes } from "../store/votes.ts";
 import type { Jobs } from "./jobs.ts";
-import { explainOrder, ordinal, voteForPlace, voteLimits, WEIGHTS } from "./score.ts";
+import { explainOrder, older, ordinal, voteForPlace, voteLimits, WEIGHTS } from "./score.ts";
 import { compareItems } from "./candidates.ts";
 
 const TRIAGED = { log: [{ at: "2026-03-02T10:00:00.000Z", by: { who: "scopesoup", agent: true as const }, kind: "session" as const, fields: { role: "triage" } }] };
@@ -184,7 +184,7 @@ test("why: place, reasons and what is ahead, in words and without the vote's num
   assert.deepEqual(order(all, jobs).slice(0, 2), ["41", "42"]);
   const why = explainOrder([first, second], { all, jobs, bugLabels: ["bug"] });
   assert.equal(why.get(refKey(first.ref)), "1st: major, already started, small");
-  assert.equal(why.get(refKey(second.ref)), "2nd: major bug, unblocks 2, small, voted up; behind #41 because #41 is already started");
+  assert.equal(why.get(refKey(second.ref)), "2nd: major bug, unblocks 2, small, voted up; behind 41 because 41 is already started");
   assert.equal(ordinal(11), "11th");
   assert.equal(ordinal(22), "22nd");
   assert.equal(voteWords(-2), "voted down");
@@ -206,4 +206,14 @@ test("vote: kept in the item.md header (meta branch) and in the store (GitHub it
   setVote(store, github.ref, 0, "robin", "2026-03-02T10:01:00.000Z");
   assert.deepEqual(loadVotes(store), {});
   assert.equal(store.getValue("scopesoup.votes"), "{}");
+});
+
+test("why: ids with a prefix are ordered by their number and named without a #", () => {
+  const a3 = work("A-3", { updatedAt: "2026-01-05T00:00:00Z" });
+  const a5 = work("A-5", { updatedAt: "2026-01-01T00:00:00Z" });
+  assert.ok(older(a3, a5) < 0);
+  const all = [a5, a3];
+  const sorted = [...all].sort(older);
+  const why = explainOrder(sorted, { all, jobs: {}, bugLabels: [] });
+  assert.equal(why.get(refKey(a5.ref)), "2nd: behind A-3 because A-3 is older");
 });

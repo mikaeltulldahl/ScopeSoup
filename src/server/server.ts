@@ -786,6 +786,18 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
       return result;
     });
     if (!done.ok) return sendError(response, 409, "REFUSED", `${work.ref.id}: ${done.why}.`);
+    // Implement anyway overrules the not-ready question the log still holds open: it is answered there, so the card stops asking.
+    const write = items?.write;
+    const asked = to === "implement" && write?.appendLog && work.ref.host === items!.host && !(options.questions && work.ref.host === options.questions.host) ? work.openQuestions ?? [] : [];
+    for (const question of asked) {
+      try {
+        await write!.appendLog!(work.ref, { kind: "answer", by: by(), fields: { answer: "Implement anyway", to: question.at, toBy: question.by } });
+      } catch (error) {
+        options.onRefresh?.();
+        return sendJson(response, 200, { ref, message: done.reason, logged: false, problem: error instanceof Error ? error.message : String(error) });
+      }
+    }
+    if (asked.length > 0) await options.syncNow?.();
     options.onRefresh?.();
     return sendJson(response, 200, { ref, message: done.reason });
   }
