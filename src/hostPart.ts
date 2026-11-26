@@ -12,6 +12,7 @@ import { resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { validateFiles } from "./config/shared.ts";
 import { type ConnectDeps, connectionOf, lookAtHost } from "./server/connect.ts";
+import { plural } from "./model/plural.ts";
 
 const USAGE = "Usage: pnpm config:host jira --site <https address> --project <KEY> [--deployment cloud|datacenter] [--email <Cloud account email>] [--filter <JQL condition>] [--component <name>]... [--read-only] [--look]";
 
@@ -43,7 +44,7 @@ export async function jiraHostPart(answers: JiraAnswers, deps: ConnectDeps, look
     { project: "check", host: connection.host },
     process.cwd(),
   );
-  if (!checked.ok) return { ok: false, code: 1, lines: [`The Jira host is not valid. ${checked.errors.length} problem(s):`, ...checked.errors.map((error) => `- ${error}`)] };
+  if (!checked.ok) return { ok: false, code: 1, lines: [`The Jira host is not valid. ${plural(checked.errors.length, "problem")}:`, ...checked.errors.map((error) => `- ${error}`)] };
   const out = { host: connection.host, ...(connection.email ? { private: { jira: { email: connection.email } } } : {}) };
   const lines = ["The host for the shared settings, and this machine's private part (put each in its file):", JSON.stringify(out, null, 2)];
   if (connection.host.deployment === "cloud" && !connection.email) lines.push("Jira Cloud needs the email of the account the API token belongs to (--email): it is kept in this machine's private file.");

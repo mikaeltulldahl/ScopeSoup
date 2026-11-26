@@ -166,7 +166,7 @@ describe("the meta branch's format", { concurrency: 4 }, () => {
     const outcome = await a.host.write!.appendLog!(work("F-1"), { kind: "released", by });
     assert.equal(outcome.shared, "pending");
     assert.ok(outcome.problem?.includes(NEWER_META), outcome.problem);
-    assert.match(outcome.problem ?? "", /1 unshared commit\(s\); they stay here and are not pushed/);
+    assert.match(outcome.problem ?? "", /1 unshared commit; they stay here and are not pushed/);
     assert.equal(origin.git(["rev-parse", REF]), newer);
   });
 

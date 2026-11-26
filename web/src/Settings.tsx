@@ -531,7 +531,7 @@ export function Settings({ project, openHistory = false }: { project?: ProjectVi
             <label>
               <b>Parallel sessions</b>
               <input type="range" min={1} max={Math.max(8, Number(draft.settings.maxParallelSessions))} step={1} value={draft.settings.maxParallelSessions} onInput={(event) => sliderSetting("maxParallelSessions", (event.target as HTMLInputElement).value)} />
-              <span>{draft.settings.maxParallelSessions} session(s) at once, of every role (1 = efficiency, more = speed)</span>
+              <span>{draft.settings.maxParallelSessions} {Number(draft.settings.maxParallelSessions) === 1 ? "session" : "sessions"} at once, of every role (1 = efficiency, more = speed)</span>
               <Marked k="maxParallelSessions" />
             </label>
           </div>

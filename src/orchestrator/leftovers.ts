@@ -25,6 +25,7 @@ import { copyFileSync, lstatSync, mkdirSync, readFileSync, readlinkSync, realpat
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { within } from "../config/validate.ts";
 import type { Git } from "./process.ts";
+import { plural } from "../model/plural.ts";
 
 /** The most that is copied into one record. More than that, and nothing is discarded. */
 export const RECORD_CAP_BYTES = 500 * 1024 * 1024;
@@ -332,7 +333,7 @@ export function finishRecord(recorded: Recorded, leftovers: Leftovers, outcome: 
       "",
       `Discarded from \`${repo}\` (clone \`${meta.clone}\`), when ${meta.item} freed it at ${meta.at}. The repository was at commit \`${head}\`; run the commands there, before anything else changes those files.`,
       "",
-      `This brings back exactly what was discarded: ${outcome.restored.length} tracked file(s) and ${outcome.removed.length} untracked file(s). It touches nothing that was left in the clone (${outcome.left.length} path(s), listed in discarded.json).`,
+      `This brings back exactly what was discarded: ${plural(outcome.restored.length, "tracked file")} and ${plural(outcome.removed.length, "untracked file")}. It touches nothing that was left in the clone (${plural(outcome.left.length, "path")}, listed in discarded.json).`,
       "",
       nothing ? "Nothing was discarded, so there is nothing to bring back." : "Run these in Git Bash (or another POSIX shell), in this order:",
       "",

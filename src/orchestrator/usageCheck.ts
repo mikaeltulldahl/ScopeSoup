@@ -1,6 +1,7 @@
 // The usage check. Pure: no clock, no I/O. Admission control over the newest usage sample.
 
 import type { UsageSample, UsageWindow, UsageWindowKind } from "../model/types.ts";
+import { plural } from "../model/plural.ts";
 
 export const WINDOW_MS: Record<UsageWindowKind, number> = {
   five_hour: 5 * 3600_000,
@@ -43,7 +44,7 @@ export function decide(input: UsageCheckInput): UsageCheckDecision {
   const probe = (why: string): UsageCheckDecision =>
     runningSessions === 0
       ? { allow: true, reason: `${why}; starting one session to get a reading` }
-      : { allow: false, reason: `${why}; waiting for a reading from the ${runningSessions} running session(s)` };
+      : { allow: false, reason: `${why}; waiting for a reading from the ${plural(runningSessions, "running session")}` };
 
   if (!sample) return probe("No usage reading yet");
 

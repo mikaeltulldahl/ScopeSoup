@@ -49,7 +49,7 @@ describe("the step on GitHub", { concurrency: 4 }, () => {
     assert.deepEqual(readMarker(comment!.body)?.data, { v: 1, issue: 1, item: "A-1" });
     for (const issue of ["1", "2"]) assert.equal(fake.issues.get(issue)!.state, "open");
     assert.ok(!writes(fake).some((call) => /\/issues\/[34]\b/.test(call)), writes(fake).join("\n"));
-    assert.match(moveText(report, "label", REPO, false).at(-1)!, /2 open issue\(s\) in harbour\/tides are labelled moved-to-scopesoup and given a comment naming its Item \(the label was created\)\. Pull requests were not touched\./);
+    assert.match(moveText(report, "label", REPO, false).at(-1)!, /2 open issues in harbour\/tides are labelled moved-to-scopesoup and given a comment naming its Item \(the label was created\)\. Pull requests were not touched\./);
   });
 
   test("close: also closed as not planned, with the reason in the comment", async () => {

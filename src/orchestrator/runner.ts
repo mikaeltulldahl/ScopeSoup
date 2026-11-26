@@ -121,6 +121,8 @@ export function createRunner(deps: RunnerDeps): Runner {
   const live = new Map<string, Live>();
   /** Starts being prepared, by subject: counted from the moment `start` is called, so `busy` sees them before the first await. */
   const preparing = new Map<string, number>();
+  /** The id of the record a session has from the moment it is asked for, by subject, until it spawns or is stillborn. */
+  const provisional = new Map<string, string>();
   const finishedSessions = new Map<string, Promise<Session>>();
 
   const runSetup = deps.runSetup ?? createSetupRunner(processes, deps.env ?? process.env, deps.config, now);
@@ -135,11 +137,18 @@ export function createRunner(deps: RunnerDeps): Runner {
     store.put(entry.session, ACTOR, iso(now()));
   }
 
+  function takeProvisionalId(subject: Ref): string | undefined {
+    const key = refKey(subject);
+    const id = provisional.get(key);
+    provisional.delete(key);
+    return id;
+  }
+
   /** A session that never got a process: refused, or its preparation failed. */
   function stillborn(request: SessionRequest, endReason: string, extra: { status?: SessionStatus; setupFailed?: true; setupOutcome?: string; cwd?: string } = {}): Session {
     const at = iso(now());
     const session: Session = {
-      ref: { host: SESSION_HOST, kind: "session", id: newId() },
+      ref: { host: SESSION_HOST, kind: "session", id: takeProvisionalId(request.subject) ?? newId() },
       role: request.role,
       subject: request.subject,
       status: extra.status ?? "failed",
@@ -364,7 +373,10 @@ export function createRunner(deps: RunnerDeps): Runner {
     if (provider.commandLimit !== "allowlist") {
       return stillborn(request, `Refused: the agent provider ${provider.name} cannot hold a session to the role's allowedTools (it limits commands with a ${provider.commandLimit} only), and whether that is enough is a person's decision.`);
     }
+    // The board and the session list see the session from now on, not only once its folder is ready (a clone, a fetch can take a while): the Item is held from the claim.
     const id = newId();
+    provisional.set(refKey(request.subject), id);
+    store.put({ ref: { host: SESSION_HOST, kind: "session", id }, role: request.role, subject: request.subject, status: "starting", attempt: request.attempt, startedAt: iso(now()) } satisfies Session, ACTOR, iso(now()));
     const streamPath = join(config.streamsDir, `${id}.ndjson`);
     let cwd: string;
     let command: Launch;
@@ -405,6 +417,7 @@ export function createRunner(deps: RunnerDeps): Runner {
       return stillborn(request, error instanceof PathRefused ? `Refused: ${message}` : error instanceof NoFreeClone ? message : `Could not prepare the session: ${message}`);
     }
 
+    provisional.delete(refKey(request.subject));
     const startedMs = now();
     const session: Session = {
       ref: { host: SESSION_HOST, kind: "session", id },

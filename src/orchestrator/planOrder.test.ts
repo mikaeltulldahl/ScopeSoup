@@ -33,9 +33,9 @@ test("readyItems holds an umbrella and an all-parts-done item; labels do not mat
   const { ready, held } = readyItems(items, [], {}, T0);
   assert.deepEqual(ready.map((item) => item.ref.id), ["3"]);
   assert.deepEqual(held.map((entry) => [entry.item.ref.id, entry.reason]), [
-    ["1", "has 2 open child item(s)"],
+    ["1", "has 2 open child items"],
     ["2", "all its child items are done; waiting for a person to close it"],
-    ["4", "has 1 open child item(s)"],
+    ["4", "has 1 open child item"],
   ]);
 });
 

@@ -63,9 +63,9 @@ function Health({ health }: { health: NonNullable<BoardView["queue"]["health"]> 
       )}
       {m && (m.timedRuns > 0 || m.reruns > 0 || m.culpritBatches > 0) && (
         <p class="muted num">
-          Batch size uses what the queue measured: {m.timedRuns} timed run(s)
-          {m.rerunCost !== undefined ? `, a rerun costs ${Math.round(m.rerunCost * 100)}% of the failed run (${m.reruns} rerun(s))` : ""}
-          {m.culpritBatches > 0 ? `, the failure report named the culprit in ${m.culpritNamed} of ${m.culpritBatches} batch(es)` : ""}.
+          Batch size uses what the queue measured: {m.timedRuns} timed {m.timedRuns === 1 ? "run" : "runs"}
+          {m.rerunCost !== undefined ? `, a rerun costs ${Math.round(m.rerunCost * 100)}% of the failed run (${m.reruns} ${m.reruns === 1 ? "rerun" : "reruns"})` : ""}
+          {m.culpritBatches > 0 ? `, the failure report named the culprit in ${m.culpritNamed} of ${m.culpritBatches} ${m.culpritBatches === 1 ? "batch" : "batches"}` : ""}.
         </p>
       )}
     </section>

@@ -14,6 +14,7 @@ import type { Self } from "./holdings.ts";
 import { actorParts } from "./holdings.ts";
 import { assessAll, isMyTurn, waitingQueue, yourTurn } from "./turns.ts";
 import type { AssumptionView, BatchMemberView, BatchView, BoardView, CardView, ChangeLink, ItemLink, LaneView, ProbeView, QueueView, SessionView } from "./views.ts";
+import { plural } from "../model/plural.ts";
 
 /** How many done items the board carries; the lane's `total` has the real count. */
 export const DONE_SHOWN = 12;
@@ -85,10 +86,6 @@ export function cardView(assessment: Assessment, parkedFor?: Map<string, Parked>
   if (session) card.session = sessionView(session);
   if (batch) card.batch = { ref: batch.ref, name: `batch ${batch.ref.id}`, status: batch.status };
   return card;
-}
-
-function plural(count: number, word: string): string {
-  return `${count} ${word}${count === 1 ? "" : "s"}`;
 }
 
 function labels(members: BatchMemberView[]): string {

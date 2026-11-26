@@ -89,7 +89,7 @@ test("config:check: an invalid file lists every problem", () => {
     assert.equal(result.ok, false);
     const text = result.lines.join("\n");
     // The older string mergeQueue is in the shared file, which no migration reads: refused as it stands.
-    assert.match(text, /is not valid\. 4 problem\(s\):/);
+    assert.match(text, /is not valid\. 4 problems:/);
     assert.match(text, /- mergeQueue must be an object/);
     assert.match(text, /- Top level: unknown key "colour"/);
     assert.match(text, /- keepAwake must be true or false/);
