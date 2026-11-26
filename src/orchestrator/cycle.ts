@@ -668,12 +668,13 @@ async function sessionMerged(ctx: Context, job: Job, item: WorkItem | null, aske
  * remote's main holds what it merged, the Item is done as after a level 2 merge. Returns false, with nothing written, when
  * it cannot be shown, so the answer is settled as the level says.
  */
-async function mergedUnderEarlierLevel(ctx: Context, job: Job, item: WorkItem | null): Promise<boolean> {
-  return settleSessionMerge(ctx, job, item, undefined, true);
+async function mergedUnderEarlierLevel(ctx: Context, job: Job, item: WorkItem | null, allowed: boolean): Promise<boolean> {
+  return settleSessionMerge(ctx, job, item, undefined, allowed ? "allowed" : "forbidden");
 }
 
 /** `late`: only finish the Item when main holds the merge; otherwise return false and write nothing. */
-async function settleSessionMerge(ctx: Context, job: Job, item: WorkItem | null, askedBy: string | undefined, late: boolean): Promise<boolean> {
+async function settleSessionMerge(ctx: Context, job: Job, item: WorkItem | null, askedBy: string | undefined, mode: false | "allowed" | "forbidden"): Promise<boolean> {
+  const late = mode !== false;
   const { runner, actions } = ctx.deps;
   const key = refKey(job.item);
   const main = ctx.config.mainBranch;
@@ -705,6 +706,16 @@ async function settleSessionMerge(ctx: Context, job: Job, item: WorkItem | null,
   }
   const merged = contains === true ? head : squash;
   if (late && !merged) return false;
+  if (merged && mode === "forbidden") {
+    // Its instructions said to commit and stop: a merge nobody reviewed, or at level 4 one the merge queue's check never saw.
+    delete job.merged;
+    await park(
+      ctx, job, "escalated",
+      `The implementor merged ${job.branch} to ${main} (${name} contains ${merged.slice(0, 7)}) although its instructions said to commit and stop, not to merge: its session started at level ${job.sessionStart?.level ?? "?"}, where nothing merges before review, and the level is ${ctx.config.level} now. The change is on ${main} without the review or the merge queue's check. Look at it; close the Item if it is fine, or answer here to have it looked at again.`,
+      "escalation",
+    );
+    return true;
+  }
   await writeRevision(ctx, job);
   if (merged) {
     job.merged = merged;
@@ -713,7 +724,7 @@ async function settleSessionMerge(ctx: Context, job: Job, item: WorkItem | null,
       : `${name} at ${tip.slice(0, 7)} contains ${merged.slice(0, 7)}, a squash of its head ${head.slice(0, 7)} (the same files, new since ${job.base!.slice(0, 7)})`;
     ctx.commit(
       "orchestrator.merged",
-      `${job.branch} is merged: ${how}. The implementing session merged it${late ? ` under the level its session started with, before the level was changed to ${ctx.config.level}` : ""}${said ? ` (it says: ${clipText(said, 200)})` : ""}.`,
+      `${job.branch} is merged: ${how}. The implementing session merged it${late ? ` under the level its session started with (started at level ${job.sessionStart?.level ?? "?"}, the level is now ${ctx.config.level})` : ""}${said ? ` (it says: ${clipText(said, 200)})` : ""}.`,
       key, { sha: merged, main: tip, by: "session", ...(contains === true ? {} : { squashed: head }) },
     );
     await ctx.act("write the merge to the item's log", key, () => actions.appendLog(job.item, "merged", { sha: merged, target: main }));
@@ -965,14 +976,6 @@ async function settleStep(ctx: Context, job: Job, session: Session | null, recor
     // Stopped without a question after a command was refused: a setting for a person, not a question.
     if (!answer.done && !answer.decision && record.denied?.length) return parkTools(ctx, job, "implementer", record.denied[0]!);
     if (!answer.done) return ask(ctx, job, "implementer", answer.decision, answer.summary, item);
-    // The level was raised while it worked, so it merged under the level its session started with (decision 108): if main holds
-    // what it merged, the Item is done as after a level 2 merge, not "nothing to change".
-    if (answer.mergedAs && !(ctx.config.level === 2 || (ctx.config.level === 3 && job.merge === true))) {
-      if (await mergedUnderEarlierLevel(ctx, job, item)) {
-        delete job.resumeWith;
-        return;
-      }
-    }
     // Level 2, or level 3 after the approval: the session merged it itself (or opened a pull request), so its branch may have no
     // commits over main any more. The hand-over looks at what it did.
     const merging = ctx.config.level === 2 || (ctx.config.level === 3 && job.merge === true);
@@ -981,6 +984,14 @@ async function settleStep(ctx: Context, job: Job, session: Session | null, recor
       // An overturn that arrived while it worked goes back to it before the hand-over.
       if (overturnsBack(ctx, job)) return;
       return handOver(ctx, job, item);
+    }
+    // The level was raised while it worked, so it merged under the level its session started with (decision 108): if main holds
+    // what it merged, the Item is done as after a level 2 merge, not "nothing to change".
+    if (answer.mergedAs && !merging) {
+      if (await mergedUnderEarlierLevel(ctx, job, item, job.sessionStart?.mayMerge === true)) {
+        delete job.resumeWith;
+        return;
+      }
     }
     // A round for the review's `should` findings (review.shouldFindings "fix") that committed nothing: the approved change goes on,
     // and the findings become a draft.

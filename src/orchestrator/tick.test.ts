@@ -416,8 +416,25 @@ test("a session started at level 2 that merged, finished after the level became 
   assert.deepEqual(w.reasons("orchestrator.escalated"), []);
   assert.equal(w.job("1")?.merged, HEAD);
   assert.deepEqual(roles(w), ["triage", "implement"], "no review of what is merged");
-  assert.match(w.reasons("orchestrator.merged")[0] ?? "", /The implementing session merged it under the level its session started with, before the level was changed to 3/);
+  assert.match(w.reasons("orchestrator.merged")[0] ?? "", /The implementing session merged it under the level its session started with \(started at level 2, the level is now 3\)/);
 });
+
+for (const [name, raw] of [["level 3 before approval", { level: 3 }], ["level 4", { level: 4, rules: STAGE1, remoteUrl: "git@git.example.invalid:team/project.git", checkCommand: ["node", "check.js"] }]] as const) {
+  test(`${name}: a session told to commit and stop that merged anyway is escalated saying so, never finished as done`, async () => {
+    const w = world(config(raw), [item("1")]);
+    w.runner.commitsAhead = async () => 0;
+    w.store.addUsageSample(usage(0.1, 0.1));
+    await w.run();
+    await step(w, "1", "succeeded", TRIAGE_OK);
+    assert.match(w.runner.requests.at(-1)?.vars.finish ?? "", /do not merge/);
+    w.runner.main = MAIN_MERGED; // it merged on its own, against its instructions
+    await step(w, "1", "succeeded", { ...IMPLEMENT_OK, mergedAs: MAIN_MERGED });
+    assert.equal(w.job("1")?.parked?.as, "escalated");
+    assert.equal(w.job("1")?.merged, undefined);
+    assert.deepEqual(w.reasons("orchestrator.merged"), []);
+    assert.match(w.reasons("orchestrator.escalated")[0] ?? "", /merged scopesoup\/1 to main .* although its instructions said to commit and stop, not to merge: its session started at level (3|4)/);
+  });
+}
 
 test("level 3, nothing committed and nothing merged (the answer names no merge): still \"nothing to change\" for a person", async () => {
   const w = world(config({ level: 3 }), [item("1")]);

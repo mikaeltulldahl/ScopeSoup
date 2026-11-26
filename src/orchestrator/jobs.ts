@@ -157,6 +157,8 @@ export interface ReviewAnswer {
 }
 
 export interface Job {
+  /** The implement session started last: the level it started at, and whether its finish text told it to merge (decision 108). */
+  sessionStart?: { level: number; mayMerge: boolean };
   item: Ref;
   workspace: string;
   branch: string;
