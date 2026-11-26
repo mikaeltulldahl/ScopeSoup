@@ -205,7 +205,8 @@ test("a pending question and its later answer both survive the deleted local sto
   assert.deepEqual(answers.map((answer) => [answer.answer, answer.question]), [["letters", "Letters or digits in ids?"]]);
   assert.equal(third.requests.length, 1);
   assert.equal(third.requests[0]?.role, "triage");
-  assert.match(third.requests[0]?.vars.itemBody ?? "", /Answered: letters/);
+  // In the earlier rounds, after the triage that asked it (decision 112).
+  assert.match(third.requests[0]?.vars.history ?? "", /Triage 1: [^\n]*\nA person answered "Letters or digits in ids\?": letters\n/);
 });
 
 test("three open triage questions all wait again after a deleted store; the first answer does not release the item, the third does", async () => {
@@ -373,6 +374,7 @@ test("an implementer's question with options survives a deleted store, and the a
   }
   await second.run();
   assert.equal(second.requests.length, 1);
-  assert.match(second.requests[0]?.vars.itemBody ?? "", /Asked: Digits or letters\?\n {2}Answered: digits/);
+  // In the earlier rounds, after the implement session that asked it (decision 112).
+  assert.match(second.requests[0]?.vars.history ?? "", /Implement 1: [^\n]*\nA person answered "Digits or letters\?": digits\n/);
 });
 });

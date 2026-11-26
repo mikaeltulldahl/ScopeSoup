@@ -12,13 +12,14 @@ import { KEYS } from "../store/keys.ts";
 import type { Level, ProjectConfig } from "../config/types.ts";
 import { levelName, mediaShared } from "../config/types.ts";
 import { mediaPromptText } from "../core/media.ts";
-import type { Change, Ref, RepoLabel, Session, SessionRole, UsageWindowKind, WorkItem } from "../model/types.ts";
+import type { Change, RecordedAnswer, Ref, RepoLabel, Session, SessionRole, UsageWindowKind, WorkItem } from "../model/types.ts";
 import { labelsPromptText } from "../model/labels.ts";
 import { refKey } from "../model/types.ts";
 import { providerFor } from "./providers/index.ts";
 import { loadVotes, withVotes } from "../store/votes.ts";
 import { busyFiles, compareItems, foreignChanges, readyItems, waitsForSameFiles } from "./candidates.ts";
 import { sameFilesWords } from "../core/sameFiles.ts";
+import { earlierText } from "../core/earlier.ts";
 import type { Context, TickDeps } from "./context.ts";
 import type { ClaimResult } from "./ports.ts";
 import { createLog, errorText } from "./context.ts";
@@ -308,7 +309,10 @@ export function finishText(config: ProjectConfig, job: Job): string {
 }
 
 /** Every variable a role template may use (the Item, where the session works, and the commands it may run). */
-export function promptVars(config: ProjectConfig, item: WorkItem, job: Job, decided = "", repoLabels: RepoLabel[] | null = null): Record<string, string> {
+export function promptVars(config: ProjectConfig, item: WorkItem, job: Job, answers: readonly RecordedAnswer[] = [], repoLabels: RepoLabel[] | null = null): Record<string, string> {
+  // What earlier sessions on the Item did, with the answers given since (decision 112); the answers it shows are not listed twice.
+  const earlier = earlierText(item.log ?? item.hostRecord?.log ?? [], answers, { role: job.step });
+  const decided = answersText(answers.filter((answer) => !earlier.shown.includes(answer)), refKey(item.ref));
   return {
     project: config.project,
     mainBranch: config.mainBranch,
@@ -330,6 +334,7 @@ export function promptVars(config: ProjectConfig, item: WorkItem, job: Job, deci
     decisions: decisionsPromptText(job),
     // What changed since the triage before, when the triage is taken again.
     recheck: recheckPromptText(job),
+    history: earlier.text,
     // Where to save images for the board, and who sees them (`media.push`).
     media: mediaPromptText(mediaShared(config)),
   };
@@ -797,7 +802,8 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
         if (main) job.base = main;
       }
       try {
-        const decided = answersText(knownAnswers(store), refKey(entry.item.ref));
+        const answers = knownAnswers(store).filter((answer) => refKey(answer.subject) === key);
+        const decided = answersText(answers, key);
         // The triage is shown the repository's labels; when they cannot be read it proposes none.
         let repoLabels: RepoLabel[] | null = null;
         if (step === "triage" && deps.actions.repoLabels) {
@@ -823,7 +829,7 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
         if (step === "implement") startedAs = { level: config.level, mayMerge: mayMerge(config, job) };
         session = await runner.start({
           role: step, subject: job.item, attempt: job.failures + 1, workspace: job.workspace, branch: job.branch,
-          vars: promptVars(config, entry.item, job, decided, repoLabels), ...implementorMessage(job, decided),
+          vars: promptVars(config, entry.item, job, answers, repoLabels), ...implementorMessage(job, decided),
           ...(chosen && chosen.model !== config.roles.implement.model ? { model: chosen.model } : {}),
           ...(Object.keys(units.env).length > 0 ? { env: units.env } : {}),
         });

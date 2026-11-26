@@ -855,9 +855,23 @@ async function writeSession(ctx: Context, job: Job, session: Session, record: Se
     ...(typeof session.costUsd === "number" && Number.isFinite(session.costUsd) ? { costUsd: Math.round(session.costUsd * 10_000) / 10_000 } : {}),
   };
   if (triage) fields.ready = output.ready;
+  // The triage's links, for the next sessions' `{{history}}` (decision 112).
+  const links = triage && Array.isArray(output.links) ? linkWords(output.links) : [];
+  if (links.length > 0) fields.links = links;
   if (after && !after.parked && !after.owes) fields.next = after.step;
   if (output.size === "small" || output.size === "medium" || output.size === "large") fields.size = output.size;
   await ctx.act("write the session to the item's log", refKey(job.item), () => ctx.deps.actions.appendLog(job.item, "session", fields));
+}
+
+/** A triage's links as short lines: `blockedBy A-3: why`. Text from an agent: data. */
+function linkWords(links: readonly unknown[]): string[] {
+  return links.flatMap((each) => {
+    if (typeof each !== "object" || each === null) return [];
+    const link = each as Record<string, unknown>;
+    if (typeof link.type !== "string" || typeof link.item !== "string") return [];
+    const reason = typeof link.reason === "string" && link.reason.trim() ? `: ${link.reason.trim()}` : "";
+    return [clipText(`${link.type} ${link.item}${reason}`, 300)];
+  }).slice(0, 10);
 }
 
 /** A triage's verdict in a sentence, for its `session` line (its answer has no summary of its own). */
