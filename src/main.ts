@@ -432,7 +432,8 @@ async function main(): Promise<void> {
                   reserve: usageReserve(loaded),
                   allowances: allowancePlans(loaded, usageReserve(loaded).seven_day),
                   level: loaded.level,
-                  pickNeeds: pickNeeds(loaded, programFound),
+                  // Looked up only for a pick: it searches PATH for each role's program.
+                  pickNeeds: () => pickNeeds(loaded, programFound),
                   ...(loaded.resources ? { resources: loaded.resources } : {}),
                 }
               : { bugLabels: ["bug"] };
