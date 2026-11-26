@@ -393,7 +393,7 @@ export function createRunner(deps: RunnerDeps): Runner {
         }
       }
       // A resumed session with a message (findings, a failed merging) is sent only the message: it has the prompt already.
-      const rendered = request.resume && request.message ? request.message : renderTemplate(spec.template, { setup: setupPromptLine(config), decisions: NO_DECISIONS, recheck: "", media: mediaPromptText(mediaShared(config)), ...request.vars, base });
+      const rendered = request.resume && request.message ? request.message : renderTemplate(spec.template, { setup: setupPromptLine(config), decisions: NO_DECISIONS, recheck: "", history: "", media: mediaPromptText(mediaShared(config)), ...request.vars, base });
       const prompt = request.message && rendered !== request.message ? `${rendered}\n\n${request.message}` : rendered;
       command = provider.launch({
         config, role: spec.role, prompt: restored ? `${prompt}\n\n${restored}\n` : prompt, partial: request.chat === true, env: { ...(deps.env ?? process.env) }, streamPath, nodePath: process.execPath,

@@ -9,7 +9,7 @@ Title: {{itemTitle}}
 
 Verification: {{verification}}
 {{labels}}
-</item>{{recheck}}
+</item>{{recheck}}{{history}}
 
 {{allowedCommands}} {{media}}
 

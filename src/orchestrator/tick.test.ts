@@ -3064,6 +3064,8 @@ test("a blockedBy link writes Scope Soup's own blocker; the job closes and the I
   assert.deepEqual(added, ["1 <- 2"]);
   assert.equal(w.job("1"), undefined);
   assert.deepEqual(roles(w), ["triage"]);
+  // The links go in the triage's session line, for the next sessions' earlier rounds (decision 112).
+  assert.match(w.lines.find((each) => each.startsWith("1 session")) ?? "", /"links":\["blockedBy #2: Needs the harbour list\.","related 2: Same screen\."\]/);
   assert.deepEqual(loadOwnBlockers(w.store)[refKey(ref("1"))]?.map((each) => each.id), ["2"]);
   assert.match(w.reasons("orchestrator.blocked")[0] ?? "", /1 is blocked by 2\. It waits in Blocked/);
   assert.match(w.reasons("orchestrator.idle").at(-1) ?? "", /1 blocked by 2/);
