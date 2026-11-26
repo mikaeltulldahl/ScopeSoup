@@ -161,7 +161,8 @@ export const closeAnswer = (closed: string, of: string): string => `Close ${clos
  * the Item was left open as busy), or anything else a person wrote, does not settle the pair. A later answer replaces an earlier one.
  */
 export function duplicateSettled(answers: readonly RecordedAnswer[], a: Ref, b: Ref, isClosed: (id: string) => boolean): RecordedAnswer | undefined {
-  const newest = answers.findLast((answer) => {
+  // Not findLast: the web build's lib has no ES2023.
+  const newest = [...answers].reverse().find((answer) => {
     if (answer.subject.host !== a.host) return false;
     const pair = duplicatePair(answer.question ?? "");
     return pair !== null && ((pair[0] === a.id && pair[1] === b.id) || (pair[0] === b.id && pair[1] === a.id));
