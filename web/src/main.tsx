@@ -19,7 +19,7 @@ import { MachineSetupNote } from "./Connect.tsx";
 import { useRoute } from "./route.ts";
 import { StatusLine } from "./StatusLine.tsx";
 import { Toasts } from "./Pending.tsx";
-import { allPaused, switchesAt } from "./switches.ts";
+import { allPaused, pausedSwitches, pausedText, switchesAt, switchPath } from "./switches.ts";
 import { mergeLane, queueShown } from "./mergeLane.ts";
 import { THEMES, taglineAt } from "./theme.ts";
 import { startThemes, useThemeId } from "./useTheme.ts";
@@ -66,6 +66,7 @@ function App() {
   const switches = { triage: status?.triage ?? "paused", implement: status?.implement ?? "paused", review: status?.review ?? "paused", mergeQueue: status?.mergeQueue ?? "paused" } as const;
   // Stop is pressed once per stop: all four read "stopped" until each is resumed.
   const allStopped = Object.values(switches).every((state) => state === "stopped");
+  const pausedList = pausedSwitches(switches, level);
   const anyStopped = Object.values(switches).some((state) => state === "stopped");
   const working = board ? board.status.runners.list.filter((runner) => runner.online && runner.busy).length + board.status.queue.testing : 0;
 
@@ -115,10 +116,19 @@ function App() {
           )}
         </div>
       </header>
-      {/* One switch paused shows on its lane; only when everything is paused does the board say so here. */}
-      {allPaused(switches, level) && (
+      {/* Whatever is paused is named here, with one button for all of it; the lanes' own buttons stay. */}
+      {pausedList.length > 0 && (
         <p class="notice notice-paused" role="status" id="paused-banner">
-          {anyStopped ? <b>Stopped.</b> : <b>Everything is paused.</b>} {anyStopped ? "Running sessions were ended; nothing new starts." : "Nothing new starts; running sessions finish their step."} Press Resume on {switchesAt(level).length > 1 ? "the lanes" : "the Backlog"} to go on.
+          {allPaused(switches, level) ? (
+            <>
+              {anyStopped ? <b>Stopped.</b> : <b>Everything is paused.</b>} {anyStopped ? "Running sessions were ended; nothing new starts." : "Nothing new starts; running sessions finish their step."}
+            </>
+          ) : (
+            <b>{pausedText(pausedList)}</b>
+          )}{" "}
+          <button type="button" id="resume-all" class="lane-switch primary" disabled={busy} title="Resume every paused switch shown here, as the buttons on the lanes do." onClick={() => pausedList.forEach((name) => act(switchPath(name, switches[name])))}>
+            Resume all
+          </button>
         </p>
       )}
       {!person && (

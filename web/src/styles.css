@@ -102,6 +102,7 @@ button.primary:hover:not(:disabled) { background: var(--accent); filter: brightn
 
 .notice { padding: 8px var(--gap); font-size: 0.9rem; border-bottom: 1px solid var(--line); }
 .notice-paused { background: var(--yours-soft); color: var(--text); border-color: var(--yours-line); }
+.notice-paused button { margin-left: 8px; }
 .notice-bad { background: var(--blocked-soft); border-color: var(--blocked); }
 .notice-person { background: var(--accent-soft); border-color: var(--accent); }
 /* who is at the board, at the top. */

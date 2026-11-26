@@ -217,7 +217,7 @@ A change to the file is picked up at the next tick. A file that does not validat
 
 ### Start, Pause and Stop
 
-Four switches, each on the overview's lane it feeds, and the stop switch in the board's header. **Scope Soup comes up paused after every start-up**: Scope Soup starts nothing of its own until a switch is resumed (a person's pick below a switch's level still runs; "The State menu"). Work under way goes on from the items' logs when it is (`src/orchestrator/recover.ts`).
+Four switches, each on the overview's lane it feeds, and the stop switch in the board's header. **Scope Soup comes up paused after every start-up**: Scope Soup starts nothing of its own until a switch is resumed (a person's pick below a switch's level still runs; "The State menu"). Work under way goes on from the items' logs when it is (`src/orchestrator/recover.ts`). While any switch shown at the level is paused, a bar under the header names them ("Paused: implementors, review, merge queue") with a **Resume all** button; it calls each switch's own endpoint below, so History shows one Resume per switch. The status line's "Nothing was started because ..." names "review is paused" and "the merge queue is paused" when that is why items wait.
 
 | Switch | Lane | From level | Endpoints | Events |
 |---|---|---|---|---|

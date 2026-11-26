@@ -2217,6 +2217,22 @@ async function toQueueAfterPause(w: World, queue: ReturnType<typeof fakeQueue>):
   assert.equal(w.job("1")?.queued, HEAD);
 }
 
+test("merging by queue: the idle reason says the merge queue is paused while an approved change waits for it", async () => {
+  const w = world(config({ ...QUEUE, review: { shouldFindings: "draft" } }), [item("1")]);
+  w.queue = fakeQueue();
+  w.store.addUsageSample(usage(0.1, 0.1));
+  await w.run();
+  await step(w, "1", "succeeded", TRIAGE_OK);
+  await step(w, "1", "succeeded", IMPLEMENT_OK);
+  w.store.setValue(KEYS.mergeQueue, "paused");
+  await step(w, "1", "succeeded", REVIEW_OK);
+  const idle = await w.run();
+  assert.match(idle.idle ?? "", /the merge queue is paused \(1 item\(s\) wait for it\)/);
+  w.store.setValue(KEYS.mergeQueue, "started");
+  const after = await w.run();
+  assert.doesNotMatch(after.idle ?? "", /merge queue is paused/);
+});
+
 test("merging by queue: an approved change waiting through many ticks for a paused merge queue writes its review and session lines once", async () => {
   const w = world(config({ ...QUEUE, review: { shouldFindings: "draft" } }), [item("1")]);
   const queue = fakeQueue();
