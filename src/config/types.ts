@@ -19,12 +19,10 @@ export interface Settings {
   stallTimeoutMinutes: NumberSetting;
   /** Hard limit on one session, whatever it is doing. */
   sessionTimeoutMinutes: NumberSetting;
-  /** Slider 1 to 5 over the share of the 5-hour and weekly windows kept for people's own use; see budgetReserve.ts. */
-  budgetReserve: NumberSetting;
-  /** Older exact share of the 5-hour window, 0 to 1. Still accepted; when present it replaces the slider's value. */
-  reserveFiveHour?: NumberSetting;
-  /** Older exact share of the weekly window, 0 to 1. Still accepted; when present it replaces the slider's value. */
-  reserveSevenDay?: NumberSetting;
+  /** Share of the 5-hour window kept for people's own use, 0 to 0.9 (the board sets it in steps of 0.05). */
+  reserveFiveHour: NumberSetting;
+  /** Share of the weekly window kept for people's own use, 0 to 0.9 (the board sets it in steps of 0.05). */
+  reserveSevenDay: NumberSetting;
   /** Slider 1 to 5 over the failed attempts of one step and the review-and-fix rounds before the item goes to a person; see persistence.ts. */
   persistence: NumberSetting;
   retryBackoffCapSeconds: NumberSetting;

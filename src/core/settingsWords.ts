@@ -24,7 +24,6 @@ const NUMBERS: Record<string, [string, string]> = {
   queueMinOutcomes: ["Outcomes the merge queue waits for", ""],
   triageMaxAgeDays: ["Oldest triage still used", "days"],
   maxParallelSessions: ["Sessions at once", ""],
-  budgetReserve: ["Usage reserve", "%"],
   reserveFiveHour: ["Reserve of the 5-hour window", "%"],
   reserveSevenDay: ["Reserve of the weekly window", "%"],
   tickSeconds: ["Time between looks", "s"],
@@ -66,6 +65,9 @@ export function shown(value: unknown, command = false): string {
   if (isObj(value) && "value" in value) return shown(value.value);
   return clip(JSON.stringify(value));
 }
+
+/** A share kept as a fraction, shown as a percentage. */
+const percent = (value: unknown): string => (typeof value === "number" ? String(Math.round(value * 100)) : shown(value));
 
 /** "X 10 → 15 min", "X set to 15 min", "X removed (was 10 min)". */
 function fromTo(label: string, change: SettingChangeLike, show: (value: unknown) => string = (value) => shown(value), unit = ""): string {
@@ -111,7 +113,7 @@ export function settingsWords(changes: readonly SettingChangeLike[]): string[] {
       if (third === "reason" && valueKeys.has(`settings.${second}`)) continue;
       const [label, unit] = NUMBERS[second] ?? [capital(spaced(second)), ""];
       if (third === "reason") out.push(`${label}: reason changed`);
-      else out.push(fromTo(label, change, (value) => shown(value), unit));
+      else out.push(fromTo(label, change, second.startsWith("reserve") ? percent : (value) => shown(value), unit));
       continue;
     }
     if (top === "mergeQueue") {

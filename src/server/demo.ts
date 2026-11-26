@@ -539,7 +539,7 @@ export async function writeDemoConfig(dir: string, settings: MetaSettings = meta
   execFileSyncRetrying("git", ["init", "--quiet", "-b", "main", repo], { windowsHide: true });
   // This machine's own settings, and the project's shared ones on the meta ref.
   const own = {
-    version: 1,
+    version: 2,
     repoPath: "repo",
     workspacesDir: "workspaces",
     machineName: "demo",
@@ -549,7 +549,8 @@ export async function writeDemoConfig(dir: string, settings: MetaSettings = meta
     ownClone: join(dir, "tidepool"),
     settings: {
       maxParallelSessions: { value: 2, reason: "Two sessions at a time on the demo machine." },
-      budgetReserve: { value: 2, reason: "The demo shares the usage window with nobody." },
+      reserveFiveHour: { value: 0.1, reason: "The demo shares the usage window with nobody." },
+      reserveSevenDay: { value: 0.1, reason: "The demo shares the usage window with nobody." },
     },
     // The plan's monthly allowance of the provider that triage runs on.
     ...allowanceDemo.machine(new Date()),

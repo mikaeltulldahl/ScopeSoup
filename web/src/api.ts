@@ -2,7 +2,6 @@
 
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { MergeQueueSetup, LevelChoice } from "../../src/config/levels.ts";
-import type { Sliders } from "../../src/config/sliders.ts";
 import type { ProjectConfig } from "../../src/config/types.ts";
 import type { ActivityView, BoardView, DraftView, ChatView, FolderName, CommitView, DiffView, HistoryView, ItemBranchState, ItemListView, ItemPage, SessionDetailsView, UsageView } from "../../src/core/views.ts";
 import type { OriginalFate, ProposedPart } from "../../src/model/types.ts";
@@ -383,7 +382,7 @@ export function useView<T extends { now: string }>(load: () => Promise<T>, key: 
  */
 export type ConfigView =
   | { present: false }
-  | { present: true; file: string; raw: unknown; config: ProjectConfig | null; errors: string[]; safeFields: string[]; sharedFields?: string[]; sliders: Sliders; defaultModels: Readonly<Record<string, string>>; setupWatchDefault?: readonly string[]; levels: LevelChoice[]; mergeQueue?: MergeQueueSetup | null; implementModels?: readonly string[] };
+  | { present: true; file: string; raw: unknown; config: ProjectConfig | null; errors: string[]; safeFields: string[]; sharedFields?: string[]; defaultModels: Readonly<Record<string, string>>; setupWatchDefault?: readonly string[]; levels: LevelChoice[]; mergeQueue?: MergeQueueSetup | null; implementModels?: readonly string[] };
 
 export const fetchConfig = () => getJson<ConfigView>("/api/config");
 
