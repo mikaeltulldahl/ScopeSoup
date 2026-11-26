@@ -33,13 +33,20 @@ test("the project's info: the GitHub host's repository, else the remote's, else 
   const failing = () => {
     throw new Error("no such remote");
   };
-  assert.deepEqual(projectInfo(config, "/x/conf/scopesoup.config.json", failing), { name: "tidepool", repository: "origin", github: null, folders: { clone: "/x/clone", config: "/x/conf", checkout: "/x/own" } });
+  assert.deepEqual(projectInfo(config, "/x/conf/scopesoup.config.json", failing), { name: "tidepool", repository: "origin", github: null, remote: "origin", folders: { clone: "/x/clone", config: "/x/conf", checkout: "/x/own" } });
   assert.equal(projectInfo(config, "/x/c.json", () => "git@github.com:sam/tidepool.git").github, "https://github.com/sam/tidepool");
+  assert.equal(projectInfo(config, "/x/c.json", () => "git@github.com:sam/tidepool.git").remote, "sam/tidepool", "a GitHub remote: owner/name");
+  assert.equal(projectInfo(config, "/x/c.json", () => "https://tok:secret@forge.example/sam/tidepool.git").remote, "https://forge.example/sam/tidepool.git", "another host: the URL, without credentials");
+  assert.equal(projectInfo(config, "/x/c.json", () => "/srv/git/tidepool.git").remote, "/srv/git/tidepool.git", "a local remote: its path");
+  assert.equal(projectInfo({ ...config, remoteUrl: "git@forge.example:sam/tidepool.git" }, "/x/c.json", failing).remote, "git@forge.example:sam/tidepool.git");
   const github = projectInfo({ ...config, ownClone: "/x/mine", host: { kind: "github", repo: "sam/tidepool", write: false } }, "/x/c.json", failing);
   assert.equal(github.repository, "sam/tidepool");
+  assert.equal(github.remote, "sam/tidepool");
   assert.equal(github.github, "https://github.com/sam/tidepool");
   assert.equal(github.folders.checkout, "/x/mine", "ownClone is the person's checkout, before realPaths");
   assert.deepEqual(projectView(github, (path) => path !== "/x/clone").folders, ["checkout", "config"], "only folders that are there are offered");
+  assert.equal(projectView(github, () => true).checkoutPath, "/x/mine");
+  assert.equal(projectView(github, (path) => path !== "/x/mine").checkoutPath, undefined, "no hover path for a folder that is not offered");
 });
 
 test("the file manager is Explorer, Finder or xdg-open", () => {
@@ -60,7 +67,7 @@ describe("POST /api/open-folder", () => {
   before(async () => {
     dir = mkdtempSync(join(tmpdir(), "scopesoup-folders-"));
     for (const name of ["own", "clone", "conf"]) mkdirSync(join(dir, name));
-    info = { name: "tidepool", repository: "sam/tidepool", github: "https://github.com/sam/tidepool", folders: { checkout: join(dir, "own"), clone: join(dir, "clone"), config: join(dir, "conf") } };
+    info = { name: "tidepool", repository: "sam/tidepool", github: "https://github.com/sam/tidepool", remote: "sam/tidepool", folders: { checkout: join(dir, "own"), clone: join(dir, "clone"), config: join(dir, "conf") } };
     store = openStore(":memory:");
     server = createServer({
       store,
@@ -86,7 +93,7 @@ describe("POST /api/open-folder", () => {
 
   test("the board names the project and the folders it can open", async () => {
     const board = (await (await fetch(`${base}/api/board`)).json()) as BoardView;
-    assert.deepEqual(board.project, { name: "tidepool", repository: "sam/tidepool", github: "https://github.com/sam/tidepool", folders: ["checkout", "clone", "config"] });
+    assert.deepEqual(board.project, { name: "tidepool", repository: "sam/tidepool", github: "https://github.com/sam/tidepool", folders: ["checkout", "clone", "config"], checkoutPath: join(dir, "own"), remote: "sam/tidepool" });
   });
 
   test("each configured folder is opened by its name, with the configuration's path", async () => {

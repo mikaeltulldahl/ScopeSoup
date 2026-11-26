@@ -42,8 +42,8 @@ h4 { font-size: 0.85rem; font-weight: 650; }
 .project-dot { flex: none; width: 10px; height: 10px; border-radius: 50%; background: var(--project, var(--brand)); }
 .project-text { display: inline-flex; flex-wrap: wrap; align-items: baseline; column-gap: 7px; min-width: 0; }
 .project-name { color: #fff; font-size: 1.02rem; overflow-wrap: anywhere; }
-.project-repo { color: var(--bar-muted); font-family: var(--mono); font-size: 0.8rem; overflow-wrap: anywhere; }
-a.project-repo:hover { color: var(--bar-text); text-decoration: underline; }
+.project-rename { font: inherit; font-size: 1.02rem; font-weight: 700; width: 14em; max-width: 100%; padding: 1px 6px; border-radius: 6px; border: 1px solid var(--bar-line); background: rgba(255, 255, 255, 0.08); color: var(--bar-text); }
+.project-refusal { color: #ffb4a8; font-size: 0.8rem; }
 .folder-button { display: inline-flex; align-items: center; gap: 6px; }
 .folder-button svg { flex: none; width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.3; stroke-linejoin: round; }
 .top .folder-button.icon-only { padding: 4px 7px; min-height: 30px; }

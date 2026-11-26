@@ -1,6 +1,7 @@
 // Hand-written validation of the configuration file. Collects every problem, in words a person
 // can act on, instead of stopping at the first.
 
+import { PROJECT_NAME_MAX } from "../core/views.ts";
 import { isAbsolute, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { SessionRole } from "../model/types.ts";
@@ -120,6 +121,7 @@ export function validateConfig(given: unknown, baseDir: string): ConfigResult {
   unknownKeys(raw, TOP_KEYS, "Top level");
 
   const project = str(raw, "project", "");
+  if (project.length > PROJECT_NAME_MAX) err(`project must be at most ${PROJECT_NAME_MAX} characters.`);
   const repoPath = path(str(raw, "repoPath", "", undefined) || ".");
   const mainBranch = str(raw, "mainBranch", "", "main");
   const remote = str(raw, "remote", "", "origin");

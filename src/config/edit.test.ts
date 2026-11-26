@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { after, test } from "node:test";
 import { type EditOptions, editConfig, readConfigView, splitChange } from "./edit.ts";
 import { createConfigLoader } from "./loader.ts";
+import { PROJECT_NAME_MAX } from "../core/views.ts";
 import { fileSettings, type SaveRequest, SaveRefused, type SaveResult, type SharedSettings } from "./shared.ts";
 import { settingChanges } from "../hosts/metaBranch/settings.ts";
 
@@ -207,6 +208,21 @@ test("an invalid result is refused with the errors and the file unchanged", asyn
   assert.equal(texts(file), before);
 });
 
+test("the project's name is saved (trimmed by the board), and an empty, blank or too long one is refused with the file unchanged", async () => {
+  const file = setup();
+  const result = await edit(file, { project: "tidepool" }, found);
+  assert.ok(result.ok && result.changed);
+  assert.equal(JSON.parse(readFileSync(sharedPath(file), "utf8")).project, "tidepool");
+  assert.equal(loaderOf(file).load().config?.project, "tidepool");
+  const before = texts(file);
+  for (const project of ["", "   ", "x".repeat(PROJECT_NAME_MAX + 1), 7]) {
+    const refused = await edit(file, { project }, found);
+    assert.equal(refused.ok, false, JSON.stringify(project));
+    if (!refused.ok) assert.ok(refused.errors.some((error) => error.includes("project must")), refused.errors.join(" "));
+  }
+  assert.equal(texts(file), before);
+});
+
 test("unsafe fields are refused, at the top and inside the safe ones", async () => {
   const file = setup();
   const before = texts(file);
@@ -348,7 +364,7 @@ test("readConfigView gives the five levels with their sentences and what each la
   assert.equal(view.levels[0]?.blocked, null);
   assert.match(view.levels[3]?.blocked ?? "", /^Level 3 needs claude/);
   assert.equal(view.levels[4]?.blocked, `Level 4 needs claude (the program "claude" was not found), a check command (checkCommand) and the remote's URL (remoteUrl).`);
-  assert.deepEqual(view.safeFields, ["level", "settings", "roles", "checkCommand", "remoteUrl", "setupCommand", "setupWatch", "resources", "sharedResources", "media", "review", "labels", "multiplayer", "host"]);
+  assert.deepEqual(view.safeFields, ["level", "project", "settings", "roles", "checkCommand", "remoteUrl", "setupCommand", "setupWatch", "resources", "sharedResources", "media", "review", "labels", "multiplayer", "host"]);
 });
 
 test("level 4 saved with its check command and remote URL writes all three; the check command must be startable; below level 4 they are refused", async () => {

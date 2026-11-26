@@ -79,7 +79,7 @@ function App() {
           </svg>
           Scope Soup
         </a>
-        {board?.project && <ProjectHeader project={board.project} onError={setFailed} />}
+        {board?.project && <ProjectHeader project={board.project} onError={setFailed} onRenamed={reload} />}
         {canWrite && NEW_ITEM_AT === "after-project" && <NewItem />}
         <PersonPicker known={board?.people ?? []} names={board?.peopleNames} />
         {canWrite && NEW_ITEM_AT === "before-nav" && <NewItem />}

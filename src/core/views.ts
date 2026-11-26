@@ -334,6 +334,9 @@ export interface BoardView {
  */
 export type FolderName = "checkout" | "clone" | "config";
 
+/** The longest project name: the configuration refuses a longer `project`, and the board's rename field stops there. */
+export const PROJECT_NAME_MAX = 60;
+
 /** The project a board belongs to, for its header and tab. */
 export interface ProjectView {
   /** The configured `project`, or the repository's name without a configuration. */
@@ -344,6 +347,12 @@ export interface ProjectView {
   github: string | null;
   /** The folders that are configured and there, which `POST /api/open-folder` opens. */
   folders: FolderName[];
+  /** For the folder button's hover: the path of the "checkout" folder, on the server's own machine; left out when it is not offered. */
+  checkoutPath?: string;
+  /** For the folder button's hover: "owner/name" from the GitHub host or a GitHub remote, else the remote's URL, else the remote's name. */
+  remote?: string;
+  /** Set when the project's shared settings can be written from the board (there is a configuration), so the name can be renamed in place. */
+  renamable?: boolean;
 }
 
 /** The filters of the item list (`GET /api/items`); all optional, all combined with "and". */

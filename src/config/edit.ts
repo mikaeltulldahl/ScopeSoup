@@ -34,6 +34,8 @@ const SETTING_NAMES = ["maxParallelSessions", "budgetReserve", "triageMaxAgeDays
 const ROLE_NAMES = ["triage", "implement", "review"];
 const SAFE: Record<string, true | ((value: unknown, err: (message: string) => void) => void)> = {
   level: true,
+  // The project's name, renamed in place on the board; validation holds it non-empty and short.
+  project: true,
   // Numbers; validation holds them within their bounds. No reason is asked for.
   settings: (value, err) => nested(value, "settings", SETTING_NAMES, ["value"], err),
   // The model per role (null or "" removes it, so the role runs on its default model). allowedTools, permissionMode and maxTurns govern what a session may do.
