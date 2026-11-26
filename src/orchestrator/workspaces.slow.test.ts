@@ -366,7 +366,7 @@ test("a review in a pool clone compares with the fetched main branch, so commits
     git(other, "push", "-q", "origin", "main");
   };
   const repo = r.repo(r.clones.a);
-  const localMain = git(repo, "rev-parse", "main");
+  const staleMain = git(repo, "rev-parse", "main");
 
   // Earlier items merged after the clone was made; the item's branch starts from the fetched main.
   mergeElsewhere("earlier.txt");
@@ -384,8 +384,8 @@ test("a review in a pool clone compares with the fetched main branch, so commits
   assert.equal(base, "origin/main");
   assert.equal(git(repo, "rev-parse", base), git(r.project, "rev-parse", "main"), "the base is the remote's newest main, fetched before the session");
   assert.equal(git(repo, "log", "--format=%s", `${base}..${workBranch(ref("1"))}`), "fake: work.txt", "only the item's own commit is the change");
-  assert.notEqual(git(repo, "log", "--format=%s", `main..${workBranch(ref("1"))}`), "fake: work.txt", "the stale local main would have shown the merged commits");
-  assert.equal(git(repo, "rev-parse", "main"), localMain, "the clone's local main branch is not moved");
+  assert.notEqual(staleMain, git(r.project, "rev-parse", "main"));
+  assert.equal(git(repo, "rev-parse", "main"), git(r.project, "rev-parse", "main"), "the clone's local main branch follows the remote's, so `git log main` is not stale");
 });
 
 test("the core rule on real paths applies to every clone of the pool", async () => {

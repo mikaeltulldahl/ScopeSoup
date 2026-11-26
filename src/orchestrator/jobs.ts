@@ -29,12 +29,14 @@ export interface Decision {
   /** Several options may be picked; the answer names each. */
   multiSelect?: true;
   /**
-   * A question made from a `duplicateOf` or `conflictsWith` link. When the answer is this label, the Item parked
-   * as not ready with that answer once the rewrite is settled (Scope Soup closes nothing itself).
+   * A question made from a `duplicateOf` or `conflictsWith` link: the answer that stops the Item once the rewrite is settled
+   * (close as a duplicate, or hold until the other Item is done). Picking it counts as keeping the rewrite, like a recommendation.
    */
   stopsOn?: string;
   /** With `stopsOn`, from a `duplicateOf` link: the Item it duplicates, so the host can close it as that one's duplicate. */
   duplicateOf?: Ref;
+  /** With `stopsOn`, from a `conflictsWith` link: the Item this one is then blocked by. */
+  holdFor?: Ref;
 }
 
 /** How the triage says this Item relates to another. Only `blockedBy` is acted on by itself (and on GitHub, `blocks`). */
@@ -65,6 +67,8 @@ export interface Rewrite {
   stop?: string;
   /** With `stop`, the Item a person said this one duplicates. */
   duplicateOf?: Ref;
+  /** With `stop`, the Item a person said to hold this one for: it becomes blocked by that Item. */
+  holdFor?: Ref;
   /**
    * The rewrite and questions came from agents working on other Items (`aboutOthers`), named here ("triage of A-3"). Once a
    * person settles them, this Item is triaged again with the answers.
@@ -594,9 +598,12 @@ export function picks(answer: string | undefined, label: string): boolean {
   return wanted !== "" && (given === wanted || given.startsWith(`${wanted}:`));
 }
 
-/** True when every answer is the recommendation of its question: then the rewrite, written for those answers, can be settled. */
+/**
+ * True when every answer is the recommendation of its question, or its stopping answer (`stopsOn`: holding for a conflict does not
+ * change the description): then the rewrite, written for the recommendations, can be settled.
+ */
 export function keepsRecommendations(rewrite: Rewrite, answers: readonly string[]): boolean {
-  return rewrite.questions.every((question, index) => picks(answers[index], question.recommendation));
+  return rewrite.questions.every((question, index) => picks(answers[index], question.recommendation) || (question.stopsOn !== undefined && picks(answers[index], question.stopsOn)));
 }
 
 /**
@@ -628,6 +635,7 @@ export function settleRewrite(store: Store, item: Ref, answers: readonly string[
   const stop = rewrite.questions.find((question, index) => question.stopsOn !== undefined && picks(answers[index], question.stopsOn));
   if (stop) rewrite.stop = stop.stopsOn;
   if (stop?.duplicateOf) rewrite.duplicateOf = stop.duplicateOf;
+  if (stop?.holdFor) rewrite.holdFor = stop.holdFor;
   saveJobs(store, jobs);
   store.appendEvent({ kind: `orchestrator.rewrite_${settled}`, subject: key, actor, data: { reason: `A person ${settled} the triage's rewrite (round ${rewrite.round}).${stop ? ` Answered: ${stop.stopsOn}.` : ""}`, round: rewrite.round, original: rewrite.original, text: rewrite.text } }, at);
   return { settled };

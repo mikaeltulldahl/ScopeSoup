@@ -22,10 +22,10 @@ import type { MergeQueue } from "./mergeQueue.ts";
 import { createLoop } from "./loop.ts";
 import { workspaceKey } from "./paths.ts";
 import { answerQuestion, asImplement, asTriage, loadJobs, jobQuestions, releaseJob, resumesStep, saveJobs, settleRewrite } from "./jobs.ts";
-import { loadOwnBlockers } from "../store/blockers.ts";
+import { loadOwnBlockers, setOwnBlockers } from "../store/blockers.ts";
 import { buildItemPage } from "../core/item-page.ts";
 import { addAnswer } from "../store/answers.ts";
-import { itemTextHash, reusableAnswer } from "../core/answerReuse.ts";
+import { conflictPair, heldUntil, itemTextHash, reusableAnswer, wentOnWithBoth } from "../core/answerReuse.ts";
 import { dryActions } from "./ports.ts";
 import type { Actions, AgentRunner, ClaimResult, SessionRequest } from "./ports.ts";
 import type { Notice, QueueDriver, QueueSink } from "./queueDriver.ts";
@@ -3164,6 +3164,177 @@ test("a duplicateOf link becomes a question; keeping the recommendation parked t
   assert.deepEqual(w.closes, []);
 });
 
+const CONFLICT = { type: "conflictsWith" as const, item: "2", reason: "Both change the tide table." };
+
+test("a conflictsWith link recommends going on with both; accepting starts the work, and a later round does not ask again", async () => {
+  const w = world(config(), [item("1"), item("2", { title: "Tide units", holder: { actor: { id: "p", name: "Pat" } } })]);
+  w.store.addUsageSample(usage(0.1, 0.1));
+  await w.run();
+  await step(w, "1", "succeeded", { ...TRIAGE, links: [CONFLICT] });
+  const question = w.job("1")?.rewrite?.questions[1];
+  assert.equal(question?.question, '1 conflicts with 2 "Tide units". Go on with both, or hold 1 until 2 is done?');
+  assert.equal(question?.recommendation, "Go on with both");
+  assert.equal(question?.stopsOn, "Hold 1 until 2 is done");
+  assert.deepEqual(conflictPair(question!.question), ["1", "2"]);
+  // Another answer to the first question runs the triage again; the conflict's "go on" is remembered for the pair.
+  assert.deepEqual(answerRewrite(w, "1", ["Imperial", "Go on with both"]), { rerun: true });
+  await w.run();
+  await step(w, "1", "succeeded", { ...TRIAGE, links: [CONFLICT] });
+  assert.deepEqual(w.job("1")?.rewrite?.questions.map((each) => each.question), [QUESTION.question]);
+  assert.deepEqual(answerRewrite(w, "1", ["Metric"]), { settled: "accepted" });
+  await w.run();
+  w.clock.ms += 1000;
+  await w.run();
+  assert.deepEqual(roles(w), ["triage", "triage", "implement"]);
+});
+
+test("a go on with both is remembered per pair, asked on either Item, until a later answer replaces it", () => {
+  const at = "2026-11-20T10:00:00Z";
+  const goOn = { subject: ref("1"), question: '1 conflicts with 2 "Tide units". Go on with both, or hold 1 until 2 is done?', answer: "Go on with both", by: "Ada", at };
+  assert.equal(wentOnWithBoth([goOn], ref("1"), ref("2")), true);
+  assert.equal(wentOnWithBoth([goOn], ref("2"), ref("1")), true);
+  assert.equal(wentOnWithBoth([goOn], ref("1"), ref("3")), false);
+  assert.equal(wentOnWithBoth([goOn], { host: "other", kind: "work", id: "1" }, { host: "other", kind: "work", id: "2" }), false);
+  const hold = { ...goOn, subject: ref("2"), question: '2 conflicts with 1 "Item 1". Go on with both, or hold 2 until 1 is done?', answer: "Hold 2 until 1 is done" };
+  assert.equal(wentOnWithBoth([goOn, hold], ref("1"), ref("2")), false);
+});
+
+test("holding for a conflict keeps the rewrite and makes the Item blocked by the other; no not-ready park", async () => {
+  const w = world(config(), [item("1", { body: "Tide table units." }), item("2", { title: "Tide units", holder: { actor: { id: "p", name: "Pat" } } })]);
+  w.store.addUsageSample(usage(0.1, 0.1));
+  const added: string[] = [];
+  const deps = w.depsFor();
+  deps.actions.addBlockers = async (target, blockers) => void added.push(`${target.id} <- ${blockers.map((each) => each.id).join(",")}`);
+  await tick(deps);
+  w.runner.end("1", "succeeded", { ...TRIAGE, links: [CONFLICT] });
+  await tick(deps);
+  assert.deepEqual(answerRewrite(w, "1", ["Metric", "Hold 1 until 2 is done"]), { settled: "accepted" });
+  await tick(deps);
+  assert.deepEqual(added, ["1 <- 2"]);
+  assert.equal(w.job("1"), undefined);
+  assert.deepEqual(loadOwnBlockers(w.store)[refKey(ref("1"))]?.map((each) => each.id), ["2"]);
+  assert.match(w.reasons("orchestrator.blocked").at(-1) ?? "", /A person answered to hold 1 until 2 is done: it waits in Blocked/);
+  const board = buildBoard(loadSnapshot(w.store), new Date(w.clock.ms));
+  assert.ok(board.lanes.find((lane) => lane.lane === "blocked")?.cards.some((card) => card.ref.id === "1"));
+  // Once the other is done, the triage runs again, and asks nothing about it.
+  w.store.put(item("2", { title: "Tide units", state: "done" }), "sync", new Date(w.clock.ms).toISOString());
+  w.clock.ms += 60_000;
+  await tick(deps);
+  assert.deepEqual(roles(w), ["triage", "triage"]);
+  w.runner.end("1", "succeeded", { ...TRIAGE, questions: [], links: [CONFLICT] });
+  await tick(deps);
+  assert.equal(w.job("1")?.rewrite?.questions.length, 0);
+});
+
+test("no conflict or duplicate question about an Item that is closed or Done (merged, the host not closed yet)", async () => {
+  const merged = { sha: "abc", target: "main", at: "2026-11-20T10:00:00Z" };
+  const w = world(config(), [item("1"), item("2", { title: "Done", state: "done" }), item("3", { title: "Merged", merged, holder: { actor: { id: "p", name: "Pat" } } }), item("4", { title: "Dropped", state: "abandoned" })]);
+  w.store.addUsageSample(usage(0.1, 0.1));
+  await w.run();
+  const links = ["2", "3", "4"].flatMap((id) => [{ type: "conflictsWith" as const, item: id, reason: "Same file." }, { type: "duplicateOf" as const, item: id, reason: "Same ask." }]);
+  await step(w, "1", "succeeded", { ...TRIAGE, links });
+  assert.deepEqual(w.job("1")?.rewrite?.questions.map((each) => each.question), [QUESTION.question]);
+});
+
+/** As `answerRewrite`, for any ref, with the item's text hash as the server records it. */
+function answerRewriteOf(w: World, subject: Ref, answers: string[], textHash?: string) {
+  const job = loadJobs(w.store)[refKey(subject)]!;
+  const at = new Date(w.clock.ms).toISOString();
+  return w.store.tx(() => {
+    job.rewrite!.questions.forEach((question, index) => addAnswer(w.store, { subject, answer: answers[index]!, by: "Ada", at, question: question.question, ...(textHash ? { textHash } : {}) }));
+    return settleRewrite(w.store, subject, answers, "accept", "Ada", at, job.parked!.at);
+  });
+}
+
+test("conflictPair reads only the question shape Scope Soup writes; the answers must be the options themselves", () => {
+  const at = "2026-11-20T10:00:00Z";
+  assert.equal(conflictPair('1 conflicts with 2 "Tide units". Hold 1 until that is settled?'), null);
+  assert.equal(conflictPair('1 conflicts with 2 "Tide units". Go on with both, or hold 2 until 1 is done?'), null);
+  assert.deepEqual(conflictPair('1 conflicts with 2 "A "quoted" title". Go on with both, or hold 1 until 2 is done?'), ["1", "2"]);
+  const question = '1 conflicts with 2 "Tide units". Go on with both, or hold 1 until 2 is done?';
+  const said = (answer: string) => [{ subject: ref("1"), question, answer, by: "Ada", at }];
+  assert.equal(wentOnWithBoth(said("Go on with both: Work on 1 as it is."), ref("1"), ref("2")), true);
+  assert.equal(wentOnWithBoth(said("Go on with both, but watch the table"), ref("1"), ref("2")), false);
+  assert.deepEqual(heldUntil(said("Hold 1 until 2 is done"), ref("1")), ["2"]);
+  assert.deepEqual(heldUntil(said("Hold 1 until 2 is done"), ref("2")), []);
+  // A conflict question is never answered by `reusableAnswer`, even on the same text: only the pair rule decides.
+  const it = item("1");
+  assert.equal(reusableAnswer([{ ...said("Go on with both")[0]!, textHash: itemTextHash(it) }], it, { question, options: [{ label: "Go on with both", description: "" }] }), undefined);
+});
+
+test("a hold picked with another answer that runs the triage again still makes the Item blocked; nothing is implemented", async () => {
+  const w = world(config(), [item("1", { body: "Tide table units." }), item("2", { title: "Tide units", holder: { actor: { id: "p", name: "Pat" } } })]);
+  w.store.addUsageSample(usage(0.1, 0.1));
+  const deps = w.depsFor();
+  deps.actions.addBlockers = async () => undefined;
+  await tick(deps);
+  w.runner.end("1", "succeeded", { ...TRIAGE, links: [CONFLICT] });
+  await tick(deps);
+  assert.deepEqual(answerRewrite(w, "1", ["Imperial", "Hold 1 until 2 is done"]), { rerun: true });
+  await tick(deps);
+  assert.deepEqual(roles(w), ["triage", "triage"]);
+  // The second round may name the conflict again, or not: the hold decides either way.
+  w.runner.end("1", "succeeded", { ...TRIAGE, links: [] });
+  await tick(deps);
+  w.clock.ms += 60_000;
+  await tick(deps);
+  assert.equal(w.job("1"), undefined);
+  assert.deepEqual(loadOwnBlockers(w.store)[refKey(ref("1"))]?.map((each) => each.id), ["2"]);
+  assert.match(w.reasons("orchestrator.blocked").at(-1) ?? "", /1 is blocked by 2 \(held by a person's answer: 2\)/);
+  assert.deepEqual(roles(w), ["triage", "triage"]);
+});
+
+test("no hold is offered when the other Item already waits on this one, and a hold that would close a cycle escalates instead", async () => {
+  const w = world(config(), [item("1", { title: "Tide units", holder: { actor: { id: "p", name: "Pat" } } }), item("2")]);
+  w.store.addUsageSample(usage(0.1, 0.1));
+  const conflict = { type: "conflictsWith" as const, item: "1", reason: "Same table." };
+  await w.run();
+  await step(w, "2", "succeeded", { ...TRIAGE, links: [conflict] });
+  assert.equal(w.job("2")?.rewrite?.questions[1]?.stopsOn, "Hold 2 until 1 is done");
+  // Meanwhile 1 is held until 2 is done.
+  setOwnBlockers(w.store, ref("1"), [ref("2")], "orchestrator", new Date(w.clock.ms).toISOString(), "A person answered to hold 1 until 2 is done.");
+  assert.deepEqual(answerRewrite(w, "2", ["Metric", "Hold 2 until 1 is done"]), { settled: "accepted" });
+  await w.run();
+  assert.equal(w.job("2")?.parked?.as, "escalated");
+  assert.match(w.job("2")?.parked?.reason ?? "", /1 already waits on 2 \(directly or through other Items\)/);
+  assert.equal(loadOwnBlockers(w.store)[refKey(ref("2"))], undefined);
+  // Triaged again, it asks nothing about 1 (the hold is not applied, and none is offered), so both go on.
+  assert.ok(releaseJob(w.store, ref("2"), "Ada", new Date(w.clock.ms).toISOString(), "Look again."));
+  await w.run();
+  await step(w, "2", "succeeded", { ...TRIAGE, questions: [], rewrite: "", links: [conflict] });
+  w.clock.ms += 1000;
+  await w.run();
+  assert.deepEqual(roles(w), ["triage", "triage", "implement"]);
+  assert.equal(loadOwnBlockers(w.store)[refKey(ref("2"))], undefined);
+});
+
+test("a go on is remembered after the description changed, which a text-hash reuse would not cover", async () => {
+  const w = world(config(), [item("1", { body: "Tide table units." }), item("2", { title: "Tide units", holder: { actor: { id: "p", name: "Pat" } } })]);
+  w.store.addUsageSample(usage(0.1, 0.1));
+  await w.run();
+  await step(w, "1", "succeeded", { ...TRIAGE, links: [CONFLICT] });
+  const hash = itemTextHash(w.store.get<WorkItem>(ref("1"))!);
+  assert.deepEqual(answerRewriteOf(w, ref("1"), ["Imperial", "Go on with both"], hash), { rerun: true });
+  w.store.put(item("1", { body: "Show the tide table in feet." }), "sync", new Date(w.clock.ms).toISOString());
+  await w.run();
+  await step(w, "1", "succeeded", { ...TRIAGE, links: [CONFLICT] });
+  assert.deepEqual(w.job("1")?.rewrite?.questions.map((each) => each.question), [QUESTION.question]);
+});
+
+test("a merged Item reopened is open work: its conflict is asked; on GitHub a merged Item the host has not closed is Done", async () => {
+  const merged = { sha: "abc", target: "main", at: "2026-11-20T10:00:00Z" };
+  const w = world(config(), [item("1"), item("2", { title: "Reopened", merged: { ...merged, reopened: "2026-11-21T10:00:00Z" }, holder: { actor: { id: "p", name: "Pat" } } })]);
+  w.store.addUsageSample(usage(0.1, 0.1));
+  await w.run();
+  await step(w, "1", "succeeded", { ...TRIAGE, links: [CONFLICT] });
+  assert.equal(w.job("1")?.rewrite?.questions.length, 2);
+  const g = world(config(), [ghItem("1"), ghItem("2", { title: "Merged", merged, holder: { actor: { id: "p", name: "Pat" } } })]);
+  g.store.addUsageSample(usage(0.1, 0.1));
+  await g.run();
+  await step(g, "1", "succeeded", { ...TRIAGE, links: [{ type: "conflictsWith", item: "#2", reason: "Same table." }] });
+  assert.deepEqual(loadJobs(g.store)[ghKey("1")]?.rewrite?.questions.map((each) => each.question), [QUESTION.question]);
+});
+
 test("on GitHub the answer closes the Item as a duplicate, with the target's database id; nothing before the answer", async () => {
   const w = world(config(), [ghItem("1"), ghItem("2", { title: "Tide units", holder: { actor: { id: "p", name: "Pat" } } })]);
   w.store.addUsageSample(usage(0.1, 0.1));
@@ -3189,6 +3360,34 @@ test("on GitHub the answer closes the Item as a duplicate, with the target's dat
   await tick(deps);
   assert.equal(loadJobs(w.store)[ghKey("1")], undefined);
   assert.deepEqual(roles(w), ["triage"]);
+});
+
+test("on GitHub a hold is one dependency call and no record of Scope Soup's own; a failed write escalates and the hold is kept", async () => {
+  const { w, fake, deps } = await githubWorld();
+  const real = deps.actions.addBlockers!;
+  deps.actions.addBlockers = async () => {
+    throw new Error("GitHub refused the dependency.");
+  };
+  const conflict = { type: "conflictsWith" as const, item: "#2", reason: "Same table." };
+  w.runner.end("1", "succeeded", { ...TRIAGE, links: [conflict] });
+  await tick(deps);
+  assert.deepEqual(answerRewriteOf(w, ghRef("1"), ["Metric", "Hold 1 until 2 is done"]), { settled: "accepted" });
+  await tick(deps);
+  const job = loadJobs(w.store)[ghKey("1")];
+  assert.equal(job?.parked?.as, "escalated");
+  assert.match(job?.parked?.reason ?? "", /could not be written on github: GitHub refused the dependency\. .*the hold is kept/);
+  // Answered, it is triaged again; the hold comes from the answer (this round names no conflict) and is written now.
+  deps.actions.addBlockers = real;
+  assert.ok(releaseJob(w.store, ghRef("1"), "Ada", new Date(w.clock.ms).toISOString(), "Try again."));
+  await tick(deps);
+  assert.deepEqual(roles(w), ["triage", "triage"]);
+  fake.clear();
+  w.runner.end("1", "succeeded", { ...TRIAGE, links: [] });
+  await tick(deps);
+  assert.deepEqual(fake.sent, [{ call: `POST ${DEPS}/1/dependencies/blocked_by`, body: { issue_id: 9002 } }]);
+  assert.equal(loadJobs(w.store)[ghKey("1")], undefined);
+  assert.equal(w.store.getValue("scopesoup.blockedBy"), null);
+  assert.deepEqual(w.store.get<WorkItem>(ghRef("1"))?.blockedBy.map((each) => each.id), ["2"]);
 });
 
 test("a rewrite that keeps the description and asks nothing goes on at once; an answer from earlier is settled as before", async () => {
