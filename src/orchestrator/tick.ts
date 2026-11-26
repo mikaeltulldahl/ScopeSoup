@@ -296,8 +296,12 @@ export function implementModel(config: ProjectConfig, job: Pick<Job, "triage" | 
  * project's CLAUDE.md says (or opens a pull request when it says so). Level 3 before the approval, and level 4: it commits and
  * stops.
  */
+export function mayMerge(config: ProjectConfig, job: Pick<Job, "merge">): boolean {
+  return config.level === 2 || (config.level === 3 && job.merge === true);
+}
+
 export function finishText(config: ProjectConfig, job: Job): string {
-  if (config.level === 2 || (config.level === 3 && job.merge)) {
+  if (mayMerge(config, job)) {
     return `Commit on ${job.branch}. When you judge it done, merge it to ${config.mainBranch} and push the way CLAUDE.md says (or open a pull request if it says so).`;
   }
   return `When you judge it done, commit on ${job.branch} and stop; do not merge.`;
@@ -540,6 +544,9 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
     report.queued = Math.max(0, queuedCount - heldForClone - waitsFor.triage - waitsFor.implement - waitsFor.review - report.started.length);
     if (report.started.length === 0) {
       const paused = off.map((role) => `${SWITCH_WORDS[role]} ${role === "implement" ? "are" : "is"} paused${waitsFor[role] > 0 ? ` (${waitsFor[role]} item(s) wait for ${role === "implement" ? "them" : "it"})` : ""}`);
+      // The merge queue is no role: its switch holds the hand-over of reviewed changes (and the queue's own work) from level 4.
+      const queueWaits = level >= 4 && !mergeQueueOn(store) ? Object.values(jobs).filter((job) => job.owes === "hand-over" || (job.parked?.as === "queued" && job.queued !== undefined)).length : 0;
+      if (queueWaits > 0) paused.push(`${SWITCH_WORDS.mergeQueue} is paused (${queueWaits} item(s) wait for it)`);
       const all = [...paused, ...reasons];
       report.idle = `Nothing was started because ${all.length > 0 ? all.join("; ") : "no item is ready"}.`;
       ctx.say("orchestrator.idle", report.idle, undefined, { running });
@@ -738,6 +745,7 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
     let session!: Session;
     let started = false;
     let chosen: ImplementModel | undefined;
+    let startedAs: { level: number; mayMerge: boolean } | undefined;
     try {
       // A pool of clones may have none free: the item waits, and the next one may still hold a clone.
       // Past implement, the item's work is at its newest revision: a rebuilt store finds the clone by it.
@@ -812,6 +820,7 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
           continue;
         }
         chosen = step === "implement" ? implementModel(config, job) : undefined;
+        if (step === "implement") startedAs = { level: config.level, mayMerge: mayMerge(config, job) };
         session = await runner.start({
           role: step, subject: job.item, attempt: job.failures + 1, workspace: job.workspace, branch: job.branch,
           vars: promptVars(config, entry.item, job, decided, repoLabels), ...implementorMessage(job, decided),
@@ -846,6 +855,7 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
     }
     jobs[key] = target;
     target.sessionId = session.ref.id;
+    if (step === "implement" && startedAs) target.sessionStart = startedAs;
     if (step === "implement") busy = busyFiles(jobs);
     delete target.notBefore;
     delete target.resume;

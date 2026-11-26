@@ -404,6 +404,52 @@ test("a level change is an event, and a change built after the level went below 
   assert.deepEqual(w.reasons("orchestrator.level_changed"), ["The level changed from level 3 (Review) to level 2 (Implement)."]);
 });
 
+test("a session started at level 2 that merged, finished after the level became 3, is done: no escalation, a line says which level it merged under (decision 108)", async () => {
+  let state: ReturnType<ConfigSource["load"]> = { config: config({ level: 2 }), changed: true };
+  const w = world({ load: () => state }, [item("1")]);
+  w.runner.commitsAhead = async () => 0;
+  w.store.addUsageSample(usage(0.1, 0.1));
+  await w.run();
+  await step(w, "1", "succeeded", TRIAGE_OK);
+  state = { config: config({ level: 3 }), changed: true };
+  await step(w, "1", "succeeded", { ...IMPLEMENT_OK, mergedAs: MAIN_MERGED });
+  assert.equal(w.runner.main, MAIN_MERGED);
+  assert.deepEqual(w.reasons("orchestrator.escalated"), []);
+  assert.equal(w.job("1")?.merged, HEAD);
+  assert.deepEqual(roles(w), ["triage", "implement"], "no review of what is merged");
+  assert.match(w.reasons("orchestrator.merged")[0] ?? "", /The implementing session merged it under the level its session started with \(started at level 2, the level is now 3\)/);
+});
+
+for (const [name, raw] of [["level 3 before approval", { level: 3 }], ["level 4", { level: 4, rules: STAGE1, remoteUrl: "git@git.example.invalid:team/project.git", checkCommand: ["node", "check.js"] }]] as const) {
+  test(`${name}: a session told to commit and stop that merged anyway is escalated saying so, never finished as done`, async () => {
+    const w = world(config(raw), [item("1")]);
+    w.runner.commitsAhead = async () => 0;
+    w.store.addUsageSample(usage(0.1, 0.1));
+    await w.run();
+    await step(w, "1", "succeeded", TRIAGE_OK);
+    assert.match(w.runner.requests.at(-1)?.vars.finish ?? "", /do not merge/);
+    w.runner.main = MAIN_MERGED; // it merged on its own, against its instructions
+    await step(w, "1", "succeeded", { ...IMPLEMENT_OK, mergedAs: MAIN_MERGED });
+    assert.equal(w.job("1")?.parked?.as, "escalated");
+    assert.equal(w.job("1")?.merged, undefined);
+    assert.deepEqual(w.reasons("orchestrator.merged"), []);
+    assert.match(w.reasons("orchestrator.escalated")[0] ?? "", /merged scopesoup\/1 to main .* although its instructions said to commit and stop, not to merge: its session started at level (3|4)/);
+  });
+}
+
+test("level 3, nothing committed and nothing merged (the answer names no merge): still \"nothing to change\" for a person", async () => {
+  const w = world(config({ level: 3 }), [item("1")]);
+  w.runner.commitsAhead = async () => 0;
+  w.store.addUsageSample(usage(0.1, 0.1));
+  await w.run();
+  await step(w, "1", "succeeded", TRIAGE_OK);
+  await step(w, "1", "succeeded", { ...IMPLEMENT_OK, mergedAs: MAIN_MERGED });
+  assert.equal(w.runner.main, MAIN_START, "the session was told not to merge, so main is as before");
+  assert.equal(w.job("1")?.parked?.as, "escalated");
+  assert.match(w.reasons("orchestrator.escalated")[0] ?? "", /^Nothing to change: /);
+  assert.equal(w.job("1")?.merged, undefined);
+});
+
 /** A person presses one of the switches (store/control.ts). */
 const press = (w: World, action: ControlAction): void => void applyControl(w.store, action, new Date(w.clock.ms).toISOString(), "test");
 
@@ -2217,6 +2263,22 @@ async function toQueueAfterPause(w: World, queue: ReturnType<typeof fakeQueue>):
   assert.equal(w.job("1")?.parked?.as, "queued");
   assert.equal(w.job("1")?.queued, HEAD);
 }
+
+test("merging by queue: the idle reason says the merge queue is paused while an approved change waits for it", async () => {
+  const w = world(config({ ...QUEUE, review: { shouldFindings: "draft" } }), [item("1")]);
+  w.queue = fakeQueue();
+  w.store.addUsageSample(usage(0.1, 0.1));
+  await w.run();
+  await step(w, "1", "succeeded", TRIAGE_OK);
+  await step(w, "1", "succeeded", IMPLEMENT_OK);
+  w.store.setValue(KEYS.mergeQueue, "paused");
+  await step(w, "1", "succeeded", REVIEW_OK);
+  const idle = await w.run();
+  assert.match(idle.idle ?? "", /the merge queue is paused \(1 item\(s\) wait for it\)/);
+  w.store.setValue(KEYS.mergeQueue, "started");
+  const after = await w.run();
+  assert.doesNotMatch(after.idle ?? "", /merge queue is paused/);
+});
 
 test("merging by queue: an approved change waiting through many ticks for a paused merge queue writes its review and session lines once", async () => {
   const w = world(config({ ...QUEUE, review: { shouldFindings: "draft" } }), [item("1")]);

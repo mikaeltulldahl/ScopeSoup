@@ -444,7 +444,7 @@ export function Settings({ project, openHistory = false }: { project?: ProjectVi
         )}
 
         <fieldset class="levels">
-          <legend><b>Level</b>: how much Scope Soup does on its own; each level includes the ones below <Marked k="level" /></legend>
+          <legend><b>Level</b>: how much Scope Soup does on its own; each level includes the ones below; a change applies to work that starts after it <Marked k="level" /></legend>
           {levels.map((choice) => {
             // The level in use stays pickable even when a need went missing since, so the page can show it.
             // A level whose only missing needs the page asks for (level 4's check command and remote URL) can be picked.
