@@ -366,6 +366,14 @@ export interface BisectProbe {
   prefix: number;
   status: RunStatus;
   run?: Ref;
+  startedAt?: string;
+  finishedAt?: string;
+  /** How long the check took, in milliseconds, when it was measured. */
+  ms?: number;
+  /** The result was taken from an earlier check of the same commit or tree: nothing ran. */
+  reused?: boolean;
+  /** A rerun of the failed test files only, not the whole check. */
+  rerun?: boolean;
 }
 
 export interface Batch {
