@@ -272,8 +272,9 @@ test("a small drop under one reset time is no reset: no mark, no extra pace line
   const samples = [reading(0, 0.03), reading(10, 0.02), reading(20, 0.04)];
   const attribution = attributeUsage(samples, [], "five_hour", options);
   assert.equal(attribution.resets, 0);
-  near(attribution.total, 0.02);
+  near(attribution.total, 0.01);
   const result = plot(samples, []);
+  near(sum(result.points[result.points.length - 1]!.parts), 0.04);
   assert.deepEqual(result.resets, []);
   assert.equal(paceLines(resetMarks(result.resets, t(0), t(60)), WINDOW_MS.five_hour, 1).length, 0);
 });

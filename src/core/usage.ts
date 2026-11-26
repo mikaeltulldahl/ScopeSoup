@@ -81,6 +81,8 @@ type Change = { kind: "rise"; from: number; to: number; delta: number } | { kind
 /** What happened to one window between its readings, oldest first. After a reset, what is read counts from the reset. */
 function changesOf(readings: readonly Reading[]): Change[] {
   const changes: Change[] = [];
+  // The highest reading since the last reset: a reading below it adds nothing, and a rise counts only above it.
+  let held = readings[0]?.utilization ?? 0;
   for (let i = 1; i < readings.length; i++) {
     const before = readings[i - 1]!;
     const now = readings[i]!;
@@ -93,8 +95,10 @@ function changesOf(readings: readonly Reading[]): Change[] {
       const resetAt = Math.min(Math.max(before.resetsAt, before.at), now.at);
       changes.push({ kind: "reset", at: resetAt });
       if (now.utilization > 0) changes.push({ kind: "rise", from: resetAt, to: now.at, delta: now.utilization });
-    } else if (now.utilization > before.utilization) {
-      changes.push({ kind: "rise", from: before.at, to: now.at, delta: now.utilization - before.utilization });
+      held = now.utilization;
+    } else if (now.utilization > held) {
+      changes.push({ kind: "rise", from: before.at, to: now.at, delta: now.utilization - held });
+      held = now.utilization;
     }
   }
   return changes;
