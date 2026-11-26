@@ -24,7 +24,7 @@ import type { AgentProvider, EventReader, Launch } from "./agent.ts";
 import { providerFor } from "./providers/index.ts";
 import { loadRole, renderTemplate } from "./roles.ts";
 import { restoreWip, wipPatchPath } from "./wip.ts";
-import { baseRef, changedPaths, changeStat, commitsAhead, commitsTouching, deleteBranch, fetchMain, isAncestor, squashedOnMain } from "./worktree.ts";
+import { baseRef, changedPaths, changeStat, commitsAhead, commitsTouching, deleteBranch, fetchMain, followRemoteMain, isAncestor, squashedOnMain } from "./worktree.ts";
 import type { RunCheck } from "./checkRunner.ts";
 import { createSetupRunner, ensureSetup, setupPromptLine } from "./setup.ts";
 import { prepareSlot, releaseSlot } from "./slots.ts";
@@ -322,14 +322,22 @@ export function createRunner(deps: RunnerDeps): Runner {
     return null;
   }
 
+  /** The reason the local main was last left alone, per folder, so the same one is said once. */
+  const mainLeft = new Map<string, string>();
+
   /**
    * Fetches the remote's main branch into the repository the session works in and names what the
    * change is compared with: the remote's main branch, or the local one when there is no such
-   * ref. A local main branch is never moved: in a pool clone it stays where the clone was made.
-   * A failed fetch is not logged here; the ref fetched last is used.
+   * ref. The local main branch follows the remote's (`followRemoteMain`), so an agent reading `git log main` is not misled; when
+   * it cannot be moved that is said once per reason as an event. A failed fetch is not logged here; the ref fetched last is used.
    */
-  async function freshBase(config: ProjectConfig, cwd: string): Promise<string> {
+  async function freshBase(config: ProjectConfig, cwd: string, subject: Ref): Promise<string> {
     await git(["fetch", "--quiet", config.remote, `+refs/heads/${config.mainBranch}:refs/remotes/${config.remote}/${config.mainBranch}`], cwd);
+    const left = await followRemoteMain(git, cwd, config.mainBranch, config.remote);
+    if (left !== null && mainLeft.get(cwd) !== left) {
+      mainLeft.set(cwd, left);
+      store.appendEvent({ kind: "orchestrator.main_not_moved", subject: refKey(subject), actor: ACTOR, data: { remote: config.remote, branch: config.mainBranch, reason: `Agents may read a stale ${config.mainBranch} here: ${left}.` } }, iso(now()));
+    } else if (left === null) mainLeft.delete(cwd);
     const ref = await baseRef(git, cwd, config.mainBranch, config.remote);
     return ref === config.mainBranch ? ref : `${config.remote}/${config.mainBranch}`;
   }
@@ -370,7 +378,7 @@ export function createRunner(deps: RunnerDeps): Runner {
       hasSchema = spec.schema !== undefined;
       schema = spec.schema;
       cwd = await prepareWorkspace(config, request.subject, request.workspace, request.branch);
-      const base = await freshBase(config, cwd);
+      const base = await freshBase(config, cwd, request.subject);
       // A fresh worktree gets back the edits the item's last session left uncommitted; the session is told.
       const restored = config.workspaces.kind === "worktree" ? await restoreWip(git, cwd, wipPatchPath(config.streamsDir, request.workspace)) : null;
       const unset = await setUp(config, request, cwd);

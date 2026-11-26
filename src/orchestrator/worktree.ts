@@ -23,6 +23,35 @@ export async function baseRef(git: Git, repoPath: string, mainBranch: string, re
 }
 
 /**
+ * Moves the repository's local main branch to the remote's (as last fetched), so that nothing reading `git log main` in Scope
+ * Soup's own clone sees a stale one. Only a ref is moved, never a working tree: a main checked out in any worktree is left, and so
+ * is a main with commits that no other branch holds (a reset would lose them). Never throws. Returns why the branch was not moved,
+ * or null when it is at the remote's main afterwards or there is nothing to move.
+ */
+export async function followRemoteMain(git: Git, repoPath: string, mainBranch: string, remote: string): Promise<string | null> {
+  try {
+    const local = `refs/heads/${mainBranch}`;
+    const tracking = `refs/remotes/${remote}/${mainBranch}`;
+    const was = await git(["rev-parse", "--verify", "--quiet", `${local}^{commit}`], repoPath);
+    const target = await git(["rev-parse", "--verify", "--quiet", `${tracking}^{commit}`], repoPath);
+    if (was.code !== 0 || target.code !== 0 || was.stdout.trim() === target.stdout.trim()) return null;
+    const listed = await git(["worktree", "list", "--porcelain"], repoPath);
+    if (listed.stdout.split("\n").some((line) => line.trim() === `branch ${local}`)) {
+      return `the local ${mainBranch} is checked out in a worktree, so it is left at ${was.stdout.trim().slice(0, 7)} while ${remote}/${mainBranch} is at ${target.stdout.trim().slice(0, 7)}`;
+    }
+    // Commits only main holds: any other branch or remote branch (the remote's main included) that has them makes the move lossless.
+    const only = await git(["rev-list", "-1", local, "--not", tracking, `--exclude=${mainBranch}`, "--branches", "--remotes"], repoPath);
+    if (only.code !== 0 || only.stdout.trim() !== "") {
+      return `the local ${mainBranch} has commits that ${remote}/${mainBranch} and no other branch has, so it is left at ${was.stdout.trim().slice(0, 7)}`;
+    }
+    const moved = await git(["update-ref", "-m", `follow ${remote}/${mainBranch}`, local, target.stdout.trim(), was.stdout.trim()], repoPath);
+    return moved.code === 0 ? null : `the local ${mainBranch} could not be moved: ${moved.stderr.trim()}`;
+  } catch (error) {
+    return `the local ${mainBranch} could not be moved: ${(error as Error).message}`;
+  }
+}
+
+/**
  * Makes the worktree if it is not there. A branch that does not exist yet is created from the
  * remote's newest main (fetched first), or from the local main when there is no such ref.
  */
@@ -36,6 +65,7 @@ export async function ensureWorktree(git: Git, spec: WorktreeSpec): Promise<void
   else {
     const fetch = await git(["fetch", "--quiet", spec.remote, `+refs/heads/${spec.mainBranch}:refs/remotes/${spec.remote}/${spec.mainBranch}`], spec.repoPath);
     if (fetch.code !== 0) spec.onFetchFailed?.(fetch.stderr.trim() || `git fetch exited with code ${fetch.code}`);
+    else await followRemoteMain(git, spec.repoPath, spec.mainBranch, spec.remote);
     const base = await baseRef(git, spec.repoPath, spec.mainBranch, spec.remote);
     args = ["worktree", "add", "-b", spec.branch, spec.path, base];
   }
@@ -110,6 +140,7 @@ export async function fetchMain(git: Git, repoPath: string, mainBranch: string, 
   const tracking = `refs/remotes/${remote}/${mainBranch}`;
   const fetched = await git(["fetch", "--quiet", remote, `+refs/heads/${mainBranch}:${tracking}`], repoPath);
   if (fetched.code !== 0) throw new Error(`git fetch ${remote} ${mainBranch} failed: ${fetched.stderr.trim() || `code ${fetched.code}`}`);
+  await followRemoteMain(git, repoPath, mainBranch, remote);
   const found = await git(["rev-parse", "--verify", "--quiet", `${tracking}^{commit}`], repoPath);
   if (found.code !== 0) throw new Error(`${remote} has no branch ${mainBranch}.`);
   return found.stdout.trim();
