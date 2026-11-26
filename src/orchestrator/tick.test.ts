@@ -120,6 +120,8 @@ interface World {
   queue?: QueueDriver;
   /** The fake `closeMerged`: what it answers (or "throw"), and the closes it was asked for. */
   closeResult: "closed" | "by-hand" | "not-needed" | "throw";
+  /** The fake host closes nothing itself on a merge (meta branch): Scope Soup does. */
+  closesItself?: boolean;
   closes: string[];
   run(): ReturnType<typeof tick>;
   /** The dependencies `run` passes to the tick, for a test that adds one. */
@@ -226,6 +228,9 @@ function world(cfg: ProjectConfig | ConfigSource, items: WorkItem[] = []): World
     async answerTurn(target, kind, reason) {
       hostWrites.push(`answerTurn ${target.id} ${kind} ${reason ?? ""}`);
       calls.push(`answerTurn ${target.id} ${kind}`);
+    },
+    get closesItself() {
+      return out.closesItself ? (true as const) : undefined;
     },
     async closeMerged(target, merged) {
       out.closes.push(`${target.id} ${merged.sha} ${merged.batch ?? "-"}`);
@@ -3170,9 +3175,14 @@ test("a duplicateOf link becomes a question; keeping the recommendation parked t
   await w.run();
   await step(w, "1", "succeeded", { ...TRIAGE, questions: [], links: [{ type: "duplicateOf", item: "2", reason: "Both ask for metres." }] });
   const question = w.job("1")?.rewrite?.questions[0];
-  assert.equal(question?.question, 'Close 1 as a duplicate of 2 "Tide units"?');
+  assert.equal(question?.question, 'Triage found 1 a duplicate of 2 "Tide units". Its reason: Both ask for metres. Which one closes?');
+  assert.deepEqual(question?.options, [
+    { label: "Close 1 as a duplicate of 2", description: "1 parked as not ready; close it on the host yourself." },
+    { label: "Close 2 as a duplicate of 1", description: "Work on 1 goes on; close 2 on the host yourself." },
+    { label: "Keep both", description: "Work on 1 as it is." },
+  ]);
   assert.equal(question?.recommendation, "Close 1 as a duplicate of 2");
-  assert.equal(question?.context, "Both ask for metres.");
+  assert.equal(question?.context, undefined);
   assert.deepEqual(answerRewrite(w, "1", ["Close 1 as a duplicate of 2"]), { settled: "accepted" });
   await w.run();
   w.clock.ms += 60_000;
@@ -3181,6 +3191,144 @@ test("a duplicateOf link becomes a question; keeping the recommendation parked t
   assert.match(w.job("1")?.parked?.reason ?? "", /A person answered: Close 1 as a duplicate of 2\. Scope Soup closes nothing itself/);
   assert.deepEqual(roles(w), ["triage"]);
   assert.deepEqual(w.closes, []);
+});
+
+/** A fake `closeDuplicate` that records each close and writes the Item abandoned into the store, as a host's re-read does. */
+function fakeCloseDuplicate(w: World): string[] {
+  const closed: string[] = [];
+  w.depsFor = ((base) => () => {
+    const deps = base();
+    deps.actions.closeDuplicate = async (target, of) => {
+      closed.push(`${target.id} of ${of.id}`);
+      const work = w.store.get<WorkItem>(target)!;
+      w.store.put({ ...work, state: "abandoned", duplicateOf: of }, "sync", new Date(w.clock.ms).toISOString());
+      return true;
+    };
+    return deps;
+  })(w.depsFor);
+  w.run = () => tick(w.depsFor());
+  return closed;
+}
+
+const DUPLICATE = { ...TRIAGE, questions: [], links: [{ type: "duplicateOf" as const, item: "2", reason: "2 duplicates 1, and 1 is the fuller spec" }] };
+
+test("a duplicate question can close the other Item instead: that one is closed as a duplicate of this one, and this one goes on", async () => {
+  // 2 waits (a person's), so nothing of Scope Soup's runs on it.
+  const w = world(config(), [item("1"), item("2", { title: "Tide units", state: "waiting" })]);
+  const closed = fakeCloseDuplicate(w);
+  w.store.addUsageSample(usage(0.1, 0.1));
+  await w.run();
+  await step(w, "1", "succeeded", DUPLICATE);
+  const question = w.job("1")?.rewrite?.questions[0];
+  assert.equal(question?.question, 'Triage found 1 a duplicate of 2 "Tide units". Its reason: 2 duplicates 1, and 1 is the fuller spec. Which one closes?');
+  assert.deepEqual(question?.options.map((each) => (typeof each === "string" ? each : each.description)), [
+    "Scope Soup closes 1 on the host as a duplicate of 2; 2 goes on.",
+    "Scope Soup closes 2 on the host as a duplicate of 1; work on 1 goes on.",
+    "Work on 1 as it is.",
+  ]);
+  // Not the recommendation, but it keeps the rewrite: settled, no new triage.
+  assert.deepEqual(answerRewrite(w, "1", ["Close 2 as a duplicate of 1"]), { settled: "accepted" });
+  w.clock.ms += 60_000;
+  await w.run();
+  assert.deepEqual(closed, ["2 of 1"]);
+  assert.match(w.reasons("orchestrator.item_closed")[0] ?? "", /^2 was closed on its host as a duplicate of 1/);
+  assert.equal(w.store.get<WorkItem>(ref("2"))?.duplicateOf?.id, "1");
+  w.clock.ms += 60_000;
+  await w.run();
+  assert.deepEqual(roles(w), ["triage", "implement"]);
+});
+
+test("closing the duplicate in triage's direction closes this Item; closing the other is left to a person while it is held", async () => {
+  const w = world(config(), [item("1"), item("2", { title: "Tide units", state: "waiting" })]);
+  const closed = fakeCloseDuplicate(w);
+  w.store.addUsageSample(usage(0.1, 0.1));
+  await w.run();
+  await step(w, "1", "succeeded", DUPLICATE);
+  assert.deepEqual(answerRewrite(w, "1", ["Close 1 as a duplicate of 2"]), { settled: "accepted" });
+  w.clock.ms += 60_000;
+  await w.run();
+  assert.deepEqual(closed, ["1 of 2"]);
+  assert.equal(w.store.get<WorkItem>(ref("1"))?.state, "abandoned");
+
+  const h = world(config(), [item("1"), item("2", { title: "Tide units", holder: { actor: { id: "p", name: "Pat" } } })]);
+  const none = fakeCloseDuplicate(h);
+  h.store.addUsageSample(usage(0.1, 0.1));
+  await h.run();
+  await step(h, "1", "succeeded", DUPLICATE);
+  assert.deepEqual(answerRewrite(h, "1", ["Close 2 as a duplicate of 1"]), { settled: "accepted" });
+  h.clock.ms += 60_000;
+  await h.run();
+  assert.deepEqual(none, []);
+  assert.match(h.reasons("orchestrator.duplicate_left_open")[0] ?? "", /close 2 as a duplicate of 1, but it is held by Pat: close it on the host yourself/);
+  h.clock.ms += 60_000;
+  await h.run();
+  assert.deepEqual(roles(h), ["triage", "implement"]);
+});
+
+/** Triage of 1 found it a duplicate of 2, and a person answered `answer`; the tick that follows. */
+async function closeOtherWith(other: Partial<WorkItem>, prepare: (w: World) => void = () => {}) {
+  const w = world(config(), [item("1"), item("2", { title: "Tide units", ...other })]);
+  const closed = fakeCloseDuplicate(w);
+  w.store.addUsageSample(usage(0.1, 0.1));
+  await w.run();
+  await step(w, "1", "succeeded", DUPLICATE);
+  prepare(w);
+  assert.deepEqual(answerRewrite(w, "1", ["Close 2 as a duplicate of 1"]), { settled: "accepted" });
+  w.clock.ms += 60_000;
+  await w.run();
+  return { w, closed, left: w.reasons("orchestrator.duplicate_left_open")[0] ?? "" };
+}
+
+test("the other Item is not closed when work would be lost: commits ahead on its branch, a job past triage, or marked doing", async () => {
+  // Blocked or waiting with a branch left over: its commits count.
+  const ahead = await closeOtherWith({ state: "waiting" }, (w) => {
+    w.runner.commitsAhead = async (branch) => (branch.endsWith("2") ? 2 : 0);
+  });
+  assert.deepEqual(ahead.closed, []);
+  assert.match(ahead.left, /but its branch \S+ has 2 commits ahead of main: close it on the host yourself/);
+  // A branch that is not there (only triage ran) holds nothing: closed.
+  const none = await closeOtherWith({ state: "waiting" }, (w) => {
+    w.runner.commitsAhead = async () => {
+      throw new Error("no such branch");
+    };
+  });
+  assert.deepEqual(none.closed, ["2 of 1"]);
+  // Without a way to count commits, a parked job past triage counts as work.
+  const parked = await closeOtherWith({ state: "waiting" }, (w) => {
+    const jobs = loadJobs(w.store);
+    jobs[refKey(ref("2"))] = { ...jobs[refKey(ref("1"))]!, item: ref("2"), branch: "scopesoup/2", step: "implement", parked: { as: "escalated", reason: "Failed.", at: new Date(w.clock.ms).toISOString() } } as never;
+    saveJobs(w.store, jobs);
+  });
+  assert.deepEqual(parked.closed, []);
+  assert.match(parked.left, /its implement work may have commits on its branch/);
+  // Someone works on it outside Scope Soup: no hold stored, no job, but doing.
+  const doing = await closeOtherWith({ state: "doing" });
+  assert.deepEqual(doing.closed, []);
+  assert.match(doing.left, /it is marked doing/);
+});
+
+test("several duplicates: every 'close the other' answer closes its Item; with 'close this Item' too, the others are left open and said so", async () => {
+  const links = [{ type: "duplicateOf" as const, item: "2", reason: "Same ask." }, { type: "duplicateOf" as const, item: "3", reason: "Same ask." }];
+  const w = world(config(), [item("1"), item("2", { state: "waiting" }), item("3", { state: "waiting" })]);
+  const closed = fakeCloseDuplicate(w);
+  w.store.addUsageSample(usage(0.1, 0.1));
+  await w.run();
+  await step(w, "1", "succeeded", { ...TRIAGE, questions: [], links });
+  assert.deepEqual(answerRewrite(w, "1", ["Close 2 as a duplicate of 1", "Close 3 as a duplicate of 1"]), { settled: "accepted" });
+  w.clock.ms += 60_000;
+  await w.run();
+  assert.deepEqual(closed, ["2 of 1", "3 of 1"]);
+
+  const m = world(config(), [item("1"), item("2", { state: "waiting" }), item("3", { state: "waiting" })]);
+  const mixed = fakeCloseDuplicate(m);
+  m.store.addUsageSample(usage(0.1, 0.1));
+  await m.run();
+  await step(m, "1", "succeeded", { ...TRIAGE, questions: [], links });
+  assert.deepEqual(answerRewrite(m, "1", ["Close 1 as a duplicate of 2", "Close 3 as a duplicate of 1"]), { settled: "accepted" });
+  m.clock.ms += 60_000;
+  await m.run();
+  assert.deepEqual(mixed, ["1 of 2"]);
+  assert.match(m.reasons("orchestrator.duplicate_left_open")[0] ?? "", /close 3 as a duplicate of 1, but also "Close 1 as a duplicate of 2", so 3 is left open/);
 });
 
 const CONFLICT = { type: "conflictsWith" as const, item: "2", reason: "Both change the tide table." };
@@ -4729,4 +4877,25 @@ test("a session a pick could not end is waited for 2 minutes, then the job goes 
   await w.run();
   assert.match(w.reasons("orchestrator.interrupt_failed")[0] ?? "", /still there 2 minutes after Ada's pick ended it/);
   assert.match(w.reasons("orchestrator.job_dropped")[0] ?? "", /Ada put 1 back in the backlog/);
+});
+
+test("meta branch: a handed-over change a person merged is logged as merged and the Item is closed", async () => {
+  const w = await handedOver();
+  w.closesItself = true;
+  await w.run();
+  assert.equal(w.closes.length, 0);
+  w.runner.main = MAIN_MERGED;
+  await w.run();
+  assert.deepEqual(w.closes, [`1 ${HEAD} -`]);
+  assert.match(w.calls.join("\n"), /appendLog 1 merged/);
+  assert.equal(w.events("orchestrator.item_closed").length, 1);
+  await w.run();
+  assert.equal(w.closes.length, 1);
+});
+
+test("GitHub: a handed-over change a person merged is left to the host to close", async () => {
+  const w = await handedOver();
+  w.runner.main = MAIN_MERGED;
+  await w.run();
+  assert.equal(w.closes.length, 0);
 });

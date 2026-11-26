@@ -20,7 +20,7 @@ import { loadVotes, withVotes } from "../store/votes.ts";
 import { busyItems, compareItems, foreignChanges, readyItems, sameFilesWait } from "./candidates.ts";
 import { sameFilesWords } from "../core/sameFiles.ts";
 import { earlierText } from "../core/earlier.ts";
-import { LINKED_TYPES, linkedText } from "../core/linked.ts";
+import { inertTags, LINKED_TYPES, linkedText } from "../core/linked.ts";
 import { linkedItem } from "./aboutOthers.ts";
 import type { Context, TickDeps } from "./context.ts";
 import type { ClaimResult } from "./ports.ts";
@@ -37,6 +37,7 @@ import { workBranch, workspaceKey } from "./paths.ts";
 import { adoptHandbacks } from "./handback.ts";
 import { migrateRemovedSteps, recoverFromLogs } from "./recover.ts";
 import { watchMain } from "./mainGuard.ts";
+import { closeMerged } from "./mergedClose.ts";
 import { readSessionResult } from "./runner.ts";
 import { driveQueue } from "./queueMerge.ts";
 import { checkHoldings, readHoldings, WorkNotFound } from "./workspaces.ts";
@@ -334,8 +335,9 @@ export function promptVars(config: ProjectConfig, item: WorkItem, job: Job, answ
     base: `${config.remote}/${config.mainBranch}`,
     branch: job.branch,
     itemId: item.ref.id,
-    itemTitle: item.title,
-    itemBody: (item.body?.trim() || "(no description)") + (decided ? `\n\n${DECIDED}\n${decided}` : "") + deletedText(item),
+    // The Item's text cannot close its markers (`inertTags`).
+    itemTitle: inertTags(item.title),
+    itemBody: inertTags((item.body?.trim() || "(no description)") + (decided ? `\n\n${DECIDED}\n${decided}` : "") + deletedText(item)),
     verification: item.verification?.trim() || "(none given)",
     allowedCommands: providerFor(config, job.step).commandsText(config.roles[job.step].allowedTools),
     // The labels the triage may propose (never `scopesoup:*`), or that it may propose none.
@@ -515,6 +517,21 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
     if (job.parked?.questions && item && (await followQuestions(ctx, job, item))) continue;
     // The rewrite's question comments were answered by replies, or deleted.
     if (job.parked?.rewrite && item && (await followRewrite(ctx, job, item))) continue;
+    // A person merged the branch handed over to them, and nothing but Scope Soup closes an Item here: done once main holds the head.
+    if (item && ctx.deps.actions.closesItself && job.parked?.as === "handed-over" && job.merged === undefined && item.state === "todo") {
+      try {
+        const tip = (await runner.fetchMain(job.branch)).main;
+        const head = await runner.head(job.branch);
+        if ((await runner.contains(job.branch, head, tip)) === true) {
+          job.merged = head;
+          ctx.commit("orchestrator.merged", `${job.branch} is on ${config.mainBranch} of ${config.remote} as ${head.slice(0, 7)}: a person merged it.`, key, { sha: head, main: tip, by: "person" });
+          await ctx.act("write the merge to the item's log", key, () => ctx.deps.actions.appendLog(job.item, "merged", { sha: head, target: config.mainBranch }));
+          await closeMerged(ctx, job, head);
+        }
+      } catch (error) {
+        ctx.say("orchestrator.main_unread", `Could not tell whether ${job.branch} is merged: ${errorText(error)}`, key);
+      }
+    }
     // A merged Item reopened on GitHub is work again: its merged job is over too.
     const over = !item || item.state === "done" || item.state === "abandoned" || (job.merged !== undefined && item.merged?.reopened !== undefined);
     // Questions or a rewrite that could not be posted for a reason that can change are posted again, without waiting for a person.
