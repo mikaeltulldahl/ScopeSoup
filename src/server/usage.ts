@@ -1,7 +1,7 @@
 // `GET /api/usage`: reads the readings and sessions from the store and the token counts from the
 // session streams (read by each session's agent provider), then attributes with core.
 
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { forecastWindow } from "../core/forecast.ts";
 import { buildIndex } from "../core/snapshot.ts";
 import type { Snapshot } from "../core/snapshot.ts";
@@ -28,9 +28,17 @@ export function parseSpan(text: string | null): { span: string; ms: number } | n
   return days >= 1 && days <= MAX_DAYS ? { span: `${days}d`, ms: days * 24 * HOUR } : null;
 }
 
+/** Token counts already read, by stream path: a finished stream does not change, so each is read once while its size and time stay. */
+const tokensRead = new Map<string, { stamp: string; tokens: number | undefined }>();
+
 /** The tokens a finished stream says it used, read by the provider that wrote it; undefined when it says none. */
 export function streamTokens(path: string | undefined, provider?: string): number | undefined {
   if (!path) return undefined;
+  const stat = statSync(path, { throwIfNoEntry: false });
+  if (!stat) return undefined;
+  const stamp = `${provider ?? ""} ${stat.size} ${stat.mtimeMs}`;
+  const known = tokensRead.get(path);
+  if (known?.stamp === stamp) return known.tokens;
   let text: string;
   try {
     text = readFileSync(path, "utf8");
@@ -45,7 +53,9 @@ export function streamTokens(path: string | undefined, provider?: string): numbe
       return undefined;
     }
   };
-  return providerNamed(provider).tokensIn(text, beside);
+  const tokens = providerNamed(provider).tokensIn(text, beside);
+  tokensRead.set(path, { stamp, tokens });
+  return tokens;
 }
 
 /** How many even steps a span's plot is sampled in: about one per pixel column's worth, at most a few hundred. */
