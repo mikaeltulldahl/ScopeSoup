@@ -6,7 +6,7 @@
 import type { Ref, WorkItem } from "../model/types.ts";
 import { refKey } from "../model/types.ts";
 import { holdStands } from "../model/people.ts";
-import { itemTextHash, optionTexts, reusableAnswer, sameDecision } from "../core/answerReuse.ts";
+import { asksAboutDuplicate, duplicateAnswer, itemTextHash, optionTexts, reusableAnswer, sameDecision } from "../core/answerReuse.ts";
 import { knownAnswers } from "../store/answers.ts";
 import type { Store } from "../store/store.ts";
 import type { Context } from "./context.ts";
@@ -136,6 +136,29 @@ export function askedBefore(ctx: Context, other: WorkItem, question: Decision): 
 }
 
 /**
+ * Why an agent's question about which of `asker` and `other` to keep is not asked, or null: Scope Soup asks that itself
+ * (`duplicateQuestion`), so it is dropped when the asker's triage reports one a duplicate of the other (`reported`), or a person
+ * already answered the duplicate question about the pair (whatever they picked: asking again could only contradict it).
+ */
+export function duplicateAsked(ctx: Context, asker: Ref, other: Ref, question: Decision, reported: boolean): string | null {
+  if (!asksAboutDuplicate(question, asker.id) && !asksAboutDuplicate(question, other.id)) return null;
+  const answered = duplicateAnswer(knownAnswers(ctx.deps.store), asker, other);
+  if (answered) return `a person answered which of ${asker.id} and ${other.id} closes at ${answered.at} ("${clip(answered.answer.trim(), 300)}")`;
+  return reported ? `Scope Soup asks which of ${asker.id} and ${other.id} closes itself` : null;
+}
+
+/** The Items a triage answer reports this one a duplicate of, by ref key. */
+export function reportedDuplicates(store: Store, subject: Ref, links: readonly { type: string; item: string }[] | undefined): Set<string> {
+  const found = new Set<string>();
+  for (const link of links ?? []) {
+    if (link.type !== "duplicateOf") continue;
+    const other = linkedItem(store, subject, link.item);
+    if (other) found.add(refKey(other.ref));
+  }
+  return found;
+}
+
+/**
  * Keeps an answer's questions about other Items, each naming who asked, until they are written on that Item. An unknown or closed
  * Item (or the asker's own) is dropped with an event; so is a rewrite that changes nothing with no question, and a question already
  * open or answered there (`askedBefore`).
@@ -145,6 +168,7 @@ export function keepAboutOthers(ctx: Context, job: Job, role: "triage" | "implem
   const { store } = ctx.deps;
   const subject = refKey(job.item);
   const askedBy = askerName(role, job.item);
+  const duplicates = role === "triage" ? reportedDuplicates(store, job.item, job.triage?.links) : new Set<string>();
   for (const entry of list) {
     const other = linkedItem(store, job.item, entry.item);
     if (!other || !isOpenItem(other)) {
@@ -157,6 +181,11 @@ export function keepAboutOthers(ctx: Context, job: Job, role: "triage" | "implem
     const questions: Decision[] = [];
     for (const each of entry.questions) {
       const question = { ...each, question: `${each.question.trim()} (asked by ${askedBy})` };
+      const duplicate = duplicateAsked(ctx, job.item, other.ref, each, duplicates.has(refKey(other.ref)));
+      if (duplicate) {
+        ctx.commit("orchestrator.about_other_dropped", `${askedBy[0]!.toUpperCase()}${askedBy.slice(1)} asked ${other.ref.id} which duplicate to keep: ${clip(each.question.trim(), 300)} Not asked: ${duplicate}.`, subject, { item: refKey(other.ref), duplicate: true });
+        continue;
+      }
       const why = askedBefore(ctx, other, question);
       if (!why) questions.push(question);
       else ctx.commit("orchestrator.about_other_dropped", `${askedBy[0]!.toUpperCase()}${askedBy.slice(1)} asked about ${other.ref.id} again: ${clip(each.question.trim(), 300)} Not asked again: ${why}.`, subject, { item: refKey(other.ref), again: true });

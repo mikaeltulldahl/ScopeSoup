@@ -3331,6 +3331,63 @@ test("several duplicates: every 'close the other' answer closes its Item; with '
   assert.match(m.reasons("orchestrator.duplicate_left_open")[0] ?? "", /close 3 as a duplicate of 1, but also "Close 1 as a duplicate of 2", so 3 is left open/);
 });
 
+const KEEP_WHICH = { question: "Which one should stay open, 1 or 2?", options: [{ label: "Keep 1", description: "Close 2." }, { label: "Keep 2", description: "Close 1." }], recommendation: "Keep 2" };
+
+test("a triage that finishes after its Item was closed as a duplicate writes nothing on the other Item, and its result is dropped with an event", async () => {
+  const w = world(config({ settings: { maxParallelSessions: { value: 2, reason: "test" } } }), [item("1", { title: "Tide units" }), item("2", { body: "Tide units too." })]);
+  w.store.addUsageSample(usage(0.1, 0.1));
+  await w.run();
+  assert.deepEqual(w.runner.requests.map((request) => `${request.role} ${request.subject.id}`), ["triage 1", "triage 2"]);
+  // 2 is closed as a duplicate of 1 while its triage runs.
+  w.store.put({ ...w.store.get<WorkItem>(ref("2"))!, state: "abandoned", duplicateOf: ref("1") }, "sync", new Date(w.clock.ms).toISOString());
+  await step(w, "2", "succeeded", { ...TRIAGE, links: [{ type: "duplicateOf", item: "1", reason: "Same." }], aboutOthers: [{ item: "1", questions: [KEEP_WHICH], rewrite: "Tide units, in metres." }] });
+  assert.deepEqual(w.reasons("orchestrator.result_dropped"), ["2 was closed as a duplicate of 1 while its triage ran: the triage's result is dropped, nothing of it is written on 2 or on other Items, and its job is closed."]);
+  assert.equal(w.job("2"), undefined);
+  assert.deepEqual(w.reasons("orchestrator.about_other_kept"), []);
+  assert.deepEqual(readProposedRewrites(w.store), {});
+  assert.equal(w.job("1")?.rewrite, undefined);
+  assert.deepEqual(w.runner.requests.map((request) => `${request.role} ${request.subject.id}`), ["triage 1", "triage 2"]);
+});
+
+test("questions waiting for an Item are dropped when the Item that asked is closed before they are written", async () => {
+  const w = world(config({ settings: { maxParallelSessions: { value: 2, reason: "test" } } }), [item("1", { title: "Tide units" }), item("2", { body: "Tide units too." })]);
+  w.store.addUsageSample(usage(0.1, 0.1));
+  await w.run();
+  // 2's triage asks about 1 while 1's own triage runs: it waits.
+  await step(w, "2", "succeeded", { ...TRIAGE_OK, aboutOthers: [{ item: "1", questions: [ABOUT_Q] }] });
+  assert.equal(w.reasons("orchestrator.about_other_kept").length, 1);
+  w.store.put({ ...w.store.get<WorkItem>(ref("2"))!, state: "abandoned", duplicateOf: ref("1") }, "sync", new Date(w.clock.ms).toISOString());
+  await step(w, "1", "succeeded", TRIAGE_OK);
+  assert.match(w.reasons("orchestrator.about_other_dropped").at(-1) ?? "", /^What triage of 2 asked about 1 is dropped: 2 was closed as a duplicate of 1 before it was written\.$/);
+  assert.equal(w.reasons("orchestrator.about_other_written").length, 0);
+  assert.notEqual(w.job("1")?.parked?.as, "needs-decision");
+});
+
+test("a triage reporting duplicateOf asks only Scope Soup's duplicate question, not its own which-one-stays question here or on the other Item", async () => {
+  const w = world(config(), [item("1"), item("2", { title: "Tide units", state: "waiting" })]);
+  w.store.addUsageSample(usage(0.1, 0.1));
+  await w.run();
+  await step(w, "1", "succeeded", { ...TRIAGE, questions: [KEEP_WHICH, QUESTION], links: [{ type: "duplicateOf", item: "2", reason: "Same." }], aboutOthers: [{ item: "2", questions: [{ ...KEEP_WHICH, question: "Should 2 stay open, or 1?" }] }] });
+  assert.deepEqual(w.job("1")?.rewrite?.questions.map((each) => each.question), [QUESTION.question, 'Triage found 1 a duplicate of 2 "Tide units". Its reason: Same. Which one closes?']);
+  assert.match(w.reasons("orchestrator.question_dropped")[0] ?? "", /^Triage of 1 asked which duplicate to keep: Which one should stay open, 1 or 2\? Not asked: Scope Soup asks which of 1 and 2 closes itself\.$/);
+  assert.deepEqual(w.reasons("orchestrator.about_other_kept"), []);
+  assert.match(w.reasons("orchestrator.about_other_dropped")[0] ?? "", /^Triage of 1 asked 2 which duplicate to keep: Should 2 stay open, or 1\? Not asked: Scope Soup asks which of 1 and 2 closes itself\.$/);
+});
+
+test("once a person answered which duplicate closes, neither Scope Soup's question nor an agent's about the pair is asked again", async () => {
+  const w = world(config({ settings: { maxParallelSessions: { value: 2, reason: "test" } } }), [item("1"), item("2", { title: "Tide units" })]);
+  w.store.addUsageSample(usage(0.1, 0.1));
+  await w.run();
+  await step(w, "1", "succeeded", DUPLICATE);
+  // Not a stop or a close: 1 is triaged again with the answer.
+  answerRewrite(w, "1", ["Keep both"]);
+  // 2's triage, still running, reports it a duplicate of 1 the other way round and asks 1 which one stays.
+  await step(w, "2", "succeeded", { ...TRIAGE, links: [{ type: "duplicateOf", item: "1", reason: "Same." }], aboutOthers: [{ item: "1", questions: [KEEP_WHICH] }] });
+  assert.deepEqual(w.job("2")?.rewrite?.questions.map((each) => each.question), [QUESTION.question]);
+  assert.match(w.reasons("orchestrator.about_other_dropped")[0] ?? "", /^Triage of 2 asked 1 which duplicate to keep: Which one should stay open, 1 or 2\? Not asked: a person answered which of 2 and 1 closes at \S+ \("Keep both"\)\.$/);
+  assert.deepEqual(w.reasons("orchestrator.about_other_kept"), []);
+});
+
 const CONFLICT = { type: "conflictsWith" as const, item: "2", reason: "Both change the tide table." };
 
 test("a conflictsWith link recommends going on with both; accepting starts the work, and a later round does not ask again", async () => {

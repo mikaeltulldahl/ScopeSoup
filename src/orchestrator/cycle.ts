@@ -8,7 +8,7 @@
 import type { LabelChange, RecordedAnswer, Ref, RepoLabel, Session, WorkItem } from "../model/types.ts";
 import { changeText, isEmptyChange, keepProposal } from "../model/labels.ts";
 import { optionText, refKey, restructuringWords } from "../model/types.ts";
-import { conflictQuestion, GO_ON_WITH_BOTH, heldUntil, holdAnswer, pairAnswer, reusableAnswer } from "../core/answerReuse.ts";
+import { conflictQuestion, duplicateAnswer, duplicatePair, duplicateQuestion, GO_ON_WITH_BOTH, heldUntil, holdAnswer, pairAnswer, reusableAnswer } from "../core/answerReuse.ts";
 import { blockersOnHost, loadOwnBlockers, setOwnBlockers } from "../store/blockers.ts";
 import { answersText, knownAnswers } from "../store/answers.ts";
 import { persistenceLimits } from "../config/persistence.ts";
@@ -36,7 +36,8 @@ import { findingKey, noProgress, shouldDraft } from "./progress.ts";
 import type { ProposedDraft } from "./drafts.ts";
 import { fileDrafts } from "./drafts.ts";
 import { reviewSettings } from "../config/types.ts";
-import { busyWhy, workingWhy, isOpenItem, keepAboutOthers, linkedItem as namedItem, readWaitingAbouts, writeWaitingAbouts } from "./aboutOthers.ts";
+import { busyWhy, duplicateAsked, workingWhy, isOpenItem, keepAboutOthers, linkedItem as namedItem, readWaitingAbouts, reportedDuplicates, writeWaitingAbouts } from "./aboutOthers.ts";
+import type { WaitingAbout } from "./aboutOthers.ts";
 import { workBranch, workspaceKey } from "./paths.ts";
 import { plural } from "../model/plural.ts";
 
@@ -944,6 +945,20 @@ async function settleStep(ctx: Context, job: Job, session: Session | null, recor
     ctx.commit("orchestrator.answer_repaired", `The ${job.step} answer had ${repaired.recovered.join(", ")} run into another field as tool-call markup; taken out and read as part of the answer.`, key, { fields: repaired.recovered });
   }
 
+  // Closed while its session ran (a duplicate closed from another Item's answer, a restructuring accepted, closed on the host): the
+  // Item's job closes on this tick, and nothing the session said is written, on this Item or on others.
+  // Read again: another Item's answer earlier in this tick may have closed it.
+  const now = ctx.deps.store.get<WorkItem>(job.item) ?? null;
+  const closed = !now || !isOpenItem(now);
+  if (job.step === "triage" && closed) {
+    delete job.sessionId;
+    delete ctx.jobs[key];
+    ctx.commit("orchestrator.result_dropped", `${job.item.id} ${now ? `was ${now.duplicateOf ? `closed as a duplicate of ${now.duplicateOf.id}` : now.state}` : "left the store"} while its triage ran: the triage's result is dropped, nothing of it is written on ${job.item.id} or on other Items, and its job is closed.`, key, { step: job.step });
+    await ctx.act("remove the worktree", key, () => ctx.deps.runner.releaseWorkspace(job.workspace));
+    await ctx.act("delete the branch", key, () => ctx.deps.runner.deleteBranch(job.branch));
+    return;
+  }
+
   if (job.step === "triage") {
     // A person's Triage pick (decision 104) was for this step.
     delete job.triageAskedBy;
@@ -984,8 +999,12 @@ async function settleStep(ctx: Context, job: Job, session: Session | null, recor
     // A person's Implement anyway (overruling triage) was for this step; what comes next goes as the level says.
     delete job.implementAskedBy;
     job.implement = answer;
-    keepAboutOthers(ctx, job, "implement", answer.aboutOthers);
-    keepDrafts(ctx, job, "implementor", answer.drafts);
+    if (!closed) {
+      keepAboutOthers(ctx, job, "implement", answer.aboutOthers);
+      keepDrafts(ctx, job, "implementor", answer.drafts);
+    } else if (answer.aboutOthers?.length || answer.drafts?.length) {
+      ctx.commit("orchestrator.result_dropped", `${job.item.id} was closed while its implementor worked: what it asked about other Items and its drafts are dropped.`, key, { step: job.step });
+    }
     // The decisions it took itself go on the Item first, whether it finished or stopped to ask.
     if (answer.decisions?.length) await recordDecisions(ctx, job, answer.decisions);
     // Stopped without a question after a command was refused: a setting for a person, not a question.
@@ -1217,9 +1236,10 @@ function linkQuestions(ctx: Context, job: Job, links: readonly ItemLinkAnswer[],
       const that = other.ref.id;
       const stop = `Close ${self} as a duplicate of ${that}`;
       const closeOther = `Close ${that} as a duplicate of ${self}`;
-      const reason = link.reason?.trim();
+      // A person already answered which of the two closes (in either direction, on either Item): not asked again.
+      if (duplicateAnswer(answers, job.item, other.ref)) continue;
       questions.push({
-        question: `Triage found ${self} a duplicate of ${that} "${other.title}".${reason ? ` Its reason: ${/[.!?]$/.test(reason) ? reason : `${reason}.`}` : ""} Which one closes?`,
+        question: duplicateQuestion(self, that, other.title, link.reason),
         options: [
           { label: stop, description: closes ? `Scope Soup closes ${self} on the host as a duplicate of ${that}; ${that} goes on.` : `${self} parked as not ready; close it on the host yourself.` },
           { label: closeOther, description: closes ? `Scope Soup closes ${that} on the host as a duplicate of ${self}; work on ${self} goes on.` : `Work on ${self} goes on; close ${that} on the host yourself.` },
@@ -1371,7 +1391,7 @@ async function triage(ctx: Context, job: Job, answer: TriageAnswer, item: WorkIt
     } else if (actions.addBlockers) await ctx.act("write the blockers to the item", key, () => actions.addBlockers!(job.item, refs));
     return waitBlocked(ctx, job, refs, `Triage: ${job.item.id} is blocked by ${names}${heldNote}. It waits in Blocked, and its triage runs again once ${blockers.length > 1 ? "they are" : "it is"} done.`);
   }
-  const questions = [...(answer.decisions ?? []), ...linkQuestions(ctx, job, links, answers)]
+  const questions = [...ownQuestions(ctx, job, answer, answers), ...linkQuestions(ctx, job, links, answers)]
     .filter((question) => question.question.trim() && !(item && reusableAnswer(answers, item, question)));
   const original = item?.body?.trim() ?? "";
   // A rewrite that changes only whitespace, or only appends the Verification field again, changes nothing.
@@ -1387,6 +1407,31 @@ async function triage(ctx: Context, job: Job, answer: TriageAnswer, item: WorkIt
     ? `Triage, round ${round}: a rewrite of the description and ${questions.length === 1 ? "1 question waits" : `${questions.length} questions wait`} for an answer: ${questions.map((each, index) => `${index + 1}. ${each.question}`).join(" ")}${labelNote}${droppedNote}`
     : `Triage, round ${round}: a rewrite of the description waits for a person to accept, edit or reject.${labelNote}${droppedNote}`;
   return park(ctx, job, "needs-decision", reason, "decision");
+}
+
+/**
+ * Triage's own questions, without the ones asking which of two duplicates to keep: Scope Soup asks that itself, from a `duplicateOf`
+ * link, or a person answered it already (`duplicateAsked`). Each dropped is said in an event.
+ */
+function ownQuestions(ctx: Context, job: Job, answer: TriageAnswer, answers: readonly RecordedAnswer[]): Decision[] {
+  const reported = reportedDuplicates(ctx.deps.store, job.item, answer.links);
+  const answered = answers.flatMap((each) => {
+    const pair = each.subject.host === job.item.host ? duplicatePair(each.question ?? "") : null;
+    return pair && pair.includes(job.item.id) ? [refKey({ ...job.item, id: pair[0] === job.item.id ? pair[1] : pair[0] })] : [];
+  });
+  const partners = [...new Set([...reported, ...answered])].flatMap((key) => {
+    const work = ctx.deps.store.list<WorkItem>("work").find((each) => refKey(each.ref) === key);
+    return work ? [work.ref] : [];
+  });
+  return (answer.decisions ?? []).filter((question) => {
+    for (const other of partners) {
+      const why = duplicateAsked(ctx, job.item, other, question, reported.has(refKey(other)));
+      if (!why) continue;
+      ctx.commit("orchestrator.question_dropped", `Triage of ${job.item.id} asked which duplicate to keep: ${clipText(question.question.trim(), 300)} Not asked: ${why}.`, refKey(job.item), { duplicateOf: refKey(other) });
+      return false;
+    }
+    return true;
+  });
 }
 
 /**
@@ -1521,18 +1566,28 @@ export async function retryHandOver(ctx: Context, job: Job, item: WorkItem | nul
  */
 export async function writeAboutOthers(ctx: Context): Promise<void> {
   const { store } = ctx.deps;
-  for (const [key, entries] of Object.entries(readWaitingAbouts(store))) {
-    if (entries.length === 0) continue;
+  for (const [key, waitingFor] of Object.entries(readWaitingAbouts(store))) {
+    if (waitingFor.length === 0) continue;
     const item = store.list<WorkItem>("work").find((work) => refKey(work.ref) === key) ?? null;
     if (!item || !isOpenItem(item)) {
       store.tx(() => {
         const waiting = readWaitingAbouts(store);
         delete waiting[key];
         writeWaitingAbouts(store, waiting);
-        ctx.commit("orchestrator.about_other_dropped", `${plural(entries.length, "set")} of questions from other Items waited for ${item ? `${item.ref.id}, which is now ${item.state}` : "an Item that is no longer in the store"}: dropped.`, key, { sets: entries.length });
+        ctx.commit("orchestrator.about_other_dropped", `${plural(waitingFor.length, "set")} of questions from other Items waited for ${item ? `${item.ref.id}, which is now ${item.state}` : "an Item that is no longer in the store"}: dropped.`, key, { sets: waitingFor.length });
       });
       continue;
     }
+    // Since kept: the asker's Item was closed (its questions went with it), or a person answered which of the two duplicates closes.
+    const entries = store.tx(() => {
+      const kept = askersOpen(ctx, item, waitingFor);
+      if (kept.length === waitingFor.length && kept.every((each, index) => each === waitingFor[index])) return kept;
+      const waiting = readWaitingAbouts(store);
+      waiting[key] = kept;
+      writeWaitingAbouts(store, waiting);
+      return kept;
+    });
+    if (entries.length === 0) continue;
     const existing = ctx.jobs[key];
     const busy = busyWhy(ctx, item, existing);
     if (busy) {
@@ -1570,6 +1625,31 @@ export async function writeAboutOthers(ctx: Context): Promise<void> {
     if (holds) await park(ctx, job, "needs-decision", reason, "decision");
     else await parkFresh(ctx, job, reason);
   }
+}
+
+/**
+ * The waiting entries for `item` that still stand, each dropped one said in an event: an asker's Item closed without being done
+ * (abandoned, or gone from the store) takes its questions with it, and a question which of the two duplicates to keep is not asked
+ * once a person answered that (`duplicateAsked`). An entry left with neither a question nor a rewrite goes.
+ */
+function askersOpen(ctx: Context, item: WorkItem, entries: readonly WaitingAbout[]): WaitingAbout[] {
+  const { store } = ctx.deps;
+  const key = refKey(item.ref);
+  return entries.flatMap((entry) => {
+    const asker = store.list<WorkItem>("work").find((work) => refKey(work.ref) === entry.from);
+    if (!asker || asker.state === "abandoned") {
+      const how = !asker ? "left the store" : asker.duplicateOf ? `was closed as a duplicate of ${asker.duplicateOf.id}` : "was closed";
+      ctx.commit("orchestrator.about_other_dropped", `What ${entry.askedBy} asked about ${item.ref.id} is dropped: ${asker?.ref.id ?? entry.from} ${how} before it was written.`, key, { from: entry.from });
+      return [];
+    }
+    const questions = entry.questions.filter((question) => {
+      const why = duplicateAsked(ctx, asker.ref, item.ref, question, false);
+      if (why) ctx.commit("orchestrator.about_other_dropped", `${entry.askedBy[0]!.toUpperCase()}${entry.askedBy.slice(1)} asked ${item.ref.id} which duplicate to keep: ${clipText(question.question, 300)} Not asked: ${why}.`, key, { from: entry.from, duplicate: true });
+      return !why;
+    });
+    if (questions.length === entry.questions.length) return [entry];
+    return questions.length > 0 || entry.rewrite ? [{ ...entry, questions }] : [];
+  });
 }
 
 /** `park` for an Item with no claim or workspace of its own to give back (no job, or one parked before). */

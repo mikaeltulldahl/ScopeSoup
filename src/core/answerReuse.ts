@@ -136,3 +136,39 @@ export function heldUntil(answers: readonly RecordedAnswer[], item: Ref): string
     return said?.kind === "hold" && said.held === item.id;
   });
 }
+
+/** The question a triage's `duplicateOf` link becomes; `duplicatePair` reads the two Item ids back from it. */
+export function duplicateQuestion(self: string, other: string, title: string, reason?: string): string {
+  const why = reason?.trim();
+  return `Triage found ${self} a duplicate of ${other} "${title}".${why ? ` Its reason: ${/[.!?]$/.test(why) ? why : `${why}.`}` : ""} Which one closes?`;
+}
+
+/** The two Item ids of a question as `duplicateQuestion` writes it (the asking Item first), or null for any other question. */
+export function duplicatePair(question: string): [string, string] | null {
+  const found = /^Triage found (\S+) a duplicate of (\S+) "[\s\S]*"\.[\s\S]* Which one closes\?$/.exec(question.trim());
+  return found ? [found[1]!, found[2]!] : null;
+}
+
+/** The newest answer to a duplicate question about `a` and `b`, asked on either of them in either direction, whatever it said. */
+export function duplicateAnswer(answers: readonly RecordedAnswer[], a: Ref, b: Ref): RecordedAnswer | undefined {
+  return answers.findLast((answer) => {
+    if (answer.subject.host !== a.host) return false;
+    const pair = duplicatePair(answer.question ?? "");
+    return pair !== null && ((pair[0] === a.id && pair[1] === b.id) || (pair[0] === b.id && pair[1] === a.id));
+  });
+}
+
+const escaped = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/** True when `text` names the Item `id` (`A-3`, `#12`, `12`) as a word of its own. */
+const mentions = (text: string, id: string): boolean => new RegExp(`(?:^|[^\\p{L}\\p{N}-])#?${escaped(id)}(?![\\p{L}\\p{N}])`, "u").test(text);
+
+/**
+ * True when an agent's question (its text and options) reads as asking which of two duplicates to keep: it speaks of a duplicate,
+ * or names `other` together with closing or keeping open. Scope Soup asks that itself (`duplicateQuestion`).
+ */
+export function asksAboutDuplicate(question: { question: string; options: readonly DecisionOption[] }, other: string): boolean {
+  const text = [question.question, ...question.options.map(optionText)].join(" ");
+  if (/duplicat/i.test(text)) return true;
+  return mentions(text, other) && /\b(?:close[sd]?|closing|open|keep|kept|stay|fold(?:ed)?)\b/i.test(text);
+}
