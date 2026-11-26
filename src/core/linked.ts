@@ -26,9 +26,9 @@ export function inertTags(text: string): string {
   return text.replace(MARKER_TAG, "&lt;");
 }
 
-/** The block for the prompt, starting with a blank line; empty when there are no linked Items. */
+/** The block for the prompt (open Items only: a done or abandoned one is left out), starting with a blank line; empty when there are no linked Items. */
 export function linkedText(linked: readonly { type: LinkType; item: WorkItem }[]): string {
-  const shown = linked.filter((each) => LINKED_TYPES.includes(each.type)).slice(0, LINKED_ITEMS);
+  const shown = linked.filter((each) => LINKED_TYPES.includes(each.type) && each.item.state !== "done" && each.item.state !== "abandoned").slice(0, LINKED_ITEMS);
   if (shown.length === 0) return "";
   const entries = shown.flatMap(({ type, item }) => [
     `<linked item="${refLabel(item.ref)}" link="${type}">`,
