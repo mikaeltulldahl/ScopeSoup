@@ -190,6 +190,8 @@ export interface Actions {
    * "by-hand": the host keeps the item but writes are off; "not-needed": the host's own log already says it merged.
    */
   closeMerged?(item: Ref, merged: { sha: string; target: string; batch?: number }): Promise<"closed" | "by-hand" | "not-needed">;
+  /** True where nothing closes an item when its change merges but Scope Soup itself (meta branch, writes on): a merge by a person is looked for too. */
+  closesItself?: true;
   /**
    * Closes the item on its host as a duplicate of `of`, on the answer, written through; false when the item is not
    * this host's. Only where the host keeps items as issues (GitHub); elsewhere absent, and a person closes it.
