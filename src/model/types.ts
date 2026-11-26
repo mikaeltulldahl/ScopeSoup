@@ -489,7 +489,8 @@ export interface ParkedRewrite {
   text: string;
   /** Round of the rewrite loop, from 1; there is no cap. */
   round: number;
-  questions: { question: string; options: DecisionOption[]; recommendation: string; context?: string; multiSelect?: true }[];
+  /** `stopsOn`: an answer that stops the Item (close as a duplicate, hold for a conflict) and still keeps the rewrite. */
+  questions: { question: string; options: DecisionOption[]; recommendation: string; context?: string; multiSelect?: true; stopsOn?: string }[];
   /** The label changes proposed with the rewrite (existing labels only, never `scopesoup:*`), applied with it at Accept. */
   labels?: LabelChange;
   /** Labels the triage named that the repository does not have: dropped, and noted here. */
