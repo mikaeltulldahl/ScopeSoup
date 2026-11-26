@@ -11,6 +11,7 @@ import { knownAnswers } from "../store/answers.ts";
 import type { Store } from "../store/store.ts";
 import type { Context } from "./context.ts";
 import type { AboutOther, Decision, Job } from "./jobs.ts";
+import { changedRewrite } from "./jobs.ts";
 
 /** Questions (and a rewrite) waiting to be written on another Item. Agent text: data. */
 export interface WaitingAbout {
@@ -103,7 +104,8 @@ export function keepAboutOthers(ctx: Context, job: Job, role: "triage" | "implem
       ctx.commit("orchestrator.about_other_dropped", `The ${role === "triage" ? "triage" : "implementor"} of ${job.item.id} asked about ${JSON.stringify(entry.item.slice(0, 60))}, but ${why}: ${entry.questions.length} question(s)${entry.rewrite ? " and a rewrite" : ""} dropped.`, subject, { item: entry.item.slice(0, 200) });
       continue;
     }
-    const rewrite = entry.rewrite?.trim() && entry.rewrite.trim() !== (other.body ?? "").trim() ? entry.rewrite.trim() : undefined;
+    // Whitespace alone, or the Verification field appended again, is no change (decision 110).
+    const rewrite = changedRewrite(entry.rewrite, other.body, other.verification) || undefined;
     const questions: Decision[] = [];
     for (const each of entry.questions) {
       const question = { ...each, question: `${each.question.trim()} (asked by ${askedBy})` };
@@ -112,7 +114,7 @@ export function keepAboutOthers(ctx: Context, job: Job, role: "triage" | "implem
       else ctx.commit("orchestrator.about_other_dropped", `${askedBy[0]!.toUpperCase()}${askedBy.slice(1)} asked about ${other.ref.id} again: ${clip(each.question.trim(), 300)} Not asked again: ${why}.`, subject, { item: refKey(other.ref), again: true });
     }
     if (questions.length === 0 && !rewrite) {
-      if (entry.questions.length === 0) ctx.commit("orchestrator.about_other_dropped", `Triage of ${job.item.id} rewrote ${other.ref.id}'s description as it already is, with no question: nothing to write.`, subject, { item: refKey(other.ref) });
+      if (entry.questions.length === 0) ctx.commit("orchestrator.about_other_dropped", `Triage of ${job.item.id} rewrote ${other.ref.id}'s description as it already is (whitespace aside), with no question: nothing to write.`, subject, { item: refKey(other.ref) });
       continue;
     }
     const key = refKey(other.ref);

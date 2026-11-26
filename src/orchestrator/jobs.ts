@@ -74,6 +74,41 @@ export interface Rewrite {
    * person settles them, this Item is triaged again with the answers.
    */
   askedBy?: string[];
+  /**
+   * With `askedBy` and no question (only a rewrite): what the Item's job was doing before, null when it had none. Once settled the
+   * job goes back to that step (parked again as it was), or goes away, and no triage starts by itself (decision 110).
+   */
+  resumes?: { step: Job["step"]; parked?: NonNullable<Job["parked"]> } | null;
+}
+
+const squash = (text: string): string => text.replace(/\s+/g, " ").trim();
+
+/** Whether two texts are the same when every run of whitespace counts as one space (a paragraph break, a trailing space). */
+export function sameText(a: string, b: string): boolean {
+  return squash(a) === squash(b);
+}
+
+const VERIFICATION_LABEL = /(^|\n)[ \t]*(?:#{1,6}[ \t]*)?(?:\*\*|__)?verification(?:\*\*|__)?[ \t]*:?[ \t]*(?:\*\*|__)?/gi;
+
+/** The text without a last "Verification: ..." part (a heading or a label) that repeats the Item's verification; else the text. */
+export function withoutVerification(text: string, verification: string | undefined): string {
+  const wanted = squash(verification ?? "");
+  if (!wanted) return text;
+  for (const found of [...text.matchAll(VERIFICATION_LABEL)].reverse()) {
+    if (squash(text.slice(found.index + found[0].length)) === wanted) return text.slice(0, found.index).trimEnd();
+  }
+  return text;
+}
+
+/**
+ * A triage's rewrite of a description as it is kept, or "" when it changes nothing: whitespace does not count, and a Verification
+ * part the rewrite appended that repeats the Item's verification field (a separate field) is cut first, unless the description has it.
+ */
+export function changedRewrite(rewrite: string | undefined, body: string | undefined, verification: string | undefined): string {
+  const original = (body ?? "").trim();
+  let text = (rewrite ?? "").trim();
+  if (withoutVerification(original, verification) === original) text = withoutVerification(text, verification);
+  return text === "" || sameText(text, original) ? "" : text;
 }
 
 /**

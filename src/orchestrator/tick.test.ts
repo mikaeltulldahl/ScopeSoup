@@ -4121,6 +4121,64 @@ test("a triage puts a question and a rewrite on another backlog Item, which park
   assert.match(w.reasons("orchestrator.step").find((reason) => reason.includes("asked about 2")) ?? "", /A person settled what triage of 1 asked about 2 \(the rewrite accepted\)\. Next: triage again/);
 });
 
+test("a triage's own rewrite that changes only whitespace, or only appends the Verification field again, goes on at once (decision 110)", async () => {
+  const w = world(config({ settings: { maxParallelSessions: { value: 2, reason: "test" } } }), [
+    item("1", { body: "First part.\n\nSecond part." }),
+    item("2", { body: "Show tides.", verification: "The table shows metres." }),
+  ]);
+  w.store.addUsageSample(usage(0.1, 0.1));
+  await w.run();
+  w.runner.end("1", "succeeded", { ...TRIAGE_OK, rewrite: "First part.  Second part.\n", links: [] });
+  w.runner.end("2", "succeeded", { ...TRIAGE_OK, paths: ["src/b.ts"], rewrite: "Show tides.\n\n## Verification\nThe table shows  metres.", links: [] });
+  await w.run();
+  w.clock.ms += 1000;
+  await w.run();
+  assert.deepEqual(roles(w), ["triage", "triage", "implement", "implement"]);
+  assert.equal(w.reasons("orchestrator.needs_decision").length + w.calls.filter((call) => call.startsWith("answerTurn")).length, 0);
+});
+
+test("a cross-Item rewrite that changes only whitespace is dropped, not written there (decision 110)", async () => {
+  const w = world(config(), [item("1", { body: "Tide table units." }), item("2", { body: "Wind units.\nShow them on the chart." })]);
+  w.store.addUsageSample(usage(0.1, 0.1));
+  await w.run();
+  await step(w, "1", "succeeded", { ...TRIAGE_OK, aboutOthers: [{ item: "2", questions: [], rewrite: "Wind units.\n\nShow them  on the chart." }] });
+  assert.deepEqual(w.reasons("orchestrator.about_other_written"), []);
+  assert.deepEqual(w.reasons("orchestrator.about_other_dropped"), ["Triage of 1 rewrote 2's description as it already is (whitespace aside), with no question: nothing to write."]);
+  assert.notEqual(w.job("2")?.parked?.as, "needs-decision");
+});
+
+test("accepting a cross-Item rewrite with no question starts no triage: the Item goes on as it was (decision 110)", async () => {
+  const w = world(config(), [item("1", { body: "Tide table units." }), item("2", { body: "Wind units." }), item("3", { body: "Gusts." })]);
+  w.store.addUsageSample(usage(0.1, 0.1));
+  const at = new Date(w.clock.ms).toISOString();
+  w.store.tx(() => {
+    const jobs = loadJobs(w.store);
+    jobs[refKey(ref("2"))] = {
+      item: ref("2"), workspace: workspaceKey(ref("2")), branch: "scopesoup/2", step: "triage", failures: 0, fixRounds: 0, startedAt: at,
+      triage: { ready: false, notReadyReason: "Which source?", size: "small", paths: [], hidesDecision: false },
+      parked: { as: "not-ready", reason: "Triage: not ready. Which source?", at, verdict: true },
+    };
+    saveJobs(w.store, jobs);
+  });
+  await w.run();
+  await step(w, "1", "succeeded", { ...TRIAGE_OK, aboutOthers: [{ item: "2", questions: [], rewrite: ABOUT_REWRITE }, { item: "3", questions: [], rewrite: "Gusts in knots." }] });
+  const two = w.job("2")!;
+  assert.equal(two.parked?.as, "needs-decision");
+  assert.deepEqual(two.rewrite?.resumes, { step: "triage", parked: { as: "not-ready", reason: "Triage: not ready. Which source?", at, verdict: true } });
+  assert.equal(w.job("3")?.rewrite?.resumes, null);
+  assert.match(w.job("3")?.parked?.reason ?? "", /^Rewrite by triage of 1: a rewrite of 3's description waits/);
+
+  assert.deepEqual(answerRewrite(w, "2", [], "accept"), { settled: "accepted" });
+  assert.deepEqual(answerRewrite(w, "3", [], "reject"), { settled: "rejected" });
+  await w.run();
+  // Item 2 is parked again as triage left it, and may still be overruled; item 3 had no job and has none again.
+  assert.deepEqual([w.job("2")?.parked?.as, w.job("2")?.parked?.verdict, w.job("2")?.step], ["not-ready", true, "triage"]);
+  assert.match(w.job("2")?.parked?.reason ?? "", /^Triage: not ready\. Which source\? \(A person accepted the rewrite of 2's description by triage of 1, which asked nothing: no new triage for it\.\)$/);
+  assert.match(w.reasons("orchestrator.job_closed").at(-1) ?? "", /^A person rejected the rewrite of 3's description by triage of 1, which asked nothing: no new triage for it\. It had no work under way/);
+  assert.equal(w.reasons("orchestrator.step").some((reason) => /Next: triage again/.test(reason)), false);
+  assert.equal(w.runner.requests.some((request) => request.role === "triage" && request.subject.id === "2"), false);
+});
+
 test("an implementor puts a question on an Item with paused work, which keeps its branch and session", async () => {
   const w = world(config(), [item("1"), item("2", { body: "Wind units." })]);
   w.store.addUsageSample(usage(0.1, 0.1));
