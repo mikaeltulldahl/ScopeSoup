@@ -32,7 +32,7 @@ import { allowanceDecision } from "./allowance.ts";
 import type { Store } from "../store/store.ts";
 import type { UsageCheckDecision } from "./usageCheck.ts";
 import type { Job, Jobs } from "./jobs.ts";
-import { adoptStored, changedMeanwhile, loadJobs, NO_DECISIONS, takenText } from "./jobs.ts";
+import { adoptStored, changedMeanwhile, loadJobs, NO_DECISIONS, takenText, WRITING_WAIT_MS } from "./jobs.ts";
 import { workBranch, workspaceKey } from "./paths.ts";
 import { adoptHandbacks } from "./handback.ts";
 import { migrateRemovedSteps, recoverFromLogs } from "./recover.ts";
@@ -661,11 +661,16 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
     }
     // The description a person accepted is written on the host, and the store reads it after the next sync: no step starts on the old text.
     if (job.writing) {
-      if (itemTextHash(item) === job.writing.from) {
+      const unread = itemTextHash(item) === job.writing.from;
+      const late = Date.parse(at) - Date.parse(job.writing.at) >= WRITING_WAIT_MS;
+      if (unread && !late) {
         reasons.push(`${item.ref.id} waits: the description written at a person's Accept is not read back from ${item.ref.host} yet`);
         continue;
       }
+      const writtenAt = job.writing.at;
       delete job.writing;
+      if (unread) ctx.commit("orchestrator.text_unread", `The description written on ${item.ref.host} at ${writtenAt} is still not read back after ${WRITING_WAIT_MS / 60_000} minutes: ${item.ref.id} goes on with the text the store has.`, key);
+      else ctx.commit("orchestrator.text_read", `The description written on ${item.ref.host} is read back: ${item.ref.id}'s next step may start.`, key);
     }
     if (job.notBefore && Date.parse(job.notBefore) > Date.parse(at)) {
       reasons.push(`${item.ref.id} waits until ${job.notBefore} before its ${job.step} step`);

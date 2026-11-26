@@ -21,7 +21,7 @@ import { openDrafts } from "./drafts.ts";
 import type { MergeQueue } from "./mergeQueue.ts";
 import { createLoop } from "./loop.ts";
 import { workspaceKey } from "./paths.ts";
-import { answerQuestion, asImplement, asTriage, loadJobs, jobQuestions, releaseJob, resumesStep, saveJobs, settleRewrite } from "./jobs.ts";
+import { answerQuestion, asImplement, asTriage, loadJobs, jobQuestions, releaseJob, resumesStep, saveJobs, settleRewrite, WRITING_WAIT_MS } from "./jobs.ts";
 import { readProposedRewrites } from "./aboutOthers.ts";
 import { loadOwnBlockers, setOwnBlockers } from "../store/blockers.ts";
 import { buildItemPage } from "../core/item-page.ts";
@@ -3104,7 +3104,8 @@ test("an accepted rewrite not yet read back from the host holds the next step; t
   const job = w.job("1")!;
   const at = new Date(w.clock.ms).toISOString();
   // Scope Soup wrote the rewrite on the host; the store reads the old text until the next sync.
-  assert.deepEqual(w.store.tx(() => settleRewrite(w.store, ref("1"), [], "accept", "Ada", at, job.parked!.at, [REWRITE])), { settled: "accepted" });
+  assert.deepEqual(w.store.tx(() => settleRewrite(w.store, ref("1"), [], "accept", "Ada", at, job.parked!.at, [REWRITE], true)), { settled: "accepted" });
+  assert.equal(w.events("orchestrator.text_wait").length, 1);
   for (let i = 0; i < 3; i++) {
     w.clock.ms += 60_000;
     const report = await w.run();
@@ -3117,6 +3118,26 @@ test("an accepted rewrite not yet read back from the host holds the next step; t
   assert.match(w.runner.requests[1]!.vars.itemBody ?? "", /Show the tide table in metres/);
   assert.equal(w.events("orchestrator.triage_again").length, 0);
   assert.equal(w.job("1")?.writing, undefined);
+  assert.deepEqual(w.reasons("orchestrator.text_read"), ["The description written on fake is read back: 1's next step may start."]);
+});
+
+test("a written description never read back holds the next step only for the limit; then it goes on with the text the store has", async () => {
+  const w = world(config(), [item("1", { body: "Tide table units." })]);
+  w.store.addUsageSample(usage(0.1, 0.1));
+  await w.run();
+  await step(w, "1", "succeeded", { ...TRIAGE, questions: [] });
+  const at = new Date(w.clock.ms).toISOString();
+  w.store.tx(() => settleRewrite(w.store, ref("1"), [], "accept", "Ada", at, w.job("1")!.parked!.at, [REWRITE], true));
+  w.clock.ms += WRITING_WAIT_MS - 60_000;
+  await w.run();
+  assert.deepEqual(roles(w), ["triage"]);
+  w.clock.ms += 60_000;
+  await w.run();
+  assert.match(w.reasons("orchestrator.text_unread")[0] ?? "", /is still not read back after 30 minutes: 1 goes on with the text the store has\.$/);
+  w.clock.ms += 1000;
+  await w.run();
+  assert.equal(w.job("1")?.writing, undefined);
+  assert.equal(roles(w).length > 1, true);
 });
 
 test("a rewrite another Item's triage proposes, the same as the one waiting there, is dropped", async () => {
