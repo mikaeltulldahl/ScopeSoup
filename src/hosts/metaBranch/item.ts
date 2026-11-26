@@ -11,6 +11,8 @@ export interface ItemFields {
   labels: string[];
   parent?: string;
   blockedBy: string[];
+  /** With state `abandoned`: closed as a duplicate of this item. */
+  duplicateOf?: string;
   verification?: string;
   priority?: Priority;
   /** The vote, a score offset in points, at most 2 decimals; absent is 0. */
@@ -24,7 +26,7 @@ export interface ItemFields {
 export type ParsedItem = { ok: true; fields: ItemFields } | { ok: false; problems: string[] };
 
 export const WORK_STATES: readonly WorkState[] = ["todo", "doing", "waiting", "done", "abandoned"];
-const KNOWN = new Set(["id", "title", "state", "labels", "parent", "blockedBy", "verification", "priority", "vote"]);
+const KNOWN = new Set(["id", "title", "state", "labels", "parent", "blockedBy", "duplicateOf", "verification", "priority", "vote"]);
 const KEY_LINE = /^([A-Za-z][A-Za-z0-9]*):(.*)$/;
 
 /** "a, b" and "[a, b]" both give ["a", "b"]. Empty entries are dropped. */
@@ -82,12 +84,15 @@ export function parseItem(text: string, dirId: string): ParsedItem {
   if (parent && !isItemId(parent)) problems.push(`the parent "${parent}" is not an item id`);
   const blockedBy = list(header.get("blockedBy") ?? "");
   for (const blocker of blockedBy) if (!isItemId(blocker)) problems.push(`blockedBy "${blocker}" is not an item id`);
+  const duplicateOf = header.get("duplicateOf") ?? "";
+  if (duplicateOf && !isItemId(duplicateOf)) problems.push(`duplicateOf "${duplicateOf}" is not an item id`);
   if (problems.length > 0) return { ok: false, problems };
 
   // The description: everything after the header, without the blank lines around it.
   const body = lines.slice(end + 1).join("\n").replace(/^\s*\n/, "").trimEnd();
   const fields: ItemFields = { title, state: state as WorkState, labels: list(header.get("labels") ?? ""), blockedBy, body, extra };
   if (parent) fields.parent = parent;
+  if (duplicateOf) fields.duplicateOf = duplicateOf;
   const verification = header.get("verification");
   if (verification) fields.verification = verification;
   if (priority) fields.priority = priority as Priority;

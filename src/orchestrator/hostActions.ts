@@ -217,6 +217,14 @@ export function createHostActions(deps: HostActionsDeps): Actions {
           await write.editWork!(item, { blockedBy: [...current.blockedBy, ...added] });
           await write.appendLog!(item, { kind: "edited", by: SCOPESOUP, fields: { changed: ["blocked by"], via: "triage" } });
         },
+        // A person answered "close as a duplicate": abandoned, with `duplicateOf` in the header, and an `edited` line.
+        async closeDuplicate(item: Ref, of: Ref) {
+          if (!mine(item) || of.host !== item.host) return false;
+          await write.editWork!(item, { state: "abandoned", duplicateOf: of });
+          await write.appendLog!(item, { kind: "edited", by: SCOPESOUP, fields: { changed: ["state", "duplicate of"], via: "a person's answer" } });
+          await reread(item);
+          return true;
+        },
       }
       : {}),
 
