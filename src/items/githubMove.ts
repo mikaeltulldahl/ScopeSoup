@@ -9,6 +9,7 @@ import type { Client } from "../hosts/github/client.ts";
 import { GitHubError } from "../hosts/github/client.ts";
 import { readMarker, withMarker } from "../hosts/github/conventions.ts";
 import type { RestComment, RestLabel } from "../hosts/github/rest.ts";
+import { plural } from "../model/plural.ts";
 
 /** What is done on GitHub after the import. */
 export type OnGitHub = "leave" | "label" | "close";
@@ -141,6 +142,6 @@ export function moveText(report: MoveReport, choice: "label" | "close", repo: st
   if (report.closedBefore.length > 0) lines.push(`Left as they are (closed on GitHub): ${report.closedBefore.map((number) => `#${number}`).join(", ")}.`);
   if (report.failed) lines.push(`On GitHub the step stopped at #${report.failed.number}: ${report.failed.message}. Run the same command again to finish it; what is done is not done twice.`);
   else if (report.rows.length === 0) lines.push(`On GitHub: no open imported issue in ${repo} to change.`);
-  else lines.push(`On GitHub: ${report.rows.length} open issue(s) in ${repo} are ${what}${report.labelCreated ? ` (the label was created)` : ""}. Pull requests were not touched.`);
+  else lines.push(`On GitHub: ${plural(report.rows.length, "open issue")} in ${repo} are ${what}${report.labelCreated ? ` (the label was created)` : ""}. Pull requests were not touched.`);
   return lines;
 }

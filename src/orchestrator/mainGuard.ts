@@ -66,7 +66,7 @@ export async function watchMain(ctx: Context, job: Job, after: string): Promise<
   }
   // Rewritten: the commit seen last is not in main's history any more (or is gone). The new main is recorded, so a person's
   // Resuming after looking is not undone by the same finding at the next session.
-  const reason = `${name} did not move fast-forward ${after}: it was at ${last!.slice(0, 7)} and is now at ${main.slice(0, 7)}, which ${forward === null ? "is not built on it (that commit is no longer there)" : "does not contain it"}. Someone forced it or rewrote its history. Agents are paused (${shownRoles(ctx.config.level)}): look at ${name}, then press Resume on their lanes.`;
+  const reason = `${name} did not move fast-forward ${after}: it was at ${last!.slice(0, 7)} and is now at ${main.slice(0, 7)}, which ${forward === null ? "is not built on it (that commit is no longer there)" : "does not contain it"}. Someone forced it or rewrote its history. Agents are paused (${shownRoles(ctx.config.level)}): look at ${name}, then press Resume all.`;
   store.tx(() => {
     record();
     ctx.commit("orchestrator.main_rewritten", reason, key, { from: last, to: main, repo });

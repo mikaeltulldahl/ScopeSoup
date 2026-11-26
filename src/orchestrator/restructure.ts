@@ -12,6 +12,7 @@ import type { Store } from "../store/store.ts";
 import { inertText } from "./hostText.ts";
 import type { Job, Proposal } from "./jobs.ts";
 import { loadJobs, releaseIn, saveJobs } from "./jobs.ts";
+import { plural } from "../model/plural.ts";
 
 /** The restructuring this job is parked on, if it parked on one. */
 export function restructuringOf(job: Job | undefined): Proposal | undefined {
@@ -106,7 +107,7 @@ export function adoptFound(store: Store, item: Ref, works: readonly WorkItem[], 
     if (added.length === 0) return 0;
     proposal.created = [...(proposal.created ?? []), ...added].sort((a, b) => a.part - b.part);
     saveJobs(store, jobs);
-    store.appendEvent({ kind: "orchestrator.restructure_parts_found", subject: key, actor, data: { reason: `Found ${added.length} part(s) of the restructuring already on the host: ${added.map((each) => refKey(each.ref)).join(", ")}.`, found: added.map((each) => ({ part: each.part, ref: refKey(each.ref), linked: each.linked })) } }, at);
+    store.appendEvent({ kind: "orchestrator.restructure_parts_found", subject: key, actor, data: { reason: `Found ${plural(added.length, "part")} of the restructuring already on the host: ${added.map((each) => refKey(each.ref)).join(", ")}.`, found: added.map((each) => ({ part: each.part, ref: refKey(each.ref), linked: each.linked })) } }, at);
     return added.length;
   });
 }

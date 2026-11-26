@@ -209,11 +209,11 @@ function roundsLog66(at: (minutes: number) => string): LogRecord[] {
     logLine(at(-165), "revision", { sha: demoSha("sunrise-1"), branch: "scopesoup/66" }),
     logLine(at(-165), "session", { role: "implement", model: "sonnet", outcome: "succeeded", summary: "Added a sunrise and sunset row under each day, computed from the harbour's position, with tests for North Quay.", durationMs: 2_100_000, sessionId: "i-66", costUsd: 1.42, next: "review" }),
     logLine(at(-141), "review", { sha: demoSha("sunrise-1"), verdict: "fail", findings: ["[must] src/day/SunRow.tsx: The sunset time is shown in UTC, not in the harbour's own time zone.", "[should] The row could hide on days the sun does not set."], model: "opus" }),
-    logLine(at(-141), "session", { role: "review", model: "opus", outcome: "succeeded", summary: "changes, 2 finding(s)", durationMs: 540_000, sessionId: "r-66", costUsd: 0.88, next: "implement" }),
+    logLine(at(-141), "session", { role: "review", model: "opus", outcome: "succeeded", summary: "changes, 2 findings", durationMs: 540_000, sessionId: "r-66", costUsd: 0.88, next: "implement" }),
     logLine(at(-106), "revision", { sha: demoSha("sunrise-2"), branch: "scopesoup/66" }),
     logLine(at(-106), "session", { role: "implement", model: "sonnet", outcome: "succeeded", summary: "Shows sunrise and sunset in the harbour's own time zone, with a test across the change to summer time. The polar day before and after: ![before: 00:00 on a day without a sunset](media/polar-before.png) ![after: the sunset left out](media/polar-after.png)", durationMs: 840_000, sessionId: "i-66b", costUsd: 0.57, next: "review" }),
     logLine(at(-88), "review", { sha: demoSha("sunrise-2"), verdict: "fail", findings: ["[must] src/day/SunRow.tsx: A day without a sunset (polar day) shows 00:00 instead of leaving the time out."], model: "opus" }),
-    logLine(at(-88), "session", { role: "review", model: "opus", outcome: "succeeded", summary: "changes, 1 finding(s)", durationMs: 420_000, sessionId: "r-66b", costUsd: 0.74, next: "implement" }),
+    logLine(at(-88), "session", { role: "review", model: "opus", outcome: "succeeded", summary: "changes, 1 finding", durationMs: 420_000, sessionId: "r-66b", costUsd: 0.74, next: "implement" }),
   ];
 }
 
@@ -228,12 +228,12 @@ function roundsLog36(at: (minutes: number) => string): LogRecord[] {
     logLine(at(-830), "revision", { sha: first, branch: "scopesoup/36" }),
     logLine(at(-830), "session", { role: "implement", model: "sonnet", outcome: "succeeded", summary: "Times are shown in the harbour's own time zone, read from the harbour list.", durationMs: 2_400_000, costUsd: 1.9, next: "review" }),
     logLine(at(-815), "review", { sha: first, verdict: "pass", findings: [], model: "opus" }),
-    logLine(at(-815), "session", { role: "review", model: "opus", outcome: "succeeded", summary: "approve, 0 finding(s)", durationMs: 480_000, costUsd: 0.65 }),
+    logLine(at(-815), "session", { role: "review", model: "opus", outcome: "succeeded", summary: "approve, 0 findings", durationMs: 480_000, costUsd: 0.65 }),
     logLine(at(-790), "check", { sha: first, verdict: "fail", command: "pnpm run check", batch: 2, findings: ["FAIL src/day/times.test.ts > Eel Bay on the night the clocks go back: expected 02:14, got 01:14"] }),
     logLine(at(-760), "revision", { sha: second, branch: "scopesoup/36" }),
     logLine(at(-760), "session", { role: "implement", model: "sonnet", outcome: "succeeded", summary: "Converts with the offset of the tide's own date, not today's; the night the clocks go back passes.", durationMs: 900_000, costUsd: 0.48, next: "review" }),
     logLine(at(-750), "review", { sha: second, verdict: "pass", findings: [], model: "opus" }),
-    logLine(at(-750), "session", { role: "review", model: "opus", outcome: "succeeded", summary: "approve, 0 finding(s)", durationMs: 300_000, costUsd: 0.4 }),
+    logLine(at(-750), "session", { role: "review", model: "opus", outcome: "succeeded", summary: "approve, 0 findings", durationMs: 300_000, costUsd: 0.4 }),
     logLine(at(-720), "revision", { sha: merged, branch: "scopesoup/36" }),
     logLine(at(-720), "check", { sha: merged, verdict: "pass", command: "pnpm run check", batch: 4 }),
     logLine(at(-720), "merged", { sha: merged, target: "main", batch: 4 }),

@@ -44,6 +44,7 @@ import { ensureSetup, setupFailedText } from "./setup.ts";
 import { CHECK_HOLDER } from "./resources.ts";
 import type { Resources } from "./resources.ts";
 import { remoteMismatch, sameRepository } from "./remote.ts";
+import { plural } from "../model/plural.ts";
 
 export { QUEUE_KEY };
 const ACTOR = "orchestrator";
@@ -791,7 +792,7 @@ export function createQueueDriver(deps: QueueDriverDeps): QueueDriver {
         if (effect.kind === "build-chain") {
           answer = await buildChain(repo, effect);
           if (answer.kind === "chain-built") {
-            sink.note("orchestrator.queue_batch", `Batch ${effect.batch}: ${answer.results.filter((r) => "sha" in r).length} of ${effect.changes.length} change(s) built into one chain on ${effect.base.slice(0, 7)}.`, { batch: effect.batch });
+            sink.note("orchestrator.queue_batch", `Batch ${effect.batch}: ${answer.results.filter((r) => "sha" in r).length} of ${plural(effect.changes.length, "change")} built into one chain on ${effect.base.slice(0, 7)}.`, { batch: effect.batch });
           }
         } else if (effect.kind === "start-run" && githubCi()) {
           const result = await ciRun(repo, effect, sink);

@@ -342,16 +342,16 @@ test("import github: misuse, a dry run that writes nothing, then the import, and
   // The meta ref holds the project's shared settings already; "nothing written" is that commit still.
   const settings = meta();
   assert.equal(await c.run("import", "github", "--repo", "harbour/tides", "--dry-run"), 0, c.err.join("\n"));
-  assert.equal(c.out.at(-1), "Dry run: 2 of 2 issue(s) from harbour/tides would be imported. Nothing was written.");
+  assert.equal(c.out.at(-1), "Dry run: 2 of 2 issues from harbour/tides would be imported. Nothing was written.");
   assert.match(c.out.at(-3)!, /^#1 +would be +A-1 +todo +Tide table 1$/);
   assert.equal(meta(), settings);
 
   assert.equal(await c.run("import", "github", "--repo", "harbour/tides"), 0, c.err.join("\n"));
-  assert.match(c.out.at(-1)!, /^Imported 2 issue\(s\) from harbour\/tides in one meta commit \([0-9a-f]{9}\)\. GitHub was not changed\.$/);
+  assert.match(c.out.at(-1)!, /^Imported 2 issues from harbour\/tides in one meta commit \([0-9a-f]{9}\)\. GitHub was not changed\.$/);
   const tip = meta();
   assert.ok(git(dir, "show", "refs/scopesoup/meta:items/A-2/item.md").includes("importedFrom: github:harbour/tides#2\n---\n\nAfter A-1."));
   assert.equal(await c.run("import", "github", "--repo", "harbour/tides"), 0, c.err.join("\n"));
-  assert.equal(c.out.at(-1), "Nothing new to import from harbour/tides: all 2 issue(s) were imported before.");
+  assert.equal(c.out.at(-1), "Nothing new to import from harbour/tides: all 2 issues were imported before.");
   assert.equal(meta(), tip);
   assert.deepEqual(fake.calls.filter((call) => !call.startsWith("GET ")), []);
   // The token is never printed.
@@ -392,7 +392,7 @@ test("import github --on-github: refused without a yes, asked in a terminal, don
   const questions: string[] = [];
   const no = cli(dir, env, { githubFetch: fake.fetch, githubApi: ISSUES_API, ask: async (question) => { questions.push(question); return "n"; } });
   assert.equal(await no.run("import", "github", "--repo", "harbour/tides", "--on-github", "label"), 0, no.err.join("\n"));
-  assert.match(questions[0]!, /^Change 2 open issue\(s\) on GitHub harbour\/tides: label them moved-to-scopesoup and comment the Item on each\? Pull requests are not touched\. Type yes to go on: $/);
+  assert.match(questions[0]!, /^Change 2 open issues on GitHub harbour\/tides: label them moved-to-scopesoup and comment the Item on each\? Pull requests are not touched\. Type yes to go on: $/);
   assert.equal(no.out.at(-1), "GitHub was left as it is.");
   assert.deepEqual(writes(), []);
   assert.match(git(dir, "show", "refs/scopesoup/meta:items/A-1/item.md"), /## Comments imported from GitHub[\s\S]*> A comment\./);
@@ -400,7 +400,7 @@ test("import github --on-github: refused without a yes, asked in a terminal, don
   // The answer yes: labelled, with a comment naming the Item on the meta branch.
   const yes = cli(dir, env, { githubFetch: fake.fetch, githubApi: ISSUES_API, ask: async () => "yes" });
   assert.equal(await yes.run("import", "github", "--repo", "harbour/tides", "--on-github", "label"), 0, yes.err.join("\n"));
-  assert.match(yes.out.at(-1)!, /^On GitHub: 2 open issue\(s\) in harbour\/tides are labelled moved-to-scopesoup/);
+  assert.match(yes.out.at(-1)!, /^On GitHub: 2 open issues in harbour\/tides are labelled moved-to-scopesoup/);
   assert.ok(fake.comments.get("2")!.some((comment) => /Item \*\*A-2\*\* on the meta ref `refs\/scopesoup\/meta` of this project/.test(comment.body ?? "")));
   assert.equal(fake.issues.get("1")!.state, "open");
 

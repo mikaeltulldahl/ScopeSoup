@@ -123,6 +123,13 @@ test("sessions: running says what it does, stalled and limit say so", () => {
   assert.deepEqual([turnOf(snap, 3).actor, turnOf(snap, 3).reason], ["nobody", "the implement session stopped at the usage limit and resumes on its own; the window resets in 30 min"]);
 });
 
+test("a held Item whose triage session runs says that a session runs, not that none does", () => {
+  const holder = { actor: { id: "scopesoup@laptop-a", name: "scopesoup on laptop-a", bot: true } };
+  const snap = snapshot({ works: [work(1, { holder }), work(2, { holder })], sessions: [session("t", ref("work", 1), { role: "triage", startedAt: at(-2) })] });
+  assert.match(turnOf(snap, 1).reason, /^triage session running for 2 min/);
+  assert.match(turnOf(snap, 2).reason, /^held by scopesoup on laptop-a; no session is running here$/);
+});
+
 test("in progress without a session: a held item, an expired claim, nobody at all", () => {
   const holder = { actor: { id: "w", name: "worker-2", bot: true } };
   const snap = snapshot({

@@ -5,6 +5,7 @@ import type { WorkItem } from "../model/types.ts";
 import { itemName } from "./assumptions.ts";
 import type { ProposedDraft } from "./drafts.ts";
 import type { Finding, Job } from "./jobs.ts";
+import { plural } from "../model/plural.ts";
 
 /** A finding as it is compared with the round before: its file and text, case and spacing aside. Rewording makes it another. */
 export const findingKey = (finding: Pick<Finding, "file" | "text">): string =>
@@ -20,7 +21,7 @@ export function noProgress(before: Job["progress"], must: readonly Finding[]): s
   const same = before?.findings ? must.find((finding) => before.findings!.includes(findingKey(finding))) : undefined;
   if (same) return `The review gives the same finding as the round before: ${clip(`${same.file ? `${same.file}: ` : ""}${same.text.trim()}`, 300)} The same failure twice in a row ends the run.`;
   if (must.length > 0 && before?.must !== undefined && must.length >= before.must) {
-    return `The review round left ${must.length} \`must\` finding(s), not fewer than the ${before.must} of the round before: a round that gets nowhere ends the run.`;
+    return `The review round left ${plural(must.length, "\`must\` finding")}, not fewer than the ${before.must} of the round before: a round that gets nowhere ends the run.`;
   }
   return null;
 }
