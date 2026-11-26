@@ -9,6 +9,14 @@ export interface RunnerState extends Runner {
   since?: string;
 }
 
+/** How sharing the meta ref with the remote went (the writer's rounds, once a minute). */
+export interface ShareState {
+  /** When a round last ended with the remote having everything. */
+  lastOkAt?: string;
+  /** The last round that failed: when, why, and how many local writes wait to be shared. */
+  failed?: { at: string; reason: string; waiting: number };
+}
+
 export interface SyncState {
   /** When the hosts were last read successfully. */
   lastAt?: string;
@@ -61,6 +69,8 @@ export interface Snapshot {
   /** Sessions planned at once (maxParallelSessions), for the forecast. Absent: raw rate. */
   plannedSessions?: number;
   sync: SyncState;
+  /** Absent in singleplayer and before the first round. */
+  share?: ShareState;
   /** Why the orchestrator started nothing in its last tick, in words. Absent while it starts work. */
   idle?: string;
   /** Items the orchestrator has put down. Absent when no orchestrator runs. */

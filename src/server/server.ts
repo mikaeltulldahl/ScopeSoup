@@ -21,6 +21,7 @@ import { knownPeople, peopleNames, PERSON_HEADER, readPersonHeader } from "./per
 import { buildItemList, parseListQuery } from "../core/item-list.ts";
 import { buildItemPage, busyWords } from "../core/item-page.ts";
 import { buildIndex } from "../core/snapshot.ts";
+import type { ShareState } from "../core/snapshot.ts";
 import { toStatusView } from "../core/status.ts";
 import { PRIORITIES, isPriority } from "../model/priority.ts";
 import type { CommitView, DiffView, HistoryView, ItemBranchState, ItemPage } from "../core/views.ts";
@@ -130,6 +131,8 @@ export interface ServerOptions {
   /** The label for Items an AI made or rewrote (`labels.aiGenerated`), or undefined when the project keeps none. Read at each use. */
   aiLabel?: () => string | undefined;
   /** The orchestrator's labels, which order the backlog column. Defaults to bug label "bug". */
+  /** How sharing the meta ref with the remote stands (kept in memory by main.ts); absent in singleplayer. */
+  shareState?: () => ShareState | undefined;
   planning?: () => { bugLabels: string[]; plannedSessions?: number; level?: number; resources?: ResourceConfig[]; reserve?: Record<UsageWindowKind, number>; allowances?: AllowancePlan[]; pickNeeds?: () => { triage?: string; review?: string; implement?: string } };
   /** Reads the diff of an item's branch for `GET /api/diff`. Absent in board-only mode. */
   diff?: (ref: Ref) => Promise<DiffView>;
@@ -372,6 +375,8 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
     const snapshot = loadSnapshot(store);
     const at = now();
     const plan = options.planning?.() ?? { bugLabels: ["bug"] };
+    const share = options.shareState?.();
+    if (share) snapshot.share = share;
     if (plan.plannedSessions !== undefined) snapshot.plannedSessions = plan.plannedSessions;
     if (plan.level !== undefined) snapshot.level = plan.level;
     const jobs = loadJobs(store);

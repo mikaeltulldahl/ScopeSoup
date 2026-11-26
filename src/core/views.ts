@@ -7,7 +7,7 @@ import type { ForecastPoint, UsageAttribution, UsagePlot } from "./usage.ts";
 import type { UsageForecast } from "./forecast.ts";
 import type { Progress } from "./estimates.ts";
 import type { Lane } from "./lanes.ts";
-import type { AgentsState, MergeQueueState, QueueHealth } from "./snapshot.ts";
+import type { AgentsState, MergeQueueState, QueueHealth, ShareState } from "./snapshot.ts";
 import type { Tone } from "./turns.ts";
 
 export type { BisectMark, Lane, Progress, Tone };
@@ -267,6 +267,8 @@ export interface StatusLine {
   usage: { at: string; status?: string; windows: UsageWindowView[] } | null;
   queue: { waiting: number; forming: number; testing: number; bisecting: number };
   sync: { lastAt?: string; error?: string };
+  /** Sharing the meta ref with the remote; absent in singleplayer. The status line shows it only when stale or failing. */
+  share?: ShareState;
   /** Why nothing runs: the orchestrator's idle reason. Absent while it starts work. */
   idle?: string;
   /** Something a person should look at: runner away with work waiting, a red batch with no suspect. */
@@ -426,6 +428,7 @@ export interface StatusView {
   runners: { name: string; words: string }[];
   usage: { kind: UsageWindowKind; utilization?: number; resetsAt: string; forecast?: { outcome: "used_up" | "lasts"; at?: string; words: string } }[];
   sync: StatusLine["sync"];
+  share?: ShareState;
   alerts: string[];
 }
 

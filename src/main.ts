@@ -73,6 +73,7 @@ import { itemDiff } from "./orchestrator/diff.ts";
 import { openInDiffTool } from "./orchestrator/diffTool.ts";
 import { commitView, projectHistory } from "./orchestrator/history.ts";
 import { loadSnapshot } from "./server/snapshot.ts";
+import type { ShareState } from "./core/snapshot.ts";
 import { desktopNotify, answerWaitTickHook } from "./orchestrator/answerWait.ts";
 import { realGit, realProcesses } from "./orchestrator/process.ts";
 import { createCheckRunner } from "./orchestrator/checkRunner.ts";
@@ -98,6 +99,7 @@ import type { AssumptionHost } from "./server/server.ts";
 import { createChat } from "./orchestrator/chat.ts";
 import { mergeQueueOn, mergeQueueStopped, pauseRemembering, roleStopped, startAgain } from "./store/control.ts";
 import { KEYS } from "./store/keys.ts";
+import { nextShareState } from "./config/shareState.ts";
 import { createBranchProtection } from "./server/branchProtection.ts";
 import { NEWER_STORE, STORE_VERSION } from "./store/schema.ts";
 import { openStore } from "./store/store.ts";
@@ -146,11 +148,18 @@ async function main(): Promise<void> {
 
   // The shared settings are on the meta ref: fetched before the first read (a new clone does not have it), then every minute.
   const shared = metaSettings({ now: iso });
+  /** In memory: the first round after a start sets it again within a minute. */
+  let shareState: ShareState | undefined;
   const fetchShared = async (): Promise<void> => {
     // Read each time: singleplayer (nothing fetched or pushed) can be switched on the Settings page.
     const repository = existsSync(configFile) ? privateWhere(configFile) : null;
     if (!repository?.machine) return;
     const report = await shared.fetch(repository.repoPath, repository.remote, repository.machine, repository.multiplayer);
+    try {
+      shareState = nextShareState(shareState, report, iso());
+    } catch {
+      // Only for the board; the next round sets it again.
+    }
     if (report.problem) console.log(`Fetching the shared settings (refs/scopesoup/meta): ${report.problem}`);
     // The picks other boards requested of this machine came with the fetch (decision 104).
     await server?.carryOutRequests().catch((error: unknown) => console.log(`Carrying out the picks requested of this machine: ${error instanceof Error ? error.message : String(error)}`));
@@ -423,6 +432,7 @@ async function main(): Promise<void> {
     ...(config
       ? {
           aiLabel: () => { const loaded = config.load().config; return loaded ? aiLabelOf(loaded) : undefined; },
+          shareState: () => shareState,
           planning: () => {
             const loaded = config.load().config;
             return loaded

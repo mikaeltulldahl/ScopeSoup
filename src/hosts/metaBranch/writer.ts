@@ -112,6 +112,8 @@ export interface SharingReport {
   renamed: { from: string; to: string }[];
   /** Lock files of Scope Soup's refs left behind by an ended git: removed (Scope Soup's own scratch refs) or to be removed by a person. */
   locks: string[];
+  /** Commits on the local ref that the remote does not have yet (0 when `shared` or `local`). */
+  waiting: number;
   /** Why something was not shared. Nothing is lost: unshared commits stay on the local ref. */
   problem?: string;
 }
@@ -609,7 +611,7 @@ export function createWriter(config: WriterConfig): Writer {
 
   // --- sharing ---
 
-  const newReport = (): SharingReport => ({ at: now(), state: "local", pushes: 0, refusedPushes: 0, replayed: 0, conflicts: [], renamed: [], locks: [] });
+  const newReport = (): SharingReport => ({ at: now(), state: "local", pushes: 0, refusedPushes: 0, replayed: 0, waiting: 0, conflicts: [], renamed: [], locks: [] });
 
   async function sharing(): Promise<boolean> {
     if (remote === null || config.shares?.() === false) return false;
@@ -955,6 +957,14 @@ export function createWriter(config: WriterConfig): Writer {
     }
     const blocking = report.locks.filter((lock) => !lock.startsWith("removed "));
     if (blocking.length > 0) report.problem = [report.problem, ...blocking].filter(Boolean).join(" ");
+    if (report.state === "pending") {
+      try {
+        const { local, shared } = await heads();
+        report.waiting = local ? (await commitsSince(git, shared, local)).length : 0;
+      } catch {
+        // The count is only for the board; the report stands without it.
+      }
+    }
     return (last = report);
   }
 

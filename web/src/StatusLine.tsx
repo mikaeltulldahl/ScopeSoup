@@ -4,6 +4,9 @@ import type { StatusLine as Status } from "./api.ts";
 import { useLive, useNow } from "./api.ts";
 import { ago, clockTime, percent } from "./format.ts";
 
+/** Without a good sharing round for this long, the status line says the shared state may be old. */
+const STALE_SHARE_MS = 5 * 60_000;
+
 function Meter({ value }: { value: number }) {
   const level = value >= 0.9 ? "high" : value >= 0.75 ? "mid" : "low";
   return (
@@ -17,6 +20,9 @@ export function StatusLine({ status }: { status: Status }) {
   const now = useNow();
   const live = useLive();
   const { runners, usage, sync } = status;
+  // Quiet while the last round shared everything within the last few minutes.
+  const stale = status.share ? !status.share.failed && (!status.share.lastOkAt || now - Date.parse(status.share.lastOkAt) > STALE_SHARE_MS) : false;
+  const share = status.share && (status.share.failed || stale) ? status.share : null;
   return (
     <section class="status" aria-label="Status">
       <div class="status-group">
@@ -57,6 +63,19 @@ export function StatusLine({ status }: { status: Status }) {
           {!live && <span class="muted"> · reconnecting</span>}
         </span>
       </div>
+      {share && (
+        <div class="status-group">
+          <span class="status-name">Shared state</span>
+          <span class="status-item">
+            <span class="dot dot-bad" aria-hidden="true" />
+            <span>
+              {share.failed
+                ? `Not shared with the remote${share.lastOkAt ? ` since ${clockTime(share.lastOkAt, now)} (${ago(share.lastOkAt, now)})` : " since this started"}: ${share.failed.reason}${share.failed.waiting > 0 ? ` · ${share.failed.waiting === 1 ? "1 write waits" : `${share.failed.waiting} writes wait`} to be shared` : ""}`
+                : `Last shared with the remote ${ago(share.lastOkAt, now)}: what you see may be old`}
+            </span>
+          </span>
+        </div>
+      )}
       {status.idle && <p class="status-idle muted">{status.idle}</p>}
       {status.alerts.length > 0 && (
         <ul class="alerts">

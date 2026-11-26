@@ -92,3 +92,4 @@ export function hostParts(store: Store, item: Ref, proposal: { id: string; parts
     .map(([part, work]) => ({ part, ref: work.ref, linked: partLinked(proposal.parts[part]!, work, item) }))
     .sort((a, b) => a.part - b.part);
 }
+

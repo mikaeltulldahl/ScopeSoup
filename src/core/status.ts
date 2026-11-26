@@ -82,6 +82,7 @@ export function buildStatusLine(index: Index, queue: QueueView, now: Date): Stat
       : null,
     queue: counts,
     sync: { ...snapshot.sync },
+    ...(snapshot.share ? { share: snapshot.share } : {}),
     ...(snapshot.idle ? { idle: snapshot.idle } : {}),
     alerts,
   };
@@ -113,6 +114,7 @@ export function toStatusView(board: BoardView): StatusView {
     runners: board.status.runners.list.map((runner) => ({ name: runner.name, words: runner.words })),
     usage: (board.status.usage?.windows ?? []).map((window) => ({ kind: window.kind, utilization: window.utilization, resetsAt: window.resetsAt, ...(window.forecast ? { forecast: window.forecast } : {}) })),
     sync: board.status.sync,
+    ...(board.status.share ? { share: board.status.share } : {}),
     alerts: board.status.alerts,
   };
 }

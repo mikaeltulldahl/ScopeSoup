@@ -198,6 +198,20 @@ test("three laptops edit one item.md: both other versions are kept, and a resolu
   assert.deepEqual(after.aside.map((version) => /title: (.*)/.exec(version.text)?.[1]), ["Title from c"]);
 });
 
+test("a round that cannot push counts the commits that wait, and a later one that pushes counts none", async () => {
+  const origin = remote();
+  const a = laptop(origin, "laptop-a", "W");
+  await port(a).createWork({ title: "Shared" });
+  a.offline.on = true;
+  await port(a).createWork({ title: "Waits one" });
+  await port(a).createWork({ title: "Waits two" });
+  const offline = await writer(a).share();
+  assert.deepEqual([offline.state, offline.waiting], ["pending", 2]);
+  a.offline.on = false;
+  const back = await writer(a).share();
+  assert.deepEqual([back.state, back.waiting], ["shared", 0]);
+});
+
 test("two laptops with one id prefix: the item created second moves to the next free id with its own lines, and is never merged into the other", async () => {
   const origin = remote();
   const a = laptop(origin, "laptop-a", "X");
