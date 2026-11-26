@@ -1252,7 +1252,7 @@ test("should findings with review.shouldFindings \"fix\" (the default): back to 
   await step(w, "1", "succeeded", approve);
   assert.deepEqual([w.job("1")?.merge, w.job("1")?.fixRounds, w.job("1")?.parked], [true, 0, undefined]);
   const drafts = openDrafts(w.store);
-  assert.deepEqual(drafts.map((each) => [each.from.id, each.role, each.title]), [["1", "reviewer", "After #1: Name the helper after what it returns."]]);
+  assert.deepEqual(drafts.map((each) => [each.from.id, each.role, each.title]), [["1", "reviewer", "Follow-ups from the review of #1 (Item 1)"]]);
   assert.equal(w.events("orchestrator.escalated").length, 0);
 });
 
@@ -1264,7 +1264,7 @@ test("a round for should findings that commits nothing is not \"nothing to chang
   await step(w, "1", "succeeded", { done: true, summary: "The name is fine as it is." });
   assert.deepEqual([w.job("1")?.parked, w.job("1")?.merge, w.job("1")?.shouldRound, roles(w).at(-1)], [undefined, true, undefined, "implement"]);
   assert.equal(w.runner.requests.filter((request) => request.role === "review").length, 1, "not reviewed again");
-  assert.deepEqual(openDrafts(w.store).map((each) => each.title), ["After #1: Shorter name."]);
+  assert.deepEqual(openDrafts(w.store).map((each) => each.title), ["Follow-ups from the review of #1 (Item 1)"]);
   assert.equal(w.events("orchestrator.escalated").length, 0);
 });
 
@@ -3040,7 +3040,7 @@ test("another answer runs the triage again with the answer in its prompt, round 
   // The second round asks a new question and writes a new rewrite.
   await step(w, "1", "succeeded", { ...TRIAGE, questions: [{ question: "Round to tenths?", options: [{ label: "Yes", description: "" }, { label: "No", description: "" }], recommendation: "Yes" }], rewrite: "Show the tide table in feet, to tenths." });
   assert.equal(w.job("1")?.rewrite?.round, 2);
-  assert.match(w.reasons("orchestrator.needs_decision").at(-1) ?? "", /^Triage, round 2: a rewrite of the description and 1 question\(s\)/);
+  assert.match(w.reasons("orchestrator.needs_decision").at(-1) ?? "", /^Triage, round 2: a rewrite of the description and 1 question waits/);
   assert.deepEqual(roles(w), ["triage", "triage"]);
   assert.deepEqual(answerRewrite(w, "1", ["Yes"], "reject"), { settled: "rejected" });
   await w.run();

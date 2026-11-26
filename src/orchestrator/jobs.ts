@@ -698,12 +698,18 @@ function withContext(decision: Decision, context: unknown): Decision {
   return decision;
 }
 
+/** The board marks the recommended option itself, so a trailing "(recommended)" the model wrote in a label is dropped. */
+export function withoutRecommendedMark(label: string): string {
+  const stripped = label.replace(/\s*\(\s*recommended\s*\)\s*$/i, "").trim();
+  return stripped || label;
+}
+
 function asDecision(value: unknown): Decision | undefined {
   if (!isObj(value) || typeof value.question !== "string" || !value.question.trim()) return undefined;
   return withContext({
     question: value.question,
-    options: asOptions(value.options),
-    recommendation: typeof value.recommendation === "string" ? value.recommendation : "",
+    options: asOptions(value.options).map((option) => (typeof option === "string" ? withoutRecommendedMark(option) : { ...option, label: withoutRecommendedMark(option.label) })),
+    recommendation: typeof value.recommendation === "string" ? withoutRecommendedMark(value.recommendation) : "",
     ...(value.multiSelect === true ? { multiSelect: true as const } : {}),
   }, value.context);
 }

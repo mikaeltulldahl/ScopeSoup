@@ -1360,7 +1360,7 @@ async function triage(ctx: Context, job: Job, answer: TriageAnswer, item: WorkIt
   job.rewrite = { original, text: rewrite || original, questions, round, ...(!isEmptyChange(labels) ? { labels } : {}), ...(dropped.length > 0 ? { droppedLabels: dropped } : {}) };
   const labelNote = isEmptyChange(labels) ? "" : ` Labels: ${changeText(labels)}.`;
   const reason = questions.length > 0
-    ? `Triage, round ${round}: a rewrite of the description and ${questions.length} question(s) wait for an answer: ${questions.map((each, index) => `${index + 1}. ${each.question}`).join(" ")}${labelNote}${droppedNote}`
+    ? `Triage, round ${round}: a rewrite of the description and ${questions.length === 1 ? "1 question waits" : `${questions.length} questions wait`} for an answer: ${questions.map((each, index) => `${index + 1}. ${each.question}`).join(" ")}${labelNote}${droppedNote}`
     : `Triage, round ${round}: a rewrite of the description waits for a person to accept, edit or reject.${labelNote}${droppedNote}`;
   return park(ctx, job, "needs-decision", reason, "decision");
 }

@@ -46,6 +46,15 @@ test("a decision in an answer keeps options as { label, description }, plain tex
   assert.deepEqual(implement?.decision, { question: "Q?", options: ["x"], recommendation: "" });
 });
 
+test("a trailing (recommended) the model wrote in an option label is dropped, and the recommendation still matches its label", () => {
+  const triage = asTriage({
+    ready: true, size: "small", paths: [], hidesDecision: true,
+    decision: { question: "Which?", options: [{ label: "Whole numbers (Recommended)", description: "d" }, "Other (RECOMMENDED) "], recommendation: "Whole numbers (recommended)" },
+  });
+  assert.deepEqual(triage?.decision?.options, [{ label: "Whole numbers", description: "d" }, "Other"]);
+  assert.equal(triage?.decision?.recommendation, "Whole numbers");
+});
+
 // Shortened from what real sessions answered: the fields after the summary ran into its string as tool-call markup.
 const RUN_INTO_SUMMARY = {
   done: true,

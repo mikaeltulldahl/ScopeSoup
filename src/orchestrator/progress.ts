@@ -30,7 +30,7 @@ export function shouldDraft(item: Pick<WorkItem, "ref" | "title">, should: reado
   const name = itemName(item as WorkItem);
   const listed = should.map((finding) => `- ${finding.file ? `\`${finding.file}\`: ` : ""}${clip(finding.text.trim(), 600)}`).join("\n");
   return {
-    title: clip(`After ${name}: ${should[0]!.text.trim().replace(/\s+/g, " ")}`, 120),
+    title: `Follow-ups from the review of ${name} (${clip(item.title.trim().replace(/\s+/g, " "), 60)})`,
     description: [
       `The review of ${name} ("${item.title}") approved its change and said ${should.length === 1 ? "this finding" : "these findings"} should still change:`,
       listed,

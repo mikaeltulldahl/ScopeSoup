@@ -60,7 +60,12 @@ const OPEN = (item: WorkItem): boolean => item.state !== "done" && item.state !=
  * Item untouched for longest goes first.
  */
 export function older(a: WorkItem, b: WorkItem): number {
-  if (a.ref.host === b.ref.host && /^\d+$/.test(a.ref.id) && /^\d+$/.test(b.ref.id)) return Number(a.ref.id) - Number(b.ref.id);
+  if (a.ref.host === b.ref.host) {
+    // "41", or a prefix and a number ("A-3" before "A-5"): ids of one prefix are handed out in order.
+    const x = /^(.*?)(\d+)$/.exec(a.ref.id);
+    const y = /^(.*?)(\d+)$/.exec(b.ref.id);
+    if (x && y && x[1] === y[1]) return Number(x[2]) - Number(y[2]);
+  }
   return Date.parse(a.updatedAt) - Date.parse(b.updatedAt) || (a.ref.id < b.ref.id ? -1 : a.ref.id > b.ref.id ? 1 : 0);
 }
 
@@ -208,7 +213,7 @@ const BECAUSE: Record<PartName, (other: string, a: Score) => string> = {
 /**
  * One line per Item of `order` (the Items in the places the board shows them, in the order `compareItems` gives): its place
  * and what counts for it in words, and what puts the Item before it ahead ("2nd: major bug, unblocks 2, small, voted up
- * once; behind #41 because #41 is already started"). The words name a vote, never its number.
+ * once; behind GF-41 because GF-41 is already started"). The words name a vote, never its number.
  */
 export function explainOrder(order: WorkItem[], context: ScoreContext): Map<string, string> {
   const scores = scoreItems(order, context);
@@ -229,7 +234,7 @@ export function explainOrder(order: WorkItem[], context: ScoreContext): Map<stri
     const above = order[index - 1];
     if (above) {
       const other = scores.get(refKey(above.ref))!;
-      const name = `#${above.ref.id}`;
+      const name = above.ref.id;
       let because: string;
       if (other.triaged !== score.triaged) because = `${name} had its triage`;
       else if (other.blocker !== score.blocker) because = `${name} is a blocker`;

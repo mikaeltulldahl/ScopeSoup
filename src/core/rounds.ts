@@ -61,7 +61,9 @@ function triage(fields: Record<string, unknown>, pending: Pending): { found: str
     parts.push(`Ready${size ? `, ${size}` : ""}.`);
   }
   if (asked.length > 0) {
-    parts.push(`${asked.length === 1 ? "One question" : `${asked.length} questions`} for you: ${asked.map((question) => question.question).join(" / ")}`);
+    // The one line Scope Soup parks for a rewrite already counts its questions ("Triage, round 1: a rewrite ... and 2 questions wait ...").
+    const whole = asked.length === 1 && /^Triage, round \d+:/.test(asked[0]!.question);
+    parts.push(whole ? asked[0]!.question : `${asked.length === 1 ? "One question" : `${asked.length} questions`} for you: ${asked.map((question) => question.question).join(" / ")}`);
     tone = "wait";
   }
   // A line from earlier with nothing else to go on: its summary, unless it is only the end reason.
