@@ -34,7 +34,7 @@ import { explainOrder, voteForPlace, voteLimits } from "../orchestrator/score.ts
 import { setVote, voteInStore } from "../store/votes.ts";
 import { isSha } from "../orchestrator/history.ts";
 import { readMergeQueueNote } from "../orchestrator/mergeQueueLease.ts";
-import { adoptWritten, answerQuestion, answerRefusal, rewriteRefusal, keepsRecommendations, loadJobs, questionsSettled, releaseJob, parkedRewrite, resumesStep, saveJobs, settleRewrite } from "../orchestrator/jobs.ts";
+import { adoptWritten, answerQuestion, awaitWritten, answerRefusal, rewriteRefusal, keepsRecommendations, loadJobs, questionsSettled, releaseJob, parkedRewrite, resumesStep, saveJobs, settleRewrite } from "../orchestrator/jobs.ts";
 import { readProposedRewrites, writeProposedRewrites } from "../orchestrator/aboutOthers.ts";
 import { applyMove, isMove, MOVES, moveWhys, ROLE_WORDS, runningRole } from "./moves.ts";
 import { holdStands } from "../model/people.ts";
@@ -1072,6 +1072,8 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
     // The description is written first: when the host refuses, nothing is recorded and the rewrite still waits.
     // On the meta branch the labels are written in the same edit: the proposed changes that still make sense on the Item now.
     let written = false;
+    // The description itself was written here (not only labels): the job then waits until the store reads it back.
+    let bodyWritten = false;
     let labelsDone: { added: string[]; removed: string[] } | undefined;
     if (writable && (newText !== undefined || !isEmptyChange(labelChange))) {
       const patch: WorkPatch = {};
@@ -1090,6 +1092,7 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
           const changed = [...(patch.body !== undefined ? ["description"] : []), ...(patch.labels !== undefined ? ["labels"] : [])];
           if (write!.appendLog) await write!.appendLog(done.work, { kind: "edited", by: by(), fields: { changed, via: `triage, round ${rewrite.round}`, ...(patch.body !== undefined ? { was: rewrite.original } : {}), ...(labelsDone ? { labels: changeText({ add: labelsDone.added, remove: labelsDone.removed }) } : {}) } });
           written = true;
+          bodyWritten = patch.body !== undefined;
         } catch (error) {
           return sendError(response, 400, "WRITE_REFUSED", error instanceof Error ? error.message : String(error));
         }
@@ -1143,7 +1146,7 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
       if (replaceProblem !== undefined) {
         store.appendEvent({ kind: "orchestrator.host_write_failed", subject: ref, actor: by().who, data: { reason: `Could not replace the description of ${subject.id} on ${subject.host}: ${replaceProblem}. The accepted text is kept as the answer.` } }, at);
       }
-      return settleRewrite(store, subject, answers, action, by().who, at, parkedAt, newText === undefined ? [] : [newText, inertText(newText)]);
+      return settleRewrite(store, subject, answers, action, by().who, at, parkedAt, newText === undefined ? [] : [newText, inertText(newText)], bodyWritten || replaced);
     });
     if ("refused" in outcome) {
       options.onRefresh?.();
@@ -1238,8 +1241,10 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
       // Scope Soup wrote the text: the Item's triage counts it as the text it saw, so its work goes on.
       const jobs = loadJobs(store);
       const job = jobs[ref];
-      if (newText !== undefined && job?.triaged) {
-        job.triaged = adoptWritten(job.triaged, [newText, inertText(newText)]);
+      if (newText !== undefined && job && (job.triaged || written)) {
+        if (job.triaged) job.triaged = adoptWritten(job.triaged, [newText, inertText(newText)]);
+        // Its next step starts on the text written, not on the one the store reads until the next sync.
+        if (written) awaitWritten(store, job, subject, [newText, inertText(newText)], at);
         saveJobs(store, jobs);
       }
       store.appendEvent({ kind: `orchestrator.rewrite_${settled}`, subject: ref, actor: by().who, data: { reason: `A person ${settled} the ${via} of ${subject.id}'s description; its work goes on as it is.`, original: proposal.original, text: newText ?? proposal.text, askedBy: proposal.askedBy } }, at);
@@ -1310,7 +1315,7 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
       store.appendEvent({ kind: "orchestrator.host_write_failed", subject: ref, actor: by().who, data: { reason: `Could not settle the triage's rewrite of ${subject.id} on ${subject.host}: ${reason}` } }, at);
       return sendError(response, 400, "WRITE_REFUSED", `${reason}${already}`);
     }
-    const outcome = store.tx(() => settleRewrite(store, subject, answers, action, by().who, at, parkedAt, newText === undefined ? [] : [newText, inertText(newText)]));
+    const outcome = store.tx(() => settleRewrite(store, subject, answers, action, by().who, at, parkedAt, newText === undefined ? [] : [newText, inertText(newText)], written));
     options.onRefresh?.();
     if ("refused" in outcome) return sendError(response, 409, outcome.refused === "parked-changed" ? "PARKED_CHANGED" : "NO_REWRITE", `${ref} parked on another rewrite now, or none: reload the item. Your answers are on ${subject.host}.`);
     if (written || labelsDone) await options.syncNow?.();

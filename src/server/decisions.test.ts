@@ -266,6 +266,25 @@ test("meta branch: Accept writes the description and the label changes to the It
   assert.deepEqual(after.item.labels, ["harbour", "bug"]);
 });
 
+test("meta branch: Accept that writes the description waits for it to be read back; one that writes only labels does not", async () => {
+  const { ref, at } = await labelRewrite("Tide ranges");
+  const accepted = await post("/api/rewrite", { ref, parkedAt: at, answers: [], action: "accept" });
+  assert.equal(accepted.status, 200, JSON.stringify(accepted.body));
+  assert.ok(loadJobs(store)[ref]?.writing);
+  assert.equal(store.eventsAfter(0, 10_000).filter((event) => event.kind === "orchestrator.text_wait" && event.subject === ref).length, 1);
+
+  const labelsOnly = await labelRewrite("Tide lows");
+  store.tx(() => {
+    const jobs = loadJobs(store);
+    jobs[labelsOnly.ref]!.rewrite!.text = "Tide lows.";
+    saveJobs(store, jobs);
+  });
+  const settled = await post("/api/rewrite", { ref: labelsOnly.ref, parkedAt: labelsOnly.at, answers: [], action: "accept" });
+  assert.equal(settled.status, 200, JSON.stringify(settled.body));
+  assert.deepEqual(settled.body.labels, { added: ["bug"], removed: ["question"] });
+  assert.equal(loadJobs(store)[labelsOnly.ref]?.writing, undefined);
+});
+
 test("meta branch: Reject leaves the labels and the description unchanged", async () => {
   const { ref, at } = await labelRewrite("Tide times");
   const rejected = await post("/api/rewrite", { ref, parkedAt: at, answers: [], action: "reject" });

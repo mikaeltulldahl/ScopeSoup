@@ -21,7 +21,7 @@ import { openDrafts } from "./drafts.ts";
 import type { MergeQueue } from "./mergeQueue.ts";
 import { createLoop } from "./loop.ts";
 import { workspaceKey } from "./paths.ts";
-import { answerQuestion, asImplement, asTriage, loadJobs, jobQuestions, releaseJob, resumesStep, saveJobs, settleRewrite } from "./jobs.ts";
+import { answerQuestion, asImplement, asTriage, loadJobs, jobQuestions, releaseJob, resumesStep, saveJobs, settleRewrite, WRITING_WAIT_MS } from "./jobs.ts";
 import { readProposedRewrites } from "./aboutOthers.ts";
 import { loadOwnBlockers, setOwnBlockers } from "../store/blockers.ts";
 import { buildItemPage } from "../core/item-page.ts";
@@ -3052,6 +3052,108 @@ test("another answer runs the triage again with the answer in its prompt, round 
   w.clock.ms += 1000;
   await w.run();
   assert.deepEqual(roles(w), ["triage", "triage", "implement"]);
+});
+
+test("a not-ready triage's rewrite accepted with the recommended answers is triaged again, not parked as not ready; rounds count up", async () => {
+  const w = world(config(), [item("1", { body: "Tide table units." })]);
+  w.store.addUsageSample(usage(0.1, 0.1));
+  await w.run();
+  await step(w, "1", "succeeded", { ...TRIAGE, ready: false, notReadyReason: "Metric or imperial is not decided." });
+  assert.equal(w.job("1")?.rewrite?.round, 1);
+  assert.deepEqual(answerRewrite(w, "1", ["Metric"]), { settled: "accepted" });
+  await w.run();
+  // No not-ready park, so the old reason is never written as a question: the only question line is the rewrite's.
+  assert.equal(w.events("orchestrator.not_ready").length, 0);
+  assert.deepEqual(w.lines.filter((line) => line.startsWith("1 question ")).map((line) => JSON.parse(line.slice("1 question ".length)).parked), ["needs-decision"]);
+  assert.match(w.reasons("orchestrator.step").at(-1) ?? "", /^A person accepted the rewrite with the answers to its questions after triage said 1 was not ready\. Next: triage again/);
+  w.clock.ms += 1000;
+  await w.run();
+  assert.deepEqual(roles(w), ["triage", "triage"]);
+  assert.match(w.runner.requests[1]!.vars.recheck ?? "", /taken again because a person accepted the rewrite with the answers to its questions after it said the Item was not ready\./);
+  // The new triage's rewrite is round 2.
+  await step(w, "1", "succeeded", { ...TRIAGE, questions: [], ready: false, notReadyReason: "Still unclear.", rewrite: "Show the tide table in metres, to tenths." });
+  assert.equal(w.job("1")?.rewrite?.round, 2);
+  assert.match(w.reasons("orchestrator.needs_decision").at(-1) ?? "", /^Triage, round 2: /);
+  // Rejected with no question: nothing it asked for was given, so the verdict parks as before.
+  assert.deepEqual(answerRewrite(w, "1", [], "reject"), { settled: "rejected" });
+  await w.run();
+  assert.equal(w.job("1")?.parked?.as, "not-ready");
+  assert.match(w.job("1")?.parked?.reason ?? "", /^Triage: not ready\. Still unclear\./);
+});
+
+test("rejecting a rewrite leaves the text's hash as the triage saw it and starts no triage again", async () => {
+  const w = world(config(), [item("1", { body: "Tide table units." })]);
+  w.store.addUsageSample(usage(0.1, 0.1));
+  await w.run();
+  await step(w, "1", "succeeded", { ...TRIAGE, questions: [] });
+  assert.deepEqual(answerRewrite(w, "1", [], "reject"), { settled: "rejected" });
+  assert.equal(w.job("1")?.triaged?.textHash, itemTextHash(w.store.get<WorkItem>(ref("1"))!));
+  assert.equal(w.job("1")?.writing, undefined);
+  await w.run();
+  w.clock.ms += 1000;
+  await w.run();
+  assert.deepEqual(roles(w), ["triage", "implement"]);
+  assert.equal(w.events("orchestrator.triage_again").length, 0);
+});
+
+test("an accepted rewrite not yet read back from the host holds the next step; then it starts on the new text, not taken for an edit", async () => {
+  const w = world(config(), [item("1", { body: "Tide table units." })]);
+  w.store.addUsageSample(usage(0.1, 0.1));
+  await w.run();
+  await step(w, "1", "succeeded", { ...TRIAGE, questions: [] });
+  const job = w.job("1")!;
+  const at = new Date(w.clock.ms).toISOString();
+  // Scope Soup wrote the rewrite on the host; the store reads the old text until the next sync.
+  assert.deepEqual(w.store.tx(() => settleRewrite(w.store, ref("1"), [], "accept", "Ada", at, job.parked!.at, [REWRITE], true)), { settled: "accepted" });
+  assert.equal(w.events("orchestrator.text_wait").length, 1);
+  for (let i = 0; i < 3; i++) {
+    w.clock.ms += 60_000;
+    const report = await w.run();
+    assert.match(report.idle ?? "", /1 waits: the description written at a person.s Accept is not read back from fake yet/);
+  }
+  assert.deepEqual(roles(w), ["triage"]);
+  w.store.put(item("1", { body: REWRITE }), "sync", new Date(w.clock.ms).toISOString());
+  await w.run();
+  assert.deepEqual(roles(w), ["triage", "implement"]);
+  assert.match(w.runner.requests[1]!.vars.itemBody ?? "", /Show the tide table in metres/);
+  assert.equal(w.events("orchestrator.triage_again").length, 0);
+  assert.equal(w.job("1")?.writing, undefined);
+  assert.deepEqual(w.reasons("orchestrator.text_read"), ["The description written on fake is read back: 1's next step may start."]);
+});
+
+test("a written description never read back holds the next step only for the limit; then it goes on with the text the store has", async () => {
+  const w = world(config(), [item("1", { body: "Tide table units." })]);
+  w.store.addUsageSample(usage(0.1, 0.1));
+  await w.run();
+  await step(w, "1", "succeeded", { ...TRIAGE, questions: [] });
+  const at = new Date(w.clock.ms).toISOString();
+  w.store.tx(() => settleRewrite(w.store, ref("1"), [], "accept", "Ada", at, w.job("1")!.parked!.at, [REWRITE], true));
+  w.clock.ms += WRITING_WAIT_MS - 60_000;
+  await w.run();
+  assert.deepEqual(roles(w), ["triage"]);
+  w.clock.ms += 60_000;
+  await w.run();
+  assert.match(w.reasons("orchestrator.text_unread")[0] ?? "", /is still not read back after 30 minutes: 1 goes on with the text the store has\.$/);
+  w.clock.ms += 1000;
+  await w.run();
+  assert.equal(w.job("1")?.writing, undefined);
+  assert.equal(roles(w).length > 1, true);
+});
+
+test("a rewrite another Item's triage proposes, the same as the one waiting there, is dropped", async () => {
+  const w = world(config(), [item("1", { body: "Tide table units." }), item("2", { body: "Wind units." })]);
+  w.store.addUsageSample(usage(0.1, 0.1));
+  await w.run();
+  // Item 1's own triage parks its rewrite.
+  await step(w, "1", "succeeded", { ...TRIAGE, questions: [] });
+  assert.equal(w.job("1")?.rewrite?.text, REWRITE);
+  w.clock.ms += 1000;
+  await w.run();
+  assert.equal(w.runner.requests.at(-1)?.subject.id, "2");
+  await step(w, "2", "succeeded", { ...TRIAGE_OK, aboutOthers: [{ item: "1", questions: [], rewrite: `${REWRITE}\n` }] });
+  assert.deepEqual(readProposedRewrites(w.store), {});
+  assert.deepEqual(w.reasons("orchestrator.about_other_dropped"), ["Triage of 2 rewrote 1's description as its own triage proposed already: the rewrite is dropped."]);
+  assert.equal(w.job("1")?.rewrite?.text, REWRITE);
 });
 
 test("a blockedBy link writes Scope Soup's own blocker; the job closes and the Item waits in Blocked", async () => {

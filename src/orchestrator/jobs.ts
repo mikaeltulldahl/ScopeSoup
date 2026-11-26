@@ -261,8 +261,14 @@ export interface Job {
   proposal?: Proposal;
   /** The triage's rewrite description and its questions, parked for a person, or settled and about to go on. */
   rewrite?: Rewrite;
-  /** Rounds of the rewrite loop so far, kept while the triage runs again with the answers. */
+  /** Rounds of the rewrite loop so far on this job: each new rewrite counts up from it. */
   rewriteRounds?: number;
+  /**
+   * A person accepted or edited a rewrite and Scope Soup wrote it on the host, but the store still reads the Item's text from before
+   * (`from`, by `itemTextHash`) until the next sync: no step starts on that old text. Cleared once the text in the store is another, or
+   * after `WRITING_WAIT_MS` from the write (`at`) whatever the store reads, so a write that never comes back cannot hold it for good.
+   */
+  writing?: { from: string; at: string };
   implement?: ImplementAnswer;
   /** Every decision the implementor recorded on this job so far, oldest first: the reviewer is shown them. */
   taken?: TakenDecision[];
@@ -649,7 +655,7 @@ export function keepsRecommendations(rewrite: Rewrite, answers: readonly string[
  * duplicate, hold for a conflict) is kept with it. Any other answer sends the item back to its triage, which runs again with
  * the answers in its prompt (the caller records them). No round cap.
  */
-export function settleRewrite(store: Store, item: Ref, answers: readonly string[], action: "accept" | "edit" | "reject", actor: string, at: string, parkedAt: string, written: readonly string[] = []): { refused: RewriteRefusal } | { rerun: true } | { settled: NonNullable<Rewrite["settled"]> } {
+export function settleRewrite(store: Store, item: Ref, answers: readonly string[], action: "accept" | "edit" | "reject", actor: string, at: string, parkedAt: string, written: readonly string[] = [], onHost = false): { refused: RewriteRefusal } | { rerun: true } | { settled: NonNullable<Rewrite["settled"]> } {
   const jobs = loadJobs(store);
   const key = refKey(item);
   const job = jobs[key];
@@ -668,7 +674,10 @@ export function settleRewrite(store: Store, item: Ref, answers: readonly string[
   }
   const settled = action === "accept" ? "accepted" : action === "edit" ? "edited" : "rejected";
   rewrite.settled = settled;
-  if (settled !== "rejected" && job.triaged && written.length > 0) job.triaged = adoptWritten(job.triaged, written);
+  if (settled !== "rejected" && written.length > 0) {
+    if (job.triaged) job.triaged = adoptWritten(job.triaged, written);
+    if (onHost) awaitWritten(store, job, item, written, at);
+  }
   const stop = rewrite.questions.find((question, index) => question.stopsOn !== undefined && picks(answers[index], question.stopsOn));
   if (stop) rewrite.stop = stop.stopsOn;
   if (stop?.duplicateOf) rewrite.duplicateOf = stop.duplicateOf;
@@ -679,6 +688,27 @@ export function settleRewrite(store: Store, item: Ref, answers: readonly string[
   saveJobs(store, jobs);
   store.appendEvent({ kind: `orchestrator.rewrite_${settled}`, subject: key, actor, data: { reason: `A person ${settled} the triage's rewrite (round ${rewrite.round}).${said ? ` Answered: ${said}.` : ""}`, round: rewrite.round, original: rewrite.original, text: rewrite.text } }, at);
   return { settled };
+}
+
+/** How long a job waits at most for the description Scope Soup wrote to be read back from the host (`Job.writing`). */
+export const WRITING_WAIT_MS = 30 * 60_000;
+
+/**
+ * Scope Soup wrote `bodies` (one text, in the forms it may have been written in) on the host as the Item's description, at `at`: while
+ * the store still reads another text, the job waits for it (`Job.writing`), with an event. Only for a write that really happened. A store
+ * that reads it already needs no wait. Call it in the transaction that saves the job.
+ */
+export function awaitWritten(store: Store, job: Job, item: Ref, bodies: readonly string[], at: string): void {
+  const current = store.get<WorkItem>(item);
+  if (!current) return;
+  const hashes = bodies.map((body) => itemTextHash({ title: current.title, body, verification: current.verification }));
+  const from = itemTextHash(current);
+  if (hashes.includes(from)) {
+    delete job.writing;
+    return;
+  }
+  job.writing = { from, at };
+  store.appendEvent({ kind: "orchestrator.text_wait", subject: refKey(item), actor: "orchestrator", data: { reason: `The description of ${item.id} was written on ${item.host}; its next step waits until Scope Soup reads it back from there.` } }, at);
 }
 
 /**

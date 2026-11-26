@@ -108,6 +108,15 @@ test("a decision is everyone's turn wherever the item is", () => {
   assert.equal(turnOf(snap, 2).actor, "nobody");
 });
 
+test("an open question in the item's record does not take the turn from a session working on it", () => {
+  const snap = snapshot({ works: [work(1, { needsDecision: true })], sessions: [session("a", ref("work", 1), { startedAt: at(-14), model: "opus", lastAction: "writing tests" })] });
+  const item = snap.works[0]!;
+  const situation = situate(item, buildIndex(snap));
+  assert.equal(situation.lane, "in-progress");
+  assert.equal(turnOf(snap, 1).actor, "agent");
+  assert.doesNotMatch(turnOf(snap, 1).reason, /Answer the question/);
+});
+
 test("sessions: running says what it does, stalled and limit say so", () => {
   const snap = snapshot({
     works: [work(1), work(2), work(3)],
