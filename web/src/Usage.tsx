@@ -7,7 +7,7 @@ import type { AllowanceView, UsagePageWindow, UsageView } from "./api.ts";
 import type { ConfigView } from "./api.ts";
 import { fetchConfig, fetchUsage, postConfig, useView } from "./api.ts";
 import { clockTime, span as spanWords } from "./format.ts";
-import { expectedAtReset, nearestPosition, paceLines, resetMarks, stackPlot, timeTicks, usageBar, usageParts, WINDOW_MS } from "../../src/core/usage.ts";
+import { expectedAtReset, paceLines, resetMarks, snapReserve, stackPlot, timeTicks, usageBar, usageParts, WINDOW_MS } from "../../src/core/usage.ts";
 import type { UsageKey, UsagePlotKey } from "../../src/core/usage.ts";
 
 /** Bottom to top in the plot, top to bottom in the table. */
@@ -55,7 +55,7 @@ interface Saver {
   busy: boolean;
   error: string | null;
   note: string | null;
-  save: (name: "maxParallelSessions" | "budgetReserve", value: number) => Promise<boolean>;
+  save: (name: "maxParallelSessions" | "reserveFiveHour" | "reserveSevenDay", value: number) => Promise<boolean>;
 }
 
 function useSaver(onSaved: () => void): Saver {
@@ -66,7 +66,7 @@ function useSaver(onSaved: () => void): Saver {
   useEffect(() => {
     fetchConfig().then(setView, () => setView(null));
   }, []);
-  const save = (name: "maxParallelSessions" | "budgetReserve", value: number) => {
+  const save = (name: "maxParallelSessions" | "reserveFiveHour" | "reserveSevenDay", value: number) => {
     setBusy(true);
     setError(null);
     setNote(null);
@@ -86,6 +86,20 @@ function useSaver(onSaved: () => void): Saver {
     );
   };
   return { view, busy, error, note, save };
+}
+
+/** What the colours of the meters' bars mean; the same colours draw the plots below. */
+function Legend() {
+  return (
+    <ul class="usage-legend" aria-label="Colours of the bars">
+      {STACK.map((key) => (
+        <li key={key}><span class="usage-dot" style={{ background: COLOR[key] }} /> {key === "earlier" ? "Used before the readings began" : `Used by ${LABEL[key]}`}</li>
+      ))}
+      <li><span class="usage-dot usage-dot-forecast" /> Forecast up to the reset</li>
+      <li><span class="usage-dot usage-dot-forecast warn" /> Forecast past the reserve</li>
+      <li><span class="usage-dot usage-dot-reserve" /> Reserve: kept for you, nothing starts into it (drag the marker)</li>
+    </ul>
+  );
 }
 
 /** The parallel sessions slider next to the meters; the reserve is the marker on each meter. */
@@ -111,10 +125,18 @@ function Pacing({ saver }: { saver: Saver }) {
   );
 }
 
-/** The reserve of each slider position for one window, position 1 first; absent when the reserve cannot be changed here. */
-function reservesOf(view: ConfigView | null, kind: UsagePageWindow["kind"]): number[] | undefined {
-  if (!view || !view.present || !view.config || view.config.level < 1) return undefined;
-  return view.sliders.budgetReserve.map((row) => (kind === "five_hour" ? row.fiveHour : row.sevenDay));
+/** The setting that holds each window's reserve. */
+const RESERVE_SETTING = { five_hour: "reserveFiveHour", seven_day: "reserveSevenDay" } as const;
+
+/** The reserve marker is dragged only when the configuration is there and the level is at least 1. */
+function canDrag(view: ConfigView | null): boolean {
+  return !!view && view.present && !!view.config && view.config.level >= 1;
+}
+
+/** The reserve being dragged (or saved and not yet reloaded), and for which window. */
+interface Picked {
+  kind: UsagePageWindow["kind"];
+  value: number;
 }
 
 const HINT_KEY = "scopesoup.usageReserveHint";
@@ -142,12 +164,13 @@ function useHint(): [boolean, () => void] {
 /** Room a label needs on the bar, in pixels, by its length. */
 const labelWidth = (text: string) => text.length * 7 + 8;
 
-function Meter({ window, now, saver, picked, pick, hint, dismissHint }: { window: UsagePageWindow; now: number; saver: Saver; picked: number | null; pick: (position: number | null) => void; hint: boolean; dismissHint: () => void }) {
+function Meter({ window, now, saver, picked, pick, hint, dismissHint }: { window: UsagePageWindow; now: number; saver: Saver; picked: Picked | null; pick: (picked: Picked | null) => void; hint: boolean; dismissHint: () => void }) {
   const [track, width] = useWidth();
   const current = window.current;
-  const reserves = reservesOf(saver.view, window.kind);
-  // While the marker is dragged (or its saving is on its way) it shows the picked position's reserve.
-  const reserve = reserves && picked !== null ? reserves[picked - 1] : window.reserve;
+  const draggable = canDrag(saver.view);
+  const dragged = picked?.kind === window.kind ? picked.value : null;
+  // While the marker is dragged (or its saving is on its way) it shows the picked reserve.
+  const reserve = draggable && dragged !== null ? dragged : window.reserve;
   const limit = reserve === undefined ? undefined : 1 - reserve;
   if (!current) {
     return (
@@ -165,14 +188,15 @@ function Meter({ window, now, saver, picked, pick, hint, dismissHint }: { window
   const place = (span: { from: number; to: number }) => ({ left: percent(span.from), width: percent(span.to - span.from) });
   const move = (event: PointerEvent) => {
     const box = track.current?.getBoundingClientRect();
-    if (!box || !reserves || box.width <= 0) return;
-    pick(nearestPosition(reserves, 1 - (event.clientX - box.left) / box.width));
+    if (!box || !draggable || box.width <= 0) return;
+    pick({ kind: window.kind, value: snapReserve(1 - (event.clientX - box.left) / box.width) });
   };
   const drop = (event: PointerEvent) => {
     (event.currentTarget as HTMLElement).releasePointerCapture?.(event.pointerId);
-    const saved = saver.view?.present && saver.view.config ? saver.view.config.settings.budgetReserve.value : undefined;
-    if (picked === null || picked === saved) return pick(null);
-    void saver.save("budgetReserve", picked).then((ok) => {
+    const name = RESERVE_SETTING[window.kind];
+    const saved = saver.view?.present && saver.view.config ? saver.view.config.settings[name].value : undefined;
+    if (dragged === null || dragged === saved) return pick(null);
+    void saver.save(name, dragged).then((ok) => {
       if (!ok) pick(null);
     });
   };
@@ -192,7 +216,7 @@ function Meter({ window, now, saver, picked, pick, hint, dismissHint }: { window
     <div class="usage-meter">
       <div class="usage-meter-head">
         <b>{TITLE[window.kind]}</b>
-        <span class="muted">{resetsIn > 0 ? `resets ${clockTime(current.resetsAt, now)}, in ${spanWords(resetsIn)}` : `reset due ${clockTime(current.resetsAt, now)}`}</span>
+        <span class="muted" title={`Resets ${clockTime(current.resetsAt, now)}`}>{resetsIn > 0 ? `resets in ${spanWords(resetsIn)}` : "reset due"}</span>
       </div>
       <div class={`usage-bar${forecastLow ? " two-rows" : ""}`} ref={track}>
         <div class="usage-track" role="meter" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(used * 100)} aria-label={`${TITLE[window.kind]} used`}>
@@ -209,19 +233,19 @@ function Meter({ window, now, saver, picked, pick, hint, dismissHint }: { window
           <span class={`usage-fc-label${forecastWarn ? " warn" : ""}${forecastLow ? " low" : ""}`} style={{ left: `${forecastRight}px` }}>{forecastText}</span>
         )}
         {limit !== undefined && (
-          reserves ? (
+          draggable ? (
             <div
-              class={`usage-thumb${picked !== null ? " dragging" : ""}${saver.busy ? " busy" : ""}`} style={{ left: percent(limit) }}
-              role="slider" aria-label={`Reserve of the ${TITLE[window.kind]}`} aria-valuemin={1} aria-valuemax={reserves.length}
-              aria-valuenow={picked ?? nearestPosition(reserves, reserve ?? 0)} aria-valuetext={`Scope Soup starts nothing from ${pct(limit)}`}
+              class={`usage-thumb${dragged !== null ? " dragging" : ""}${saver.busy ? " busy" : ""}`} style={{ left: percent(limit) }}
+              role="slider" aria-label={`Reserve of the ${TITLE[window.kind]}`} aria-valuemin={0} aria-valuemax={90}
+              aria-valuenow={Math.round(snapReserve(reserve ?? 0) * 100)} aria-valuetext={`Scope Soup starts nothing from ${pct(limit)}`}
               title={`Reserve: Scope Soup starts nothing from ${pct(limit)}. Drag to change.`}
               onPointerDown={(event) => {
                 if (saver.busy) return;
                 dismissHint();
                 (event.currentTarget as HTMLElement).setPointerCapture?.(event.pointerId);
-                pick(nearestPosition(reserves, reserve ?? 0));
+                pick({ kind: window.kind, value: snapReserve(reserve ?? 0) });
               }}
-              onPointerMove={(event) => picked !== null && (event.buttons & 1) !== 0 && move(event)}
+              onPointerMove={(event) => dragged !== null && (event.buttons & 1) !== 0 && move(event)}
               onPointerUp={drop}
               onPointerCancel={() => pick(null)}
             ><i class="usage-knob" /><span /></div>
@@ -232,7 +256,7 @@ function Meter({ window, now, saver, picked, pick, hint, dismissHint }: { window
         {limit !== undefined && (
           <span class={`usage-reserve-label${reserveFlip ? " flip" : ""}`} style={{ left: percent(limit) }}>
             {reserveText}
-            {reserves && hint && <em> · drag to change</em>}
+            {draggable && hint && <em> · drag to change</em>}
           </span>
         )}
       </div>
@@ -483,7 +507,7 @@ function AllowanceSection({ plan, now }: { plan: AllowanceView; now: number }) {
         <div class="usage-meter">
           <div class="usage-meter-head">
             <b>Used this month</b>
-            <span class="muted">resets {clockTime(plan.resetsAt, now)}, in {spanWords(Math.max(0, resetsIn))}</span>
+            <span class="muted" title={`Resets ${clockTime(plan.resetsAt, now)}`}>resets in {spanWords(Math.max(0, resetsIn))}</span>
           </div>
           {allowance === undefined ? (
             <p class="empty">{requests(plan.used)} {plan.unit} used this month. {plan.label} reports no limit: set <code>{plan.setting}</code> in this machine's configuration file (and the reset day beside it) to see the meter and to pace {plan.label} sessions.</p>
@@ -555,7 +579,7 @@ export function Usage() {
   const now = data ? Date.parse(data.now) : Date.now();
   const saver = useSaver(reload);
   // The reserve position being dragged, or saved and not yet reloaded.
-  const [picked, pick] = useState<number | null>(null);
+  const [picked, pick] = useState<Picked | null>(null);
   const [hint, dismissHint] = useHint();
   // One tab per provider: Claude's windows, and each provider that counts a monthly allowance, when a role runs on it.
   const [provider, setProvider] = useState("claude");
@@ -601,6 +625,7 @@ export function Usage() {
             {data.windows.map((window) => <Meter key={window.kind} window={window} now={now} saver={saver} picked={picked} pick={pick} hint={hint} dismissHint={dismissHint} />)}
           </div>
         )}
+        {data && !onAllowance && <Legend />}
         {data && !onAllowance && <Pacing saver={saver} />}
       </div>
       {data && plan && <AllowanceSection plan={plan} now={now} />}

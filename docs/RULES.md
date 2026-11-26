@@ -36,14 +36,14 @@ The level limits only what Scope Soup does on its own: a person's pick of an Ite
 
 ## Always on with the levels: the usage stop and claims
 
-No rule is a switch any more; an older file's `rules` is dropped, with a notice, when Scope Soup migrates the file to format 1 (`docs/RUNNING.md`).
+No rule is a switch any more; an older file's `rules` is dropped, with a notice, when Scope Soup migrates the file to format 2 (`docs/RUNNING.md`).
 
-- **The usage stop.** From level 1 Scope Soup keeps the share of the 5-hour and weekly windows that `settings.budgetReserve` names for you (default 20 %): no session starts while less is left. The reserve is the one usage setting.
+- **The usage stop.** From level 1 Scope Soup keeps the share of the 5-hour and weekly windows that `settings.reserveFiveHour` and `settings.reserveSevenDay` name for you, one per window (default 20 % each): no session starts while less is left of either. The reserves are the usage settings.
 - **Claims.** When the host is shared with other machines, Scope Soup claims each Item before it starts work on it, so two machines do not start the same Item: on a meta branch with writes on and a remote to share it with, a `claimed` line; on GitHub with writes on, a claim comment. A claim lasts a fixed 120 minutes and is renewed once less than half is left. On a meta branch with no remote nothing is claimed.
 
 ## Removed rules
 
-A file of format 0 that names a removed key still loads: Scope Soup migrates it to format 1 at start, dropping the key with a notice. In a format-1 file it is an unknown key.
+A file of format 0 that names a removed key still loads: Scope Soup migrates it to format 2 at start, dropping the key with a notice. In a format-2 file it is an unknown key.
 
 - `isolatedResources`, `oneCoordinator`, `toolVerification`, `queueOnlyWriter` (never built). The merging rules below stay.
 - `irreversibleActions` (read by no code), `testsWithChange` and `agentCheckCommand` (the project's `CLAUDE.md` says how changes are tested), `changePerItem`, `weeklyPacing` and `waitingCap`, and the check before a risk-class change.

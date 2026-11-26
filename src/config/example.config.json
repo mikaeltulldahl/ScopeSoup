@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "repoPath": "../example-clone",
   "remote": "origin",
   "ownClone": "/home/sam/example",
@@ -9,6 +9,7 @@
   "claude": { "path": "claude" },
   "settings": {
     "maxParallelSessions": { "value": 1, "reason": "One session at a time." },
-    "budgetReserve": { "value": 4, "reason": "We work in the same window and the same week." }
+    "reserveFiveHour": { "value": 0.35, "reason": "We work in the same window." },
+    "reserveSevenDay": { "value": 0.35, "reason": "We work in the same week." }
   }
 }

@@ -38,9 +38,8 @@ const SETTING_RANGES: Record<SettingName, { min: number; max: number; whole: boo
   tickSeconds: { min: 1, max: 3600, whole: true },
   stallTimeoutMinutes: { min: 1, max: 1440, whole: false },
   sessionTimeoutMinutes: { min: 1, max: 1440, whole: false },
-  reserveFiveHour: { min: 0, max: 0.99, whole: false },
-  reserveSevenDay: { min: 0, max: 0.99, whole: false },
-  budgetReserve: { min: 1, max: 5, whole: true },
+  reserveFiveHour: { min: 0, max: 0.9, whole: false },
+  reserveSevenDay: { min: 0, max: 0.9, whole: false },
   persistence: { min: 1, max: 5, whole: true },
   retryBackoffCapSeconds: { min: 10, max: 86400, whole: true },
   checkTimeoutMinutes: { min: 1, max: 1440, whole: false },
@@ -50,9 +49,6 @@ const SETTING_RANGES: Record<SettingName, { min: number; max: number; whole: boo
   queueMinOutcomes: { min: 1, max: 1000, whole: true },
   triageMaxAgeDays: { min: 1, max: 365, whole: true },
 };
-
-/** Settings that older files carry and that stay accepted; absent from the defaults. */
-const LEGACY_SETTINGS = ["reserveFiveHour", "reserveSevenDay"];
 
 const TOP_KEYS = [
   "workspaces", "remoteUrl", "checkCommand", "rerunFilesCommand", "setupCommand", "setupWatch",
@@ -260,7 +256,7 @@ export function validateConfig(given: unknown, baseDir: string): ConfigResult {
   if (raw.settings !== undefined) {
     if (!isObj(raw.settings)) err("settings must be an object.");
     else {
-      const names = [...Object.keys(settings), ...LEGACY_SETTINGS] as SettingName[];
+      const names = Object.keys(settings) as SettingName[];
       const kept = raw.settings;
       unknownKeys(kept, names, "settings");
       for (const name of names) {

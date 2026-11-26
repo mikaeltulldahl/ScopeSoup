@@ -37,7 +37,7 @@ before(async () => {
   git(dir, "init", "-q", "--bare", "-b", "main", origin);
   git(dir, "clone", "-q", origin, repo);
   file = join(dir, "scopesoup.config.json");
-  writeFileSync(file, JSON.stringify({ version: 1, machineName: "laptop-a", repoPath: "repo" }, null, 2) + "\n");
+  writeFileSync(file, JSON.stringify({ version: 2, machineName: "laptop-a", repoPath: "repo" }, null, 2) + "\n");
   settings = metaSettings({ now: () => new Date(T0).toISOString() });
   // The first person's onboarding wrote the shared settings.
   const first = await settings.save({ repoPath: repo, remote: "origin", machine: "laptop-a", by: "Ada", update: () => ({ project: "demo", checkCommand: ["node", "--test"] }) });
@@ -64,13 +64,12 @@ const post = (body: unknown, headers: Record<string, string> = {}) =>
 const state = (): string => `${readFileSync(file, "utf8")}\n${git(origin, "for-each-ref")}`;
 
 test("GET /api/config returns both files as one and the configuration; board-only mode says there is none", async () => {
-  const view = (await (await fetch(`${base}/api/config`)).json()) as { present: boolean; raw: Record<string, unknown>; config: { project: string; level: number }; safeFields: string[]; sharedFields: string[]; sliders: { budgetReserve: unknown[] }; defaultModels: Record<string, string>; levels: { level: number; blocked: string | null }[] };
-  assert.equal(view.sliders.budgetReserve.length, 5);
+  const view = (await (await fetch(`${base}/api/config`)).json()) as { present: boolean; raw: Record<string, unknown>; config: { project: string; level: number }; safeFields: string[]; sharedFields: string[]; defaultModels: Record<string, string>; levels: { level: number; blocked: string | null }[] };
   // The shared file names a check command but this machine's file no remoteUrl, so level 4 is shown but cannot be picked.
   assert.deepEqual(view.levels.map((choice) => choice.blocked), [null, null, null, null, "Level 4 needs the remote's URL (remoteUrl)."]);
   assert.deepEqual(view.defaultModels, { triage: "opus", implement: "sonnet", review: "opus" });
   assert.deepEqual([view.present, view.config.project, view.config.level], [true, "demo", 0]);
-  assert.deepEqual(view.raw, { version: 1, machineName: "laptop-a", repoPath: "repo", project: "demo", checkCommand: ["node", "--test"] });
+  assert.deepEqual(view.raw, { version: 2, machineName: "laptop-a", repoPath: "repo", project: "demo", checkCommand: ["node", "--test"] });
   assert.ok(view.safeFields.includes("level"));
   assert.deepEqual(view.sharedFields, ["level", "project", "roles", "checkCommand", "setupCommand", "setupWatch", "sharedResources", "media", "review", "labels", "host", "settings.triageMaxAgeDays"]);
   assert.deepEqual(await (await fetch(`${bareBase}/api/config`)).json(), { present: false });

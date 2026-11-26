@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { UsageSample } from "../model/types.ts";
 import { at, ref, T0 } from "./testing.ts";
-import { attributeUsage, expectedAtReset, forecastLine, nearestPosition, paceAt, paceLines, resetMarks, stackPlot, timeTicks, usageBar, usageParts, usagePlot, WINDOW_MS } from "./usage.ts";
+import { attributeUsage, expectedAtReset, forecastLine, snapReserve, paceAt, paceLines, resetMarks, stackPlot, timeTicks, usageBar, usageParts, usagePlot, WINDOW_MS } from "./usage.ts";
 import type { UsageSession } from "./usage.ts";
 
 const t = (minutes: number) => Date.parse(at(minutes));
@@ -255,13 +255,12 @@ test("expectedAtReset: used up is full, lasts is the expected level", () => {
   assert.equal(expectedAtReset(0.4, { outcome: "lasts" }), 0.4);
 });
 
-test("nearestPosition: the slider position whose reserve is nearest", () => {
-  const reserves = [0, 0.1, 0.2, 0.35, 0.5];
-  assert.equal(nearestPosition(reserves, 0), 1);
-  assert.equal(nearestPosition(reserves, 0.14), 2);
-  assert.equal(nearestPosition(reserves, 0.3), 4);
-  assert.equal(nearestPosition(reserves, 0.9), 5);
-  assert.equal(nearestPosition(reserves, 0.15), 2);
+test("snapReserve: from 0 to 0.9 in steps of 0.05", () => {
+  assert.equal(snapReserve(-0.2), 0);
+  assert.equal(snapReserve(0.14), 0.15);
+  assert.equal(snapReserve(0.12), 0.1);
+  assert.equal(snapReserve(0.9), 0.9);
+  assert.equal(snapReserve(1), 0.9);
 });
 
 function round(value: number): number {

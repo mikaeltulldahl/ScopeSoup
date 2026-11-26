@@ -487,11 +487,7 @@ export function expectedAtReset(utilization: number, forecast: { outcome: "used_
   return forecast.outcome === "used_up" ? 1 : Math.min(1, forecast.atReset ?? utilization);
 }
 
-/** The slider position (1-based) whose reserve is nearest to `reserve`; the lower position when two are equally near. */
-export function nearestPosition(reserves: readonly number[], reserve: number): number {
-  let best = 0;
-  reserves.forEach((value, index) => {
-    if (Math.abs(value - reserve) < Math.abs(reserves[best]! - reserve) - 1e-12) best = index;
-  });
-  return best + 1;
+/** A reserve share as the board sets it: from 0 to 0.9, in steps of 0.05. */
+export function snapReserve(reserve: number): number {
+  return Math.round(Math.min(0.9, Math.max(0, reserve)) * 20) / 20;
 }

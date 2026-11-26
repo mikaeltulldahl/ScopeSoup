@@ -31,7 +31,7 @@ export const SHARED_KEYS: readonly string[] = [
   "roles", "settings", "sharedResources", "media", "review", "labels",
 ];
 /** What this machine may spend, and how often it looks: in the private file's `settings`. */
-export const PRIVATE_SETTINGS: readonly string[] = ["maxParallelSessions", "budgetReserve", "reserveFiveHour", "reserveSevenDay", "tickSeconds"];
+export const PRIVATE_SETTINGS: readonly string[] = ["maxParallelSessions", "reserveFiveHour", "reserveSevenDay", "tickSeconds"];
 /** The rule-like numbers: in the shared settings' `settings`. */
 export const SHARED_SETTINGS: readonly string[] = [
   "stallTimeoutMinutes", "sessionTimeoutMinutes", "persistence", "retryBackoffCapSeconds", "checkTimeoutMinutes", "queueMinBatch",

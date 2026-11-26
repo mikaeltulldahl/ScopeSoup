@@ -142,7 +142,7 @@ test("the demo shows today's Scope Soup: triage questions and a rewrite, session
     // Settings shows the level picker on the demo's own configuration.
     assert.ok(settings.present);
     assert.deepEqual([settings.config?.level, settings.config?.machineName, settings.levels?.length], [4, "demo", 5]);
-    assert.equal(JSON.parse(readFileSync(file, "utf8")).version, 1);
+    assert.equal(JSON.parse(readFileSync(file, "utf8")).version, 2);
 
     const shown = JSON.stringify({ board, pages, chats, settings });
     for (const removed of [/approv(al|e it)/i, /\brisk/i, /checklist/i, /\bfix (role|session)/i, /invite/i, /dry ?run/i]) assert.doesNotMatch(shown, removed);

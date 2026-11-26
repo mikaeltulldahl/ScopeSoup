@@ -7,7 +7,7 @@ import { defaultSettings } from "./defaults.ts";
 import { levelName } from "./types.ts";
 
 /** The format this Scope Soup writes and reads. Raise it, and add a step, when an older file would no longer load as is. */
-export const CONFIG_VERSION = 1;
+export const CONFIG_VERSION = 2;
 
 /** Said when a file's `version` is newer than this Scope Soup's. */
 export const NEWER_CONFIG = "this project's config is from a newer Scope Soup; upgrade Scope Soup";
@@ -32,7 +32,7 @@ export type MigrateResult = { ok: true; from: number; raw: Obj; changes: string[
 type Step = (raw: Obj, changes: string[]) => string[];
 
 /** STEPS[n] turns format n into format n + 1. */
-const STEPS: readonly Step[] = [from0to1];
+const STEPS: readonly Step[] = [from0to1, from1to2];
 
 /** The file's format: 0 when it has no `version`, null when `version` is not a whole number from 0. */
 export function formatOf(raw: Obj): number | null {
@@ -57,6 +57,31 @@ export function migrateConfig(given: unknown): MigrateResult {
   return errors.length > 0 ? { ok: false, errors, raw: current } : { ok: true, from, raw: current, changes };
 }
 
+// --- format 1 to 2 ---
+
+/** What each position of the one reserve slider of format 1 kept of both windows. */
+const RESERVE_POSITIONS = [0, 0.1, 0.2, 0.35, 0.5];
+
+/**
+ * Format 1 to 2: the one `settings.budgetReserve` position became a reserve per window, `settings.reserveFiveHour` and
+ * `settings.reserveSevenDay` (a share from 0 to 0.9). The position's share is given to each window that has none of its own.
+ */
+function from1to2(raw: Obj, changes: string[]): string[] {
+  if (!isObj(raw.settings) || !Object.hasOwn(raw.settings, "budgetReserve")) return [];
+  const settings = raw.settings;
+  const given = settings.budgetReserve;
+  delete settings.budgetReserve;
+  const position = isObj(given) && typeof given.value === "number" ? RESERVE_POSITIONS[Math.round(given.value) - 1] : undefined;
+  const reason = isObj(given) && typeof given.reason === "string" ? given.reason : undefined;
+  if (position === undefined) {
+    changes.push("settings.budgetReserve was dropped: the usage reserve is now settings.reserveFiveHour and settings.reserveSevenDay, one per window, and the default (20 %) applies.");
+    return [];
+  }
+  for (const name of ["reserveFiveHour", "reserveSevenDay"]) if (!Object.hasOwn(settings, name)) settings[name] = reason === undefined ? { value: position } : { value: position, reason };
+  changes.push(`settings.budgetReserve was replaced by settings.reserveFiveHour and settings.reserveSevenDay, one reserve per window; each now keeps ${Math.round(position * 100)} %.`);
+  return [];
+}
+
 // --- format 0 to 1 ---
 
 /** Rule switches that format 0 still accepted and no Scope Soup reads, with why. */
@@ -73,7 +98,7 @@ const RULES_0: Record<string, string> = {
   reviewer: "the level decides: from level 3 (Review) every built change is reviewed, below it none is",
   riskClasses: "there is no approval step any more: no change waits for an Approve, whatever paths it touches",
   pinnedApproval: "there is no approval step any more, so there is no approval to pin",
-  hardBudgetStop: "from level 1 the usage stop at settings.budgetReserve is always on; the reserve is the one usage setting",
+  hardBudgetStop: "from level 1 the usage stop at settings.reserveFiveHour and settings.reserveSevenDay is always on; the reserves are the usage settings",
   claims: "Scope Soup claims the Items it starts by itself when the host is shared with other machines, with a fixed expiry of 120 minutes",
 };
 
