@@ -44,7 +44,7 @@ test("backlog reasons: blocked, sub-items, paused, usage limit, ready", () => {
   assert.equal(turnOf(base, 1).unblocks, 1);
   assert.match(turnOf(base, 3).reason, /2 open sub-items/);
   assert.equal(turnOf(base, 4).actor, "agent");
-  assert.equal(turnOf({ ...base, paused: true }, 1).reason, "ready, but agents are paused (Resume on the lanes)");
+  assert.equal(turnOf({ ...base, paused: true }, 1).reason, "ready, but agents are paused (press Resume all)");
   const limited = { ...base, usage: { at: T0, status: "rejected", windows: [{ kind: "five_hour" as const, resetsAt: at(42) }] } };
   assert.equal(turnOf(limited, 1).reason, "ready, but the usage limit is reached; the window resets in 42 min");
 });
@@ -367,4 +367,13 @@ test("a triaged Item whose paths overlap an Item in progress waits for it, and s
   const turn = turnOf(snap, 2);
   assert.deepEqual([turn.actor, turn.reason], ["nobody", "waits for #1, which changes the same files"]);
   assert.equal(turnOf(snap, 1).reason, "ready; waiting for a free agent slot");
+});
+
+test("a same-files wait shows on the card over Scope Soup's own leftover hold, not over a person's", () => {
+  const sameFiles = [{ subject: ref("work", 1), waitsFor: [ref("work", 2)], mayConflict: [] }];
+  const bot = { actor: { id: "scopesoup@laptop-a", name: "scopesoup on laptop-a", bot: true } };
+  const alice = { actor: { id: "alice", name: "Alice" } };
+  const held = (holder: typeof bot | typeof alice) => turnOf(snapshot({ works: [work(1, { holder }), work(2, { state: "doing" })], sameFiles }), 1).reason;
+  assert.match(held(bot), /^waits for /);
+  assert.match(held(alice), /^held by Alice/);
 });
