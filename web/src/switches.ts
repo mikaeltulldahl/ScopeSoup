@@ -50,3 +50,13 @@ export function allPaused(switches: Switches, level: number | undefined): boolea
   const shown = switchesAt(level);
   return shown.length > 0 && shown.every((name) => switches[name] !== "started");
 }
+
+/** The switches shown at this level that are paused or stopped, in lane order. */
+export function pausedSwitches(switches: Switches, level: number | undefined): SwitchName[] {
+  return switchesAt(level).filter((name) => switches[name] !== "started");
+}
+
+/** The words the status bar uses for them: "Paused: implementors, review, merge queue". */
+export function pausedText(names: readonly SwitchName[]): string {
+  return `Paused: ${names.map((name) => SWITCH_WORDS[name].toLowerCase()).join(", ")}`;
+}

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { asImplement, asReview, asTriage, hasMarkup, recoverFields } from "./jobs.ts";
+import { asImplement, asReview, asTriage, changedRewrite, hasMarkup, recoverFields, sameText, withoutVerification } from "./jobs.ts";
 
 test("a stored answer that carries the removed tests or untested fields is still read", () => {
   const implement = asImplement({ done: true, summary: "s", risk: "low", riskReason: "r", tests: "Added a test for parsing." });
@@ -128,4 +128,22 @@ test("a triage answer with a field run into another string is recovered", () => 
   const { value, recovered } = recoverFields(raw);
   assert.deepEqual(recovered, ["notReadyReason"]);
   assert.equal(asTriage(value)?.notReadyReason, "Size is large");
+});
+
+test("a triage's rewrite that changes only whitespace, or only appends the Verification field again, is no change (decision 110)", () => {
+  assert.equal(sameText("One.\n\nTwo. ", "One. Two."), true);
+  assert.equal(sameText("One.", "One!"), false);
+  assert.equal(changedRewrite("One.\n\nTwo.\n", "One.\nTwo.", undefined), "");
+  assert.equal(changedRewrite("", "One.", undefined), "");
+  assert.equal(changedRewrite(" One, two. ", "One.", undefined), "One, two.");
+  const verification = "The table shows metres.";
+  for (const appended of ["Verification: The table shows metres.", "## Verification\nThe table shows  metres.", "**Verification:** The table shows metres."]) {
+    assert.equal(changedRewrite(`Show tides.\n\n${appended}`, "Show tides.", verification), "", appended);
+  }
+  // Cut from a rewrite that changes something else too, so the field is not shown twice.
+  assert.equal(changedRewrite("Show tides in metres.\n\nVerification: The table shows metres.", "Show tides.", verification), "Show tides in metres.");
+  // A different Verification text is the rewrite's own; a description that already holds it keeps it.
+  assert.equal(withoutVerification("Show tides.\nVerification: something else.", verification), "Show tides.\nVerification: something else.");
+  assert.equal(changedRewrite("Show tides.\nVerification: The table shows metres.", "Show tides.\nVerification: The table shows metres.", verification), "");
+  assert.equal(changedRewrite("Show tides.", "Show tides.\nVerification: The table shows metres.", verification), "Show tides.");
 });

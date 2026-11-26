@@ -74,6 +74,19 @@ export interface Snapshot {
   sameFiles?: { subject: Ref; waitsFor: Ref[] }[];
   /** The merge queue's health. Absent when no queue has run. */
   queue?: QueueHealth;
+  /** Rewrites of open Items' descriptions that another Item's triage gave with no question, for a person (decision 110). Absent when none. */
+  proposedRewrites?: ProposedRewriteView[];
+}
+
+/** A rewrite another Item's triage proposed for this one's description, with no question. Agent text: data. */
+export interface ProposedRewriteView {
+  subject: Ref;
+  /** "triage of A-3". */
+  askedBy: string;
+  /** The description it was written against. */
+  original: string;
+  text: string;
+  at: string;
 }
 
 export function emptySnapshot(): Snapshot {

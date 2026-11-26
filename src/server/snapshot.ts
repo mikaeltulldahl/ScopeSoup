@@ -7,6 +7,7 @@ import { loadJobs, jobQuestions, resumesStep } from "../orchestrator/jobs.ts";
 import { busyFiles, waitsForSameFiles } from "../orchestrator/candidates.ts";
 import { markedParts, partLinked } from "../orchestrator/restructure.ts";
 import { readQueueHealth } from "../orchestrator/queueHealth.ts";
+import { openProposedRewrites } from "../orchestrator/aboutOthers.ts";
 import { knownAnswers } from "../store/answers.ts";
 import { loadOwnBlockers, withOwnBlockers } from "../store/blockers.ts";
 import { loadVotes, withVotes } from "../store/votes.ts";
@@ -29,7 +30,9 @@ function parse<T>(text: string | null, fallback: T, ok: (value: unknown) => bool
 export function loadSnapshot(store: Store): Snapshot {
   const queue = readQueueHealth(store);
   const idle = store.getValue(KEYS.idle);
+  const proposedRewrites = openProposedRewrites(store);
   return {
+    ...(proposedRewrites.length > 0 ? { proposedRewrites } : {}),
     ...(idle ? { idle } : {}),
     ...(queue ? { queue } : {}),
     // Scope Soup's own blockers show as the host's do.

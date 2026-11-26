@@ -2,7 +2,7 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { allPaused, laneSwitch, switchesAt, switchPath } from "../web/src/switches.ts";
+import { allPaused, laneSwitch, pausedSwitches, pausedText, switchesAt, switchPath } from "../web/src/switches.ts";
 
 test("each switch sits on its lane, and is hidden below the level that uses its role", () => {
   assert.deepEqual(switchesAt(undefined), [], "no project configuration: no switches");
@@ -37,4 +37,15 @@ test("the banner is shown only when every switch shown at the level is paused", 
   assert.equal(allPaused({ ...all, implement: "started" }, 2), false);
   assert.equal(allPaused(all, 0), false, "level 0 starts nothing anyway");
   assert.equal(allPaused(all, undefined), false);
+});
+
+test("the status bar names the paused switches shown at the level, in lane order", () => {
+  const states = { triage: "started", implement: "paused", review: "paused", mergeQueue: "stopped" } as const;
+  assert.deepEqual(pausedSwitches(states, 4), ["implement", "review", "mergeQueue"]);
+  assert.equal(pausedText(pausedSwitches(states, 4)), "Paused: implementors, review, merge queue");
+  assert.deepEqual(pausedSwitches(states, 2), ["implement"], "review and the merge queue are not shown at level 2");
+  assert.deepEqual(pausedSwitches(states, undefined), []);
+  assert.deepEqual(pausedSwitches({ ...states, implement: "started", review: "started", mergeQueue: "started" }, 4), []);
+  // The one button presses each switch's own Resume.
+  assert.deepEqual(pausedSwitches(states, 4).map((name) => switchPath(name, states[name])), ["/api/implement/start", "/api/review/start", "/api/merge-queue/start"]);
 });
