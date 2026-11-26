@@ -19,7 +19,7 @@ after(() => {
   for (const dir of dirs) rmSync(dir, { recursive: true, force: true, maxRetries: 3 });
 });
 
-const OWN = { version: 1, machineName: "laptop-a", repoPath: "repo", jira: { email: CLOUD_EMAIL } };
+const OWN = { version: 2, machineName: "laptop-a", repoPath: "repo", jira: { email: CLOUD_EMAIL } };
 const HOST = { kind: "jira", site: FAKE_SITE, project: "DEMO", deployment: "cloud", write: true, filter: "labels = frontend" };
 
 type Answer = { error?: { code: string; message: string }; errors?: string[]; filter?: { added: number; removed: number; lines: string[] }; changed?: boolean };

@@ -3,7 +3,6 @@
 // switch and the budget, pick ready items, dispatch into free slots.
 // Every decision is an `orchestrator.*` event with its reason, including "nothing to do because".
 
-import { budgetReserve } from "../config/budgetReserve.ts";
 import { clearWithoutTriage } from "../core/statedSize.ts";
 import { answersText, knownAnswers } from "../store/answers.ts";
 import { mergeQueueOn, ROLES, SWITCH_WORDS, switchOnFor, switchState } from "../store/control.ts";
@@ -83,8 +82,8 @@ export const CLAIM_EXPIRY_MINUTES = 120;
 /** The share of each usage window kept for people's own use: the usage stop, for the tick and for a chat turn. */
 export function usageReserve(config: ProjectConfig): Record<UsageWindowKind, number> {
   return {
-    five_hour: config.settings.reserveFiveHour?.value ?? budgetReserve(config.settings.budgetReserve.value).fiveHour,
-    seven_day: config.settings.reserveSevenDay?.value ?? budgetReserve(config.settings.budgetReserve.value).sevenDay,
+    five_hour: config.settings.reserveFiveHour.value,
+    seven_day: config.settings.reserveSevenDay.value,
   };
 }
 
@@ -517,7 +516,7 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
       await retryHandOver(ctx, job, item);
       continue;
     }
-    // A duplicate question parked here about a pair a person settled on the other Item is withdrawn (decision 118).
+    // A duplicate question parked here about a pair a person settled on the other Item is withdrawn (decision 119).
     if (item && item.state !== "done" && item.state !== "abandoned" && (await withdrawSettledDuplicates(ctx, job))) continue;
     // The question comments it is parked on were answered or deleted on GitHub.
     if (job.parked?.questions && item && (await followQuestions(ctx, job, item))) continue;

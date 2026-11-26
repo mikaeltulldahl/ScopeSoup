@@ -1,7 +1,7 @@
 // Estimates and progress, after Zuul (mean of the last 10 passed runs of the same job) and
 // Jenkins (bar capped at 99 %, "likely stuck" beyond 10 x the estimate).
 
-import type { Batch, Ref, Run } from "../model/types.ts";
+import type { Batch, BisectProbe, Ref, Run } from "../model/types.ts";
 import { refKey } from "../model/types.ts";
 import { durationWords, ms } from "./snapshot.ts";
 
@@ -52,6 +52,34 @@ export function estimateFor(pipeline: string, runs: readonly Run[]): number | nu
     .sort((a, b) => (b.finishedAt ?? "").localeCompare(a.finishedAt ?? ""))
     .slice(0, HISTORY_SIZE)
     .map((run) => durationOf(run) as number);
+  if (durations.length === 0) return null;
+  return Math.round(durations.reduce((sum, value) => sum + value, 0) / durations.length);
+}
+
+function probeDuration(probe: BisectProbe): number | null {
+  if (probe.ms !== undefined) return probe.ms > 0 ? probe.ms : null;
+  const start = ms(probe.startedAt);
+  const end = ms(probe.finishedAt);
+  if (start === null || end === null || end <= start) return null;
+  return end - start;
+}
+
+/** A check the merge queue ran on this machine (no host run), of the whole chain: what a local batch waits for. */
+function isLocalCheck(probe: BisectProbe): boolean {
+  return probe.run === undefined && !probe.reused && !probe.rerun;
+}
+
+/**
+ * Mean duration of the last up-to-10 passed checks the merge queue ran on this machine, over all batches. Null with no
+ * history. A batch checked locally has no runs, so its estimate comes from here.
+ */
+export function localCheckEstimate(batches: readonly Batch[]): number | null {
+  const durations = batches
+    .flatMap((batch) => batch.probes)
+    .filter((probe) => probe.status === "passed" && isLocalCheck(probe) && probeDuration(probe) !== null)
+    .sort((a, b) => (b.finishedAt ?? "").localeCompare(a.finishedAt ?? ""))
+    .slice(0, HISTORY_SIZE)
+    .map((probe) => probeDuration(probe) as number);
   if (durations.length === 0) return null;
   return Math.round(durations.reduce((sum, value) => sum + value, 0) / durations.length);
 }
@@ -136,15 +164,20 @@ export function activeRuns(batch: Batch, runByKey: ReadonlyMap<string, Run>): Ru
 }
 
 /**
- * One bar for a batch. It follows the run that will finish last. The ETA is the largest
+ * One bar for a batch. With no host runs (checked on this machine) it follows the local check, against the mean of the
+ * earlier ones (`batches` is that history). Otherwise it follows the run that will finish last. The ETA is the largest
  * remaining time over the batch's runs, and is given only once all of them have started
  * and all have an estimate (Zuul's rule).
  */
-export function batchProgress(batch: Batch, runByKey: ReadonlyMap<string, Run>, runs: readonly Run[], now: Date): Progress {
+export function batchProgress(batch: Batch, runByKey: ReadonlyMap<string, Run>, runs: readonly Run[], batches: readonly Batch[], now: Date): Progress {
   if (batch.status === "merged" || batch.status === "failed") return finished(batch.status);
   if (batch.status === "forming") return finished("forming");
   const active = activeRuns(batch, runByKey);
-  if (active.length === 0) return running(batch.startedAt, null, now);
+  if (active.length === 0) {
+    // Checked on this machine: the clock is the check that runs now, the estimate the earlier local checks.
+    const check = batch.probes.find((probe) => (probe.status === "queued" || probe.status === "running") && probe.run === undefined);
+    return running(check?.startedAt ?? batch.startedAt, localCheckEstimate(batches), now);
+  }
   const started = active.filter((run) => run.status === "running");
   if (started.length === 0) {
     const oldest = active.map((run) => run.createdAt).filter((at): at is string => !!at).sort()[0];

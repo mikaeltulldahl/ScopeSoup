@@ -2,7 +2,6 @@
 
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
-import { budgetReserve } from "../config/budgetReserve.ts";
 import { persistenceLimits } from "../config/persistence.ts";
 import { buildCommand } from "./providers/claude/command.ts";
 import type { ConfigSource } from "../config/loader.ts";
@@ -669,7 +668,7 @@ test("the budget: over the reserve nothing starts, and the event says until when
 
 test("at level 1 with the default config the stop at the 20 % reserve is always on: no session starts when less than 20 % is left", async () => {
   const cfg = config({ level: 1 });
-  assert.equal(cfg.settings.budgetReserve.value, 3, "the default position keeps 20 %");
+  assert.deepEqual([cfg.settings.reserveFiveHour.value, cfg.settings.reserveSevenDay.value], [0.2, 0.2], "the default keeps 20 % of each window");
   const tight = world(cfg, [item("1")]);
   tight.store.addUsageSample(usage(0.85, 0.1));
   const report = await tight.run();
@@ -1608,31 +1607,21 @@ test("persistence: each slider position sets the attempts per step and the fix r
   }
 });
 
-test("budgetReserve: each slider position keeps its share of both windows for a person", async () => {
-  const expected: [number, number][] = [[0, 0], [0.1, 0.1], [0.2, 0.2], [0.35, 0.35], [0.5, 0.5]];
-  for (const [index, [five, week]] of expected.entries()) {
-    const position = index + 1;
-    assert.deepEqual(budgetReserve(position), { fiveHour: five, sevenDay: week });
-    const settings = { budgetReserve: { value: position, reason: "test" } };
+test("reserve: each window has its own reserve, and the scheduler uses each for its own window", async () => {
+  for (const [five, week] of [[0, 0], [0.15, 0.4], [0.5, 0.05], [0.05, 0.5]] as [number, number][]) {
+    const settings = { reserveFiveHour: { value: five, reason: "test" }, reserveSevenDay: { value: week, reason: "test" } };
     const starts = async (fiveUsed: number, weekUsed: number): Promise<boolean> => {
       const w = world(config({ rules: STAGE1, settings }), [item("1")]);
       w.store.addUsageSample(usage(fiveUsed, weekUsed));
       await w.run();
       return w.runner.requests.length === 1;
     };
-    assert.equal(await starts(0.98 - five, 0.1), true, `position ${position}: just under the 5-hour limit starts`);
-    assert.equal(await starts(1 - five, 0.1), false, `position ${position}: at the 5-hour limit waits`);
-    assert.equal(await starts(0.1, 0.98 - week), true, `position ${position}: just under the weekly limit starts`);
-    assert.equal(await starts(0.1, 1 - week), false, `position ${position}: at the weekly limit waits`);
+    const name = `reserves ${five} and ${week}`;
+    assert.equal(await starts(0.98 - five, 0.1), true, `${name}: just under the 5-hour limit starts`);
+    assert.equal(await starts(1 - five, 0.1), false, `${name}: at the 5-hour limit waits`);
+    assert.equal(await starts(0.1, 0.98 - week), true, `${name}: just under the weekly limit starts`);
+    assert.equal(await starts(0.1, 1 - week), false, `${name}: at the weekly limit waits`);
   }
-});
-
-test("budgetReserve: the older reserve settings still load and replace the slider's values", async () => {
-  const w = world(config({ rules: STAGE1, settings: { reserveFiveHour: { value: 0.6, reason: "old file" } } }), [item("1")]);
-  w.store.addUsageSample(usage(0.5, 0.1));
-  await w.run();
-  assert.equal(w.runner.requests.length, 0);
-  assert.match(w.reasons("orchestrator.budget_wait")[0] ?? "", /limit with the reserve is 40 %/);
 });
 
 test("role models: each session runs on its role's model, opus for triage and review and sonnet for implement by default", async () => {

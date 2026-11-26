@@ -1428,7 +1428,7 @@ function rewriteReason(rewrite: NonNullable<Job["rewrite"]>): string {
 /**
  * Duplicate questions parked on this Item about a pair a person settled since (on the other Item: "Keep both", or a close that took
  * effect, `duplicatePairSettled`) are withdrawn, each with an event: answering them could only contradict that answer, and the
- * recommended one may close the one Item left (decision 118). Their comments on the host are withdrawn and what is left is asked
+ * recommended one may close the one Item left (decision 119). Their comments on the host are withdrawn and what is left is asked
  * again; with nothing left (no other question, a rewrite that changes nothing, no labels), the Item goes on from triage's other
  * verdicts as if the question were answered "Keep both". True when the job is no longer parked as it was.
  */
@@ -1519,7 +1519,7 @@ export async function afterRewrite(ctx: Context, job: Job): Promise<void> {
     for (const other of others) ctx.commit("orchestrator.duplicate_left_open", `A person answered to close ${other.id} as a duplicate of ${job.item.id}, but also "${rewrite!.stop}", so ${other.id} is left open: close it on the host yourself if it should go.`, refKey(other), { duplicateOf: refKey(job.item) });
   };
   // The Item it duplicates was closed meanwhile (a person answered on that one): closing this one too would close both, so it goes on
-  // as if a person had kept it (decision 118).
+  // as if a person had kept it (decision 119).
   const partner = rewrite?.stop && rewrite.duplicateOf ? ctx.deps.store.get<WorkItem>(rewrite.duplicateOf) : undefined;
   if (partner?.state === "abandoned") {
     ctx.commit("orchestrator.duplicate_close_skipped", `A person answered "${rewrite!.stop}", but ${partner.ref.id} is closed already${partner.duplicateOf ? ` as a duplicate of ${partner.duplicateOf.id}` : ""}: ${job.item.id} is not closed, and its work goes on.`, refKey(job.item), { duplicateOf: refKey(partner.ref) });

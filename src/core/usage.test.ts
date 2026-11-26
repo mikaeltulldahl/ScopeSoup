@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { UsageSample } from "../model/types.ts";
 import { at, ref, T0 } from "./testing.ts";
-import { attributeUsage, expectedAtReset, forecastLine, nearestPosition, paceAt, paceLines, resetMarks, stackPlot, timeTicks, usageBar, usageParts, usagePlot, WINDOW_MS } from "./usage.ts";
+import { attributeUsage, expectedAtReset, forecastLine, snapReserve, paceAt, paceLines, resetMarks, stackPlot, timeTicks, usageBar, usageParts, usagePlot, WINDOW_MS } from "./usage.ts";
 import type { UsageSession } from "./usage.ts";
 
 const t = (minutes: number) => Date.parse(at(minutes));
@@ -255,15 +255,36 @@ test("expectedAtReset: used up is full, lasts is the expected level", () => {
   assert.equal(expectedAtReset(0.4, { outcome: "lasts" }), 0.4);
 });
 
-test("nearestPosition: the slider position whose reserve is nearest", () => {
-  const reserves = [0, 0.1, 0.2, 0.35, 0.5];
-  assert.equal(nearestPosition(reserves, 0), 1);
-  assert.equal(nearestPosition(reserves, 0.14), 2);
-  assert.equal(nearestPosition(reserves, 0.3), 4);
-  assert.equal(nearestPosition(reserves, 0.9), 5);
-  assert.equal(nearestPosition(reserves, 0.15), 2);
+test("snapReserve: from 0 to 0.9 in steps of 0.05", () => {
+  assert.equal(snapReserve(-0.2), 0);
+  assert.equal(snapReserve(0.14), 0.15);
+  assert.equal(snapReserve(0.12), 0.1);
+  assert.equal(snapReserve(0.9), 0.9);
+  assert.equal(snapReserve(1), 0.9);
 });
 
 function round(value: number): number {
   return Math.round(value * 1e6) / 1e6;
 }
+
+test("a small drop under one reset time is no reset: no mark, no extra pace line, the level holds", () => {
+  const samples = [reading(0, 0.03), reading(10, 0.02), reading(20, 0.04)];
+  const attribution = attributeUsage(samples, [], "five_hour", options);
+  assert.equal(attribution.resets, 0);
+  near(attribution.total, 0.01);
+  const result = plot(samples, []);
+  near(sum(result.points[result.points.length - 1]!.parts), 0.04);
+  assert.deepEqual(result.resets, []);
+  assert.equal(paceLines(resetMarks(result.resets, t(0), t(60)), WINDOW_MS.five_hour, 1).length, 0);
+});
+
+test("a reading after the reset time with a new one gives exactly one reset, at the old reset time", () => {
+  const samples = [reading(0, 0.6, 30), reading(20, 0.7, 30), reading(40, 0.1, 330), reading(50, 0.09, 330)];
+  assert.equal(attributeUsage(samples, [], "five_hour", options).resets, 1);
+  assert.deepEqual(plot(samples, []).resets, [at(30)]);
+});
+
+test("a later reset time is a reset even when the reading did not fall", () => {
+  const samples = [reading(0, 0.1, 300), reading(20, 0.3, 600)];
+  assert.equal(attributeUsage(samples, [], "five_hour", options).resets, 1);
+});

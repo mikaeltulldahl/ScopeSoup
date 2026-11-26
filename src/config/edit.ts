@@ -15,7 +15,6 @@ import { checkCommandProblem, type MergeQueueOptions, type MergeQueueSetup, merg
 import { type LevelChoice, levelChoices } from "./levels.ts";
 import { CONFIG_VERSION, migrateConfig } from "./migrate.ts";
 import { programFound } from "./program.ts";
-import { type Sliders, SLIDERS } from "./sliders.ts";
 import type { Level, ProjectConfig } from "./types.ts";
 import { mergeQueueCi } from "./types.ts";
 import { metaSettings } from "./metaSettings.ts";
@@ -30,7 +29,7 @@ type Obj = Record<string, unknown>;
  * The fields the board may change, and inside each what may be given. `true` means any value (validation decides);
  * a function checks the names and keys allowed one level down.
  */
-const SETTING_NAMES = ["maxParallelSessions", "budgetReserve", "triageMaxAgeDays"];
+const SETTING_NAMES = ["maxParallelSessions", "reserveFiveHour", "reserveSevenDay", "triageMaxAgeDays"];
 const ROLE_NAMES = ["triage", "implement", "review"];
 const SAFE: Record<string, true | ((value: unknown, err: (message: string) => void) => void)> = {
   level: true,
@@ -496,14 +495,14 @@ export async function connectHost(file: string, connection: HostConnection, opti
  */
 export type ConfigView =
   | { present: false }
-  | { present: true; file: string; raw: unknown; config: ProjectConfig | null; errors: string[]; safeFields: string[]; sharedFields: string[]; sliders: Sliders; defaultModels: Readonly<Record<string, string>>; setupWatchDefault: readonly string[]; levels: LevelChoice[]; mergeQueue: MergeQueueSetup | null; /** The implement role's provider's known models, weakest first: the choices per size (decision 105). */ implementModels?: readonly string[] };
+  | { present: true; file: string; raw: unknown; config: ProjectConfig | null; errors: string[]; safeFields: string[]; sharedFields: string[]; defaultModels: Readonly<Record<string, string>>; setupWatchDefault: readonly string[]; levels: LevelChoice[]; mergeQueue: MergeQueueSetup | null; /** The implement role's provider's known models, weakest first: the choices per size (decision 105). */ implementModels?: readonly string[] };
 
 export function readConfigView(file: string | undefined, options: EditOptions = {}): ConfigView {
   if (file === undefined) return { present: false };
   const path = resolve(file);
   // Which of the page's fields are shared by every machine (saved on the meta ref); the rest are this machine's.
   const sharedFields = [...SAFE_FIELDS.filter((key) => SHARED_KEYS.includes(key) && key !== "settings"), ...SETTING_NAMES.filter((name) => SHARED_SETTINGS.includes(name)).map((name) => `settings.${name}`)];
-  const common = { file: path, safeFields: SAFE_FIELDS, sharedFields, sliders: SLIDERS, defaultModels: DEFAULT_MODELS, setupWatchDefault: DEFAULT_SETUP_WATCH };
+  const common = { file: path, safeFields: SAFE_FIELDS, sharedFields, defaultModels: DEFAULT_MODELS, setupWatchDefault: DEFAULT_SETUP_WATCH };
   const read = readFiles(path, options);
   if (!read.ok) return { present: true, ...common, raw: null, config: null, errors: read.errors, levels: [], mergeQueue: null };
   const result = validateFiles(read.files.raw, read.files.shared.raw, dirname(path));

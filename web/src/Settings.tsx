@@ -20,7 +20,6 @@ import { SettingsHistory } from "./SettingsHistory.tsx";
 import type { ConfigView, ProjectConfig, ProjectView } from "./api.ts";
 import { FolderButton } from "./ProjectHeader.tsx";
 import type { AskedField } from "../../src/config/levels.ts";
-import type { Sliders } from "../../src/config/sliders.ts";
 import { commandText, commandWords } from "../../src/config/commandLine.ts";
 import { fetchConfig, FilterWidens, PlayersDiffer, postConfig } from "./api.ts";
 import { EFFORT_LEVELS } from "../../src/config/types.ts";
@@ -30,7 +29,7 @@ import { ConnectDialog, type DialogKind, HOST_NAMES } from "./Connect.tsx";
 const ONBOARDING = "https://github.com/mikaeltulldahl/scopesoup/blob/main/docs/ONBOARDING.md";
 
 /** The settings the page shows, besides the level. */
-const SETTINGS = ["maxParallelSessions", "budgetReserve", "triageMaxAgeDays"] as const;
+const SETTINGS = ["maxParallelSessions", "reserveFiveHour", "reserveSevenDay", "triageMaxAgeDays"] as const;
 type SettingName = (typeof SETTINGS)[number];
 
 /** What a role set to the Copilot provider is told (`COPILOT_WARNING` in src/orchestrator/providers/copilot/command.ts; the board reads no server code). */
@@ -48,12 +47,6 @@ const ROLES: [string, string][] = [
   ["implement", "Implement"],
   ["review", "Review"],
 ];
-
-/** What each budget reserve position keeps for people's own use, in percent. The table comes from the server. */
-function budgetReserveText(position: number, table: Sliders["budgetReserve"]): string {
-  const { fiveHour, sevenDay } = table[Math.min(table.length, Math.max(1, Math.round(position))) - 1] ?? { fiveHour: 0.2, sevenDay: 0.2 };
-  return `keeps ${Math.round(fiveHour * 100)}% of the 5-hour window and ${Math.round(sevenDay * 100)}% of the week for you; Scope Soup starts nothing past it`;
-}
 
 /** What the page may change, as the form holds it. */
 interface Draft {
@@ -131,7 +124,7 @@ function draftOf(config: ProjectConfig, raw: unknown, mergeQueue: { remoteUrl?: 
   // The command as the shared file holds it, with {{ownClone}} unexpanded (the configuration in use has this machine's path in it).
   const command = (raw as { setupCommand?: unknown } | null)?.setupCommand;
   const setup = { command: Array.isArray(command) ? commandText(command as string[]) : config.setupCommand ? commandText(config.setupCommand) : "", watch: (config.setupWatch ?? []).join("\n") };
-  return { level: config.level, settings: { maxParallelSessions: setting("maxParallelSessions"), budgetReserve: setting("budgetReserve"), triageMaxAgeDays: setting("triageMaxAgeDays") }, roles, mergeQueue: asked, setup, resources: resourceDrafts(config), media: { push: config.media?.push ?? false, keepDays: config.media?.keepDaysAfterClose === null || config.media?.keepDaysAfterClose === undefined ? "" : String(config.media.keepDaysAfterClose), keepMode: config.media?.keepDaysAfterClose === null || config.media?.keepDaysAfterClose === undefined ? "never" : "after" }, multiplayer: config.multiplayer, shouldFindings: config.review?.shouldFindings ?? "fix", aiLabel: config.labels?.aiGenerated || "", jira: { filter: config.host?.kind === "jira" ? config.host.filter ?? "" : "", components: config.host?.kind === "jira" ? (config.host.components ?? []).join(", ") : "" } };
+  return { level: config.level, settings: { maxParallelSessions: setting("maxParallelSessions"), reserveFiveHour: setting("reserveFiveHour"), reserveSevenDay: setting("reserveSevenDay"), triageMaxAgeDays: setting("triageMaxAgeDays") }, roles, mergeQueue: asked, setup, resources: resourceDrafts(config), media: { push: config.media?.push ?? false, keepDays: config.media?.keepDaysAfterClose === null || config.media?.keepDaysAfterClose === undefined ? "" : String(config.media.keepDaysAfterClose), keepMode: config.media?.keepDaysAfterClose === null || config.media?.keepDaysAfterClose === undefined ? "never" : "after" }, multiplayer: config.multiplayer, shouldFindings: config.review?.shouldFindings ?? "fix", aiLabel: config.labels?.aiGenerated || "", jira: { filter: config.host?.kind === "jira" ? config.host.filter ?? "" : "", components: config.host?.kind === "jira" ? (config.host.components ?? []).join(", ") : "" } };
 }
 
 /** Component names as typed: comma separated, blanks dropped. */
@@ -536,14 +529,24 @@ export function Settings({ project, openHistory = false }: { project?: ProjectVi
             </label>
           </div>
           {draft.level >= 1 && (
+            <>
             <div class="settings-row">
               <label>
-                <b>Usage reserve</b>
-                <input type="range" min={1} max={5} step={1} value={draft.settings.budgetReserve} onInput={(event) => sliderSetting("budgetReserve", (event.target as HTMLInputElement).value)} />
-                <span>Position {draft.settings.budgetReserve}: {budgetReserveText(Number(draft.settings.budgetReserve), view.sliders.budgetReserve)}</span>
-                <Marked k="budgetReserve" />
+                <b>Reserve of the 5-hour window</b>
+                <input type="range" min={0} max={90} step={5} value={Math.round(Number(draft.settings.reserveFiveHour) * 100)} onInput={(event) => sliderSetting("reserveFiveHour", String(Number((event.target as HTMLInputElement).value) / 100))} />
+                <span>{Math.round(Number(draft.settings.reserveFiveHour) * 100)} % kept for you; Scope Soup starts nothing past it</span>
+                <Marked k="reserveFiveHour" />
               </label>
             </div>
+            <div class="settings-row">
+              <label>
+                <b>Reserve of the weekly window</b>
+                <input type="range" min={0} max={90} step={5} value={Math.round(Number(draft.settings.reserveSevenDay) * 100)} onInput={(event) => sliderSetting("reserveSevenDay", String(Number((event.target as HTMLInputElement).value) / 100))} />
+                <span>{Math.round(Number(draft.settings.reserveSevenDay) * 100)} % kept for you; Scope Soup starts nothing past it</span>
+                <Marked k="reserveSevenDay" />
+              </label>
+            </div>
+            </>
           )}
           {draft.level >= 2 && (
             <div class="settings-row">

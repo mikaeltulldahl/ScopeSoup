@@ -75,30 +75,49 @@ test("batch ETA is the largest remaining time, only once every run has started",
   const a = run("a", { status: "running", startedAt: at(-4) });
   const b = run("b", { status: "running", startedAt: at(-1), pipeline: "browser suite" });
   const both = batch(1, [member(1)], { runs: [a.ref, b.ref] });
-  const progress = batchProgress(both, byKey([a, b]), history, now);
+  const progress = batchProgress(both, byKey([a, b]), history, [], now);
   assert.equal(progress.remainingMs, 9 * 60_000);
   assert.equal(progress.etaAt, at(9));
   assert.equal(progress.estimateMs, 10 * 60_000);
 
   const queued = run("b", { status: "queued", createdAt: at(-1), pipeline: "browser suite" });
-  const partly = batchProgress(both, byKey([a, queued]), history, now);
+  const partly = batchProgress(both, byKey([a, queued]), history, [], now);
   assert.equal(partly.state, "running");
   assert.equal(partly.etaAt, undefined);
 
-  const waiting = batchProgress(batch(2, [member(1)], { runs: [queued.ref] }), byKey([queued]), history, now);
+  const waiting = batchProgress(batch(2, [member(1)], { runs: [queued.ref] }), byKey([queued]), history, [], now);
   assert.equal(waiting.state, "waiting-for-runner");
 });
 
 test("a batch with no history is indeterminate and has no ETA; a bisecting batch follows its probe", () => {
   const a = run("a", { status: "running", startedAt: at(-4) });
-  const bare = batchProgress(batch(1, [member(1)], { runs: [a.ref] }), byKey([a]), [], now);
+  const bare = batchProgress(batch(1, [member(1)], { runs: [a.ref] }), byKey([a]), [], [], now);
   assert.equal(bare.state, "indeterminate");
   assert.equal(bare.etaAt, undefined);
 
   const old = run("old", { status: "failed", startedAt: at(-20), finishedAt: at(-12) });
   const probe = run("p", { status: "running", startedAt: at(-2) });
   const bisecting = batch(2, [member(1), member(2)], { status: "bisecting", runs: [old.ref], probes: [{ prefix: 1, status: "running", run: probe.ref }] });
-  const progress = batchProgress(bisecting, byKey([old, probe]), [passed("h", 8, at(-60))], now);
+  const progress = batchProgress(bisecting, byKey([old, probe]), [passed("h", 8, at(-60))], [], now);
   assert.equal(progress.fraction, 0.25);
-  assert.equal(batchProgress(batch(3, [], { status: "merged" }), new Map(), [], now).state, "finished");
+  assert.equal(batchProgress(batch(3, [], { status: "merged" }), new Map(), [], [], now).state, "finished");
+});
+
+test("a batch checked on this machine fills against the mean of the earlier local checks", () => {
+  // Merged batches of 60 s each, checked locally: no runs, only probes with their times.
+  const merged = [1, 2, 3].map((id) =>
+    batch(id, [member(id, "merged")], { status: "merged", startedAt: at(-30 + id), finishedAt: at(-29 + id), probes: [{ prefix: 1, status: "passed", startedAt: at(-30 + id), finishedAt: at(-29 + id) }] }),
+  );
+  // A reused result and a rerun do not count: nothing ran, or only the failed files ran.
+  merged.push(batch(4, [member(4, "merged")], { status: "merged", probes: [{ prefix: 1, status: "passed", startedAt: at(-10), finishedAt: at(-9.9), reused: true }, { prefix: 2, status: "passed", startedAt: at(-9), finishedAt: at(-8.9), rerun: true }] }));
+  const testing = batch(5, [member(5)], { startedAt: at(-1), probes: [{ prefix: 1, status: "running", startedAt: at(-0.5) }] });
+  const progress = batchProgress(testing, new Map(), [], [...merged, testing], now);
+  assert.equal(progress.state, "running");
+  assert.equal(progress.estimateMs, 60_000);
+  assert.equal(progress.elapsedMs, 30_000);
+  assert.equal(progress.fraction, 0.5);
+  assert.match(progress.words, /of ~1 min/);
+
+  const alone = batchProgress(testing, new Map(), [], [testing], now);
+  assert.equal(alone.state, "indeterminate");
 });

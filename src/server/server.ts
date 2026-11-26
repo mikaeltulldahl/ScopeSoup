@@ -130,7 +130,7 @@ export interface ServerOptions {
   /** The label for Items an AI made or rewrote (`labels.aiGenerated`), or undefined when the project keeps none. Read at each use. */
   aiLabel?: () => string | undefined;
   /** The orchestrator's labels, which order the backlog column. Defaults to bug label "bug". */
-  planning?: () => { bugLabels: string[]; plannedSessions?: number; level?: number; resources?: ResourceConfig[]; reserve?: Record<UsageWindowKind, number>; allowances?: AllowancePlan[]; pickNeeds?: { triage?: string; review?: string; implement?: string } };
+  planning?: () => { bugLabels: string[]; plannedSessions?: number; level?: number; resources?: ResourceConfig[]; reserve?: Record<UsageWindowKind, number>; allowances?: AllowancePlan[]; pickNeeds?: () => { triage?: string; review?: string; implement?: string } };
   /** Reads the diff of an item's branch for `GET /api/diff`. Absent in board-only mode. */
   diff?: (ref: Ref) => Promise<DiffView>;
   /** Opens an Item's change, or one of its files, in the person's own diff tool for `POST /api/open-diff` (`src/orchestrator/diffTool.ts`). Absent in board-only mode. */
@@ -711,7 +711,7 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
     const elsewhere = job ? undefined : workElsewhere(work);
     return {
       item: work, job, lane, level, mergeQueueOn: mergeQueueOn(store), at: now().getTime(),
-      ...(live ? { liveRole: live.role } : {}), ...(plan?.pickNeeds ? { needs: plan.pickNeeds } : {}), ...(elsewhere ? { elsewhere } : {}),
+      ...(live ? { liveRole: live.role } : {}), ...(plan?.pickNeeds ? { needs: plan.pickNeeds() } : {}), ...(elsewhere ? { elsewhere } : {}),
     };
   }
 

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { isApproved, laneOf, situate } from "./lanes.ts";
+import { assessAll, waitingQueue } from "./turns.ts";
 import { buildIndex } from "./snapshot.ts";
 import type { SessionRole } from "../model/types.ts";
 import { at, batch, change, member, ref, session, snapshot, verdict, work } from "./testing.ts";
@@ -127,4 +128,22 @@ test("the newest open change decides, and a session cut off by a limit still cou
   );
   assert.equal(situate(works[0]!, index).change?.ref.id, "11");
   assert.equal(laneOf(works[1]!, index), "in-progress");
+});
+
+test("an approved change whose Item is parked for a person's question after review waits in review, not in the queue", () => {
+  const index = buildIndex(
+    snapshot({
+      works: [work(1), work(2)],
+      changes: [change(10, [1], { verdicts: [verdict("review", "pass")] }), change(20, [2], { verdicts: [verdict("review", "pass")] })],
+      parked: [
+        { subject: ref("work", 1), as: "needs-decision", reason: "the fix round asked", at: at(-5), decision: { question: "Which way?", options: [], recommendation: "" } },
+        { subject: ref("work", 2), as: "queued", reason: "in the queue", at: at(-5) },
+      ],
+    }),
+  );
+  assert.deepEqual(index.snapshot.works.map((item) => laneOf(item, index)), ["in-review", "queued"]);
+  assert.deepEqual(waitingQueue(index).map((each) => each.ref.id), ["20"]);
+  const turn = assessAll(index, new Date(at(0))).find((each) => each.situation.item.ref.id === "1")!;
+  assert.equal(turn.tone, "yours");
+  assert.match(turn.turn.reason, /Which way\?/);
 });

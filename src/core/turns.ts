@@ -7,7 +7,7 @@ import { batchProgress } from "./estimates.ts";
 import type { Self } from "./holdings.ts";
 import { actorParts, holdDetails, isSelfPerson } from "./holdings.ts";
 import type { Situation } from "./lanes.ts";
-import { currentVerdicts, isApproved, isLive, openBlockers, situate } from "./lanes.ts";
+import { currentVerdicts, isApproved, isLive, openBlockers, parkedForPerson, situate } from "./lanes.ts";
 import type { Index } from "./snapshot.ts";
 import { durationWords, ms, refLabel } from "./snapshot.ts";
 import { sameFilesWords } from "./sameFiles.ts";
@@ -71,6 +71,7 @@ export function waitingQueue(index: Index): Change[] {
   return index.snapshot.changes
     .filter((change) => {
       if (!isApproved(change, index)) return false;
+      if (change.works.some((work) => parkedForPerson(work, index))) return false;
       const sha = change.revisions[change.revisions.length - 1]?.sha;
       return !(index.batchesByChange.get(refKey(change.ref)) ?? []).some((batch) => {
         if (batch.status === "merged") return false;
@@ -276,7 +277,7 @@ function testTurn(situation: Situation, ctx: TurnContext): Draft {
       reason: suspect ? `${name} failed and this change is the suspect; the bisect is checking` : `${name} failed; a bisect is finding which change broke it`,
     };
   }
-  const progress = batchProgress(batch, ctx.index.run, snapshot.runs, ctx.now);
+  const progress = batchProgress(batch, ctx.index.run, snapshot.runs, snapshot.batches, ctx.now);
   if (progress.state === "waiting-for-runner") {
     const none = snapshot.runners.length > 0 && !snapshot.runners.some((runner) => runner.online);
     return { actor: "runner", tone: none ? "blocked" : "waiting", since: progress.startedAt, reason: none ? `in ${name}, waiting for a runner: none is online` : `in ${name}, ${progress.words}` };

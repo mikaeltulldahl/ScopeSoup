@@ -1,6 +1,6 @@
 // The configuration file's format, and the migration of older files. Fixtures in ./fixtures, one per released
 // format: format-0.json is shaped like what release 0.5.0 wrote (its example file, with the machineName it asks for
-// and a meta branch host); format-1.json is what migrating it gives. Synthetic values only.
+// and a meta branch host); format-1.json is what migrating it gave in format 1; format-2.json is what migrating it gives today. Synthetic values only.
 
 import assert from "node:assert/strict";
 import { chmodSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -17,6 +17,7 @@ import { fileSettings, PRIVATE_SETTINGS, SHARED_KEYS, SHARED_SETTINGS, SHARED_WH
 const FIXTURES = join(import.meta.dirname, "fixtures");
 const FORMAT_0 = join(FIXTURES, "format-0.json");
 const FORMAT_1 = join(FIXTURES, "format-1.json");
+const FORMAT_2 = join(FIXTURES, "format-2.json");
 const read = (path: string): string => readFileSync(path, "utf8");
 
 const dirs: string[] = [];
@@ -50,8 +51,8 @@ function sharedPart(raw: Obj): Obj {
 }
 const asText = (raw: Obj): string => JSON.stringify(raw, null, 2) + "\n";
 const OLD_OWN = asText(ownPart(JSON.parse(read(FORMAT_0)) as Obj));
-const NEW_OWN = asText(ownPart(JSON.parse(read(FORMAT_1)) as Obj));
-const SHARED_RAW = sharedPart(JSON.parse(read(FORMAT_1)) as Obj);
+const NEW_OWN = asText(ownPart(JSON.parse(read(FORMAT_2)) as Obj));
+const SHARED_RAW = sharedPart(JSON.parse(read(FORMAT_2)) as Obj);
 const sharedDir = mkdtempSync(join(tmpdir(), "scopesoup-migrate-shared-"));
 dirs.push(sharedDir);
 writeFileSync(join(sharedDir, "project.json"), asText(SHARED_RAW));
@@ -67,25 +68,26 @@ function place(text: string): { dir: string; file: string } {
 }
 
 describe("the config format", { concurrency: 4 }, () => {
-  test("this Scope Soup writes format 1; the fixture of the current format is that format", () => {
-    assert.equal(CONFIG_VERSION, 1);
-    assert.equal(JSON.parse(read(FORMAT_1)).version, CONFIG_VERSION);
+  test("this Scope Soup writes format 2; the fixture of the current format is that format", () => {
+    assert.equal(CONFIG_VERSION, 2);
+    assert.equal(JSON.parse(read(FORMAT_2)).version, CONFIG_VERSION);
+    assert.equal(JSON.parse(read(FORMAT_1)).version, 1);
     assert.equal("version" in JSON.parse(read(FORMAT_0)), false);
   });
 
-  test("an old config migrates: the file is rewritten as format 1, a copy of the old file is kept, and the notice says what changed", () => {
+  test("an old config migrates: the file is rewritten as format 2, a copy of the old file is kept, and the notice says what changed", () => {
     const old = OLD_OWN;
     const { dir, file } = place(old);
     const state = createConfigLoader(file, undefined, { shared: SHARED }).load();
     assert.equal(state.error, undefined);
     assert.equal(state.config?.level, 0);
     assert.equal(state.config?.settings.maxParallelSessions.value, 1);
-    // The file is now exactly the format-1 fixture, and the old one is kept beside it.
+    // The file is now exactly the format-2 fixture, and the old one is kept beside it.
     assert.deepEqual(JSON.parse(read(file)), JSON.parse(NEW_OWN));
     assert.equal(read(join(dir, "scopesoup.config.v0.json")), old);
     assert.deepEqual(readdirSync(dir).sort(), ["scopesoup.config.json", "scopesoup.config.v0.json"]);
     const notices = state.notices ?? [];
-    assert.equal(notices[0], `${file} was migrated from format 0 to format 1; the old file is kept as ${join(dir, "scopesoup.config.v0.json")}.`);
+    assert.equal(notices[0], `${file} was migrated from format 0 to format 2; the old file is kept as ${join(dir, "scopesoup.config.v0.json")}.`);
     const said = notices.slice(1).join("\n");
     for (const line of [
       /^irreversibleActions was dropped: no code read it\.$/m,
@@ -98,8 +100,9 @@ describe("the config format", { concurrency: 4 }, () => {
       /^settings\.parallelSessions was merged into settings\.maxParallelSessions, which caps every session; the smaller value, 1, is kept\.$/m,
     ]) assert.match(said, line);
     // DryRun, the older mergeQueue, roles and host were project settings: they are not in the private file to migrate.
-    assert.equal(notices.length, 1 + 12, said);
-    // The notice is shown once: a later start finds format 1 and changes nothing.
+    assert.match(said, /^settings\.budgetReserve was replaced by settings\.reserveFiveHour and settings\.reserveSevenDay[^\n]*each now keeps 35 %\.$/m);
+    assert.equal(notices.length, 1 + 13, said);
+    // The notice is shown once: a later start finds format 2 and changes nothing.
     const again = createConfigLoader(file, undefined, { shared: SHARED }).load();
     assert.deepEqual([again.error, again.notices], [undefined, undefined]);
     assert.deepEqual(readdirSync(dir).sort(), ["scopesoup.config.json", "scopesoup.config.v0.json"]);
@@ -114,7 +117,7 @@ describe("the config format", { concurrency: 4 }, () => {
     assert.deepEqual(readdirSync(dir), ["scopesoup.config.json"]);
     const result = validateFiles(JSON.parse(text), SHARED_RAW, dir);
     assert.ok(result.ok);
-    assert.deepEqual([result.from, result.notices], [1, []]);
+    assert.deepEqual([result.from, result.notices], [2, []]);
   });
 
   test("a config with a newer version is refused with the upgrade message, and the file is not changed", async () => {
@@ -139,14 +142,14 @@ describe("the config format", { concurrency: 4 }, () => {
     const { dir, file } = place(text);
     const state = createConfigLoader(file, undefined, { shared: SHARED }).load();
     assert.equal(state.config, null);
-    assert.equal(state.error, `${file} with ${SHARED_WHERE}: ${MACHINE_NAME_MISSING} The file is format 0: it was not changed, and is migrated to format 1 once it loads.`);
+    assert.equal(state.error, `${file} with ${SHARED_WHERE}: ${MACHINE_NAME_MISSING} The file is format 0: it was not changed, and is migrated to format 2 once it loads.`);
     assert.equal(read(file), text);
     assert.deepEqual(readdirSync(dir), ["scopesoup.config.json"]);
     // The person adds the name to the old file; the next start migrates it.
     writeFileSync(file, JSON.stringify({ ...raw, machineName: "desk" }, null, 2) + "\n");
     const fixed = createConfigLoader(file, undefined, { shared: SHARED }).load();
     assert.equal(fixed.error, undefined);
-    assert.equal(JSON.parse(read(file)).version, 1);
+    assert.equal(JSON.parse(read(file)).version, 2);
   });
 
   test("a migration that cannot be written fails with a clear message and changes nothing", { skip: process.getuid?.() === 0 ? "root may write a read-only file" : false }, () => {
@@ -156,7 +159,7 @@ describe("the config format", { concurrency: 4 }, () => {
     try {
       const state = createConfigLoader(file, undefined, { shared: SHARED }).load();
       assert.equal(state.config, null);
-      assert.match(state.error ?? "", /is format 0 and must be migrated to format 1, but .* cannot be written .*; it was not changed\. Make it writable and start again\. The migration would change: irreversibleActions was dropped/);
+      assert.match(state.error ?? "", /is format 0 and must be migrated to format 2, but .* cannot be written .*; it was not changed\. Make it writable and start again\. The migration would change: irreversibleActions was dropped/);
       assert.equal(read(file), old);
       assert.deepEqual(readdirSync(dir), ["scopesoup.config.json"]);
     } finally {
@@ -188,10 +191,10 @@ describe("the config format", { concurrency: 4 }, () => {
     const { dir, file } = place(old);
     const state = createConfigLoader(file, undefined, { write: false, shared: SHARED }).load();
     assert.equal(state.config?.level, 0);
-    assert.match(state.notices?.[0] ?? "", /is format 0: it is read as format 1, and Scope Soup writes it so when it starts/);
+    assert.match(state.notices?.[0] ?? "", /is format 0: it is read as format 2, and Scope Soup writes it so when it starts/);
     const check = checkConfigFile(file, undefined, SHARED);
     assert.equal(check.ok, true);
-    assert.ok(check.lines.some((line) => line.includes("The file is format 0: Scope Soup migrates it to format 1 when it starts")));
+    assert.ok(check.lines.some((line) => line.includes("The file is format 0: Scope Soup migrates it to format 2 when it starts")));
     assert.ok(check.lines.some((line) => line === "  Notice: inviteLabel was dropped: Scope Soup picks from the whole backlog in order; there is no invite label any more."));
     assert.equal(read(file), old);
     assert.deepEqual(readdirSync(dir), ["scopesoup.config.json"]);
@@ -205,7 +208,7 @@ describe("the config format", { concurrency: 4 }, () => {
     assert.deepEqual(given, copy);
     assert.equal(result.from, 0);
     assert.deepEqual(Object.keys(result.raw)[0], "version");
-    const current = JSON.parse(read(FORMAT_1)) as Record<string, unknown>;
+    const current = JSON.parse(read(FORMAT_2)) as Record<string, unknown>;
     const same = migrateConfig(current);
     assert.ok(same.ok && same.raw === current && same.changes.length === 0);
     for (const version of [-1, 0.5, "1", null]) {
@@ -213,10 +216,24 @@ describe("the config format", { concurrency: 4 }, () => {
       assert.equal(bad.ok, false);
       if (!bad.ok) assert.match(bad.errors[0] ?? "", /^version must be a whole number/);
     }
-    // Keys format 1 no longer has are errors in a format-1 file: the migration is where they are known.
+    // Keys format 2 no longer has are errors in a format-2 file: the migration is where they are known.
     const stale = validateConfig({ ...current, dryRun: true, rules: {} }, FIXTURES);
     assert.equal(stale.ok, false);
     if (!stale.ok) assert.match(stale.errors.join("\n"), /unknown key "dryRun"[\s\S]*unknown key "rules"/);
+  });
+
+  test("format 1 to 2: the one reserve position becomes a reserve per window; a window's own reserve is kept", () => {
+    const format1 = JSON.parse(read(FORMAT_1)) as Record<string, unknown>;
+    const result = migrateConfig(format1);
+    assert.ok(result.ok);
+    assert.deepEqual(result.raw, JSON.parse(read(FORMAT_2)));
+    assert.equal(result.from, 1);
+    const kept = migrateConfig({ version: 1, settings: { budgetReserve: { value: 2 }, reserveSevenDay: { value: 0.6 } } });
+    assert.ok(kept.ok);
+    assert.deepEqual((kept.raw.settings as Obj), { reserveFiveHour: { value: 0.1 }, reserveSevenDay: { value: 0.6 } });
+    const odd = migrateConfig({ version: 1, settings: { budgetReserve: { value: 9 } } });
+    assert.ok(odd.ok);
+    assert.deepEqual([odd.raw.settings, odd.changes.length], [{}, 1]);
   });
 
   test("the repository's own config and the example file are the current format and load without a notice", () => {

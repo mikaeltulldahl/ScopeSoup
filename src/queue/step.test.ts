@@ -528,9 +528,10 @@ describe("what the board reads", () => {
     assert.equal(toBatch(w.state)[0]!.members[0]!.sha, w.changes.get("1")!.head);
     w.deliver();
     assert.deepEqual(toBatch(w.state)[0]!.status, "testing");
-    assert.deepEqual(toBatch(w.state)[0]!.probes, [{ prefix: 4, status: "queued" }]);
+    const started = w.state.batches[0]!.probes[0]!.startedAt;
+    assert.deepEqual(toBatch(w.state)[0]!.probes, [{ prefix: 4, status: "queued", startedAt: started }]);
     w.send({ kind: "run-started", run: "1.1", ref: { host: "test", kind: "run", id: "r1" } });
-    assert.deepEqual(toBatch(w.state)[0]!.probes, [{ prefix: 4, status: "running", run: { host: "test", kind: "run", id: "r1" } }]);
+    assert.deepEqual(toBatch(w.state)[0]!.probes, [{ prefix: 4, status: "running", startedAt: started, run: { host: "test", kind: "run", id: "r1" } }]);
     w.deliver(); // red: rerun
     w.deliver(); // rerun red: mapped, prefix 2 is tested
     let b = toBatch(w.state)[0]!;

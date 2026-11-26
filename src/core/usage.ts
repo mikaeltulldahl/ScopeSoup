@@ -6,7 +6,8 @@
 //  - one session ran: it gets the moment ("session");
 //  - several ran: split by run time ("runtime"), or, when every one of them has a token count from its
 //    stream, by tokens per second of run time ("tokens"), so a chatty session counts for more.
-// A drop between readings is a reset: the new window's reading is what was used since the reset.
+// A reset is the reset time passing (or a later one being reported): the new window's reading is what was used since the reset.
+// A small drop without one is no change.
 
 import { refKey } from "../model/types.ts";
 import type { Session, SessionRole, UsageSample, UsageWindowKind } from "../model/types.ts";
@@ -80,16 +81,24 @@ type Change = { kind: "rise"; from: number; to: number; delta: number } | { kind
 /** What happened to one window between its readings, oldest first. After a reset, what is read counts from the reset. */
 function changesOf(readings: readonly Reading[]): Change[] {
   const changes: Change[] = [];
+  // The highest reading since the last reset: a reading below it adds nothing, and a rise counts only above it.
+  let held = readings[0]?.utilization ?? 0;
   for (let i = 1; i < readings.length; i++) {
     const before = readings[i - 1]!;
     const now = readings[i]!;
-    if (now.utilization >= before.utilization) {
-      if (now.utilization > before.utilization) changes.push({ kind: "rise", from: before.at, to: now.at, delta: now.utilization - before.utilization });
-    } else {
+    // A reset is the window really starting over: the earlier reading's reset time has passed, or a later one is reported.
+    // A drop without that is the reported level wobbling, read as no change.
+    const passed = !Number.isNaN(before.resetsAt) && before.resetsAt <= now.at;
+    const moved = !Number.isNaN(before.resetsAt) && !Number.isNaN(now.resetsAt) && now.resetsAt > before.resetsAt;
+    if (passed || moved) {
       // The window emptied at its reset time; what is read now was used after that.
-      const resetAt = Number.isNaN(before.resetsAt) ? before.at : Math.min(Math.max(before.resetsAt, before.at), now.at);
+      const resetAt = Math.min(Math.max(before.resetsAt, before.at), now.at);
       changes.push({ kind: "reset", at: resetAt });
       if (now.utilization > 0) changes.push({ kind: "rise", from: resetAt, to: now.at, delta: now.utilization });
+      held = now.utilization;
+    } else if (now.utilization > held) {
+      changes.push({ kind: "rise", from: before.at, to: now.at, delta: now.utilization - held });
+      held = now.utilization;
     }
   }
   return changes;
@@ -478,11 +487,7 @@ export function expectedAtReset(utilization: number, forecast: { outcome: "used_
   return forecast.outcome === "used_up" ? 1 : Math.min(1, forecast.atReset ?? utilization);
 }
 
-/** The slider position (1-based) whose reserve is nearest to `reserve`; the lower position when two are equally near. */
-export function nearestPosition(reserves: readonly number[], reserve: number): number {
-  let best = 0;
-  reserves.forEach((value, index) => {
-    if (Math.abs(value - reserve) < Math.abs(reserves[best]! - reserve) - 1e-12) best = index;
-  });
-  return best + 1;
+/** A reserve share as the board sets it: from 0 to 0.9, in steps of 0.05. */
+export function snapReserve(reserve: number): number {
+  return Math.round(Math.min(0.9, Math.max(0, reserve)) * 20) / 20;
 }

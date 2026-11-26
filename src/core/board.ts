@@ -109,7 +109,7 @@ export function batchView(batch: Batch, index: Index, now: Date): BatchView {
     if (state) view.mark = state.marks[position];
     return view;
   });
-  const progress = batchProgress(batch, index.run, index.snapshot.runs, now);
+  const progress = batchProgress(batch, index.run, index.snapshot.runs, index.snapshot.batches, now);
   const view: BatchView = {
     ref: batch.ref,
     key: refKey(batch.ref),
