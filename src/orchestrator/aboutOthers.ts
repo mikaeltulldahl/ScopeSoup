@@ -191,6 +191,14 @@ export function keepAboutOthers(ctx: Context, job: Job, role: "triage" | "implem
  * This machine's own claim does not count: parking releases it.
  */
 export function busyWhy(ctx: Context, item: WorkItem, job: Job | undefined): string | null {
+  const working = workingWhy(ctx, item, job);
+  if (working) return working;
+  if (job?.parked?.as === "needs-decision" || job?.parked?.retry === "post") return "it waits for a person's answer to its own questions";
+  return null;
+}
+
+/** As `busyWhy`, but an Item waiting for an answer to its own questions is free: why the Item's work cannot be taken from it now. */
+export function workingWhy(ctx: Context, item: WorkItem, job: Job | undefined): string | null {
   if (ctx.deps.runner.busy?.(item.ref)) return "a person is talking to one of its sessions";
   if (job?.sessionId) return `its ${job.step} session runs`;
   const holder = item.holder;
@@ -199,6 +207,5 @@ export function busyWhy(ctx: Context, item: WorkItem, job: Job | undefined): str
   // A change in review (its session about to start, or between attempts) is not pulled back to triage by another Item's question.
   if (job.step === "review" && !job.parked) return "its change is in review";
   if (job.owes || job.merged !== undefined || job.queued !== undefined || job.parked?.as === "queued" || job.parked?.as === "handed-over" || job.parked?.retry === "hand-over") return "its change is merged, in the merge queue or handed over";
-  if (job.parked?.as === "needs-decision" || job.parked?.retry === "post") return "it waits for a person's answer to its own questions";
   return null;
 }

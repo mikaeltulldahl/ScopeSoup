@@ -31,7 +31,7 @@ const refuse = (message: string): never => {
  * plain text. U+2028 and U+2029 end a line for the reader's pattern (its `.` does not match them).
  */
 const CONTROL = /[\u0000-\u001f\u007f\u2028\u2029]/;
-const KNOWN_KEYS = new Set(["id", "title", "state", "labels", "parent", "blockedBy", "verification", "priority", "vote"]);
+const KNOWN_KEYS = new Set(["id", "title", "state", "labels", "parent", "blockedBy", "duplicateOf", "verification", "priority", "vote"]);
 const KEY = /^[A-Za-z][A-Za-z0-9]*$/;
 
 /** What a person or an agent gives for an item, before it is put in canonical form. */
@@ -41,6 +41,7 @@ export interface ItemInput {
   labels?: string[];
   parent?: string;
   blockedBy?: string[];
+  duplicateOf?: string;
   verification?: string;
   priority?: Priority;
   vote?: number;
@@ -77,6 +78,8 @@ export function canonicalItem(input: ItemInput): ItemFields {
   };
   const parent = input.parent?.trim();
   if (parent) fields.parent = parent;
+  const duplicateOf = input.duplicateOf?.trim();
+  if (duplicateOf) fields.duplicateOf = duplicateOf;
   const verification = input.verification?.trim();
   if (verification) fields.verification = verification;
   if (input.priority) fields.priority = input.priority;
@@ -98,6 +101,7 @@ export function checkFields(fields: ItemFields): void {
   }
   if (fields.parent !== undefined && !isItemId(fields.parent)) refuse(`The parent ${show(fields.parent)} is not an item id.`);
   for (const id of fields.blockedBy) if (!isItemId(id)) refuse(`blockedBy ${show(id)} is not an item id.`);
+  if (fields.duplicateOf !== undefined && !isItemId(fields.duplicateOf)) refuse(`duplicateOf ${show(fields.duplicateOf)} is not an item id.`);
   if (fields.verification !== undefined) headerValue("verification", fields.verification, true);
   if (fields.priority !== undefined && !isPriority(fields.priority)) refuse(`The priority ${show(String(fields.priority))} is not one of ${PRIORITIES.join(", ")}.`);
   if (fields.vote !== undefined && (fields.vote === 0 || cleanVote(fields.vote) !== fields.vote || Math.abs(fields.vote) >= 1e9)) refuse(`The vote ${show(String(fields.vote))} is not a number of points with at most 2 decimals (0 is left out).`);
@@ -120,6 +124,7 @@ export function serializeItem(id: string, fields: ItemFields): string {
   if (fields.labels.length > 0) header.push(`labels: ${fields.labels.join(", ")}`);
   if (fields.parent) header.push(`parent: ${fields.parent}`);
   if (fields.blockedBy.length > 0) header.push(`blockedBy: ${fields.blockedBy.join(", ")}`);
+  if (fields.duplicateOf) header.push(`duplicateOf: ${fields.duplicateOf}`);
   if (fields.verification) header.push(`verification: ${fields.verification}`);
   if (fields.priority) header.push(`priority: ${fields.priority}`);
   if (fields.vote) header.push(`vote: ${fields.vote}`);
