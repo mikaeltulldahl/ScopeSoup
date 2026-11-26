@@ -183,12 +183,14 @@ function backlogTurn(situation: Situation, ctx: TurnContext): Draft {
     return { actor: "nobody", tone: "blocked", reason: `blocked by ${list(words)}` };
   }
   if (item.state === "waiting") return { actor: "nobody", tone: "blocked", reason: `waiting on the host (status "${item.hostState}")` };
-  // A held item is not waiting for a free slot here: a person works on it, or another machine's agent does.
-  if (item.holder && holdStands(item.holder, ctx.now.getTime())) return heldTurn(item, ctx);
   // Triaged, and its paths overlap those of a busy Item, or it may conflict with one: it waits for that one, not for a slot.
+  // This outranks an agent's hold (Scope Soup's own leftover from its triage); a person's hold is still their turn.
   const sameFiles = ctx.index.snapshot.sameFiles?.find((each) => refKey(each.subject) === refKey(item.ref));
+  const personHeld = item.holder && !item.holder.actor.bot;
+  // A held item is not waiting for a free slot here: a person works on it, or another machine's agent does.
+  if (item.holder && holdStands(item.holder, ctx.now.getTime()) && (personHeld || !sameFiles)) return heldTurn(item, ctx);
   if (sameFiles) return { actor: "nobody", tone: "waiting", reason: sameFilesWords(sameFiles.waitsFor, sameFiles.mayConflict) };
-  if (ctx.index.snapshot.paused) return { actor: "nobody", tone: "blocked", reason: "ready, but agents are paused (Resume on the lanes)" };
+  if (ctx.index.snapshot.paused) return { actor: "nobody", tone: "blocked", reason: "ready, but agents are paused (press Resume all)" };
   if (ctx.index.snapshot.usage?.status === "rejected") return { actor: "nobody", tone: "blocked", reason: `ready, but the usage limit is reached${resetWords(ctx)}` };
   // Its next step is the triage and triage is paused: it waits for that switch, not for a slot. (A stated size skips the triage from level 2.)
   const triageNext = ctx.notTriaged?.has(refKey(item.ref)) && !((ctx.index.snapshot.level ?? 0) >= 2 && clearWithoutTriage(item));
