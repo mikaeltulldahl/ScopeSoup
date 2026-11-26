@@ -98,6 +98,7 @@ import type { AssumptionHost } from "./server/server.ts";
 import { createChat } from "./orchestrator/chat.ts";
 import { mergeQueueOn, mergeQueueStopped, pauseRemembering, roleStopped, startAgain } from "./store/control.ts";
 import { KEYS } from "./store/keys.ts";
+import { recordShare } from "./config/shareState.ts";
 import { createBranchProtection } from "./server/branchProtection.ts";
 import { NEWER_STORE, STORE_VERSION } from "./store/schema.ts";
 import { openStore } from "./store/store.ts";
@@ -151,6 +152,11 @@ async function main(): Promise<void> {
     const repository = existsSync(configFile) ? privateWhere(configFile) : null;
     if (!repository?.machine) return;
     const report = await shared.fetch(repository.repoPath, repository.remote, repository.machine, repository.multiplayer);
+    try {
+      recordShare(store, report, iso());
+    } catch {
+      // The store failing shows elsewhere; the next round writes it again.
+    }
     if (report.problem) console.log(`Fetching the shared settings (refs/scopesoup/meta): ${report.problem}`);
     // The picks other boards requested of this machine came with the fetch (decision 104).
     await server?.carryOutRequests().catch((error: unknown) => console.log(`Carrying out the picks requested of this machine: ${error instanceof Error ? error.message : String(error)}`));

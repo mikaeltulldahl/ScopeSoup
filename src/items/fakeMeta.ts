@@ -57,7 +57,7 @@ export function fakeMeta(prefix: string, at = "2026-11-25T09:00:00.000Z"): FakeM
       }
       const changed = [...ids.values()].some((each) => each.created);
       if (changed) fake.commits++;
-      return { items: ids, commit: changed ? `c${fake.commits}` : null, changed, sharing: { at, state: fake.sharing, pushes: 0, refusedPushes: 0, replayed: 0, conflicts: [], renamed: [], locks: [], ...(fake.sharing === "pending" ? { problem: "the remote did not answer" } : {}) } };
+      return { items: ids, commit: changed ? `c${fake.commits}` : null, changed, sharing: { at, state: fake.sharing, pushes: 0, refusedPushes: 0, replayed: 0, waiting: fake.sharing === "pending" ? 1 : 0, conflicts: [], renamed: [], locks: [], ...(fake.sharing === "pending" ? { problem: "the remote did not answer" } : {}) } };
     },
     async listWork(): Promise<WorkItem[]> {
       return [...fake.items].map(([id, item]) => ({

@@ -14,6 +14,8 @@ export const KEYS = {
   mergeQueue: "control.mergeQueue",
   /** JSON `{ "lastAt"?: string, "error"?: string }`. */
   sync: "sync",
+  /** JSON `ShareState` (core/snapshot.ts): when this machine last shared the meta ref with the remote, and the last failure; "" in singleplayer. */
+  share: "share",
   /** JSON `MergeQueueNote`: who held the merge queue lease when this machine last looked. */
   mergeQueueNote: "mergeQueueNote",
   /** JSON: the units of the limited resources this machine holds, what waits for them, and what other machines held (`resources.ts`). */

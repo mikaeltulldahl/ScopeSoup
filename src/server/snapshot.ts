@@ -1,6 +1,6 @@
 // Reads everything the board needs from the store in one go.
 
-import type { Snapshot, RunnerState, SyncState } from "../core/snapshot.ts";
+import type { Snapshot, RunnerState, ShareState, SyncState } from "../core/snapshot.ts";
 import type { Batch, Change, CreatedPart, ProposedPart, Ref, Parked, ParkedQuestion, Run, Session, WorkItem } from "../model/types.ts";
 import { refKey } from "../model/types.ts";
 import { loadJobs, jobQuestions, resumesStep } from "../orchestrator/jobs.ts";
@@ -82,6 +82,7 @@ export function loadSnapshot(store: Store): Snapshot {
       return sameFiles.length > 0 ? { sameFiles } : {};
     })(),
     answers: knownAnswers(store),
+    ...shareOf(store),
     sync: parse<SyncState>(store.getValue(KEYS.sync), {}, (value) => typeof value === "object" && value !== null && !Array.isArray(value)),
   };
 }
@@ -91,4 +92,10 @@ export function hostParts(store: Store, item: Ref, proposal: { id: string; parts
   return [...markedParts(store.list<WorkItem>("work", item.host), item, proposal)]
     .map(([part, work]) => ({ part, ref: work.ref, linked: partLinked(proposal.parts[part]!, work, item) }))
     .sort((a, b) => a.part - b.part);
+}
+
+/** The sharing state the meta-ref rounds left in the store (`recordShare`); nothing in singleplayer. */
+function shareOf(store: Store): { share?: ShareState } {
+  const share = parse<ShareState | null>(store.getValue(KEYS.share), null, (value) => typeof value === "object" && value !== null && !Array.isArray(value));
+  return share ? { share } : {};
 }
