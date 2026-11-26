@@ -941,6 +941,8 @@ function RewritePanel({ page, rewrite, reload, primary }: { page: ItemPage; rewr
   // A stopping answer (hold for a conflict, close as a duplicate) keeps the rewrite too: it does not change the description.
   const keeps = answers.every((answer, index) => answer.trim() === recommended[index]!.trim() || (rewrite.questions[index]!.stopsOn !== undefined && answer.trim() === rewrite.questions[index]!.stopsOn!.trim()));
   const filled = answers.every((answer) => answer.trim() !== "");
+  // A stopping answer that is not the recommendation: a hold for a conflict, which makes the Item wait in Blocked.
+  const holding = answers.some((answer, index) => answer.trim() !== recommended[index]!.trim() && rewrite.questions[index]!.stopsOn !== undefined && answer.trim() === rewrite.questions[index]!.stopsOn!.trim());
   // Someone edited the description since the rewrite was written; Accept is refused; Edit or Reject decides with it in view.
   const changed = (page.item.body ?? "").trim() !== rewrite.original.trim();
   const decide = (action: "accept" | "edit" | "reject") =>
@@ -993,7 +995,7 @@ function RewritePanel({ page, rewrite, reload, primary }: { page: ItemPage; rewr
       )}
       <p class="muted">
         {keeps
-          ? `${page.canEdit ? "Accept writes the rewrite as the item's description; the old text stays in the item's history." : "This host's items are edited on the host: accepting gives the rewrite to the agents in place of the host's text."}${rewrite.labels ? " The label changes go with it; a label someone changed since stays as they set it." : ""} Reject keeps the description${rewrite.labels ? " and the labels" : ""} as they are. Either way the work can then start.`
+          ? `${page.canEdit ? "Accept writes the rewrite as the item's description; the old text stays in the item's history." : "This host's items are edited on the host: accepting gives the rewrite to the agents in place of the host's text."}${rewrite.labels ? " The label changes go with it; a label someone changed since stays as they set it." : ""} Reject keeps the description${rewrite.labels ? " and the labels" : ""} as they are. ${holding ? "With the hold, the item then waits in Blocked until the other one is done." : "Either way the work can then start."}`
           : "Your answers go to a new triage, which writes a new rewrite. Nothing starts until you accept or reject a rewrite."}
       </p>
       {error && <p class="error">{error}</p>}
