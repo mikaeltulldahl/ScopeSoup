@@ -7,7 +7,8 @@
 // same settle (`src/orchestrator/cycle.ts`), so they are gathered until the next `session` line. A `check` line (level 4) and a
 // `merged` line are rows of their own.
 
-import type { LogRecord, Parked, Session } from "../model/types.ts";
+import type { LogRecord, OriginalFate, Parked, ProposedPart, Session } from "../model/types.ts";
+import { ORIGINAL_FATES, restructuringWords } from "../model/types.ts";
 import type { RoundFinding, RoundRow } from "./views.ts";
 
 export interface RoundsInput {
@@ -38,7 +39,8 @@ export function parseFinding(raw: string): RoundFinding {
 interface Pending {
   commits: string[];
   review?: { verdict: string; findings: RoundFinding[]; model?: string };
-  questions: { question: string; parked: string; proposal?: number }[];
+  /** `proposal`: a proposed restructuring, in words (`restructuringWords`). */
+  questions: { question: string; parked: string; proposal?: string }[];
 }
 
 const empty = (): Pending => ({ commits: [], questions: [] });
@@ -52,7 +54,7 @@ function triage(fields: Record<string, unknown>, pending: Pending): { found: str
   const parts: string[] = [];
   let tone: RoundRow["tone"] = "good";
   if (split) {
-    parts.push(`Proposes a restructuring into ${split.proposal} parts.`);
+    parts.push(`Proposes a restructuring: ${split.proposal}.`);
     tone = "wait";
   } else if (notReady || fields.ready === false) {
     parts.push(notReady ? notReady.question.replace(/^Triage: /, "") : `Not ready.${text(fields.summary) ? ` ${text(fields.summary)}` : ""}`);
@@ -115,7 +117,7 @@ export function buildRounds(input: RoundsInput): RoundRow[] {
         if (parked) parkedLine = { at: line.at, question, parked };
         // An escalation is the outcome's row, not what the step found.
         if (parked && parked !== "escalated") {
-          const proposal = typeof f.proposal === "object" && f.proposal !== null && Array.isArray((f.proposal as Record<string, unknown>).parts) ? ((f.proposal as Record<string, unknown>).parts as unknown[]).length : undefined;
+          const proposal = proposalWords(f.proposal);
           pending.questions.push({ question, parked, ...(proposal !== undefined ? { proposal } : {}) });
         }
         break;
@@ -258,4 +260,14 @@ function parkedRow(parked: Pick<Parked, "as" | "reason" | "at">): RoundRow | nul
     default:
       return { ...base, step: String(parked.as), tone: "wait" };
   }
+}
+
+/** A logged restructuring proposal in words, or undefined when the field is not one. */
+function proposalWords(value: unknown): string | undefined {
+  if (typeof value !== "object" || value === null) return undefined;
+  const { original, parts } = value as Record<string, unknown>;
+  if (!Array.isArray(parts)) return undefined;
+  const fate = ORIGINAL_FATES.includes(original as OriginalFate) ? original as OriginalFate : "keeps";
+  const each = parts.filter((part): part is ProposedPart => typeof part === "object" && part !== null && typeof (part as Record<string, unknown>).goes === "string");
+  return restructuringWords(fate, each);
 }
