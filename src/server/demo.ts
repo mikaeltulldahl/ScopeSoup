@@ -518,6 +518,7 @@ export function seedDemo(store: Store, now: Date, dir?: string): void {
     at: at(-0.5), running: { triage: 0, implement: 2, review: 1 }, ceiling: 4, cap: 3,
     why: "the weekly window is at 52 %; one more session would put it at about 55 % by 18:40, over its pace line (54 % then)",
     waiting: 2, caps: { triage: 2, work: 5 }, waits: ["new triage waits: 2 things wait for you (it starts below 2)"],
+    retriage: { used: 0.03, share: 0.05, reason: "triage again has used 3 % of what Scope Soup used in the last week; its share is 5 %: one more fits" },
   }));
   // 30 days of synthetic usage readings and the finished sessions that filled the windows, for the Usage page.
   const usage = demoUsage(now);
@@ -557,7 +558,7 @@ export async function writeDemoConfig(dir: string, settings: MetaSettings = meta
   execFileSyncRetrying("git", ["init", "--quiet", "-b", "main", repo], { windowsHide: true });
   // This machine's own settings, and the project's shared ones on the meta ref.
   const own = {
-    version: 3,
+    version: 4,
     repoPath: "repo",
     workspacesDir: "workspaces",
     machineName: "demo",

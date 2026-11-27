@@ -22,12 +22,12 @@ const NUMBERS: Record<string, [string, string]> = {
   queueMaxBatch: ["Largest merge queue batch", ""],
   queueRerunCost: ["Cost of a rerun in the merge queue", ""],
   queueMinOutcomes: ["Outcomes the merge queue waits for", ""],
-  triageMaxAgeDays: ["Oldest triage still used", "days"],
   maxParallelSessions: ["Sessions at once", ""],
   budgetFiveHour: ["Budget of the 5-hour window", "%"],
   budgetSevenDay: ["Budget of the weekly window", "%"],
   waitingCapTriage: ["Waiting things that stop new triage", ""],
   waitingCapWork: ["Waiting things that stop new work", ""],
+  retriageShare: ["Share of usage for triage again", "%"],
   tickSeconds: ["Time between looks", "s"],
 };
 
@@ -115,7 +115,7 @@ export function settingsWords(changes: readonly SettingChangeLike[]): string[] {
       if (third === "reason" && valueKeys.has(`settings.${second}`)) continue;
       const [label, unit] = NUMBERS[second] ?? [capital(spaced(second)), ""];
       if (third === "reason") out.push(`${label}: reason changed`);
-      else out.push(fromTo(label, change, second.startsWith("reserve") ? percent : (value) => shown(value), unit));
+      else out.push(fromTo(label, change, second.startsWith("reserve") || second === "retriageShare" ? percent : (value) => shown(value), unit));
       continue;
     }
     if (top === "mergeQueue") {

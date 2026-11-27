@@ -7,7 +7,7 @@ import { defaultSettings } from "./defaults.ts";
 import { levelName } from "./types.ts";
 
 /** The format this Scope Soup writes and reads. Raise it, and add a step, when an older file would no longer load as is. */
-export const CONFIG_VERSION = 3;
+export const CONFIG_VERSION = 4;
 
 /** Said when a file's `version` is newer than this Scope Soup's. */
 export const NEWER_CONFIG = "this project's config is from a newer Scope Soup; upgrade Scope Soup";
@@ -32,7 +32,7 @@ export type MigrateResult = { ok: true; from: number; raw: Obj; changes: string[
 type Step = (raw: Obj, changes: string[]) => string[];
 
 /** STEPS[n] turns format n into format n + 1. */
-const STEPS: readonly Step[] = [from0to1, from1to2, from2to3];
+const STEPS: readonly Step[] = [from0to1, from1to2, from2to3, from3to4];
 
 /** The file's format: 0 when it has no `version`, null when `version` is not a whole number from 0. */
 export function formatOf(raw: Obj): number | null {
@@ -55,6 +55,19 @@ export function migrateConfig(given: unknown): MigrateResult {
   delete raw.version;
   const current = { version: CONFIG_VERSION, ...raw };
   return errors.length > 0 ? { ok: false, errors, raw: current } : { ok: true, from, raw: current, changes };
+}
+
+// --- format 3 to 4 ---
+
+/**
+ * Format 3 to 4: `settings.triageMaxAgeDays` is gone (#217): age alone is no input, and a triage is taken again only when what it
+ * read changed, within `settings.retriageShare`. The key is dropped; it is a shared setting, so this file holds it only by mistake.
+ */
+function from3to4(raw: Obj, changes: string[]): string[] {
+  if (!isObj(raw.settings) || !Object.hasOwn(raw.settings, "triageMaxAgeDays")) return [];
+  delete raw.settings.triageMaxAgeDays;
+  changes.push("settings.triageMaxAgeDays was dropped: a triage is no longer taken again for its age alone, only when what it read changed (settings.retriageShare paces it).");
+  return [];
 }
 
 // --- format 2 to 3 ---

@@ -37,7 +37,7 @@ before(async () => {
   git(dir, "init", "-q", "--bare", "-b", "main", origin);
   git(dir, "clone", "-q", origin, repo);
   file = join(dir, "scopesoup.config.json");
-  writeFileSync(file, JSON.stringify({ version: 3, machineName: "laptop-a", repoPath: "repo" }, null, 2) + "\n");
+  writeFileSync(file, JSON.stringify({ version: 4, machineName: "laptop-a", repoPath: "repo" }, null, 2) + "\n");
   settings = metaSettings({ now: () => new Date(T0).toISOString() });
   // The first person's onboarding wrote the shared settings.
   const first = await settings.save({ repoPath: repo, remote: "origin", machine: "laptop-a", by: "Ada", update: () => ({ project: "demo", checkCommand: ["node", "--test"] }) });
@@ -69,9 +69,9 @@ test("GET /api/config returns both files as one and the configuration; board-onl
   assert.deepEqual(view.levels.map((choice) => choice.blocked), [null, null, null, null, "Level 4 needs the remote's URL (remoteUrl)."]);
   assert.deepEqual(view.defaultModels, { triage: "opus", implement: "sonnet", review: "opus" });
   assert.deepEqual([view.present, view.config.project, view.config.level], [true, "demo", 0]);
-  assert.deepEqual(view.raw, { version: 3, machineName: "laptop-a", repoPath: "repo", project: "demo", checkCommand: ["node", "--test"] });
+  assert.deepEqual(view.raw, { version: 4, machineName: "laptop-a", repoPath: "repo", project: "demo", checkCommand: ["node", "--test"] });
   assert.ok(view.safeFields.includes("level"));
-  assert.deepEqual(view.sharedFields, ["level", "project", "roles", "checkCommand", "setupCommand", "setupWatch", "sharedResources", "media", "review", "labels", "host", "settings.triageMaxAgeDays", "settings.waitingCapTriage", "settings.waitingCapWork"]);
+  assert.deepEqual(view.sharedFields, ["level", "project", "roles", "checkCommand", "setupCommand", "setupWatch", "sharedResources", "media", "review", "labels", "host", "settings.waitingCapTriage", "settings.waitingCapWork", "settings.retriageShare"]);
   assert.deepEqual(await (await fetch(`${bareBase}/api/config`)).json(), { present: false });
   assert.equal((await fetch(`${bareBase}/api/config`, { method: "POST", body: "{}" })).status, 404);
 });
@@ -132,10 +132,10 @@ test("POST /api/config refuses level 4 while a need is missing, and leaves both 
 
 test("POST /api/config refuses an invalid change with the errors and leaves both files", async () => {
   const before = state();
-  const response = await post({ settings: { triageMaxAgeDays: { value: 0 } } });
+  const response = await post({ settings: { retriageShare: { value: 0.9 } } });
   assert.equal(response.status, 400);
   const body = (await response.json()) as { errors: string[] };
-  assert.ok(body.errors.some((error) => error.includes("settings.triageMaxAgeDays")));
+  assert.ok(body.errors.some((error) => error.includes("settings.retriageShare")));
   assert.equal(state(), before);
 });
 

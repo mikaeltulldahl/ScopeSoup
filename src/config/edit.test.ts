@@ -66,7 +66,7 @@ function setup(extra: Record<string, unknown> = {}): string {
   dirs.push(dir);
   const file = join(dir, "scopesoup.config.json");
   const raw: Record<string, unknown> = {
-    version: 3,
+    version: 4,
     project: "demo",
     machineName: "laptop-a",
     repoPath: "repo",
@@ -175,7 +175,7 @@ test("a save of a format-0 file writes it migrated, with \"version\": 1 and a co
   assert.equal(saved.ok, true);
   if (saved.ok) assert.equal(saved.config.settings.maxParallelSessions.value, 2);
   const raw = JSON.parse(readFileSync(file, "utf8")) as Record<string, any>;
-  assert.deepEqual([raw.version, raw.settings], [3, { maxParallelSessions: { value: 2, reason: "Two builders." }, budgetSevenDay: { value: 0.2 } }]);
+  assert.deepEqual([raw.version, raw.settings], [4, { maxParallelSessions: { value: 2, reason: "Two builders." }, budgetSevenDay: { value: 0.2 } }]);
   assert.equal(readFileSync(join(file, "..", "scopesoup.config.v0.json"), "utf8"), old);
   assert.deepEqual(readdirSync(join(file, "..")).sort(), ["project.json", "scopesoup.config.json", "scopesoup.config.v0.json"]);
 });
@@ -282,7 +282,7 @@ test("the next load returns a written change", async () => {
 
 test("a key in the wrong file is refused with where it belongs, and an old file whose migration makes a project setting is refused too", async () => {
   const file = setup();
-  writeFileSync(file, JSON.stringify({ version: 3, machineName: "laptop-a", repoPath: "repo", level: 2, settings: { persistence: { value: 2 } } }, null, 2) + "\n");
+  writeFileSync(file, JSON.stringify({ version: 4, machineName: "laptop-a", repoPath: "repo", level: 2, settings: { persistence: { value: 2 } } }, null, 2) + "\n");
   let state = loaderOf(file).load();
   assert.equal(state.config, null);
   assert.match(state.error ?? "", /level is a project setting, the same on every machine: it belongs in the project's shared settings \(settings\/settings\.json on refs\/scopesoup\/meta\), saved on the Settings page, not in this machine's scopesoup\.config\.json\./);
@@ -290,7 +290,7 @@ test("a key in the wrong file is refused with where it belongs, and an old file 
   writeFileSync(file, JSON.stringify({ machineName: "laptop-a", repoPath: "repo", dryRun: false, mergeQueue: "person" }, null, 2) + "\n");
   state = loaderOf(file).load();
   assert.match(state.error ?? "", /level is a project setting/);
-  writeFileSync(file, JSON.stringify({ version: 3, machineName: "laptop-a", repoPath: "repo" }, null, 2) + "\n");
+  writeFileSync(file, JSON.stringify({ version: 4, machineName: "laptop-a", repoPath: "repo" }, null, 2) + "\n");
   writeFileSync(sharedPath(file), JSON.stringify({ project: "demo", machineName: "desk", workspacesDir: "w", settings: { maxParallelSessions: { value: 2 } }, host: { kind: "metaBranch", prefix: "A" } }, null, 2) + "\n");
   state = loaderOf(file).load();
   assert.match(state.error ?? "", /machineName is this machine's own setting: it belongs in its scopesoup\.config\.json, not in the project's shared settings \(settings\/settings\.json on refs\/scopesoup\/meta\), which every machine shares\./);

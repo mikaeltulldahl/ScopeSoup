@@ -5127,10 +5127,10 @@ const overruled = (id: string, over: Record<string, unknown> = {}) => ({
 
 test("Implement anyway runs the implement step below level 2, even at level 0, with triage's notes as they are; its settling clears the ask", async () => {
   for (const level of [0, 1]) {
-    const w = world(config({ level, settings: { triageMaxAgeDays: { value: 1, reason: "test" } } }), [item("1"), item("2")]);
+    const w = world(config({ level }), [item("1"), item("2")]);
     w.store.addUsageSample(usage(0.1, 0.1));
     applyControl(w.store, "pause", new Date(T0).toISOString(), "test");
-    // Triaged long ago: a triage that is out of date is not taken again first for a person's Implement anyway.
+    // Its text changed since its triage: a triage that is out of date is not taken again first for a person's Implement anyway.
     saveJobs(w.store, { [refKey(ref("1"))]: overruled("1", { triaged: { at: "2020-01-01T00:00:00Z", textHash: "old", title: "Item 1", body: "", verification: "", blockers: [] } }) });
     await w.run();
     assert.deepEqual(w.runner.requests.map((request) => `${request.role} ${request.subject.id}`), ["implement 1"], `level ${level}: only the step a person asked for`);

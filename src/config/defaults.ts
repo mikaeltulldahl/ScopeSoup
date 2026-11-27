@@ -17,6 +17,7 @@ export function defaultSettings(): Settings {
     budgetSevenDay: { value: 0.8, reason: "80% of the weekly window's even pace: the rest is kept for people's own use." },
     waitingCapTriage: { value: 2, reason: "New triage stops first, so an implementor's questions are not crowded out." },
     waitingCapWork: { value: 5, reason: "No more new work than a person can answer for." },
+    retriageShare: { value: 0.05, reason: "A twentieth of what Scope Soup uses keeps To do's triages fresh, however long the list (#217)." },
     persistence: { value: 3, reason: "The middle position: 3 attempts and 2 review rounds, as before the slider existed." },
     retryBackoffCapSeconds: { value: 300, reason: GUESS },
     checkTimeoutMinutes: { value: 60, reason: "The check is expected to take about 10 minutes; the limit is well above that." },
@@ -24,7 +25,6 @@ export function defaultSettings(): Settings {
     queueMaxBatch: { value: 12, reason: "Keeps chains short to build, the wait to merge reasonable and conflicts rare (docs/BATCH_SIZE.md)." },
     queueRerunCost: { value: 0.15, reason: "A rerun of only the failed files costs about a seventh of a full check; the queue measures it and moves away from this." },
     queueMinOutcomes: { value: 10, reason: "Ten merged or sent-back changes are enough to size batches by the model; fewer use the plain rule." },
-    triageMaxAgeDays: { value: 30, reason: "A triage older than a month is taken again before the work starts." },
   };
 }
 

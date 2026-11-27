@@ -1056,7 +1056,7 @@ async function settleStep(ctx: Context, job: Job, session: Session | null, recor
     keepDrafts(ctx, job, "triage", answer.drafts);
     // What this triage saw, so it is taken again once that is out of date.
     const text = job.triaging ?? (item ? triagedText(item) : undefined);
-    if (text) job.triaged = triagedNow(text, item, ctx.deps.store.list<WorkItem>("work"), ctx.at, main);
+    if (text) job.triaged = triagedNow(text, item, ctx.deps.store.list<WorkItem>("work"), ctx.at, main, answer.links ?? []);
     delete job.triaging;
     delete job.recheck;
     // An answer with a rewrite goes through the rewrite loop. One without (from earlier) is settled as before.

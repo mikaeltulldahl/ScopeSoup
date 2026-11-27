@@ -323,6 +323,55 @@ export const RULES: Rule[] = [
     },
   },
   {
+    id: "B9",
+    why: "No re-triage without new input: a triage taken again (told what changed) starts only after something it read changed since the triage before settled: the Item's text, a blocker or a linked Item closed, commits on main on the paths it named. Age alone is no input (#217, decision 9 of #211).",
+    check(o, prev, memo) {
+      // What each triage read when it started; it becomes the Item's triage once its session settles (a failed or orphaned one does not).
+      type Read = { text: string; blockers: string[]; open: string[]; main: string; paths: string[]; at: string };
+      const pending = (memo.pending ??= {}) as Record<string, { item: string; read: Read }>;
+      const triaged = (memo.triaged ??= {}) as Record<string, Read>;
+      for (const [session, each] of Object.entries(pending)) {
+        const end = o.ledger.ended.find((e) => e.session === session);
+        if (!end) continue;
+        if (end.settled) triaged[each.item] = each.read;
+        delete pending[session];
+      }
+      const closedNow = new Set(o.items.filter(isClosed).map((i) => i.key));
+      const refOf = (b: { host: string; kind: string; id: string }): string => `${b.host}:${b.kind}:${b.id}`;
+      const linkedOf = (i: ItemObs): string[] => (i.job?.triage?.links ?? []).map((l) => `${i.item.ref.host}:work:${l.item.replace(/^#/, "")}`);
+      const readOf = (i: ItemObs): Read => ({
+        text: JSON.stringify([i.item.title, i.item.body ?? "", i.item.verification ?? ""]), blockers: i.item.blockedBy.map(refOf).sort(),
+        open: [...i.item.blockedBy.map(refOf), ...linkedOf(i)].filter((k) => !closedNow.has(k)), main: o.git.main, paths: i.paths, at: o.at,
+      });
+      for (const s of o.started) {
+        if (s.role !== "triage") continue;
+        const i = o.items.find((each) => each.key === s.item);
+        if (!i) continue;
+        const again = (s.request.vars.recheck ?? "").trim() !== "";
+        const before = triaged[s.item];
+        if (again && before && prevOf(prev, s.item)?.job?.triageAskedBy === undefined) {
+          const now = readOf(i);
+          const changed = now.text !== before.text || JSON.stringify(now.blockers) !== JSON.stringify(before.blockers)
+            || before.open.some((k) => closedNow.has(k)) || (before.paths.length > 0 && o.git.touching(before.main, o.git.main, before.paths) > 0);
+          if (!changed) return `${i.id}'s triage was taken again with nothing it read changed since its triage of ${before.at}`;
+        }
+        pending[s.session] = { item: s.item, read: readOf(i) };
+      }
+      return null;
+    },
+  },
+  {
+    id: "B10",
+    why: "Re-triage stays within its share: the triages Scope Soup takes again on its own number at most the share of the sessions started, plus one (the share is of expected use, which the fake usage makes about the same per session) (#217).",
+    check(o, _prev, memo) {
+      const count = (memo.count ??= { sessions: 0, retriages: 0 }) as { sessions: number; retriages: number };
+      count.sessions += o.started.length;
+      count.retriages += o.events.filter((e) => e.kind === "orchestrator.triage_again" && (e.data as Record<string, unknown> | undefined)?.background === true).length;
+      const allowed = o.retriageShare * count.sessions + 1;
+      return count.retriages > allowed ? `${count.retriages} triages were taken again on Scope Soup's own choice in ${count.sessions} sessions; the share (${Math.round(o.retriageShare * 100)} %) allows ${Math.floor(allowed)}` : null;
+    },
+  },
+  {
     id: "B8",
     why: "An answer resumes where it was asked, with the work kept: an implementor's question answered goes back to the implementor, not to triage.",
     check(o, prev, memo) {
@@ -955,6 +1004,22 @@ export const RULES: Rule[] = [
         if (before[i.key] || prevOf(prev, i.key) || i.card?.lane !== todo) return null;
         const filed = o.requests.some((r) => r.status === 200 && r.path === "/api/items" && r.body.todo === true);
         return filed ? null : `${i.id} is new and landed in To do`;
+      });
+    },
+  },
+  {
+    id: "J4",
+    why: "Backlog is never triaged again on its own: no triage taken again (told what changed) starts on an Item in Backlog; only a person's Triage there runs (#217, #221).",
+    check(o, prev) {
+      if (!todoLane(o) || !prev) return null;
+      return first(o.started, (s) => {
+        if (s.role !== "triage" || (s.request.vars.recheck ?? "").trim() === "") return null;
+        const before = prevOf(prev, s.item);
+        const inBacklog = before?.card?.lane === "backlog" || before?.item.backlog === true;
+        if (!inBacklog || before?.job?.triageAskedBy !== undefined) return null;
+        const id = s.item.split(":").pop();
+        const asked = o.requests.some((r) => r.status === 200 && r.item === id && r.path === "/api/item/move" && r.body.to === "triage");
+        return asked ? null : `${id} is in Backlog and its triage was taken again with no person asking`;
       });
     },
   },

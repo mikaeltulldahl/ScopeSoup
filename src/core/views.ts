@@ -770,6 +770,8 @@ export interface PacingView {
   waiting: number;
   caps: { triage: number; work: number };
   waits: string[];
+  /** Triage again on Scope Soup's own choice (#217): the share of use it took in the last week, its share, and why one more fits or not. */
+  retriage?: { used: number; share: number; reason: string };
 }
 
 /** One turn of a person's chat with a session: the message, and the reply as far as it is written. */

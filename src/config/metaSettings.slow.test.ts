@@ -40,8 +40,8 @@ function project(): { origin: string; a: string; b: string; fileA: string; fileB
   git(dir, "clone", "-q", origin, b);
   const fileA = join(dir, "a", "scopesoup.config.json");
   const fileB = join(dir, "b", "scopesoup.config.json");
-  writeFileSync(fileA, JSON.stringify({ version: 3, machineName: "laptop-a", repoPath: "repo" }, null, 2) + "\n");
-  writeFileSync(fileB, JSON.stringify({ version: 3, machineName: "laptop-b", repoPath: "repo" }, null, 2) + "\n");
+  writeFileSync(fileA, JSON.stringify({ version: 4, machineName: "laptop-a", repoPath: "repo" }, null, 2) + "\n");
+  writeFileSync(fileB, JSON.stringify({ version: 4, machineName: "laptop-b", repoPath: "repo" }, null, 2) + "\n");
   return { origin, a, b, fileA, fileB };
 }
 
@@ -174,7 +174,7 @@ describe("meta settings", { concurrency: 3 }, () => {
     assert.equal(git(b, "rev-parse", "refs/scopesoup/meta"), tip);
 
     // A shared key in the private file is refused, saying where it belongs.
-    writeFileSync(fileB, JSON.stringify({ version: 3, machineName: "laptop-b", repoPath: "repo", level: 3 }, null, 2) + "\n");
+    writeFileSync(fileB, JSON.stringify({ version: 4, machineName: "laptop-b", repoPath: "repo", level: 3 }, null, 2) + "\n");
     const settings = metaSettings();
     try {
       const state = createConfigLoader(fileB, undefined, { shared: settings, sharedTtlMs: 0 }).load();

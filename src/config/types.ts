@@ -30,6 +30,8 @@ export interface Settings {
   waitingCapTriage: NumberSetting;
   /** No new work (a first implement step) starts while this many things wait for a person. */
   waitingCapWork: NumberSetting;
+  /** The share of what Scope Soup uses (by expected use, over a week) that re-triages of To do Items it chooses on its own may take (#217). */
+  retriageShare: NumberSetting;
   /** Slider 1 to 5 over the failed attempts of one step and the review-and-fix rounds before the item goes to a person; see persistence.ts. */
   persistence: NumberSetting;
   retryBackoffCapSeconds: NumberSetting;
@@ -43,8 +45,6 @@ export interface Settings {
   queueRerunCost: NumberSetting;
   /** How many outcomes (merged changes and culprits) the queue needs before it sizes batches by the model instead of the plain rule. */
   queueMinOutcomes: NumberSetting;
-  /** Days after which a waiting Item's triage is taken again before its implement step. Optional in the file. */
-  triageMaxAgeDays: NumberSetting;
 }
 
 export type SettingName = keyof Settings;

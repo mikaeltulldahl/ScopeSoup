@@ -27,7 +27,7 @@ after(() => {
   for (const dir of dirs) rmSync(dir, { recursive: true, force: true, maxRetries: 3 });
 });
 
-const OWN = { version: 3, machineName: "laptop-a", repoPath: "repo", meta: { authorName: "Test Person", authorEmail: "test.person@example.invalid", prefix: "A" } };
+const OWN = { version: 4, machineName: "laptop-a", repoPath: "repo", meta: { authorName: "Test Person", authorEmail: "test.person@example.invalid", prefix: "A" } };
 const SHARED = { project: "demo", host: { kind: "metaBranch", write: true } };
 const JIRA_HOST = { kind: "jira", site: FAKE_SITE, project: "DEMO", deployment: "cloud", write: true };
 
@@ -266,7 +266,7 @@ describe("POST /api/connect", { concurrency: 4 }, () => {
   test("join mode sets this machine up for the project's Jira host: its email only, the shared settings untouched", async () => {
     const jira = jiraFake();
     const shared = { project: "demo", host: JIRA_HOST };
-    const s = await setUp({ env: { SCOPESOUP_JIRA_TOKEN: TOKEN }, fetchImpl: jira.fetch }, { own: { version: 3, machineName: "laptop-b", repoPath: "repo" }, shared });
+    const s = await setUp({ env: { SCOPESOUP_JIRA_TOKEN: TOKEN }, fetchImpl: jira.fetch }, { own: { version: 4, machineName: "laptop-b", repoPath: "repo" }, shared });
     try {
       const setup = (await (await fetch(`${s.base}/api/machine-setup`)).json()) as { setup: unknown };
       assert.deepEqual(setup, { setup: null, meta: {} }, "the server was not told this machine lacks anything");
@@ -275,7 +275,7 @@ describe("POST /api/connect", { concurrency: 4 }, () => {
       assert.match(plan.body.lines.join("\n"), /the project's shared settings stay as they are/);
       const done = await s.post({ mode: "join", email: CLOUD_EMAIL, confirm: true }, "");
       assert.equal(done.status, 200, JSON.stringify(done.body));
-      assert.deepEqual(s.own(), { version: 3, machineName: "laptop-b", repoPath: "repo", jira: { email: CLOUD_EMAIL } });
+      assert.deepEqual(s.own(), { version: 4, machineName: "laptop-b", repoPath: "repo", jira: { email: CLOUD_EMAIL } });
       assert.deepEqual(s.settings.current(), shared);
       assert.equal(s.settings.saves, 0);
     } finally {
@@ -341,7 +341,7 @@ describe("POST /api/connect", { concurrency: 4 }, () => {
 describe("POST /api/connect back to the meta branch (#134)", { concurrency: 4 }, () => {
   const GITHUB = { project: "demo", host: { kind: "github", repo: "harbour/tides", write: true } };
   const PART = { authorName: "Test Person", authorEmail: "test.person@example.invalid", prefix: "B" };
-  const BARE = { version: 3, machineName: "laptop-a", repoPath: "repo" };
+  const BARE = { version: 4, machineName: "laptop-a", repoPath: "repo" };
   const tides = () => {
     const fake = fakeIssues("harbour/tides", [1, 2, 3]);
     Object.assign(fake.issues.get("1")!, { title: "Tide table", body: "Before #2." });

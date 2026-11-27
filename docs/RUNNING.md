@@ -190,7 +190,7 @@ Start picks from To do in order (priority, then bugs, smaller, older). Agents ne
 
 ### The file's format and upgrades
 
-`version` is the format of the private file, raised only when an older file would no longer load as it is. This Scope Soup uses format 3; a file without `version` is format 0 (release 0.5.0 and before). The shared settings have no `version` (the meta ref has its `format`). A file that still holds project settings is refused, each key with where it belongs.
+`version` is the format of the private file, raised only when an older file would no longer load as it is. This Scope Soup uses format 4; a file without `version` is format 0 (release 0.5.0 and before). The shared settings have no `version` (the meta ref has its `format`). A file that still holds project settings is refused, each key with where it belongs.
 
 - **An older file is migrated at start** (`src/config/migrate.ts`): Scope Soup keeps a copy beside it, `scopesoup.config.v<old>.json` (only the newest), rewrites the file and prints a notice of what changed. The step from 0 to 1 drops keys no Scope Soup reads any more (the old `rules.*` switches, `inviteLabel`, `autonomy`, `triageDepth`, `modelStrength`, the roles `fix`, `check-review`, `rebase`, `situation`), merges `settings.parallelSessions` into `maxParallelSessions` and turns `dryRun` into `level` (the table); the step from 1 to 2 replaces `settings.budgetReserve` with `reserveFiveHour` and `reserveSevenDay` (decision 118); the step from 2 to 3 turns each reserve into a budget, `budgetFiveHour` and `budgetSevenDay`, 1 minus the reserve (decision 133).
 

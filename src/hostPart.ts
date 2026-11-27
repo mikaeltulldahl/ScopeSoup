@@ -40,7 +40,7 @@ export async function jiraHostPart(answers: JiraAnswers, deps: ConnectDeps, look
   const { connection } = given;
   // The configuration's own validation, on the two files as they will be: this host and this machine's email.
   const checked = validateFiles(
-    { version: 3, machineName: "check", repoPath: ".", ...(connection.email ? { jira: { email: connection.email } } : {}) },
+    { version: 4, machineName: "check", repoPath: ".", ...(connection.email ? { jira: { email: connection.email } } : {}) },
     { project: "check", host: connection.host },
     process.cwd(),
   );
