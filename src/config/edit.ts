@@ -29,7 +29,7 @@ type Obj = Record<string, unknown>;
  * The fields the board may change, and inside each what may be given. `true` means any value (validation decides);
  * a function checks the names and keys allowed one level down.
  */
-const SETTING_NAMES = ["maxParallelSessions", "reserveFiveHour", "reserveSevenDay", "triageMaxAgeDays"];
+const SETTING_NAMES = ["maxParallelSessions", "budgetFiveHour", "budgetSevenDay", "triageMaxAgeDays", "waitingCapTriage", "waitingCapWork"];
 const ROLE_NAMES = ["triage", "implement", "review"];
 const SAFE: Record<string, true | ((value: unknown, err: (message: string) => void) => void)> = {
   level: true,

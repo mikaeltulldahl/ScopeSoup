@@ -16,7 +16,8 @@ import { openStore } from "../store/store.ts";
 import type { Store } from "../store/store.ts";
 import { compareItems, readyItems } from "./candidates.ts";
 import { backoffMs } from "./cycle.ts";
-import { openDrafts } from "./drafts.ts";
+import { fileDrafts, openDrafts } from "./drafts.ts";
+import { readPacing } from "./pacing.ts";
 import type { MergeQueue } from "./mergeQueue.ts";
 import { createLoop } from "./loop.ts";
 import { workspaceKey } from "./paths.ts";
@@ -729,7 +730,7 @@ test("after a restart nothing starts until Start agents: the loop comes up pause
   await loop.stop();
 });
 
-test("the budget: over the reserve nothing starts, and the event says until when", async () => {
+test("the budget: at it nothing starts, and the event says until when", async () => {
   const w = world(config({ rules: STAGE1 }), [item("1")]);
   w.store.addUsageSample(usage(0.85, 0.1));
   const report = await w.run();
@@ -743,9 +744,9 @@ test("the budget: over the reserve nothing starts, and the event says until when
 
 });
 
-test("at level 1 with the default config the stop at the 20 % reserve is always on: no session starts when less than 20 % is left", async () => {
+test("at level 1 with the default config the stop at the 80 % budget is always on: no session starts when a window is at 80 %", async () => {
   const cfg = config({ level: 1 });
-  assert.deepEqual([cfg.settings.reserveFiveHour.value, cfg.settings.reserveSevenDay.value], [0.2, 0.2], "the default keeps 20 % of each window");
+  assert.deepEqual([cfg.settings.budgetFiveHour.value, cfg.settings.budgetSevenDay.value], [0.8, 0.8], "the default budget is 80 % of each window's even pace");
   const tight = world(cfg, [item("1")]);
   tight.store.addUsageSample(usage(0.85, 0.1));
   const report = await tight.run();
@@ -762,8 +763,8 @@ test("at level 1 with the default config the stop at the 20 % reserve is always 
   assert.deepEqual(room.runner.requests.map((request) => request.role), ["triage"]);
 });
 
-test("the budget: the reserve is the one usage control; a week used ahead of an even pace still starts work", async () => {
-  // Half the week gone, 60 % used: inside the reserve, but ahead of an even pace.
+test("the budget: with nothing running one session starts (the kick), even with a week used ahead of its pace line", async () => {
+  // Half the week gone, 60 % used: under the budget, but over the pace line (40 %).
   const without = world(config({ rules: STAGE1 }), [item("1")]);
   without.store.addUsageSample(usage(0.1, 0.6));
   await without.run();
@@ -1709,9 +1710,9 @@ test("persistence: each slider position sets the attempts per step and the fix r
   }
 });
 
-test("reserve: each window has its own reserve, and the scheduler uses each for its own window", async () => {
+test("budget: each window has its own budget, and the scheduler stops at each for its own window", async () => {
   for (const [five, week] of [[0, 0], [0.15, 0.4], [0.5, 0.05], [0.05, 0.5]] as [number, number][]) {
-    const settings = { reserveFiveHour: { value: five, reason: "test" }, reserveSevenDay: { value: week, reason: "test" } };
+    const settings = { budgetFiveHour: { value: 1 - five, reason: "test" }, budgetSevenDay: { value: 1 - week, reason: "test" } };
     const starts = async (fiveUsed: number, weekUsed: number): Promise<boolean> => {
       const w = world(config({ rules: STAGE1, settings }), [item("1")]);
       w.store.addUsageSample(usage(fiveUsed, weekUsed));
@@ -5327,4 +5328,90 @@ test("GitHub: a handed-over change a person merged is left to the host to close"
   w.runner.main = MAIN_MERGED;
   await w.run();
   assert.equal(w.closes.length, 0);
+});
+
+// --- Pacing and the waiting caps (decision 132) ---
+
+const CEILING_4 = { maxParallelSessions: { value: 4, reason: "test" } };
+
+test("the pace: under the pace line up to the ceiling starts; close to it fewer start, and the Usage tab is told how many and why", async () => {
+  // 5-hour window: 3 h of 5 gone, the line by a 20-minute session's end is 0.8 * 200/300 = 53 %. A session's default use is 5 %.
+  const room = world(config({ settings: CEILING_4 }), [item("1"), item("2"), item("3"), item("4"), item("5")]);
+  room.store.addUsageSample(usage(0.1, 0.1));
+  assert.equal((await room.run()).started.length, 4);
+  const roomy = readPacing(room.store)!;
+  assert.deepEqual([roomy.running, roomy.ceiling, roomy.cap, roomy.why], [{ triage: 4, implement: 0, review: 0 }, 4, 4, "the ceiling is 4 sessions"]);
+
+  // 45 % used: the first starts (nothing ran: the kick), a second would end over the line.
+  const tight = world(config({ settings: CEILING_4 }), [item("1"), item("2"), item("3")]);
+  tight.store.addUsageSample(usage(0.45, 0.1));
+  assert.equal((await tight.run()).started.length, 1);
+  const state = readPacing(tight.store)!;
+  assert.deepEqual([state.cap, state.ceiling], [1, 4]);
+  assert.match(state.why, /^the 5-hour window is at 45 %; one more session would put it at about 55 % by .*, over its pace line \(53 % then\)$/);
+  // Nothing more starts in the next tick, and the status line says the pace holds it.
+  const again = await tight.run();
+  assert.equal(again.started.length, 0);
+  assert.match(again.idle ?? "", /1 session is running; no more sessions start for now: the 5-hour window is at 45 %/);
+  // A higher budget raises the line: a second starts.
+  const fast = world(config({ settings: { ...CEILING_4, budgetFiveHour: { value: 1.5, reason: "demo day" } } }), [item("1"), item("2"), item("3")]);
+  fast.store.addUsageSample(usage(0.45, 0.1));
+  assert.equal((await fast.run()).started.length, 3);
+});
+
+test("the pace: a role's expected use is the median of its recent sessions as the readings attribute them", async () => {
+  // Three finished triages that each used 10 % of the 5-hour window in 20 minutes: a triage is expected to use 10 %, not 5 %.
+  const w = world(config({ settings: CEILING_4 }), [item("1"), item("2"), item("3")]);
+  for (let n = 0; n < 3; n++) {
+    const start = T0 - (3 - n) * 3600_000;
+    w.store.put<Session>({ ref: { host: "scopesoup", kind: "session", id: `old-${n}` }, role: "triage", subject: { host: "fake", kind: "work", id: "9" }, status: "succeeded", attempt: 1, startedAt: new Date(start).toISOString(), finishedAt: new Date(start + 20 * 60_000).toISOString() }, "test", new Date(T0).toISOString());
+    w.store.addUsageSample({ at: new Date(start - 60_000).toISOString(), status: "allowed", windows: [{ kind: "five_hour", utilization: 0.05 + n * 0.1, resetsAt: new Date(T0 + 2 * 3600_000).toISOString() }] });
+    w.store.addUsageSample({ at: new Date(start + 21 * 60_000).toISOString(), status: "allowed", windows: [{ kind: "five_hour", utilization: 0.15 + n * 0.1, resetsAt: new Date(T0 + 2 * 3600_000).toISOString() }] });
+  }
+  // 30 % used now: with the default 5 % three more would fit beside the kick; at 10 % each, 0.3 + 0.1 + 0.1 = 50 % fits and a third does not.
+  w.store.addUsageSample(usage(0.3, 0.1));
+  assert.equal((await w.run()).started.length, 2);
+});
+
+test("the waiting caps: new triage stops while 2 things wait for a person, new work at 5; work under way goes on", async () => {
+  const draft = (n: number) => ({ title: `Draft ${n}`, description: `Something ${n}.`, verification: "It works." });
+  const w = world(config({ settings: CEILING_4 }), [item("1"), item("2")]);
+  w.store.addUsageSample(usage(0.1, 0.1));
+  fileDrafts(w.store, { host: "fake", kind: "work", id: "8" }, "reviewer", [draft(1), draft(2)], "test", new Date(T0).toISOString());
+  const held = await w.run();
+  assert.equal(held.started.length, 0);
+  assert.match(held.idle ?? "", /new triage waits: 2 things wait for you \(it starts below 2\)/);
+  assert.deepEqual([readPacing(w.store)?.waiting, readPacing(w.store)?.waits], [2, ["new triage waits: 2 things wait for you (it starts below 2)"]]);
+
+  // Under the caps triage and the first implement step go on.
+  const one = world(config({ settings: CEILING_4 }), [item("1")]);
+  one.store.addUsageSample(usage(0.1, 0.1));
+  fileDrafts(one.store, { host: "fake", kind: "work", id: "8" }, "reviewer", [draft(1)], "test", new Date(T0).toISOString());
+  await one.run();
+  await step(one, "1", "succeeded", TRIAGE_OK);
+  // Item 1's first implement step started (1 waiting is under 5). Five drafts now: no first implement step of a new Item starts.
+  assert.deepEqual(one.runner.requests.map((request) => request.role), ["triage", "implement"]);
+
+  const work = world(config({ settings: { ...CEILING_4, waitingCapTriage: { value: 9, reason: "test" } } }), [item("1")]);
+  work.store.addUsageSample(usage(0.1, 0.1));
+  await work.run();
+  fileDrafts(work.store, { host: "fake", kind: "work", id: "8" }, "reviewer", [1, 2, 3, 4, 5].map(draft), "test", new Date(T0).toISOString());
+  const waits = await step(work, "1", "succeeded", TRIAGE_OK);
+  assert.deepEqual(work.runner.requests.map((request) => request.role), ["triage"]);
+  assert.match(waits.idle ?? "", /new work waits: 5 things wait for you \(it starts below 5\)/);
+  // A size label skips triage, which is new work too.
+  const sized = world(config({ settings: { ...CEILING_4, waitingCapTriage: { value: 9, reason: "test" } } }), [item("1", { labels: ["size:small"] })]);
+  sized.store.addUsageSample(usage(0.1, 0.1));
+  fileDrafts(sized.store, { host: "fake", kind: "work", id: "8" }, "reviewer", [1, 2, 3, 4, 5].map(draft), "test", new Date(T0).toISOString());
+  assert.equal((await sized.run()).started.length, 0);
+
+  // Work under way goes on: review's findings go back to the implementor with 5 things waiting.
+  const under = world(config({ rules: STAGE1 }), [item("1")]);
+  under.store.addUsageSample(usage(0.1, 0.1));
+  await under.run();
+  await step(under, "1", "succeeded", TRIAGE_OK);
+  await step(under, "1", "succeeded", IMPLEMENT_OK);
+  fileDrafts(under.store, { host: "fake", kind: "work", id: "8" }, "reviewer", [1, 2, 3, 4, 5].map(draft), "test", new Date(T0).toISOString());
+  await step(under, "1", "succeeded", REVIEW_CHANGES);
+  assert.deepEqual(under.runner.requests.map((request) => request.role), ["triage", "implement", "review", "implement"]);
 });

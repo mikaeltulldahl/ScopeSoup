@@ -33,7 +33,7 @@ import { loadJobs, saveJobs } from "../orchestrator/jobs.ts";
 import { fileDrafts } from "../orchestrator/drafts.ts";
 import { workspaceKey } from "../orchestrator/paths.ts";
 import { allowancePlans } from "../orchestrator/allowance.ts";
-import { usageReserve } from "../orchestrator/tick.ts";
+import { allowanceReserve, usageBudget } from "../orchestrator/tick.ts";
 import { demoUsage } from "./demoUsage.ts";
 import { allowanceDemo } from "../orchestrator/providers/index.ts";
 import { sessionResultKey } from "../orchestrator/runner.ts";
@@ -551,7 +551,7 @@ export async function writeDemoConfig(dir: string, settings: MetaSettings = meta
   execFileSyncRetrying("git", ["init", "--quiet", "-b", "main", repo], { windowsHide: true });
   // This machine's own settings, and the project's shared ones on the meta ref.
   const own = {
-    version: 2,
+    version: 3,
     repoPath: "repo",
     workspacesDir: "workspaces",
     machineName: "demo",
@@ -561,8 +561,8 @@ export async function writeDemoConfig(dir: string, settings: MetaSettings = meta
     ownClone: join(dir, "tidepool"),
     settings: {
       maxParallelSessions: { value: 2, reason: "Two sessions at a time on the demo machine." },
-      reserveFiveHour: { value: 0.1, reason: "The demo shares the usage window with nobody." },
-      reserveSevenDay: { value: 0.1, reason: "The demo shares the usage window with nobody." },
+      budgetFiveHour: { value: 0.9, reason: "The demo shares the usage window with nobody." },
+      budgetSevenDay: { value: 0.9, reason: "The demo shares the usage window with nobody." },
     },
     // The plan's monthly allowance of the provider that triage runs on.
     ...allowanceDemo.machine(new Date()),
@@ -974,7 +974,7 @@ async function main(): Promise<void> {
     },
     planning: () => {
       const loaded = loader.load().config;
-      return loaded ? { bugLabels: loaded.bugLabels, plannedSessions: loaded.settings.maxParallelSessions.value, reserve: usageReserve(loaded), allowances: allowancePlans(loaded, usageReserve(loaded).seven_day), level: loaded.level, ...(loaded.resources ? { resources: loaded.resources } : {}) } : { bugLabels: ["bug"] };
+      return loaded ? { bugLabels: loaded.bugLabels, plannedSessions: loaded.settings.maxParallelSessions.value, budget: usageBudget(loaded), allowances: allowancePlans(loaded, allowanceReserve(loaded)), level: loaded.level, ...(loaded.resources ? { resources: loaded.resources } : {}) } : { bugLabels: ["bug"] };
     },
     chat: createDemoChat(store, configFile, dir, undefined, settings),
     assumptions: [demoAssumptionHost(store)],

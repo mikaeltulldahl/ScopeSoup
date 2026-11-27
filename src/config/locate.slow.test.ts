@@ -36,7 +36,7 @@ function configFile(folder: string, raw: Record<string, unknown>): string {
   const dir = join(root, folder);
   mkdirSync(dir, { recursive: true });
   const file = join(dir, "scopesoup.config.json");
-  writeFileSync(file, JSON.stringify({ version: 2, machineName: "laptop", ...raw }, null, 2));
+  writeFileSync(file, JSON.stringify({ version: 3, machineName: "laptop", ...raw }, null, 2));
   return file;
 }
 

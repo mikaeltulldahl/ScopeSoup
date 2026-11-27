@@ -156,14 +156,14 @@ test("GET /api/usage attributes readings to sessions, reads tokens from streams,
   own.put(session(2, subject, { role: "review", startedAt: at(-60), finishedAt: at(0), streamPath: join(streams, "b.ndjson") }), "runner", T0);
   own.addUsageSample({ at: at(-60), windows: [{ kind: "five_hour", utilization: 0.1, resetsAt: at(120) }] });
   own.addUsageSample({ at: T0, windows: [{ kind: "five_hour", utilization: 0.5, resetsAt: at(120) }] });
-  const usage = createServer({ store: own, now: () => new Date(T0), port: 0, planning: () => ({ bugLabels: ["bug"], reserve: { five_hour: 0.1, seven_day: 0.2 } }) });
+  const usage = createServer({ store: own, now: () => new Date(T0), port: 0, planning: () => ({ bugLabels: ["bug"], budget: { five_hour: 0.9, seven_day: 0.8 } }) });
   const url = (await usage.start()).url;
   try {
     const view = (await (await fetch(`${url}/api/usage?span=5h`)).json()) as UsageView;
     assert.deepEqual([view.span, view.sessions, view.withTokens], ["5h", 2, 2]);
     const five = view.windows.find((window) => window.kind === "five_hour")!;
-    // Now: the newest reading with the status line's forecast (0.4 an hour from 0.5: full in 75 min, before the reset), the reserve.
-    assert.deepEqual([five.current?.utilization, five.current?.resetsAt, five.current?.forecast?.outcome, five.reserve], [0.5, at(120), "used_up", 0.1]);
+    // Now: the newest reading with the status line's forecast (0.4 an hour from 0.5: full in 75 min, before the reset), the budget.
+    assert.deepEqual([five.current?.utilization, five.current?.resetsAt, five.current?.forecast?.outcome, five.budget], [0.5, at(120), "used_up", 0.9]);
     assert.deepEqual(five.forecastLine.map((point) => [point.at, point.value]), [[T0, 0.5], [at(75), 1], [at(120), 1]]);
     assert.equal(five.plot.firstAt, at(-60));
     assert.ok(Math.abs((five.plot.points.at(-1)!.parts.implement ?? 0) - 0.3) < 1e-3);
@@ -189,7 +189,7 @@ test("a window whose reset has passed with no newer reading shows as reset on th
     const five = view.windows.find((window) => window.kind === "five_hour")!;
     assert.deepEqual([five.current?.reset, five.current?.utilization, five.forecastLine], [true, 0, []]);
     assert.equal(five.current?.forecast, undefined);
-    const decision = decide({ sample: loadSnapshot(own).usage!, now: T0, runningSessions: 0, reserve: { five_hour: 0.1, seven_day: 0.2 } });
+    const decision = decide({ sample: loadSnapshot(own).usage!, now: T0, runningSessions: 0, budget: { five_hour: 0.9, seven_day: 0.8 } });
     assert.equal(decision.allow, true);
   } finally {
     own.close();

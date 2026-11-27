@@ -82,7 +82,7 @@ import { createQueueDriver, githubCiRefusal } from "./orchestrator/queueDriver.t
 import { remoteMismatch } from "./orchestrator/remote.ts";
 import { createRunner } from "./orchestrator/runner.ts";
 import { allowancePlans } from "./orchestrator/allowance.ts";
-import { usageReserve } from "./orchestrator/tick.ts";
+import { allowanceReserve, usageBudget } from "./orchestrator/tick.ts";
 import type { Runner } from "./orchestrator/runner.ts";
 import type { AnswerWrite, Host, WorkPatch } from "./ports/host.ts";
 import { createServer } from "./server/server.ts";
@@ -439,8 +439,8 @@ async function main(): Promise<void> {
               ? {
                   bugLabels: loaded.bugLabels,
                   plannedSessions: loaded.settings.maxParallelSessions.value,
-                  reserve: usageReserve(loaded),
-                  allowances: allowancePlans(loaded, usageReserve(loaded).seven_day),
+                  budget: usageBudget(loaded),
+                  allowances: allowancePlans(loaded, allowanceReserve(loaded)),
                   level: loaded.level,
                   // Looked up only for a pick: it searches PATH for each role's program.
                   pickNeeds: () => pickNeeds(loaded, programFound),

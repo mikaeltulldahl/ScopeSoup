@@ -79,7 +79,7 @@ test("hardBudgetStop and claims in an old file load, are dropped by the migratio
   }, BASE);
   if (!result.ok) return assert.fail(result.errors.join("\n"));
   assert.equal(result.notices.length, 2);
-  assert.match(result.notices.join("\n"), /^rules\.hardBudgetStop was dropped: from level 1 the usage stop at settings\.reserveFiveHour and settings\.reserveSevenDay is always on/m);
+  assert.match(result.notices.join("\n"), /^rules\.hardBudgetStop was dropped: from level 1 Scope Soup paces to settings\.budgetFiveHour and settings\.budgetSevenDay/m);
   assert.match(result.notices.join("\n"), /^rules\.claims was dropped: Scope Soup claims the Items it starts by itself .* fixed expiry of 120 minutes/m);
   assert.equal("rules" in result.config, false);
   // Even values the earlier loader refused (no reason, an expiry of 0) only give the notice now.
@@ -153,7 +153,7 @@ test("the loader returns notices only on the read that replaces the configuratio
   const first = loader.load();
   assert.equal(first.changed, true);
   assert.equal(first.notices?.length, 2);
-  assert.match(first.notices?.[0] ?? "", /was migrated from format 0 to format 2/);
+  assert.match(first.notices?.[0] ?? "", /was migrated from format 0 to format 3/);
   assert.match(first.notices?.[1] ?? "", /rules\.oneCoordinator was dropped/);
   const second = loader.load();
   assert.equal(second.changed, false);
@@ -247,7 +247,7 @@ test("problems are reported together, in words", () => {
     repoPath: "/srv/clone",
     colour: "red",
     rules: { hardBudgetStop: { on: true }, noSuchRule: { on: true, reason: "x" } },
-    settings: { maxParallelSessions: { value: 1.5, reason: "x" }, reserveFiveHour: { value: 0.1 } },
+    settings: { maxParallelSessions: { value: 1.5, reason: "x" }, budgetFiveHour: { value: 0.9 } },
     roles: { review: { permissionMode: "bypassPermissions" } },
   });
   assert.match(errors, /project must be a non-empty string/);
@@ -320,7 +320,7 @@ test("within and overlaps compare whole path segments", () => {
 });
 
 test("a bad reload keeps the last good configuration and reports the error", () => {
-  let text = JSON.stringify({ version: 2, machineName: "laptop-a", repoPath: "/srv/clone" });
+  let text = JSON.stringify({ version: 3, machineName: "laptop-a", repoPath: "/srv/clone" });
   let shared = JSON.stringify({ project: "one" });
   const loader = createConfigLoader("/srv/scopesoup/scopesoup.config.json", () => text, { shared: sharedText(() => shared) });
 
@@ -334,7 +334,7 @@ test("a bad reload keeps the last good configuration and reports the error", () 
   assert.equal(second.config?.project, "one");
   assert.match(second.error ?? "", /not valid JSON/);
 
-  text = JSON.stringify({ version: 2, machineName: "laptop-a", repoPath: "/srv/clone" });
+  text = JSON.stringify({ version: 3, machineName: "laptop-a", repoPath: "/srv/clone" });
   shared = JSON.stringify({ project: "" });
   const third = loader.load();
   assert.equal(third.config?.project, "one");
@@ -399,14 +399,15 @@ test("host: mistakes are refused in words", () => {
   assert.match(bad({ ...base, host: { kind: "metaBranch", repo: "owner/name" } }), /unknown key "repo" for kind "metaBranch"/);
 });
 
-test("reserveFiveHour and reserveSevenDay: each from 0 to 0.9, 20 % by default; the removed budgetReserve is an unknown key", () => {
-  const own = { version: 2, project: "p", machineName: "laptop-a", repoPath: "/srv/clone" };
+test("budgetFiveHour and budgetSevenDay: each from 0 to 2, 80 % by default; the waiting caps 2 and 5; the removed reserves are unknown keys", () => {
+  const own = { version: 3, project: "p", machineName: "laptop-a", repoPath: "/srv/clone" };
   const defaults = good(own).settings;
-  assert.deepEqual([defaults.reserveFiveHour.value, defaults.reserveSevenDay.value], [0.2, 0.2]);
-  assert.match(bad({ ...own, settings: { reserveFiveHour: { value: 0.95, reason: "x" } } }), /reserveFiveHour\.value/);
-  assert.match(bad({ ...own, settings: { budgetReserve: { value: 3, reason: "x" } } }), /unknown key "budgetReserve"/);
-  const set = good({ ...own, settings: { reserveFiveHour: { value: 0.15, reason: "x" }, reserveSevenDay: { value: 0.9, reason: "x" } } });
-  assert.deepEqual([set.settings.reserveFiveHour.value, set.settings.reserveSevenDay.value], [0.15, 0.9]);
+  assert.deepEqual([defaults.budgetFiveHour.value, defaults.budgetSevenDay.value, defaults.waitingCapTriage.value, defaults.waitingCapWork.value], [0.8, 0.8, 2, 5]);
+  assert.match(bad({ ...own, settings: { budgetFiveHour: { value: 2.05, reason: "x" } } }), /budgetFiveHour\.value/);
+  assert.match(bad({ ...own, settings: { waitingCapWork: { value: 0, reason: "x" } } }), /waitingCapWork\.value/);
+  assert.match(bad({ ...own, settings: { reserveFiveHour: { value: 0.2, reason: "x" } } }), /unknown key "reserveFiveHour"/);
+  const set = good({ ...own, settings: { budgetFiveHour: { value: 1.5, reason: "x" }, budgetSevenDay: { value: 0, reason: "x" } } });
+  assert.deepEqual([set.settings.budgetFiveHour.value, set.settings.budgetSevenDay.value], [1.5, 0]);
 });
 
 test("role models default to opus for triage and review and sonnet for implement; a model in roles wins", () => {
@@ -540,14 +541,14 @@ test("migration: a file that sets level wins; its dryRun is dropped by the migra
 });
 
 test("a number in settings needs no reason: without one it loads with an empty reason; a reason that is not text is refused", () => {
-  const config = good({ project: "demo", machineName: "laptop-a", repoPath: "repo", settings: { maxParallelSessions: { value: 2 }, reserveSevenDay: { value: 0.4, reason: " Room. " } } });
+  const config = good({ project: "demo", machineName: "laptop-a", repoPath: "repo", settings: { maxParallelSessions: { value: 2 }, budgetSevenDay: { value: 0.4, reason: " Room. " } } });
   assert.deepEqual(config.settings.maxParallelSessions, { value: 2, reason: "" });
-  assert.deepEqual(config.settings.reserveSevenDay, { value: 0.4, reason: "Room." });
-  assert.match(bad({ project: "demo", machineName: "laptop-a", repoPath: "repo", settings: { reserveSevenDay: { value: 0.4, reason: 3 } } }), /settings\.reserveSevenDay\.reason must be text/);
+  assert.deepEqual(config.settings.budgetSevenDay, { value: 0.4, reason: "Room." });
+  assert.match(bad({ project: "demo", machineName: "laptop-a", repoPath: "repo", settings: { budgetSevenDay: { value: 0.4, reason: 3 } } }), /settings\.budgetSevenDay\.reason must be text/);
 });
 
 test("setupCommand and setupWatch are optional keys of format 1, checked for their form", () => {
-  const core = { version: 2, project: "demo", machineName: "laptop-a", repoPath: "/srv/clone" };
+  const core = { version: 3, project: "demo", machineName: "laptop-a", repoPath: "/srv/clone" };
   const plain = good(core);
   assert.equal(plain.setupCommand, undefined);
   assert.equal(plain.setupWatch, undefined);
@@ -583,7 +584,7 @@ test("media: images stay on this machine and are kept unless the project says ot
 });
 
 test("review.shouldFindings: \"fix\" (the default) or \"draft\"; anything else is refused with what it may be", () => {
-  const base = { project: "synthetic", machineName: "laptop-a", repoPath: "/srv/clone", version: 2 };
+  const base = { project: "synthetic", machineName: "laptop-a", repoPath: "/srv/clone", version: 3 };
   const read = (review: unknown) => validateConfig({ ...base, review }, "/srv/scopesoup");
   const fine = read({ shouldFindings: "draft" });
   assert.deepEqual(fine.ok ? fine.config.review : fine.errors, { shouldFindings: "draft" });
@@ -594,7 +595,7 @@ test("review.shouldFindings: \"fix\" (the default) or \"draft\"; anything else i
 });
 
 test("labels.aiGenerated: false (the default), true (\"ai-generated\") or a label name; anything else is refused", () => {
-  const base = { project: "synthetic", machineName: "laptop-a", repoPath: "/srv/clone", version: 2 };
+  const base = { project: "synthetic", machineName: "laptop-a", repoPath: "/srv/clone", version: 3 };
   const read = (labels: unknown) => validateConfig({ ...base, labels }, "/srv/scopesoup");
   assert.deepEqual((read({ aiGenerated: true }) as { config: { labels: unknown } }).config.labels, { aiGenerated: "ai-generated" });
   assert.deepEqual((read({ aiGenerated: " by-ai " }) as { config: { labels: unknown } }).config.labels, { aiGenerated: "by-ai" });

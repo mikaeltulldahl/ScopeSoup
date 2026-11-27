@@ -11,7 +11,7 @@ import { KEYS } from "../store/keys.ts";
 import type { Level, ProjectConfig } from "../config/types.ts";
 import { levelName, mediaShared } from "../config/types.ts";
 import { mediaPromptText } from "../core/media.ts";
-import type { Change, LinkType, RecordedAnswer, Ref, RepoLabel, Session, SessionRole, UsageWindowKind, WorkItem } from "../model/types.ts";
+import type { Change, LinkType, RecordedAnswer, Ref, RepoLabel, Session, SessionRole, WorkItem } from "../model/types.ts";
 import { labelsPromptText } from "../model/labels.ts";
 import { refKey } from "../model/types.ts";
 import { providerFor } from "./providers/index.ts";
@@ -46,6 +46,8 @@ import { itemTextHash } from "../core/answerReuse.ts";
 import { loadSlots } from "./slots.ts";
 import { dropOverturns, readOverturns } from "./overturns.ts";
 import { setupPromptLine } from "./setup.ts";
+import { pacer, runningByRole, usageBudget, waitingCaps, waitingForPerson, writePacing } from "./pacing.ts";
+import { waitingCapWait } from "../core/waitingCaps.ts";
 import { plural } from "../model/plural.ts";
 
 export type { TickDeps } from "./context.ts";
@@ -79,21 +81,19 @@ const DELETED = "Questions a person deleted on the host (do not ask them again; 
 
 export { CLAIM_EXPIRY_MINUTES };
 
-/** The share of each usage window kept for people's own use: the usage stop, for the tick and for a chat turn. */
-export function usageReserve(config: ProjectConfig): Record<UsageWindowKind, number> {
-  return {
-    five_hour: config.settings.reserveFiveHour.value,
-    seven_day: config.settings.reserveSevenDay.value,
-  };
+export { usageBudget };
+
+/** The share of a monthly allowance kept for people's own use: what the weekly budget leaves of the week's even pace. */
+export function allowanceReserve(config: ProjectConfig): number {
+  return Math.max(0, 1 - usageBudget(config).seven_day);
 }
 
 /**
  * The usage check for a session of `role`: a role on a provider that counts a monthly allowance is paced by it (`allowance.ts`),
- * every other role by Claude's windows.
+ * every other role by Claude's windows (the stop at the budget; the pace is asked at dispatch, `pacing.ts`).
  */
 export function usageDecision(store: Store, config: ProjectConfig, role: SessionRole, at: string, running: number): UsageCheckDecision {
-  const reserve = usageReserve(config);
-  return allowanceDecision(store, config, role, at, reserve.seven_day) ?? decide({ sample: store.latestUsageSample(), now: at, reserve, runningSessions: running });
+  return allowanceDecision(store, config, role, at, allowanceReserve(config)) ?? decide({ sample: store.latestUsageSample(), now: at, budget: usageBudget(config), runningSessions: running });
 }
 
 /** Writes an event for each number changed since the last tick, and for a change of level. */
@@ -787,7 +787,16 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
   // The roles paused (or stopped) at this level, and how many steps wait for each: named first in the idle reason.
   const off: SessionRole[] = [];
   const waitsFor: Record<SessionRole, number> = { triage: 0, implement: 0, review: 0 };
+  // The pace and what waits for a person (decision 132): read once per tick, kept for the Usage tab when the tick ends.
+  const pace = pacer(store, config, at);
+  const waitingNow = waitingForPerson(store, store.list<WorkItem>("work"), jobs);
+  const caps = waitingCaps(config);
+  const capWaits = new Set<string>();
   const finish = (): TickReport => {
+    const ceiling = config.settings.maxParallelSessions.value;
+    const fit = pace.fits(ceiling);
+    writePacing(store, { at, running: runningByRole(store), ceiling, cap: fit.count, why: fit.reason, waiting: waitingNow, caps, waits: [...capWaits] });
+    reasons.push(...capWaits);
     // A blocker this tick closed (the store has it at once) frees what waited for it in this tick.
     noteBlockersChanged(ctx, seq0);
     report.running = running;
@@ -938,7 +947,7 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
     // From level 1 the stop at the reserve is always on (nothing is dispatched at level 0).
     usageDecision(store, config, role, at, running);
   // Paid extra usage is Claude's: it stops what runs on any provider.
-  const first = decide({ sample: store.latestUsageSample(), now: at, reserve: usageReserve(config), runningSessions: running });
+  const first = decide({ sample: store.latestUsageSample(), now: at, budget: usageBudget(config), runningSessions: running });
   if (first.stopRunning) {
     const stopped = running > 0 ? runner.stopAll(first.reason) : 0;
     if (stopped > 0) ctx.commit("orchestrator.budget_stop", `${first.reason} Stopped ${plural(stopped, "running session")}.`);
@@ -982,6 +991,13 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
       if (decision.resumeAt && (!report.wakeAt || decision.resumeAt < report.wakeAt)) report.wakeAt = decision.resumeAt;
       break;
     }
+    // The pace (decision 132): one more session only while the windows stay under their pace lines by its end. Work under way is
+    // first in line, so a refusal holds what comes after it too. The line rises with time: a later tick may start it.
+    const paced = pace.check(step);
+    if (!paced.allow) {
+      reasons.push(`no more sessions start for now: ${paced.reason}`);
+      break;
+    }
 
     // The front of the line. A waiting Item whose implement step is next, with its triage out of date (the paths it named
     // changed on main, its text was edited, a blocker finished, or it is older than triageMaxAgeDays), has its triage again.
@@ -1008,6 +1024,15 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
         reasons.push(`${entry.item.ref.id} ${sameFilesWords(wait.waitsFor, wait.mayConflict)}`);
         continue;
       }
+    }
+
+    // Don't outrun the person (decision 132): new triage, and new work (a first implement step), wait while too much waits for a person.
+    // Work under way, its fix rounds, the steps an answer resumes and a person's own pick go on; the next entry may start.
+    const newKind = personAsked(entry.job, step) ? null : !entry.job ? (step === "triage" ? "triage" : "work") : step === "implement" && firstImplement(entry.job) ? "work" : null;
+    const capWait = newKind ? waitingCapWait(newKind, waitingNow, caps) : null;
+    if (capWait) {
+      capWaits.add(capWait);
+      continue;
     }
 
     const why = again
@@ -1172,6 +1197,7 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
     delete target.resume;
     delete target.answerArrived;
     running++;
+    pace.started(step);
     report.started.push({ item: key, role: step, sessionId: session.ref.id });
     // Said once, when the model changes to the stepped-up one.
     const stepped = chosen?.steppedUp && job.implementModel !== chosen.model ? ` Stepped up to ${chosen.model} after ${chosen.steppedUp.sendBacks} send-backs by review (from ${chosen.steppedUp.from}).` : "";
@@ -1181,4 +1207,9 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
 
   if (running > 0 && report.started.length === 0) reasons.unshift(`${plural(running, "session")} ${running === 1 ? "is" : "are"} running`);
   return finish();
+}
+
+/** The implement step has not begun: no change, no session of it, nothing to resume and no attempt yet. Its start is new work (decision 132). */
+export function firstImplement(job: Job): boolean {
+  return job.step === "implement" && job.head === undefined && !job.implement && job.agentSession === undefined && job.resumeWith === undefined && !job.resume && job.failures === 0 && !job.merge;
 }

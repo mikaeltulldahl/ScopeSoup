@@ -134,7 +134,7 @@ export interface ServerOptions {
   /** The orchestrator's labels, which order the backlog column. Defaults to bug label "bug". */
   /** How sharing the meta ref with the remote stands (kept in memory by main.ts); absent in singleplayer. */
   shareState?: () => ShareState | undefined;
-  planning?: () => { bugLabels: string[]; plannedSessions?: number; level?: number; resources?: ResourceConfig[]; reserve?: Record<UsageWindowKind, number>; allowances?: AllowancePlan[]; pickNeeds?: () => { triage?: string; review?: string; implement?: string } };
+  planning?: () => { bugLabels: string[]; plannedSessions?: number; level?: number; resources?: ResourceConfig[]; budget?: Record<UsageWindowKind, number>; allowances?: AllowancePlan[]; pickNeeds?: () => { triage?: string; review?: string; implement?: string } };
   /** Reads the diff of an item's branch for `GET /api/diff`. Absent in board-only mode. */
   diff?: (ref: Ref) => Promise<DiffView>;
   /** Opens an Item's change, or one of its files, in the person's own diff tool for `POST /api/open-diff` (`src/orchestrator/diffTool.ts`). Absent in board-only mode. */
@@ -2893,7 +2893,7 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
         const snapshot = loadSnapshot(store);
         const plan = options.planning?.();
         if (plan?.plannedSessions !== undefined) snapshot.plannedSessions = plan.plannedSessions;
-        return sendJson(response, 200, buildUsageView(store, snapshot, span, now(), plan?.reserve, plan?.allowances));
+        return sendJson(response, 200, buildUsageView(store, snapshot, span, now(), plan?.budget, plan?.allowances));
       }
       if (path === "/api/history") {
         if (!options.history) return sendJson(response, 200, { now: now().toISOString(), available: false, reason: "Commits show when Scope Soup runs with a project configuration; this board reads no repository." });

@@ -19,10 +19,17 @@ export interface Settings {
   stallTimeoutMinutes: NumberSetting;
   /** Hard limit on one session, whatever it is doing. */
   sessionTimeoutMinutes: NumberSetting;
-  /** Share of the 5-hour window kept for people's own use, 0 to 0.9 (the board sets it in steps of 0.05). */
-  reserveFiveHour: NumberSetting;
-  /** Share of the weekly window kept for people's own use, 0 to 0.9 (the board sets it in steps of 0.05). */
-  reserveSevenDay: NumberSetting;
+  /**
+   * The share of the 5-hour window's even pace Scope Soup may use, 0 to 2 (the board sets it in steps of 0.05): its pace line rises
+   * from 0 at the window's start to this at its reset. Above 1 it paces faster than the window lasts; the provider's limit stops it.
+   */
+  budgetFiveHour: NumberSetting;
+  /** The same for the weekly window. */
+  budgetSevenDay: NumberSetting;
+  /** No new triage starts while this many things wait for a person (asks, drafts, decisions to look at). */
+  waitingCapTriage: NumberSetting;
+  /** No new work (a first implement step) starts while this many things wait for a person. */
+  waitingCapWork: NumberSetting;
   /** Slider 1 to 5 over the failed attempts of one step and the review-and-fix rounds before the item goes to a person; see persistence.ts. */
   persistence: NumberSetting;
   retryBackoffCapSeconds: NumberSetting;
