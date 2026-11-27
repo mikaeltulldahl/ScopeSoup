@@ -162,9 +162,10 @@ function interrupted(ctx: Context, key: string, job: Job, item: WorkItem | null)
 /**
  * The job's Item is closed or gone (decision 5): work whose output would be thrown away is stopped at once. Its step session is
  * ended the way Stop ends sessions, and a result it left is not settled. A person's chat turn on the Item is left alone. True while
- * that session is still there (the job waits for its process to exit); false once there is none, with the session forgotten.
+ * that session is still there (the job waits for its process to exit); false once there is none, with the session forgotten, or, with
+ * `takeEnded`, a session that ended already left to be settled.
  */
-function stopForClosed(ctx: Context, key: string, job: Job, item: WorkItem | null): boolean {
+function stopForClosed(ctx: Context, key: string, job: Job, item: WorkItem | null, takeEnded: boolean): boolean {
   const { store, runner } = ctx.deps;
   const isLive = (each: Session): boolean => !OVER.includes(each.status) && !each.finishedAt;
   const own = job.sessionId ? store.get<Session>({ host: "scopesoup", kind: "session", id: job.sessionId }) : undefined;
@@ -176,6 +177,7 @@ function stopForClosed(ctx: Context, key: string, job: Job, item: WorkItem | nul
     const after = store.get<Session>(session.ref);
     if (after && isLive(after)) return true;
   } else if (own && job.sessionId) {
+    if (takeEnded) return false;
     ctx.commit("orchestrator.result_dropped", `${item ? `${item.ref.id} is ${item.state}` : `${key} is no longer in the store`}: the result of its ${own.role} session ${own.ref.id} is not taken.`, key, { step: job.step });
   }
   delete job.interrupt;
@@ -522,9 +524,8 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
     const over = !item || item.state === "done" || item.state === "abandoned" || (job.merged !== undefined && item.merged?.reopened !== undefined);
     // Closing an Item ends everything it owns (decision 5): its step session is stopped at once and its result not taken; the job
     // closes below, once that session is gone. Done at the implement step is the usual end (the session merged, and the host closed
-    // the Item): that session finishes, and what it said (drafts, questions about other Items) is kept.
-    const ownMerge = item?.state === "done" && job.step === "implement";
-    if (over && !ownMerge && stopForClosed(ctx, key, job, item)) {
+    // the Item): when that session is over already, what it said (drafts, questions about other Items) is still taken.
+    if (over && stopForClosed(ctx, key, job, item, item?.state === "done" && job.step === "implement")) {
       running++;
       continue;
     }
