@@ -53,6 +53,8 @@ export interface RefGit {
   deleteRef(ref: string, sha: string): Promise<void>;
   /** Drops the stash entry with this sha, after reading its place again; false when it moved meanwhile (nothing dropped). */
   dropStash(sha: string): Promise<boolean>;
+  /** The remote's main as last fetched: a ref kept while main was elsewhere is judged again (its work may have landed since, #238). */
+  mainTip?(): Promise<string | null>;
 }
 
 /** A job of this machine (or a live session) on an Item: what it holds is never swept. */
@@ -70,7 +72,7 @@ export interface SweepDeps {
 }
 
 type Verdict = "kept" | "unjudged" | "failed";
-type Judged = Record<string, { verdict: Verdict; at: string }>;
+type Judged = Record<string, { verdict: Verdict; at: string; main?: string }>;
 
 function loadJudged(store: Store): Judged {
   try {
@@ -107,11 +109,17 @@ export async function sweepLeftovers(deps: SweepDeps): Promise<{ removed: number
   }
 
   const judged = loadJudged(store);
+  let tip: string | null = null;
+  try {
+    tip = (await git.mainTip?.()) ?? null;
+  } catch {
+    tip = null;
+  }
   let removed = 0;
   let kept = 0;
   /** Writes the event and the verdict in one transaction; a verdict of null forgets the ref. */
   const record = (id: string, verdict: Verdict | null, kind: string, item: string, data: Record<string, unknown>): void => {
-    if (verdict) judged[id] = { verdict, at };
+    if (verdict) judged[id] = { verdict, at, ...(verdict === "kept" && tip ? { main: tip } : {}) };
     else delete judged[id];
     const ids = Object.keys(judged);
     for (const old of ids.slice(0, Math.max(0, ids.length - MAX_JUDGED))) delete judged[old];
@@ -124,7 +132,9 @@ export async function sweepLeftovers(deps: SweepDeps): Promise<{ removed: number
   const judge = async (item: string, ref: string, sha: string, what: string, how: { annotated?: boolean; safe: () => Promise<boolean>; remove: () => Promise<boolean>; restore: string }): Promise<void> => {
     const id = `${ref}@${sha}`;
     const before = judged[id]?.verdict;
-    if (before === "kept" || before === "failed") return;
+    // Kept is judged again only once main moved (the work it holds may have merged since), and not reported again.
+    const again = before === "kept" && !how.annotated && tip !== null && judged[id]?.main !== undefined && judged[id]!.main !== tip;
+    if ((before === "kept" && !again) || before === "failed") return;
     if (how.annotated) {
       kept++;
       record(id, "kept", "orchestrator.leftover_kept", item, { ref, sha, reason: `${what} is an annotated tag, which may be a release or a note someone wants, so it is kept in Scope Soup's clone: git show ${sha}` });
@@ -139,6 +149,11 @@ export async function sweepLeftovers(deps: SweepDeps): Promise<{ removed: number
       return;
     }
     if (!safe) {
+      if (again) {
+        judged[id] = { ...judged[id]!, main: tip! };
+        store.setValue(JUDGED_KEY, JSON.stringify(judged));
+        return;
+      }
       kept++;
       record(id, "kept", "orchestrator.leftover_kept", item, { ref, sha, reason: `${what} holds work found nowhere else (not on the main branch, nor on the Item's branch as pushed), so it is kept in Scope Soup's clone for a person to look at: git show ${sha}` });
       return;
@@ -219,6 +234,10 @@ export function gitRefs(git: Git, repo: string, remote: string, mainBranch: stri
   const names = (text: string): string[] => text.split("\0").filter(Boolean);
   const stashShas = async (): Promise<string[]> => ((await exists("refs/stash")) ? (await run(["log", "-g", "--format=%H", "refs/stash"])).split("\n").map((line) => line.trim()).filter(Boolean) : []);
   return {
+    async mainTip() {
+      const main = `refs/remotes/${remote}/${mainBranch}`;
+      return (await exists(main)) ? (await run(["rev-parse", main])).trim() : null;
+    },
     async refs() {
       const text = await run(["for-each-ref", "--format=%(objectname) %(objecttype) %(refname)", "refs/heads", "refs/tags"]);
       const out = new Map<string, RefInfo>();

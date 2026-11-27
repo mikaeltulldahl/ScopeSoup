@@ -195,6 +195,8 @@ export interface Job {
   sessionStart?: { level: number; mayMerge: boolean };
   /** Sessions of this step left by an earlier run of Scope Soup in a row (`Session.orphaned`); at the attempts' limit a person is asked. */
   orphanRestarts?: number;
+  /** The change merged, and closing its Item on the host failed: each tick tries again until it is closed (#238). */
+  closeOwed?: { sha: string; batch?: number };
   item: Ref;
   workspace: string;
   branch: string;

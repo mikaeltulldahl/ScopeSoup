@@ -628,6 +628,11 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
         ctx.say("orchestrator.main_unread", `Could not tell whether ${job.branch} is merged: ${errorText(error)}`, key);
       }
     }
+    // A merged change whose Item could not be closed on the host (it did not answer): the close is tried again.
+    if (item && job.closeOwed && job.merged !== undefined && !over && !job.sessionId) {
+      await closeMerged(ctx, job, job.closeOwed.sha, job.closeOwed.batch);
+      continue;
+    }
     // Questions or a rewrite that could not be posted for a reason that can change are posted again, without waiting for a person.
     if (repost && !job.sessionId && !over && job.parked?.retry === "post") {
       await retryPost(ctx, job);

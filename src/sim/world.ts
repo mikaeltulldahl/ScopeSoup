@@ -17,7 +17,7 @@ import { tick } from "../orchestrator/tick.ts";
 import { initialState } from "../queue/state.ts";
 import type { PickRequestPort, ScopeSoupServer } from "../server/server.ts";
 import { createServer } from "../server/server.ts";
-import { applyControl, mergeQueueOn, pauseAtStartup, setRolesForTest } from "../store/control.ts";
+import { applyControl, mergeQueueOn, mergeQueueStopped, pauseAtStartup, setRolesForTest } from "../store/control.ts";
 import { KEYS } from "../store/keys.ts";
 import type { Store } from "../store/store.ts";
 import { openStore } from "../store/store.ts";
@@ -504,7 +504,8 @@ export class SimWorld {
         const entry = this.queue.waiting.get(this.key(action.item));
         // The real queue is driven only at level 4 while merging is on (`driveQueue`); a drain under way finishes its batch whatever
         // the level is now. Otherwise it neither merges nor sends back.
-        const inFlight = this.queue.draining && this.queue.inFlight.has(this.key(action.item));
+        // Stop ends a drain at its next step, so a stopped one decides nothing.
+        const inFlight = this.queue.draining && this.queue.inFlight.has(this.key(action.item)) && !mergeQueueStopped(this.store);
         if (!entry || (!inFlight && (this.configNow.level < 4 || !mergeQueueOn(this.store)))) return this.skip();
         this.queue.waiting.delete(this.key(action.item));
         this.queue.inFlight.delete(this.key(action.item));

@@ -152,8 +152,11 @@ export interface MultiResult {
  */
 const NOT_PER_MACHINE = new Set(["B2", "E1", "E3"]);
 const FIRST_MACHINE_ONLY = new Set(["C3", "H3"]);
-/** Rules about letting go of a claim, which takes the remote: not checked while the machine is offline (longer than a single run's "host down"). */
-const OFFLINE_EXCUSED = new Set(["C3", "H3"]);
+/**
+ * Rules about what takes the remote (letting go of a claim; closing a merged Item, C2, #238): not checked while the machine is
+ * offline (longer than a single run's "host down").
+ */
+const OFFLINE_EXCUSED = new Set(["C2", "C3", "H3"]);
 /** Rules that a person's request excuses: one on another machine's board counts too. */
 const EXCUSED_BY_ANY_BOARD = new Set(["C1", "J2", "J3"]);
 

@@ -75,7 +75,9 @@ export const RULES: Rule[] = [
         if (i.w.kind === "blocker" && lane !== "blocked") return `${i.id} waits for ${i.w.on.join(", ")} but is in ${lane}, not Blocked`;
         if (i.w.kind === "person" && i.w.why !== "holds" && i.w.why !== "merge" && lane !== stageLane(i.item, i.job)) return `${i.id}: W is ${wText(i.w)}, so its lane is ${stageLane(i.item, i.job)} (decision 2), but the card is in ${lane}`;
         if (i.w.kind === "nothing" && i.item.state === "done" && lane !== "done") return `${i.id} is done but in ${lane}`;
-        // The words of the cause (decision 3): the two timed waits have their own.
+        // The words of the cause (decision 3): the two timed waits have their own. Read after a tick: between ticks the card is the
+        // last tick's, while W reads git as it is now (a session's merge makes another Item no longer busy before any tick saw it, #238).
+        if (!isTick(o)) return null;
         if (i.w.kind === "start" && i.w.cause === "text" && !/read back/.test(card.reason)) return `${i.id} waits for its written text to be read back, but the card says "${card.reason}"`;
         if (i.w.kind === "start" && i.w.cause === "timer" && !/(tries again|resumes|starts) in /.test(card.reason)) return `${i.id} waits for a timer, but the card says "${card.reason}"`;
         return null;
@@ -470,8 +472,14 @@ export const RULES: Rule[] = [
       // Escalated once is handled: what a person answers to the escalation is theirs to decide.
       const escalated = (memo.escalated ??= {}) as Record<string, true>;
       return first(o.git.mainMoves.filter((m) => m.how === "session untold"), (m) => {
+        // Judged by the machine whose implementor merged (multiplayer: another machine's session is that machine's to escalate).
+        if (!o.sessions.some((s) => s.role === "implement" && `${s.subject.host}:${s.subject.kind}:${s.subject.id}` === m.item)) return null;
         const i = o.items.find((each) => each.key === m.item);
-        if (i?.job?.parked?.as === "escalated") escalated[m.sha] = true;
+        // Escalated here, or by another machine (multiplayer): its question line in the Item's shared log says so.
+        // (or a person's answer to it there, which names the question it answers).
+        const untold = /merged .* although its instructions said to commit and stop/;
+        const logged = (i?.item.log ?? []).some((line) => (line.kind === "question" && line.fields.parked === "escalated" && untold.test(String(line.fields.question ?? ""))) || (line.kind === "answer" && untold.test(String(line.fields.toQuestion ?? ""))));
+        if (i?.job?.parked?.as === "escalated" || logged) escalated[m.sha] = true;
         const handled = !i || escalated[m.sha] === true || isClosed(i);
         const n = ticksSince(memo, `E4|${m.sha}`, !handled, o);
         return n > 2 ? `${i!.id}'s session merged without being told to and it was not escalated` : null;
@@ -545,12 +553,14 @@ export const RULES: Rule[] = [
   // --- G. Restart and recovery ---
   {
     id: "G1",
-    why: "Restart: every switch is paused, and after the first tick each Item's W is what it was, except that a session became a wait to start the same step (not counted as a failure), or questions that waited for the session to end were written, or the restarts in a row reached the attempts' limit and a person is asked.",
+    why: "Restart: every switch is paused, and after the first tick each Item's W is what it was, except that a session became a wait to start the same step (not counted as a failure), or questions that waited for the session to end were written, or the restarts in a row reached the attempts' limit and a person is asked, or questions waiting to be posted again were posted.",
     check(o, prev, memo) {
       if (o.action.kind === "restart" && prev) {
         const on = (["triage", "implement", "review"] as const).find((r) => o.switches[r] === "started");
         if (on) return `after a restart the ${on} switch is started`;
         memo.before = Object.fromEntries(prev.items.map((i) => [i.key, i.w]));
+        // A wait that ends by itself at a tick (questions that could not be posted are posted again, #230) is not the restart's.
+        memo.reposts = prev.items.filter((i) => i.job?.parked?.retry === "post").map((i) => i.key);
         return null;
       }
       const before = memo.before as Record<string, W> | undefined;
@@ -565,11 +575,13 @@ export const RULES: Rule[] = [
         const w = before[i.key];
         if (!w) return null;
         if (w.kind === "session" && w.settling) return null;
-        // Questions other Items' agents asked about it wait until no session runs on it: the session's end lets them be written, as
-        // any session's end does.
+        if (((memo.reposts as string[] | undefined) ?? []).includes(i.key)) return null;
+        // Questions other Items' agents asked about it wait until no session runs on it and nobody holds it: once that ends they are
+        // written, whatever ended it.
         // Or the restarts in a row reached the attempts' limit, and a person is asked (a crash at every start must end).
         const asked = o.events.some((e) => (e.kind === "orchestrator.about_other_written" || e.kind === "orchestrator.restart_limit") && e.subject === i.key);
-        if (w.kind === "session") return (i.w.kind === "start" && i.w.role === w.role) || asked ? null : `${i.id} had a ${w.role} session before the restart and is ${wText(i.w)} after the first tick`;
+        if (asked) return null;
+        if (w.kind === "session") return i.w.kind === "start" && i.w.role === w.role ? null : `${i.id} had a ${w.role} session before the restart and is ${wText(i.w)} after the first tick`;
         if (["person", "queue", "blocker", "nothing"].includes(w.kind) && wText(w) !== wText(i.w)) return `${i.id} was ${wText(w)} before the restart and is ${wText(i.w)} after the first tick`;
         return null;
       });

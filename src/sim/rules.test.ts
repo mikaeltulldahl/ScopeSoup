@@ -107,7 +107,8 @@ describe("each rule fires on a bad state built by hand", { concurrency: 1 }, () 
     assert.match(fires("A1", obs({ items: [asked] })) ?? "", /its lane is in-progress/);
   });
   it("A1", "a timed wait whose card says another cause (decision 3, #230)", () => {
-    const at = (cause: "text" | "timer", reason: string) => obs({ items: [item("A-1", { kind: "start", role: "implement", cause }, { card: card("A-1", { lane: "todo", reason }) })] });
+    // Read after a tick (between ticks the card is the last tick's, #238).
+    const at = (cause: "text" | "timer", reason: string) => obs({ action: { kind: "tick" }, items: [item("A-1", { kind: "start", role: "implement", cause }, { card: card("A-1", { lane: "todo", reason }) })] });
     assert.match(fires("A1", at("timer", "ready; waiting for a free agent slot")) ?? "", /waits for a timer/);
     assert.equal(fires("A1", at("timer", "the implement step failed once; it tries again in 30 s")), null);
     assert.match(fires("A1", at("text", "ready; waiting for a free agent slot")) ?? "", /read back/);
@@ -230,8 +231,12 @@ describe("each rule fires on a bad state built by hand", { concurrency: 1 }, () 
   it("E4", "a session merged without being told, and nobody is told (decision 108)", () => {
     const g = new FakeGit();
     g.mergeToMain(g.commit([g.main], ["src/a.ts"], "work", "agent"), "session untold", key("A-1"));
-    const o = obs({ action: tick, git: gitObs(g), items: [item("A-1", SLOT)] });
+    const session = { ref: { host: "scopesoup", kind: "session" as const, id: "s1" }, role: "implement" as const, subject: { host: "metaBranch", kind: "work" as const, id: "A-1" }, status: "succeeded" as const, attempt: 1, startedAt: AT };
+    const o = obs({ action: tick, git: gitObs(g), items: [item("A-1", SLOT)], sessions: [session] });
     assert.match(fires("E4", o, o, o, o) ?? "", /without being told/);
+    // Another machine's implementor merged it (multiplayer): that machine judges it.
+    const elsewhere = obs({ action: tick, git: gitObs(g), items: [item("A-1", SLOT)] });
+    assert.equal(fires("E4", elsewhere, elsewhere, elsewhere, elsewhere), null);
   });
   it("E5", "the queue merged an Item's change and its implementor merges it again (#238)", () => {
     const g = new FakeGit();

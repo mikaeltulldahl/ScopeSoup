@@ -183,6 +183,7 @@ export class FakeGit {
   /** The view of the clone the leftover sweep reads and changes, as real git gives it. */
   refGit(): RefGit {
     return {
+      mainTip: async () => this.main,
       refs: async () => new Map([
         ...[...this.branches].map(([name, sha]) => [`refs/heads/${name}`, { sha, annotated: false }] as const),
         ...[...this.tags].map(([name, sha]) => [`refs/tags/${name}`, { sha, annotated: false }] as const),

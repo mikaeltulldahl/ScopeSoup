@@ -2277,15 +2277,20 @@ test("merging by queue: when the close fails the item is not started again; with
   queue.notices.push({ kind: "mark-merged", batch: 3, tested: SHA2, members: [{ change: ref("1"), sha: SHA2, head: SHA }] });
   await w.run();
   await w.run();
-  // The issue is still open on the host, but the job parked as merged and nothing starts for it.
-  assert.deepEqual(w.closes, [`1 ${SHA2} 3`]);
+  // The issue is still open on the host, but the job parked as merged and nothing starts for it; each tick tries the close again.
+  assert.deepEqual(w.closes, [`1 ${SHA2} 3`, `1 ${SHA2} 3`]);
   assert.equal(w.job("1")?.merged, SHA2);
   assert.equal(w.job("1")?.parked?.as, "queued");
   assert.equal(w.events("orchestrator.started").length, startedBefore);
   assert.deepEqual(w.reasons("orchestrator.item_closed"), []);
   // The failure leaves a standing note on the board, once.
-  assert.equal(w.reasons("orchestrator.close_failed").length, 1);
-  assert.match(w.reasons("orchestrator.close_failed")[0] ?? "", /closing it on the host failed: close it on the host by hand/);
+  assert.ok(w.reasons("orchestrator.close_failed").length >= 1);
+  assert.match(w.reasons("orchestrator.close_failed")[0] ?? "", /closing it on the host failed: Scope Soup tries again at each tick, or close it on the host by hand/);
+  // Each tick tries the close again (#238); once the host takes it, it is closed.
+  w.closeResult = "closed";
+  await w.run();
+  assert.equal(w.closes.length, 3);
+  assert.equal(w.reasons("orchestrator.item_closed").length, 1);
 
   const h = world(config(QUEUE), [item("1")]);
   const hq = fakeQueue();
