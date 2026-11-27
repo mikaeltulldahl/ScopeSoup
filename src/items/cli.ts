@@ -40,7 +40,8 @@ type Env = Record<string, string | undefined>;
 export const USAGE = `Usage: pnpm item <verb> [options]
 
   new --title TEXT [--body-file FILE | --body TEXT] [--priority blocker|critical|major|minor] [--label NAME]... [--claim]
-      File an item. With --claim you hold it from the start, in one write, so Scope Soup cannot pick it up first.
+      File an item, in Backlog: agents start nothing there until a person moves it to To do on the board. With --claim you hold
+      it from the start (in To do), in one write, so Scope Soup cannot pick it up first.
   claim ID [--as NAME]
       You hold the item. Scope Soup does not start it; it refuses when an agent holds it.
   handback ID [--note TEXT]

@@ -11,6 +11,7 @@ import type { Deployment } from "./client.ts";
 import type { JiraComment, JiraIssue, JiraIssueLink, JiraIssueStub, JiraStatus, JiraUser } from "./rest.ts";
 
 export const FAKE_STATUSES: Record<string, JiraStatus> = {
+  Backlog: { name: "Backlog", statusCategory: { key: "new", name: "To Do" } },
   "To Do": { name: "To Do", statusCategory: { key: "new", name: "To Do" } },
   "In Progress": { name: "In Progress", statusCategory: { key: "indeterminate", name: "In Progress" } },
   Done: { name: "Done", statusCategory: { key: "done", name: "Done" } },
@@ -18,6 +19,7 @@ export const FAKE_STATUSES: Record<string, JiraStatus> = {
 
 /** The workflow: one transition into each status, offered from every other status; Done's screen requires a resolution. */
 const TRANSITIONS = [
+  { id: "41", name: "Backlog", to: "Backlog" },
   { id: "11", name: "To Do", to: "To Do" },
   { id: "21", name: "In Progress", to: "In Progress" },
   { id: "31", name: "Done", to: "Done", resolution: true },
@@ -391,6 +393,11 @@ export function routeWrite(state: FakeWriteState, method: string, rest: string, 
     const had = !!store[id] && key in store[id]!;
     store[id] = { ...store[id], [key]: structuredClone(body) };
     return answer(had ? 200 : 201);
+  }
+
+  // The project's statuses per issue type [known: GET /project/{key}/statuses]: every type has the fake workflow's statuses.
+  if (method === "GET" && rest === `/project/${state.project}/statuses`) {
+    return answer(200, Object.keys(ISSUE_TYPES).map((name) => ({ name, statuses: Object.values(FAKE_STATUSES) })));
   }
 
   if (method === "GET" && rest === "/user/assignable/search") {

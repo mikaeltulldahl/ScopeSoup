@@ -31,7 +31,7 @@ export function forecastLoad(index: Index): ForecastLoad | undefined {
     snapshot.sessions.some(isLive) ||
     snapshot.works.some((item) => {
       const lane = laneOf(item, index);
-      return lane === "backlog" || lane === "in-progress";
+      return lane === "todo" || lane === "in-progress";
     });
   return { paused: snapshot.paused, workReady };
 }

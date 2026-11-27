@@ -689,22 +689,27 @@ export const RULES: Rule[] = [
   // These turn on by themselves once the board has a To do lane in front of the agents' lanes (#221); until then they hold for nothing.
   {
     id: "J1",
-    why: "An agent never starts work on an Item in Backlog: agents start only from To do (#221).",
+    why: "An agent never starts work on an Item in Backlog: agents start only from To do (#221). A person's Triage there is theirs: one triage runs, and the Item stays.",
     check(o, prev) {
       if (!todoLane(o) || !prev) return null;
-      return first(o.started, (s) => (prevOf(prev, s.item)?.card?.lane === "backlog" ? `a ${s.role} session started on ${s.item.split(":").pop()}, which was in Backlog` : null));
+      return first(o.started, (s) => {
+        if (prevOf(prev, s.item)?.card?.lane !== "backlog") return null;
+        const id = s.item.split(":").pop();
+        const asked = s.role === "triage" && o.ledger.requests.some((r) => r.status === 200 && r.item === id && r.path === "/api/item/move" && r.body.to === "triage");
+        return asked ? null : `a ${s.role} session started on ${id}, which was in Backlog`;
+      });
     },
   },
   {
     id: "J2",
-    why: "Only a person moves an Item into To do (#221).",
+    why: "Only a person moves an Item into To do (#221): the lane itself, or what puts work under way, which is never in Backlog (a claim, a hand-back, Implement anyway).",
     check(o, prev) {
       const todo = todoLane(o);
       if (!todo || !prev) return null;
       return first(o.items, (i) => {
         const before = prevOf(prev, i.key)?.card?.lane;
         if (i.card?.lane !== todo || before !== "backlog") return null;
-        const moved = o.requests.some((r) => r.status === 200 && r.item === i.id && (r.body.to === "todo" || r.body.to === todo));
+        const moved = o.requests.some((r) => r.status === 200 && r.item === i.id && personIntoTodo(r));
         return moved ? null : `${i.id} moved from Backlog to To do with no person's move`;
       });
     },
@@ -723,6 +728,18 @@ export const RULES: Rule[] = [
     },
   },
 ];
+
+/** A person's request that takes an Item into To do (#221): the lane edit or pick, a claim, a hand-back, Implement anyway. */
+function personIntoTodo(r: { path: string; body: Record<string, unknown> }): boolean {
+  if (r.path === "/api/item/edit") return r.body.lane === "todo";
+  if (r.path === "/api/item/claim" || r.path === "/api/item/handback") return true;
+  if (r.path === "/api/item/move") return r.body.to === "implement";
+  if (r.path === "/api/item/pick") {
+    const steps = Array.isArray(r.body.steps) ? (r.body.steps as Record<string, unknown>[]) : [];
+    return steps.some((step) => (step.kind === "lane" && step.lane === "todo") || step.kind === "claim" || (step.kind === "move" && step.to === "implement"));
+  }
+  return false;
+}
 
 /** The To do lane's id, once the board has one (#221); undefined before. */
 function todoLane(o: Observation): string | undefined {

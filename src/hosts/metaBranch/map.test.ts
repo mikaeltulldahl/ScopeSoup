@@ -36,6 +36,18 @@ test("a merged newest revision makes the item done, whatever its header says", (
   assert.equal(changes[0]?.state, "merged");
 });
 
+test("an Item with `lane: backlog` is in Backlog only while its state is todo (decision 121)", () => {
+  const backlog = (id: string, state: string) => `---
+id: ${id}
+title: Item ${id}
+state: ${state}
+lane: backlog
+---
+`;
+  const { works } = mapItems(scope, [{ id: "A-1", itemMd: backlog("A-1", "todo") }, { id: "A-2", itemMd: backlog("A-2", "doing") }, { id: "A-3", itemMd: itemMd("A-3", "Plain", "todo") }]);
+  assert.deepEqual(works.map((work) => work.backlog), [true, undefined, undefined]);
+});
+
 test("children counts all sub-items, openChildren only the open ones", () => {
   const { works } = mapItems(scope, [
     { id: "A-1", itemMd: itemMd("A-1", "Parent", "todo") },

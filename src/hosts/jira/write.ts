@@ -23,10 +23,10 @@ import { ISSUE_FIELDS, isoTime, itemsJql, jqlString, NEEDS_DECISION_LABEL, prior
 import type { JiraComment, JiraIssue } from "./rest.ts";
 
 /** What Scope Soup moves an issue to: the workflow's transition is named per target in the configuration. */
-export type TransitionTarget = "todo" | "doing" | "done" | "abandoned";
+export type TransitionTarget = "backlog" | "todo" | "doing" | "done" | "abandoned";
 
 /** Jira's default names: the simplified workflow's transitions are named after the status they go to [known]. */
-export const DEFAULT_TRANSITIONS: Readonly<Record<TransitionTarget, string>> = { todo: "To Do", doing: "In Progress", done: "Done", abandoned: "Won't Do" };
+export const DEFAULT_TRANSITIONS: Readonly<Record<TransitionTarget, string>> = { backlog: "Backlog", todo: "To Do", doing: "In Progress", done: "Done", abandoned: "Won't Do" };
 /** The resolution set by a transition whose screen asks for one. Jira's default names. */
 export const DEFAULT_RESOLUTIONS: Readonly<Record<"done" | "abandoned" | "duplicate", string>> = { done: "Done", abandoned: "Won't Do", duplicate: "Duplicate" };
 /** The issue type of a new Item and of a split's child. Jira's default names. */
@@ -212,8 +212,11 @@ export function createJiraWrite(deps: JiraWriteDeps): WritePort {
     const offered = (await client.get<{ transitions?: JiraTransition[] }>(`${path(ref)}/transitions?expand=transitions.fields`)).transitions ?? [];
     const name = settings.transitions[target];
     const category = target === "todo" ? "new" : target === "doing" ? "indeterminate" : "done";
-    // The configured name first (the transition's own name, or the status it goes to), else any transition into the category.
-    const found = offered.find((each) => same(each.name, name) || same(each.to?.name ?? "", name)) ?? offered.find((each) => each.to?.statusCategory?.key === category);
+    // The configured name first (the transition's own name, or the status it goes to), else any transition into the category. Backlog
+    // has no fallback: To Do is in the same category; and To do's fallback is never the Backlog status.
+    const backlog = settings.transitions.backlog;
+    const found = offered.find((each) => same(each.name, name) || same(each.to?.name ?? "", name))
+      ?? (target === "backlog" ? undefined : offered.find((each) => each.to?.statusCategory?.key === category && !same(each.to?.name ?? "", backlog)));
     if (!found) throw new Error(`Jira offers no transition of ${ref.id} to ${target} (looked for "${name}"; offered: ${offered.map((each) => `"${each.name}"`).join(", ") || "none"}). Name it in host.transitions.${target}.`);
     const fields = resolution && found.fields?.resolution ? { resolution: { name: resolution } } : undefined;
     await client.post(`${path(ref)}/transitions`, { transition: { id: found.id }, ...(fields ? { fields } : {}) });
@@ -305,8 +308,22 @@ export function createJiraWrite(deps: JiraWriteDeps): WritePort {
     }
   }
 
+  /** The project's statuses have the Backlog one (`host.transitions.backlog`); asked once, refused with the reason when not. */
+  let backlogStatusSeen = false;
+  async function checkBacklogStatus(): Promise<void> {
+    if (backlogStatusSeen) return;
+    const types = await client.get<{ statuses?: { name?: string }[] }[]>(`${api}/project/${encodeURIComponent(scope.project)}/statuses`);
+    const names = new Set((types ?? []).flatMap((type) => type.statuses ?? []).map((status) => (status.name ?? "").toLowerCase()));
+    if (!names.has(settings.transitions.backlog.toLowerCase())) {
+      throw new Error(`Jira project ${scope.project} has no status "${settings.transitions.backlog}", so a new Item could not wait in Backlog and agents would start it (decision 121). Add a Backlog status to the workflow, or name it in host.transitions.backlog.`);
+    }
+    backlogStatusSeen = true;
+  }
+
   const write: WritePort = {
     async createWork(input) {
+      // A new Item lands in Backlog (decision 121): without that status it would be startable at once, so the create is refused.
+      if ((input.state ?? "todo") === "todo" && (input.lane ?? "backlog") === "backlog") await checkBacklogStatus();
       const body = input.body ?? "";
       const markdown = input.verification !== undefined ? spliceBody(body, { verification: input.verification }) : body.trim();
       const labels = input.labels ?? [];
@@ -339,9 +356,25 @@ export function createJiraWrite(deps: JiraWriteDeps): WritePort {
       if (assignee) await client.put(`${path(work)}/assignee`, deployment === "cloud" ? { accountId: assignee } : { name: assignee });
       if (input.blockedBy && input.blockedBy.length > 0) await setBlockers(work, input.blockedBy.filter((each) => each.host === scope.host), true);
       if (input.state && input.state !== "todo" && input.state !== "waiting") await transitionTo(work, input.state, input.state === "done" ? settings.resolutions.done : input.state === "abandoned" ? settings.resolutions.abandoned : undefined);
+      // New Items land in Backlog (decision 121), To do only when a person picked it: the workflow's first status may be either.
+      // The project has the Backlog status (checked above); a transition the workflow does not offer from the first status is said.
+      let laneProblem: string | undefined;
+      if ((input.state ?? "todo") === "todo") {
+        const lane = input.lane ?? "backlog";
+        const now = await issueOf(work);
+        const inBacklog = same(now.fields.status?.name ?? "", settings.transitions.backlog);
+        if ((lane === "backlog") !== inBacklog) {
+          try {
+            await transitionTo(work, lane);
+          } catch (error) {
+            laneProblem = `Created ${work.id}, but it is not in ${lane === "backlog" ? "Backlog" : "To do"}: ${error instanceof Error ? error.message : String(error)}`;
+          }
+        }
+      }
       await checkInFilter(work.id);
       const outcome: WriteOutcome = { work, shared: "shared", conflict: false };
       if (problem) Object.assign(outcome, { linked: false, problem: `Created ${work.id} but could not put it under ${input.parent?.id}: ${problem}` });
+      else if (laneProblem) outcome.problem = laneProblem;
       return outcome;
     },
 
@@ -384,6 +417,12 @@ export function createJiraWrite(deps: JiraWriteDeps): WritePort {
         const resolution = patch.state === "done" ? settings.resolutions.done : patch.state === "abandoned" ? (patch.duplicateOf ? settings.resolutions.duplicate : settings.resolutions.abandoned) : undefined;
         await transitionTo(subject, patch.state, resolution);
       }
+      // Backlog and To do are two statuses of the To Do category (decision 121), moved to after the state.
+      if (patch.lane !== undefined && (patch.state ?? state) === "todo") {
+        const now = patch.state !== undefined && patch.state !== state ? await issueOf(subject) : issue;
+        const inBacklog = same(now.fields.status?.name ?? "", settings.transitions.backlog);
+        if ((patch.lane === "backlog") !== inBacklog) await transitionTo(subject, patch.lane);
+      }
       // Once: a retry finds the link there already.
       if (patch.duplicateOf && !linkedTo(await issueOf(subject), settings.duplicateLink, patch.duplicateOf.id)) await link(settings.duplicateLink, subject.id, patch.duplicateOf.id);
       const after = await issueOf(subject);
@@ -396,6 +435,7 @@ export function createJiraWrite(deps: JiraWriteDeps): WritePort {
       for (const name of labelRemove) if ((after.fields.labels ?? []).some((each) => same(each, name))) missed.push(`label ${name} not removed`);
       const stateAfter = stateOf(scope, after.fields.status, after.fields.resolution?.name);
       if (patch.state !== undefined && stateAfter !== patch.state) missed.push(`state ${stateAfter}, not ${patch.state} (check host.transitions and host.resolutions)`);
+      if (patch.lane !== undefined && stateAfter === "todo" && (patch.lane === "backlog") !== same(after.fields.status?.name ?? "", settings.transitions.backlog)) missed.push(`not in ${patch.lane === "backlog" ? "Backlog" : "To do"} (check host.transitions.${patch.lane})`);
       failIf(subject, missed);
       return { work: subject, shared: "shared", conflict: false };
     },

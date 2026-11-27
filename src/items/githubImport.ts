@@ -8,7 +8,7 @@
 import type { Client } from "../hosts/github/client.ts";
 import { GitHubError } from "../hosts/github/client.ts";
 import { readMarker } from "../hosts/github/conventions.ts";
-import { issueRefFromUrl, labelNames, splitBody } from "../hosts/github/map.ts";
+import { issueRefFromUrl, labelNames, splitBody, TODO_LABEL } from "../hosts/github/map.ts";
 import type { RestComment, RestIssue, RestUser } from "../hosts/github/rest.ts";
 import type { BatchItem } from "../hosts/metaBranch/index.ts";
 import type { ItemInput } from "../hosts/metaBranch/serialize.ts";
@@ -280,6 +280,8 @@ export function importBatch(issues: readonly SourceIssue[], context: BatchContex
         input: {
           title: oneLine(issue.title) || `Issue ${issue.number}`,
           state: stateOf(issue),
+          // In Backlog on GitHub (no `scopesoup:todo` label, decision 121): in Backlog here too.
+          ...(issue.open && !issue.labels.some((label) => label.toLowerCase() === TODO_LABEL) ? { lane: "backlog" as const } : {}),
           labels,
           ...(parent ? { parent } : {}),
           blockedBy,

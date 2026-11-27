@@ -10,13 +10,13 @@ import { awaitsImplement } from "./recheck.ts";
 
 export interface Readiness {
   ready: WorkItem[];
-  /** Items in "todo" that are not ready, each with the reason in words. */
+  /** Items in "todo" that are not ready (Backlog Items among them), each with the reason in words. */
   held: { item: WorkItem; reason: string }[];
 }
 
 /**
- * Ready: state todo, not blocked, nobody holds it, no decision pending, no open change, no job.
- * Every item of the backlog is a candidate: there is no invite label.
+ * Ready: state todo, in To do (not Backlog), not blocked, nobody holds it, no decision pending, no open change, no job.
+ * Every Item in To do is a candidate: there is no invite label.
  */
 export function readyItems(items: WorkItem[], changes: Change[], jobs: Jobs, now: string): Readiness {
   const byKey = new Map(items.map((item) => [refKey(item.ref), item]));
@@ -41,6 +41,8 @@ export function readyItems(items: WorkItem[], changes: Change[], jobs: Jobs, now
     else if (item.holder && holdStands(item.holder, at)) reason = `held by ${item.holder.actor.name}`;
     else if (touched.has(key)) reason = "an open change already covers it";
     else if (merged.has(key)) reason = "its change is merged; waiting for the host to close the item";
+    // Backlog (decision 121): nothing starts it until a person moves it to To do.
+    else if (item.backlog) reason = BACKLOG_REASON;
     else {
       const open = item.blockedBy.filter((blocker) => {
         const other = byKey.get(refKey(blocker));
@@ -53,6 +55,9 @@ export function readyItems(items: WorkItem[], changes: Change[], jobs: Jobs, now
   }
   return result;
 }
+
+/** Why a Backlog Item is not started, in words. */
+export const BACKLOG_REASON = "is in Backlog: it waits for a person to move it to To do";
 
 export { compareItems, hasTriage } from "./score.ts";
 import { compareItems } from "./score.ts";

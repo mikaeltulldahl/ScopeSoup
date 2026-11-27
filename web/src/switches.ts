@@ -1,4 +1,4 @@
-// The four switches on the overview's lanes (src/store/control.ts): triage on Backlog, implementors on In progress, review on
+// The four switches on the overview's lanes (src/store/control.ts): triage on To do, implementors on In progress, review on
 // In review, the merge queue on Merge queue (the overview's lane for Queued and Checking). Below the level that uses a role its
 // switch is not shown.
 
@@ -12,7 +12,7 @@ export const SWITCH_NAMES: readonly SwitchName[] = ["triage", "implement", "revi
 export const SWITCH_LEVEL: Record<SwitchName, number> = { triage: 1, implement: 2, review: 3, mergeQueue: 4 };
 
 /** The lane each switch sits on. */
-const LANE_OF: Record<SwitchName, string> = { triage: "backlog", implement: "in-progress", review: "in-review", mergeQueue: "merge-queue" };
+const LANE_OF: Record<SwitchName, string> = { triage: "todo", implement: "in-progress", review: "in-review", mergeQueue: "merge-queue" };
 
 export const SWITCH_WORDS: Record<SwitchName, string> = { triage: "Triage", implement: "Implementors", review: "Review", mergeQueue: "Merge queue" };
 

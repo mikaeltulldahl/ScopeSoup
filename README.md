@@ -49,7 +49,7 @@ You choose how much to hand over, one level at a time:
 | 3 | Review | Also reviews them. |
 | 4 | Autopilot | Also merges, through the batching queue. |
 
-The level limits only what Scope Soup does on its own; you can move an Item yourself at any level. At levels 2 and 3 the implementing agent merges the way your `CLAUDE.md` says, or opens a pull request. Scope Soup starts nothing of its own until you press Resume on the lanes of the overview (triage on Backlog, implementors on In progress, review on In review, the merge queue on Merge queue).
+The level limits only what Scope Soup does on its own; you can move an Item yourself at any level. Agents start only what a person moved from Backlog to To do: new Items, agents' drafts and follow-ups land in Backlog ([`docs/RUNNING.md`](docs/RUNNING.md), "Backlog and To do"). At levels 2 and 3 the implementing agent merges the way your `CLAUDE.md` says, or opens a pull request. Scope Soup starts nothing of its own until you press Resume on the lanes of the overview (triage on Backlog, implementors on In progress, review on In review, the merge queue on Merge queue).
 
 ![The queue: one batch being bisected (made-up data)](docs/images/queue.png)
 

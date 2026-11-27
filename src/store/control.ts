@@ -1,6 +1,6 @@
 // The switches over what Scope Soup runs (docs/RUNNING.md "Start, Pause and Stop"), each Resume / Pause, on the overview's
 // lane it feeds:
-//   triage       whether triage sessions start (Backlog, from level 1).
+//   triage       whether triage sessions start (To do, from level 1).
 //   implement    whether implementor sessions start (In progress, from level 2).
 //   review       whether review sessions start, and hand-backs are taken on (In review, from level 3).
 //   merge queue  whether Scope Soup merges (Queued, level 4). Paused, no new merging or batch starts; a merge under way

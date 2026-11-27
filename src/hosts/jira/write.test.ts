@@ -34,6 +34,33 @@ for (const deployment of ["cloud", "datacenter"] as const) {
       assert.equal(item?.priority, "critical");
     });
 
+    test("Backlog and To do (decision 121): a new issue goes to the Backlog status, To do on a person's pick; an edit moves it", async () => {
+      const { fake, host, write } = writable(deployment);
+      const backlog = await write.createWork!({ title: "Tide graph" });
+      assert.equal(fake.issues.get(backlog.work.id)!.fields.status?.name, "Backlog");
+      assert.equal((await host.work.getWork(backlog.work))?.backlog, true);
+      const todo = await write.createWork!({ title: "Tide graph now", lane: "todo" });
+      assert.equal(fake.issues.get(todo.work.id)!.fields.status?.name, "To Do");
+      assert.equal((await host.work.getWork(todo.work))?.backlog, undefined);
+      await write.editWork!(backlog.work, { lane: "todo" });
+      assert.equal(fake.issues.get(backlog.work.id)!.fields.status?.name, "To Do");
+      await write.editWork!(todo.work, { lane: "backlog" });
+      assert.equal(fake.issues.get(todo.work.id)!.fields.status?.name, "Backlog");
+      // A reopen into To do: the state's transition first, then the lane.
+      await write.editWork!(backlog.work, { state: "done" });
+      await write.editWork!(backlog.work, { state: "todo", lane: "todo" });
+      assert.equal(fake.issues.get(backlog.work.id)!.fields.status?.name, "To Do");
+    });
+
+    test("a project without the Backlog status: a new Item is refused before anything is made, To do still works", async () => {
+      const { fake, write } = writable(deployment, { transitions: { backlog: "Icebox" } });
+      const before = fake.issues.size;
+      await assert.rejects(write.createWork!({ title: "Tide graph" }), /has no status "Icebox"/);
+      assert.equal(fake.issues.size, before);
+      await write.createWork!({ title: "Tide graph", lane: "todo" });
+      assert.equal(fake.issues.size, before + 1);
+    });
+
     test("a split's child is a Sub-task under its parent; a hierarchy the project refuses gives an issue of its own, not linked", async () => {
       const { fake, write, ref } = writable(deployment);
       const child = await write.createWork!({ title: "Part one", parent: ref("DEMO-3") });

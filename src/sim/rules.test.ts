@@ -293,10 +293,20 @@ describe("each rule fires on a bad state built by hand", { concurrency: 1 }, () 
     assert.match(fires("J1", before, obs({ lanes: LANES, started: [started("A-1", "triage")] })) ?? "", /was in Backlog/);
     // Before #221 the board has no To do lane, and the rule holds for nothing.
     assert.equal(fires("J1", obs({ items: before.items }), obs({ started: [started("A-1", "triage")] })), null);
+    // A person's Triage on the Backlog Item: that one triage is theirs; an implement step is still an agent starting work there.
+    const asked = ledger({ requests: [{ step: 1, path: "/api/item/move", body: { to: "triage" }, status: 200, response: {}, item: "A-1" }] });
+    assert.equal(fires("J1", before, obs({ lanes: LANES, ledger: asked, started: [started("A-1", "triage")] })), null);
+    assert.match(fires("J1", before, obs({ lanes: LANES, ledger: asked, started: [started("A-1", "implement")] })) ?? "", /implement session started on A-1/);
   });
   it("J2", "an Item moves into To do with no person's move (#221)", () => {
     const at = (lane: string) => obs({ lanes: LANES, items: [item("A-1", { kind: "not-started" }, { card: card("A-1", { lane: lane as never }) })] });
     assert.match(fires("J2", at("backlog"), at("todo")) ?? "", /no person's move/);
+    // A person's move: the lane edit, a claim, a hand-back, Implement anyway (work under way is never in Backlog). Dropping work is not.
+    const by = (path: string, body: Record<string, unknown>) => ({ ...at("todo"), requests: [{ step: 1, path, body, status: 200, response: {}, item: "A-1" }] });
+    for (const [path, body] of [["/api/item/edit", { lane: "todo" }], ["/api/item/claim", { id: "A-1" }], ["/api/item/handback", { id: "A-1" }], ["/api/item/move", { to: "implement" }], ["/api/item/pick", { steps: [{ kind: "lane", lane: "todo" }] }]] as const) {
+      assert.equal(fires("J2", at("backlog"), by(path, body)), null, path);
+    }
+    assert.match(fires("J2", at("backlog"), by("/api/item/move", { to: "todo" })) ?? "", /no person's move/);
   });
   it("J3", "a new Item lands in To do (#221)", () => {
     assert.match(fires("J3", obs({ lanes: LANES }), obs({ lanes: LANES, items: [item("A-1", { kind: "not-started" }, { card: card("A-1", { lane: "todo" as never }) })] })) ?? "", /landed in To do/);

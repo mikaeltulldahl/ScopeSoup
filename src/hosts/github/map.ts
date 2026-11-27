@@ -46,6 +46,8 @@ export const NEEDS_DECISION_LABEL = "scopesoup:needs-decision";
 export const CLAIMED_LABEL = "scopesoup:claimed";
 /** An implementor decided something itself that a person may accept or overturn. Does not block, and is not needs-decision. */
 export const ASSUMPTION_LABEL = "scopesoup:assumption";
+/** In To do (decision 121): the board sets and removes it. An open issue without it is in Backlog, where no agent starts it. */
+export const TODO_LABEL = "scopesoup:todo";
 
 export const hasLabel = (labels: string[], name: string): string | undefined => labels.find((label) => label.toLowerCase() === name.toLowerCase());
 
@@ -132,6 +134,7 @@ export function issueToWork(scope: Scope, issue: RestIssue, blockedBy: Ref[] = [
     openChildren: Math.max(0, (issue.sub_issues_summary?.total ?? 0) - (issue.sub_issues_summary?.completed ?? 0)),
     updatedAt: issue.updated_at,
   };
+  if (item.state === "todo" && !hasLabel(labels, TODO_LABEL)) item.backlog = true;
   if (issue.sub_issues_summary?.total) item.children = issue.sub_issues_summary.total;
   const priority = priorityFromLabels(item.labels);
   if (priority) item.priority = priority;

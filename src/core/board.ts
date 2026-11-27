@@ -178,11 +178,11 @@ function cardOrder(a: CardView, b: CardView): number {
 }
 
 /**
- * Sorts the backlog by `planned`, the item keys in planned order of execution (next first).
+ * Sorts To do by `planned`, the item keys in planned order of execution (next first).
  * The order comes from the orchestrator (planOrder), so there is one definition of it.
  * With `notTriaged`, the Items not triaged yet go below the ones that were, in their own planned order.
  */
-function planBacklog(cards: CardView[], planned: string[], unplanned: Set<string>, notTriaged?: Set<string>): CardView[] {
+function planTodo(cards: CardView[], planned: string[], unplanned: Set<string>, notTriaged?: Set<string>): CardView[] {
   const rank = new Map(planned.map((key, position) => [key, position]));
   const at = (card: CardView): number => rank.get(card.key) ?? Number.MAX_SAFE_INTEGER;
   const below = (card: CardView): number => (notTriaged?.has(card.key) ? 1 : 0);
@@ -191,11 +191,18 @@ function planBacklog(cards: CardView[], planned: string[], unplanned: Set<string
   return cards.sort((a, b) => below(a) - below(b) || at(a) - at(b) || cardOrder(a, b)).map((card) => (unplanned.has(card.key) ? card : { ...card, position: ++next }));
 }
 
+/** Backlog in the same planned order (decision 121), for a person choosing what to pull in; unnumbered, as nothing starts there. */
+function planBacklog(cards: CardView[], planned: string[]): CardView[] {
+  const rank = new Map(planned.map((key, position) => [key, position]));
+  const at = (card: CardView): number => rank.get(card.key) ?? Number.MAX_SAFE_INTEGER;
+  return cards.sort((a, b) => at(a) - at(b) || cardOrder(a, b));
+}
+
 /**
  * `self`: the machine and person this board belongs to: a person's turn is in `yourTurn` only on their board.
- * `notTriaged` (from level 1): the keys of the Items not triaged yet; the backlog shows them below a divider.
+ * `notTriaged` (from level 1): the keys of the Items not triaged yet; To do shows them below a divider.
  */
-export function buildBoard(snapshot: Snapshot, now: Date, backlogOrder?: string[], self?: Self, notTriaged?: Set<string>): BoardView {
+export function buildBoard(snapshot: Snapshot, now: Date, planned?: string[], self?: Self, notTriaged?: Set<string>): BoardView {
   const index = buildIndex(snapshot);
   // Not in the plan: an umbrella, whose work happens in its open children, and an item a person holds: Scope Soup never starts it.
   const unplanned = new Set(snapshot.works.filter((item) => item.openChildren > 0 || (item.holder !== undefined && !item.holder.actor.bot)).map((item) => refKey(item.ref)));
@@ -206,10 +213,12 @@ export function buildBoard(snapshot: Snapshot, now: Date, backlogOrder?: string[
     now: now.toISOString(),
     lanes: LANES.map((lane): LaneView => {
       const found = cards.filter((card) => card.lane === lane).map(strip);
-      const backlog = lane === "backlog" && backlogOrder !== undefined;
-      const inLane = backlog ? planBacklog(found, backlogOrder, unplanned, notTriaged) : found.sort(cardOrder);
+      const inLane = planned === undefined ? found.sort(cardOrder)
+        : lane === "todo" ? planTodo(found, planned, unplanned, notTriaged)
+        : lane === "backlog" ? planBacklog(found, planned)
+        : found.sort(cardOrder);
       const view: LaneView = { lane, title: LANE_TITLES[lane], total: inLane.length, cards: lane === "done" ? inLane.slice(0, DONE_SHOWN) : inLane };
-      if (lane === "backlog" && notTriaged) view.notTriaged = inLane.filter((card) => notTriaged.has(card.key)).length;
+      if (lane === "todo" && notTriaged) view.notTriaged = inLane.filter((card) => notTriaged.has(card.key)).length;
       return view;
     }),
     yourTurn: yourTurn(cards, self).map(strip),

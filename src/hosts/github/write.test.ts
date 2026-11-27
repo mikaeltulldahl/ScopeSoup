@@ -205,3 +205,23 @@ test("createWork with labels makes the label first when the repository lacks it,
   assert.deepEqual(f.calls.map((call) => [call.method, call.path]), [["POST", "/repos/harbour/tides/labels"], ["POST", "/repos/harbour/tides/issues"]]);
   assert.deepEqual(f.calls[1]!.body, { title: "Made by an agent", labels: ["ai-generated"] });
 });
+
+test("Backlog and To do (decision 121): a new issue is in Backlog without the label; To do gives it scopesoup:todo, and an edit moves it", async () => {
+  const issue = (labels: string[]) => ({ number: 14, id: 9003, title: "Tide graph", state: "open", labels: labels.map((name) => ({ name })), assignees: [], updated_at: "2026-11-27T10:00:00Z", html_url: "u" });
+  const f = fake({
+    "POST /repos/harbour/tides/labels": [201, { name: "scopesoup:todo" }],
+    "POST /repos/harbour/tides/issues": [201, { number: 14, id: 9003, html_url: "u" }],
+    "GET /repos/harbour/tides/issues/14": [200, issue([])],
+    "POST /repos/harbour/tides/issues/14/labels": [200, [{ name: "scopesoup:todo" }]],
+  });
+  const host = createGitHubHost({ ...config, fetchImpl: f.fetchImpl, allowWrites: true });
+  await host.write!.createWork!({ title: "Tide graph" });
+  assert.deepEqual(f.calls[0]!.body, { title: "Tide graph" });
+  await host.write!.createWork!({ title: "Tide graph", lane: "todo" });
+  assert.deepEqual(f.calls.slice(1).map((call) => [call.method, call.path]), [["POST", "/repos/harbour/tides/labels"], ["POST", "/repos/harbour/tides/issues"]]);
+  assert.deepEqual(f.calls[2]!.body, { title: "Tide graph", labels: ["scopesoup:todo"] });
+  f.calls.length = 0;
+  // The re-read still lacks the label in this fake, so the edit says it was not applied: the add was sent.
+  await assert.rejects(host.write!.editWork!({ host: "github", kind: "work", id: "14" }, { lane: "todo" }));
+  assert.deepEqual(f.calls.find((call) => call.method === "POST" && call.path.endsWith("/14/labels"))?.body, { labels: ["scopesoup:todo"] });
+});

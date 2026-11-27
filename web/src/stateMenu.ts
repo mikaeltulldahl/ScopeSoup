@@ -7,7 +7,7 @@ import type { ItemPage } from "../../src/core/views.ts";
 import type { ThemeWords } from "./theme.ts";
 import { fill } from "./theme.ts";
 
-export const STATE_KEYS = ["triage", "blocked", "backlog", "in-progress", "in-review", "merge-queue", "done", "abandoned"] as const;
+export const STATE_KEYS = ["triage", "backlog", "blocked", "todo", "in-progress", "in-review", "merge-queue", "done", "abandoned"] as const;
 export type StateKey = (typeof STATE_KEYS)[number];
 
 /** One call the pick sends, in order. `block` adds the blocker the person picks. */
@@ -15,7 +15,8 @@ export type Step =
   | { kind: "release" }
   | { kind: "claim" }
   | { kind: "state"; state: "todo" | "done" | "abandoned" }
-  | { kind: "move"; to: "triage" | "backlog" | "in-review" | "merge-queue" | "implement" }
+  | { kind: "lane"; lane: "backlog" | "todo" }
+  | { kind: "move"; to: "triage" | "todo" | "in-review" | "merge-queue" | "implement" }
   | { kind: "block" };
 
 export interface StateOption {
@@ -70,16 +71,35 @@ export function stateOptions(page: MenuPage, theme: ThemeWords): StateOption[] {
   };
   const edit = (state: "todo" | "done" | "abandoned", before: Step[] = []): Pick<StateOption, "why" | "steps"> => (page.canEdit ? { steps: [...before, { kind: "state", state }] } : { why: NO_EDIT, steps: [] });
 
-  const backlog = ((): Pick<StateOption, "why" | "steps"> => {
-    if (closed) return edit("todo");
-    const drop = moves?.backlog;
+  const lane = (to: "backlog" | "todo"): Step => ({ kind: "lane", lane: to });
+  // To do: out of Backlog (a person's choice, decision 120), or back from work under way (dropped, so it starts again at triage).
+  const todo = ((): Pick<StateOption, "why" | "steps"> => {
+    if (closed) return page.canEdit ? { steps: [{ kind: "state", state: "todo" }, lane("todo")] } : { why: NO_EDIT, steps: [] };
+    if (page.lane === "backlog") return page.canEdit ? { steps: [...releasing, lane("todo")] } : { why: NO_EDIT, steps: [] };
+    const drop = moves?.todo;
     if (drop?.why) return { why: drop.why, steps: [] };
-    const steps: Step[] = [...releasing, ...(drop ? [{ kind: "move" as const, to: "backlog" as const }] : [])];
+    const steps: Step[] = [...releasing, ...(drop ? [{ kind: "move" as const, to: "todo" as const }] : [])];
     if (other && releasing.length === 0) return { why: hold?.release?.why ?? NO_EDIT, steps: [] };
     if (page.item.state === "doing" && !page.item.holder) return edit("todo", steps);
     if (steps.length > 0) return { steps };
     if (page.lane === "blocked") return { why: "remove its blockers in Edit", steps: [] };
-    return { why: "in the backlog already", steps: [] };
+    return { why: "in To do already", steps: [] };
+  })();
+
+  // Backlog: out of the agents' reach until a person picks To do again; work under way is dropped first.
+  const backlog = ((): Pick<StateOption, "why" | "steps"> => {
+    if (!page.canEdit) return { why: NO_EDIT, steps: [] };
+    if (closed) return { steps: [{ kind: "state", state: "todo" }, lane("backlog")] };
+    if (page.lane === "backlog") return { why: "in Backlog already", steps: [] };
+    const drop = moves?.todo;
+    if (drop?.why) return { why: drop.why, steps: [] };
+    if (other && releasing.length === 0) return { why: hold?.release?.why ?? NO_EDIT, steps: [] };
+    const before: Step[] = [...releasing, ...(drop ? [{ kind: "move" as const, to: "todo" as const }] : [])];
+    if (page.item.state === "doing" && !page.item.holder) {
+      const steps: Step[] = [...before, { kind: "state", state: "todo" }, lane("backlog")];
+      return steps.length > 3 ? { why: "pick To do first", steps: [] } : { steps };
+    }
+    return { steps: [...before, lane("backlog")] };
   })();
 
   const inProgress = ((): Pick<StateOption, "why" | "steps"> => {
@@ -92,8 +112,9 @@ export function stateOptions(page: MenuPage, theme: ThemeWords): StateOption[] {
 
   const options: Record<StateKey, Pick<StateOption, "why" | "steps">> = {
     triage: move("triage"),
-    blocked: closed ? { why: "reopen it first", steps: [] } : page.canEdit ? { steps: [{ kind: "block" }] } : { why: NO_EDIT, steps: [] },
     backlog,
+    todo,
+    blocked: closed ? { why: "reopen it first", steps: [] } : page.canEdit ? { steps: [{ kind: "block" }] } : { why: NO_EDIT, steps: [] },
     "in-progress": inProgress,
     "in-review": move("in-review"),
     "merge-queue": move("merge-queue"),
@@ -106,7 +127,7 @@ export function stateOptions(page: MenuPage, theme: ThemeWords): StateOption[] {
 }
 
 /** The picks that replace the step that runs, and so end its session at once (decision 104). Done lets it finish its step. */
-const INTERRUPTS: readonly StateKey[] = ["triage", "backlog", "in-review", "merge-queue", "abandoned"];
+const INTERRUPTS: readonly StateKey[] = ["triage", "backlog", "todo", "in-review", "merge-queue", "abandoned"];
 
 /**
  * What the pick does to work under way, for the toast, in a few words; "" for nothing. A pick that replaces the step that runs
@@ -138,7 +159,7 @@ export function requestNote(page: MenuPage, theme: ThemeWords, now: number): str
   const request = page.remote?.request;
   if (!request || request.state === "done" || now - Date.parse(request.at) > 60 * 60_000) return "";
   const step = request.steps.find((each) => each.kind === "move" || each.kind === "state");
-  const key = (step?.kind === "move" ? (step.to === "implement" ? "in-progress" : step.to) : step?.state === "abandoned" ? "abandoned" : step?.state === "done" ? "done" : "backlog") as StateKey;
+  const key = (request.steps.some((each) => each.kind === "lane" && each.lane === "backlog") ? "backlog" : step?.kind === "move" ? (step.to === "implement" ? "in-progress" : step.to) : step?.kind === "state" && step.state === "abandoned" ? "abandoned" : step?.kind === "state" && step.state === "done" ? "done" : "todo") as StateKey;
   const picked = `${request.who}'s ${stateLabel(key, theme)}`;
   if (request.state === "pending") return `${picked} waits for ${request.for} (at its next fetch, within a minute)`;
   if (request.state === "refused") return `${request.for} refused ${picked}: ${request.why ?? "no reason given"}`;

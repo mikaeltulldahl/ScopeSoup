@@ -60,8 +60,8 @@ test("two laptops claim the same item: one wins, and the picker of the other ski
   const remote = origin();
   const a = laptop(remote, "laptop-a", "A");
   const b = laptop(remote, "laptop-b", "B");
-  await (a.host.write?.createWork?.({ title: "Shared work", state: "todo" }) as Promise<unknown>);
-  await (a.host.write?.createWork?.({ title: "Other work", state: "todo" }) as Promise<unknown>);
+  await (a.host.write?.createWork?.({ title: "Shared work", state: "todo", lane: "todo" }) as Promise<unknown>);
+  await (a.host.write?.createWork?.({ title: "Other work", state: "todo", lane: "todo" }) as Promise<unknown>);
   assert.equal(a.actions.claimant, "scopesoup@laptop-a");
   await listed(b); // B syncs before it picks, as the sync loop does
 
@@ -87,7 +87,7 @@ test("a claim expires without a renewing line, and renewal keeps it", async () =
   const remote = origin();
   const a = laptop(remote, "laptop-a", "A");
   const b = laptop(remote, "laptop-b", "B");
-  await (a.host.write?.createWork?.({ title: "Long work", state: "todo" }) as Promise<unknown>);
+  await (a.host.write?.createWork?.({ title: "Long work", state: "todo", lane: "todo" }) as Promise<unknown>);
   await listed(b);
   await a.actions.claim(ref("A-1"), untilFrom(a, 30), at(a));
 
@@ -109,7 +109,7 @@ test("a claim expires without a renewing line, and renewal keeps it", async () =
 test("a claim that cannot be shared is not won", async () => {
   const remote = origin();
   const a = laptop(remote, "laptop-a", "A");
-  await (a.host.write?.createWork?.({ title: "Work", state: "todo" }) as Promise<unknown>);
+  await (a.host.write?.createWork?.({ title: "Work", state: "todo", lane: "todo" }) as Promise<unknown>);
   // The remote goes away: the claim is written here but cannot be shared.
   a.clone.git(["remote", "set-url", "origin", `${remote.dir}-gone`]);
   const result = await a.actions.claim(ref("A-1"), untilFrom(a, 60), at(a));

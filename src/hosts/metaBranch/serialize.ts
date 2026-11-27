@@ -31,13 +31,15 @@ const refuse = (message: string): never => {
  * plain text. U+2028 and U+2029 end a line for the reader's pattern (its `.` does not match them).
  */
 const CONTROL = /[\u0000-\u001f\u007f\u2028\u2029]/;
-const KNOWN_KEYS = new Set(["id", "title", "state", "labels", "parent", "blockedBy", "duplicateOf", "verification", "priority", "vote"]);
+const KNOWN_KEYS = new Set(["id", "title", "state", "lane", "labels", "parent", "blockedBy", "duplicateOf", "verification", "priority", "vote"]);
 const KEY = /^[A-Za-z][A-Za-z0-9]*$/;
 
 /** What a person or an agent gives for an item, before it is put in canonical form. */
 export interface ItemInput {
   title: string;
   state?: WorkState;
+  /** `backlog`: in Backlog (decision 121); absent: To do. */
+  lane?: "backlog";
   labels?: string[];
   parent?: string;
   blockedBy?: string[];
@@ -76,6 +78,7 @@ export function canonicalItem(input: ItemInput): ItemFields {
     body: canonicalBody(input.body ?? ""),
     extra: (input.extra ?? []).map(([key, value]): [string, string] => [key, value.trim()]),
   };
+  if (input.lane === "backlog") fields.lane = "backlog";
   const parent = input.parent?.trim();
   if (parent) fields.parent = parent;
   const duplicateOf = input.duplicateOf?.trim();
@@ -95,6 +98,7 @@ export function checkFields(fields: ItemFields): void {
   if (texts.some((text) => throughBytes(text) !== text)) refuse("The item holds text that is not valid Unicode (a lone surrogate); it would not read back as written.");
   headerValue("title", fields.title, true);
   if (!(WORK_STATES as readonly string[]).includes(fields.state)) refuse(`The state ${show(String(fields.state))} is not one of ${WORK_STATES.join(", ")}.`);
+  if (fields.lane !== undefined && fields.lane !== "backlog") refuse(`The lane ${show(String(fields.lane))} is not backlog (To do is no lane line).`);
   for (const label of fields.labels) {
     headerValue("label", label, true);
     if (/[,[\]]/.test(label)) refuse(`The label ${show(label)} holds a comma or a bracket, which the list syntax would split or drop.`);
@@ -121,6 +125,7 @@ export function serializeItem(id: string, fields: ItemFields): string {
   if (!isItemId(id)) refuse(`${show(id)} is not an item id.`);
   checkFields(fields);
   const header = ["---", `id: ${id}`, `title: ${fields.title}`, `state: ${fields.state}`];
+  if (fields.lane) header.push(`lane: ${fields.lane}`);
   if (fields.labels.length > 0) header.push(`labels: ${fields.labels.join(", ")}`);
   if (fields.parent) header.push(`parent: ${fields.parent}`);
   if (fields.blockedBy.length > 0) header.push(`blockedBy: ${fields.blockedBy.join(", ")}`);

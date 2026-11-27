@@ -294,6 +294,9 @@ a.member:hover { border-color: var(--accent); }
 .vote-small .vote-button { width: 24px; min-height: 18px; padding: 0; font-size: 0.6rem; line-height: 1; color: var(--muted); }
 .vote-small .vote-button:hover:not(:disabled) { color: var(--accent); border-color: var(--accent); }
 .vote-small .vote-button:disabled { opacity: 0.35; cursor: default; }
+/* Triage on a Backlog card: a small button at the card's side. */
+.card-triage { flex: none; display: inline-flex; gap: 4px; align-items: center; align-self: flex-start; }
+.card-triage .vote-button { min-height: 22px; font-size: 0.7rem; color: var(--muted); }
 .vote-problem { font-size: 0.75rem; font-weight: 700; text-align: center; color: var(--blocked); }
 .reason-big { font-size: 0.95rem; }
 .panel { display: grid; gap: 8px; padding: 10px 12px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); min-width: 0; }
@@ -303,7 +306,7 @@ a.member:hover { border-color: var(--accent); }
 /* A section with nothing in it yet: the heading and one line, side by side. */
 .panel-empty { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; padding: 6px 12px; }
 .panel-empty .empty { padding: 0; }
-/* The Item section's backlog place: the line, then ▲ ▼ side by side. */
+/* The Item section's place in To do: the line, then ▲ ▼ side by side. */
 .place { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
 .place .vote-small { flex-direction: row; align-self: center; }
 .body-text { white-space: pre-wrap; }

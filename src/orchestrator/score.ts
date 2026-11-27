@@ -9,7 +9,7 @@ import { refKey } from "../model/types.ts";
 import { cleanVote, voteWords } from "../model/vote.ts";
 import type { Job, Jobs, TriageAnswer } from "./jobs.ts";
 
-/** The weights, in points. One place: change them here and in docs/RUNNING.md ("How the backlog is ordered"). */
+/** The weights, in points. One place: change them here and in docs/RUNNING.md ("How Items are ordered"). */
 export const WEIGHTS = {
   /** A `blocker` goes first whatever its score; its points only order blockers. An Item without a priority gets `noPriority`: below major, above minor. */
   priority: { blocker: 100, critical: 60, major: 30, minor: -30 } satisfies Record<Priority, number>,

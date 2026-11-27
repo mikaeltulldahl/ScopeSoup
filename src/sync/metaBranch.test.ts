@@ -148,13 +148,13 @@ test("the board's snapshot shows the meta branch's items with the right state, h
     const found = card(cards, id);
     return [found.lane, found.actor, found.reason];
   };
-  assert.deepEqual(where("A-1"), ["backlog", "agent", "ready; waiting for a free agent slot"]);
+  assert.deepEqual(where("A-1"), ["todo", "agent", "ready; waiting for a free agent slot"]);
   assert.deepEqual(where("A-2"), ["in-progress", "person", "held by robin on laptop-a; Scope Soup leaves it alone until they hand it back or release it"]);
   assert.deepEqual(where("A-3"), ["queued", "queue", "approved; waiting in the queue (position 1 of 1)"]);
-  assert.deepEqual(where("A-4"), ["backlog", "anyone", "Answer the question: the item needs a decision"]);
+  assert.deepEqual(where("A-4"), ["todo", "anyone", "Answer the question: the item needs a decision"]);
   assert.deepEqual(where("A-5"), ["done", "nobody", "done"]);
   assert.deepEqual(where("A-6"), ["in-review", "agent", "it has a new revision since the last review; waiting for a reviewer session"]);
-  assert.deepEqual(where("A-7"), ["backlog", "nobody", "has 1 open sub-item; the work happens there"]);
+  assert.deepEqual(where("A-7"), ["todo", "nobody", "has 1 open sub-item; the work happens there"]);
   assert.equal(card(cards, "A-3").change?.label, "A-3");
   assert.equal(card(cards, "A-4").needsDecision, true);
   // Robin's board has a person's turn and robin's hold; a board with no person has every person's.
@@ -166,7 +166,7 @@ test("the board's snapshot shows the meta branch's items with the right state, h
   assert.equal(b1.state, "waiting");
   assert.match(b1.hostState, /^malformed: item.md does not start with a --- line/);
   assert.equal(b1.holder?.actor.id, "sam@laptop-b");
-  assert.deepEqual(where("B-1")[0], "backlog");
+  assert.deepEqual(where("B-1")[0], "todo");
   assert.match(String(where("B-1")[2]), /waiting on the host \(status "malformed: /);
   assert.deepEqual(host.lastReport(), {
     items: 8,

@@ -372,7 +372,7 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
     if (level !== undefined) snapshot.level = level;
     return { snapshot, ...(options.configFile !== undefined && (level ?? 0) >= 1 ? { notTriaged: withoutTriageKeys(snapshot.works, loadJobs(store)) } : {}) };
   };
-  /** The board, with the backlog in the orchestrator's planned order. */
+  /** The board, with To do and Backlog in the orchestrator's planned order. */
   const boardNow = () => {
     const snapshot = loadSnapshot(store);
     const at = now();
@@ -383,19 +383,19 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
     if (plan.level !== undefined) snapshot.level = plan.level;
     const jobs = loadJobs(store);
     const order = planOrder(snapshot.works, snapshot.changes, jobs, at.toISOString(), plan.bugLabels);
-    // From level 1 the backlog has a divider above the Items not triaged yet.
+    // From level 1 To do has a divider above the Items not triaged yet.
     const divided = options.configFile !== undefined && (plan.level ?? 0) >= 1;
     const board = buildBoard(snapshot, at, order.map((item) => refKey(item.ref)), self(), divided ? withoutTriageKeys(snapshot.works, jobs) : undefined);
     // The limited resources, who holds their units and what waits for one.
     const resources = plan.resources && plan.resources.length > 0 ? resourcesView(plan.resources, readResourceState(store)) : undefined;
-    // Each numbered backlog card says why it is where it is.
-    const backlog = board.lanes.find((lane) => lane.lane === "backlog");
-    if (backlog) {
+    // Each numbered To do card says why it is where it is.
+    const todo = board.lanes.find((lane) => lane.lane === "todo");
+    if (todo) {
       const byKey = new Map(snapshot.works.map((item) => [refKey(item.ref), item]));
-      const numbered = backlog.cards.filter((card) => card.position !== undefined);
+      const numbered = todo.cards.filter((card) => card.position !== undefined);
       const why = explainOrder(numbered.flatMap((card) => byKey.get(card.key) ?? []), { all: snapshot.works, jobs, bugLabels: plan.bugLabels });
       const limits = voteLimits(numbered.flatMap((card) => byKey.get(card.key) ?? []), { all: snapshot.works, jobs, bugLabels: plan.bugLabels });
-      backlog.cards = backlog.cards.map((card) => {
+      todo.cards = todo.cards.map((card) => {
         if (!why.has(card.key)) return card;
         const off = limits.get(card.key);
         return { ...card, why: why.get(card.key)!, ...(off && (off.up || off.down) ? { voteOff: off } : {}) };
@@ -406,7 +406,7 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
     return { ...board, ...(mergeQueue ? { queue: { ...board.queue, mergeQueue } } : {}), ...(resources ? { resources } : {}) };
   };
   /**
-   * `{ ref, direction: "up" | "down" }`: sets the Item's vote so it moves exactly one place in the backlog (`voteForPlace`),
+   * `{ ref, direction: "up" | "down" }`: sets the Item's vote so it moves exactly one place in To do (`voteForPlace`),
    * computed from the order now. On the meta branch host the vote is a header field written like any edit; on GitHub it is kept in
    * Scope Soup's store. The answer is the Item's new vote, in points.
    */
@@ -422,8 +422,8 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
     if (!current || current.state === "done" || current.state === "abandoned") return sendError(response, 404, "ITEM_NOT_FOUND", `No open item ${body.ref}.`);
     const snapshot = loadSnapshot(store);
     const byKey = new Map(snapshot.works.map((work) => [refKey(work.ref), work]));
-    const backlog = boardNow().lanes.find((lane) => lane.lane === "backlog")?.cards.filter((card) => card.position !== undefined).sort((a, b) => a.position! - b.position!) ?? [];
-    const move = voteForPlace(backlog.flatMap((card) => byKey.get(card.key) ?? []), body.ref, body.direction, { all: snapshot.works, jobs: loadJobs(store), bugLabels: (options.planning?.() ?? { bugLabels: ["bug"] }).bugLabels });
+    const todo = boardNow().lanes.find((lane) => lane.lane === "todo")?.cards.filter((card) => card.position !== undefined).sort((a, b) => a.position! - b.position!) ?? [];
+    const move = voteForPlace(todo.flatMap((card) => byKey.get(card.key) ?? []), body.ref, body.direction, { all: snapshot.works, jobs: loadJobs(store), bugLabels: (options.planning?.() ?? { bugLabels: ["bug"] }).bugLabels });
     if (!move.ok) return sendError(response, 409, "VOTE_OFF", move.reason);
     const next = move.vote;
     if (voteInStore(current.ref)) {
@@ -766,7 +766,7 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
 
   /**
    * A person sets an Item's state from its page (#154): `{ ref, to, seen? }` with `to` one of `MOVES` (`src/server/moves.ts`):
-   * triage again, back to the backlog, the review step now, the merge queue now. Acts on this machine's job, never on a running session.
+   * triage again, back to To do, the review step now, the merge queue now. Acts on this machine's job, never on a running session.
    */
   async function moveItem(request: IncomingMessage, response: ServerResponse): Promise<void> {
     let body: Record<string, unknown>;
@@ -795,6 +795,11 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
       return result;
     });
     if (!done.ok) return sendError(response, 409, "REFUSED", `${work.ref.id}: ${done.why}.`);
+    // Implement anyway is work under way, which is never in Backlog (decision 121): the Item moves to To do.
+    if (to === "implement" && work.backlog) {
+      const moved = await inProcess(editItem, { ref, lane: "todo" });
+      store.appendEvent({ kind: "person.moved", subject: ref, actor: who, data: { to: "todo", reason: moved.status < 400 ? `${work.ref.id} moved from Backlog to To do: ${who}'s Implement anyway puts work under way.` : `${work.ref.id} could not be moved from Backlog to To do for ${who}'s Implement anyway: ${moved.message ?? `the server answered ${moved.status}`}`, via: "board" } }, now().toISOString());
+    }
     // Implement anyway overrules the not-ready question the log still holds open: it is answered there, so the card stops asking.
     const write = items?.write;
     const asked = to === "implement" && write?.appendLog && work.ref.host === items!.host && !(options.questions && work.ref.host === options.questions.host) ? work.openQuestions ?? [] : [];
@@ -866,6 +871,7 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
       const each = step as Record<string, unknown>;
       if (each.kind === "release" || each.kind === "claim" || each.kind === "block") return true;
       if (each.kind === "state") return each.state === "todo" || each.state === "done" || each.state === "abandoned";
+      if (each.kind === "lane") return each.lane === "backlog" || each.lane === "todo";
       return each.kind === "move" && isMove(each.to);
     };
     if (typeof ref !== "string" || typeof seen !== "string" || !Array.isArray(steps) || steps.length === 0 || steps.length > 3 || !steps.every(valid) || blockedBy === null) {
@@ -880,6 +886,8 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
     const elsewhere = loadJobs(store)[ref] ? undefined : workElsewhere(work);
     const typed = steps as PickStep[];
     if (elsewhere && typed.some((step) => step.kind === "move" || (step.kind === "state" && step.state === "abandoned"))) {
+      // Backlog (the work dropped, then the lane) goes there whole: that machine drops the work and writes the lane, so nothing
+      // changes here before it does, and nothing at all when the request cannot be written.
       if (!requestable(typed)) return sendError(response, 409, "REFUSED", `${work.ref.id}'s work runs on ${elsewhere}: pick one state at a time for it.`);
       const id = randomUUID();
       const written = await options.requests!.write({ kind: "pick", by: { who: by().who, agent: false }, fields: { id, item: ref, for: elsewhere, seen, steps: typed } });
@@ -897,11 +905,12 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
   /** A pick's steps, in order, each through its own endpoint's code, as the picked person (the caller checked `seen`). */
   async function runPick(ref: string, steps: readonly RequestStep[], blockedBy: string[] | undefined): Promise<{ ok: true; done: string[] } | { ok: false; status: number; message: string }> {
     const done: string[] = [];
-    const words: Record<string, string> = { release: "released", claim: "claimed", state: "state changed", block: "blocker added", move: "moved" };
+    const words: Record<string, string> = { release: "released", claim: "claimed", state: "state changed", lane: "lane changed", block: "blocker added", move: "moved" };
     for (const step of steps) {
       const kind = step.kind;
       const answer = kind === "release" || kind === "claim" ? await inProcess((req, res) => person(req, res, kind), { id: ref })
         : step.kind === "state" ? await inProcess(editItem, { ref, state: step.state })
+        : step.kind === "lane" ? await inProcess(editItem, { ref, lane: step.lane })
         : step.kind === "move" ? await inProcess(moveItem, { ref, to: step.to })
         : await inProcess(editItem, { ref, blockedBy: blockedBy ?? [] });
       if (answer.status >= 400) {
@@ -1568,7 +1577,7 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
         }
         let done: WriteOutcome;
         try {
-          done = await writer.write.createWork!(partWork(part, at, { ...marks, ...(plan.carried ? { carried: plan.carried } : {}), ...(writer.verificationInBody ? { verificationInBody: true } : {}), ...(options.aiLabel?.() ? { label: options.aiLabel() } : {}), by: by() }));
+          done = await writer.write.createWork!(partWork(part, at, { ...marks, lane: fresh.find((work) => refKey(work.ref) === refKey(subject))?.backlog ? "backlog" : "todo", ...(plan.carried ? { carried: plan.carried } : {}), ...(writer.verificationInBody ? { verificationInBody: true } : {}), ...(options.aiLabel?.() ? { label: options.aiLabel() } : {}), by: by() }));
         } catch (error) {
           return incomplete(at, error instanceof Error ? error.message : String(error));
         }
@@ -1684,12 +1693,14 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
         if (running) throw new Refused(running);
         const from = text(body.from);
         const done = await claimItem(backend, ref.id, from ? { from } : {});
+        if (done.movedToTodo) store.appendEvent({ kind: "person.moved", subject: refKey(done.ref), actor: who, data: { to: "todo", reason: `${done.ref.id} moved from Backlog to To do: ${who} took it.`, via: "board" } }, now().toISOString());
         return written(response, { work: done.ref, shared: done.shared, conflict: false }, done.message);
       }
       if (verb === "handback") {
         // No branch or commit is given: Scope Soup reads the Item's branch from the remote.
         const note = text(body.note);
         const done = await handBackItem(backend, ref.id, note ? { note } : {});
+        if (done.movedToTodo) store.appendEvent({ kind: "person.moved", subject: refKey(done.ref), actor: who, data: { to: "todo", reason: `${done.ref.id} moved from Backlog to To do: ${who} handed it back.`, via: "board" } }, now().toISOString());
         return written(response, { work: done.ref, shared: done.shared, conflict: false }, done.message);
       }
       const note = text(body.note);
@@ -1792,7 +1803,7 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
     return hold;
   }
 
-  /** `{ title, body?, verification?, labels?, blockedBy? }`: a new item, and a `created` line in its log. */
+  /** `{ title, body?, verification?, labels?, blockedBy?, todo? }`: a new item (in Backlog, or To do with `todo`), and a `created` line in its log. */
   async function createItem(request: IncomingMessage, response: ServerResponse): Promise<void> {
     const write = items?.write;
     if (!write?.createWork) return sendError(response, 403, "READ_ONLY", "Items cannot be written here: the project's host is read-only.");
@@ -1824,6 +1835,8 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
         labels,
         blockedBy: blockedBy.map(itemRef),
         ...(priority ? { priority: priority as Priority } : {}),
+        // A person who takes the Item as they file it has chosen it: To do (decision 121).
+        lane: body.todo === true || body.claim === true ? "todo" : "backlog",
       });
       return written(response, done, `Filed ${done.work.id}: ${title.trim()}${body.claim === true ? `. ${creator.who} holds it; Scope Soup will not start it` : ""}`);
     } catch (error) {
@@ -1937,6 +1950,29 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
       const allowed = onHost ? HOST_STATES : STATES;
       if (!allowed.includes(body.state as WorkState)) return bad("state", allowed.join(", "));
       if (body.state !== (onHost ? current.state : current.hostState.split(";")[0])) (patch.state = body.state as WorkState), changed.push("state");
+    }
+    if (body.lane !== undefined) {
+      if (body.lane !== "backlog" && body.lane !== "todo") return bad("lane", "backlog or todo");
+      // A closed Item keeps no lane on GitHub and Jira: the pick that reopens it writes the lane it goes to.
+      if (body.lane !== (current.backlog ? "backlog" : "todo") || current.state !== "todo") (patch.lane = body.lane), changed.push("lane");
+    }
+    // Backlog is no work (decision 121): a job on the Item here is dropped first, as To do drops it, or the move is refused.
+    if (patch.lane === "backlog") {
+      const key = refKey(current.ref);
+      const lane = buildItemPage(loadSnapshot(store), key, now())?.lane ?? null;
+      const at = now().toISOString();
+      const who = by().who;
+      const dropped = store.tx(() => {
+        const jobs = loadJobs(store);
+        const job = jobs[key];
+        if (!job || job.dropAskedBy) return { ok: true as const };
+        const result = applyMove(jobs, key, "todo", { ...moveInput(current, lane), job }, who, at);
+        if (!result.ok) return result;
+        saveJobs(store, jobs);
+        store.appendEvent({ kind: "person.moved", subject: key, actor: who, data: { to: "backlog", reason: `${result.reason} It goes to Backlog.`, via: "board" } }, at);
+        return result;
+      });
+      if (!dropped.ok) return sendError(response, 409, "REFUSED", `${current.ref.id} cannot go to Backlog: ${dropped.why}.`);
     }
     if (body.verification !== undefined) {
       if (typeof body.verification !== "string") return bad("verification", "text");
@@ -2704,11 +2740,11 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
           const conflict = await items.write.conflictVersions(page.item.ref);
           if (conflict) page.conflict = conflict;
         }
-        const backlogCard = boardNow().lanes.find((lane) => lane.lane === "backlog")?.cards.find((card) => card.key === ref);
-        if (backlogCard?.why) page.why = backlogCard.why;
-        if (backlogCard?.why && page.item.state !== "done" && page.item.state !== "abandoned" && (voteInStore(page.item.ref) || (ours && !!items.write.editWork))) {
+        const todoCard = boardNow().lanes.find((lane) => lane.lane === "todo")?.cards.find((card) => card.key === ref);
+        if (todoCard?.why) page.why = todoCard.why;
+        if (todoCard?.why && page.item.state !== "done" && page.item.state !== "abandoned" && (voteInStore(page.item.ref) || (ours && !!items.write.editWork))) {
           page.canVote = true;
-          if (backlogCard.voteOff) page.voteOff = backlogCard.voteOff;
+          if (todoCard.voteOff) page.voteOff = todoCard.voteOff;
         }
         if (page.proposal?.parts) page.proposal.canCreate = restructureHost(page.item.ref) !== undefined;
         const onHost = options.hostEdit !== undefined && page.item.ref.host === options.hostEdit.host;

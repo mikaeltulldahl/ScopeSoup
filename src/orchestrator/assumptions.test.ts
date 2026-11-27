@@ -83,8 +83,8 @@ test("on GitHub two decisions are one comment with the scopesoup:assumption labe
   assert.equal((made as Ref | null)?.id, "2");
   const issue = fake.issues.get("2")!;
   assert.match(issue.title, /^Overturned in #1: Sort harbours by\?/);
-  // The project keeps an AI label: the new Item has it, made in the repository first.
-  assert.deepEqual(labelsOf(fake, "2"), ["ai-generated"]);
+  // The project keeps an AI label: the new Item has it, made in the repository first. A person's overturn is in To do (decision 121).
+  assert.deepEqual(labelsOf(fake, "2"), ["ai-generated", "scopesoup:todo"]);
   assert.match(issue.body ?? "", /\*\*Decided by a person:\*\* By distance from the user's harbour/);
   assert.match(issue.body ?? "", /#1's change has not merged yet; this Item waits for it/);
   // The rework waits for #1 (an issue dependency), and the decision's comment names #2.

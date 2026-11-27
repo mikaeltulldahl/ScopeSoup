@@ -71,7 +71,9 @@ test("metaBranch: file, claim, list, hand back and release, as lines in the item
   const revision = after.log!.find((line) => line.kind === "revision")!;
   assert.deepEqual({ ...revision.fields }, { sha: SHA, branch: "scopesoup/A-1", handback: true, note: "tests included" });
   assert.equal(revision.by.agent, false);
-  assert.deepEqual(after.log!.map((line) => line.kind), ["created", "claimed", "revision", "released"]);
+  // The claim moved it from Backlog to To do (decision 121): the `edited` line.
+  assert.deepEqual(after.log!.map((line) => line.kind), ["created", "claimed", "edited", "revision", "released"]);
+  assert.equal(after.backlog, undefined);
 
   // Taken again, then let go without a branch.
   await claimItem(backend, "A-1");
@@ -267,6 +269,9 @@ function fakeApi(issues: Record<number, { title: string; assignees: string[]; st
     else if (method === "POST" && path === "/repos/o/r/pulls") {
       status = 201;
       json = { number: 41, html_url: "https://github.test/o/r/pull/41" };
+    } else if (method === "POST" && path === "/repos/o/r/labels") {
+      status = 201;
+      json = body;
     } else if (method === "POST" && /\/labels$/.test(path)) {
       const number = Number(/issues\/(\d+)\//.exec(path)![1]);
       labels[number] = [...(labels[number] ?? []), ...((body?.labels as string[]) ?? [])];
@@ -297,7 +302,9 @@ test("github: new creates an issue; claim assigns the token's user; release unas
   assert.match(filed.message, /GitHub has no priority field/);
   assert.deepEqual(api.calls.find((call) => call.method === "POST" && call.path === "/repos/o/r/issues")!.body, { title: "Tune the buoy lights", body: "Dim at dusk." });
 
-  assert.match((await claimItem(backend, "#2")).message, /ada holds 2/);
+  // In Backlog (no scopesoup:todo label): the claim moves it to To do (decision 121).
+  assert.match((await claimItem(backend, "#2")).message, /ada holds 2 .*It moved from Backlog to To do\./);
+  assert.deepEqual(api.calls.find((call) => call.method === "POST" && call.path === "/repos/o/r/issues/2/labels")!.body, { labels: ["scopesoup:todo"] });
   assert.deepEqual(api.calls.find((call) => call.path === "/repos/o/r/issues/2/assignees")!.body, { assignees: ["ada"] });
   assert.deepEqual((await listItems(backend, { mine: true })).map((row) => row.id), ["2"]);
   assert.deepEqual((await listItems(backend, { free: true })).map((row) => row.id), ["1"]);

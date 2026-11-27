@@ -102,7 +102,7 @@ test("GET /api/board returns the view-model", async () => {
   assert.match(response.headers.get("content-type") ?? "", /application\/json/);
   const board = (await response.json()) as BoardView;
   assert.equal(board.now, T0);
-  assert.deepEqual(board.lanes.map((lane) => lane.total), [0, 1, 0, 0, 1, 0, 0]);
+  assert.deepEqual(board.lanes.map((lane) => lane.total), [0, 0, 1, 0, 0, 1, 0, 0]);
   assert.deepEqual(board.yourTurn.map((card) => [card.label, card.unblocks]), [["#1", 1]]);
   assert.equal(board.status.runners.list[0]?.words, "online, idle for 5 min");
 });
@@ -118,7 +118,7 @@ test("GET /api/item returns the item page, 400 without a ref, 404 for an unknown
 
 test("GET /api/status is compact", async () => {
   const status = (await (await fetch(`${base}/api/status`)).json()) as StatusView;
-  assert.deepEqual(status.lanes, { blocked: 0, backlog: 1, "in-progress": 0, "in-review": 0, queued: 1, checking: 0, done: 0 });
+  assert.deepEqual(status.lanes, { backlog: 0, blocked: 0, todo: 1, "in-progress": 0, "in-review": 0, queued: 1, checking: 0, done: 0 });
   // Nothing was started: both read as paused.
   assert.deepEqual([status.yourTurn[0]?.ref, status.queue.waiting, status.paused, status.agents, status.mergeQueue], ["demo:work:1", 1, true, "paused", "paused"]);
 });

@@ -1,6 +1,7 @@
 // The overview's one line at level 0 (replacing an earlier offer): "N Items have no triage: set level 1 and press
-// Resume on the Backlog." Level 1 with triage started runs a triage on every Item without one; nothing else runs them. From level 1
-// the backlog has a divider (replacing "Triage done for N of M Items"): the Items not triaged yet are below it.
+// Resume on To do." Level 1 with triage started runs a triage on every Item in To do without one; nothing else runs them (a person
+// may ask for one on a Backlog Item). From level 1 To do has a divider (replacing "Triage done for N of M Items"): the Items not
+// triaged yet are below it.
 
 import type { Change, WorkItem } from "../model/types.ts";
 import { refKey } from "../model/types.ts";
@@ -13,7 +14,7 @@ export function countWithoutTriage(items: WorkItem[], changes: Change[], jobs: J
 }
 
 /**
- * From level 1, the backlog's divider: the keys of the open Items not triaged yet (no triage), umbrellas left out
+ * From level 1, To do's divider: the keys of the open Items not triaged yet (no triage), umbrellas left out
  * (they never have one). Pure.
  */
 export function withoutTriageKeys(items: WorkItem[], jobs: Jobs): Set<string> {

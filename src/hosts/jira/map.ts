@@ -36,7 +36,12 @@ export interface JiraScope {
   priorities: Readonly<Record<string, Priority>>;
   abandonedResolutions: readonly string[];
   blocksLink: string;
+  /** The status (category To Do) that is Backlog (decision 121): `transitions.backlog` in the config. Default "Backlog". */
+  backlogStatus?: string;
 }
+
+/** Jira's usual name of the Backlog status. */
+export const DEFAULT_BACKLOG_STATUS = "Backlog";
 
 /** Jira's time (`2026-11-20T10:15:30.000+0000`) as ISO 8601 in UTC; the text itself when it cannot be read. */
 export function isoTime(value: string | undefined): string {
@@ -109,6 +114,7 @@ export function issueToWork(scope: JiraScope, issue: JiraIssue): { item: WorkIte
     openChildren: subtasks.filter((stub) => !isDone(stub)).length,
     updatedAt: isoTime(fields.updated),
   };
+  if (item.state === "todo" && (fields.status?.name ?? "").toLowerCase() === (scope.backlogStatus ?? DEFAULT_BACKLOG_STATUS).toLowerCase()) item.backlog = true;
   if (subtasks.length > 0) item.children = subtasks.length;
   const priority = priorityOf(scope, fields.priority?.name);
   if (priority) item.priority = priority;

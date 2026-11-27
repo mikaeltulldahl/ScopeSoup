@@ -164,6 +164,7 @@ export function toWork(scope: MetaScope, read: ReadItem, openChildren: number): 
       openChildren,
       updatedAt,
     };
+    if (fields.lane === "backlog" && work.state === "todo") work.backlog = true;
     if (fields.body) work.body = fields.body;
     if (fields.parent) work.parent = workRef(scope, fields.parent);
     if (fields.duplicateOf && fields.state === "abandoned") work.duplicateOf = workRef(scope, fields.duplicateOf);

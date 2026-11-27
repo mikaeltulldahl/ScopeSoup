@@ -7,7 +7,7 @@
 // and no file grows past a month of picks.
 //
 //   {"at":…,"by":{"who":"mira","machine":"laptop-a","agent":false},"kind":"pick","id":"<uuid>","item":"meta:work:A-2",
-//    "for":"laptop-b","seen":"<the Item's updatedAt the page showed>","steps":[{"kind":"move","to":"backlog"}]}
+//    "for":"laptop-b","seen":"<the Item's updatedAt the page showed>","steps":[{"kind":"move","to":"todo"}]}
 //   {"at":…,"by":{"who":"scopesoup","machine":"laptop-b","agent":true},"kind":"pick-done","request":"<uuid>","done":["moved"]}
 //   {"at":…,"by":{"who":"scopesoup","machine":"laptop-b","agent":true},"kind":"pick-refused","request":"<uuid>","why":"…"}
 //
@@ -40,7 +40,11 @@ export const REQUEST_MAX_AGE_MS = 60 * 60_000;
 export const REQUEST_AHEAD_MS = 2 * 60_000;
 
 /** A pick's steps as the board's `POST /api/item/pick` takes them. */
-export type RequestStep = { kind: "release" | "claim" | "block" } | { kind: "state"; state: "todo" | "done" | "abandoned" } | { kind: "move"; to: "triage" | "backlog" | "in-review" | "merge-queue" | "implement" };
+export type RequestStep =
+  | { kind: "release" | "claim" | "block" }
+  | { kind: "state"; state: "todo" | "done" | "abandoned" }
+  | { kind: "lane"; lane: "backlog" | "todo" }
+  | { kind: "move"; to: "triage" | "todo" | "in-review" | "merge-queue" | "implement" };
 
 export interface PickRequest {
   id: string;
@@ -58,19 +62,25 @@ export interface PickRequest {
   answer?: { at: string; done?: string[]; why?: string };
 }
 
-const MOVES = new Set(["triage", "backlog", "in-review", "merge-queue", "implement"]);
+const MOVES = new Set(["triage", "todo", "in-review", "merge-queue", "implement"]);
 
 /** The one step a request may carry: what a board sends for another machine's work (a move, or Abandoned). */
 function asStep(value: unknown): RequestStep | null {
   if (typeof value !== "object" || value === null) return null;
   const each = value as Record<string, unknown>;
   if (each.kind === "state" && each.state === "abandoned") return { kind: "state", state: "abandoned" };
-  if (each.kind === "move" && typeof each.to === "string" && MOVES.has(each.to)) return { kind: "move", to: each.to as "triage" | "backlog" | "in-review" | "merge-queue" | "implement" };
+  if (each.kind === "move" && typeof each.to === "string" && MOVES.has(each.to)) return { kind: "move", to: each.to as "triage" | "todo" | "in-review" | "merge-queue" | "implement" };
   return null;
 }
 
-/** Whether a board's pick may go to another machine as a request: one move, or Abandoned. */
-export const requestable = (steps: readonly unknown[]): boolean => steps.length === 1 && asStep(steps[0]) !== null;
+/** Backlog for work on another machine: the work dropped there, then the lane written there (decision 121). */
+const isBacklogPick = (steps: readonly unknown[]): boolean => {
+  const [drop, lane] = steps as Record<string, unknown>[];
+  return steps.length === 2 && drop?.kind === "move" && drop.to === "todo" && lane?.kind === "lane" && lane.lane === "backlog";
+};
+
+/** Whether a board's pick may go to another machine as a request: one move, Abandoned, or Backlog (drop, then the lane). */
+export const requestable = (steps: readonly unknown[]): boolean => (steps.length === 1 && asStep(steps[0]) !== null) || isBacklogPick(steps);
 
 const str = (value: unknown): string | undefined => (typeof value === "string" && value.length > 0 && value.length <= 300 ? value : undefined);
 
@@ -84,7 +94,8 @@ function asRequest(entry: LogEntry): PickRequest | null {
   const seen = str(data.seen);
   const steps = Array.isArray(data.steps) ? data.steps : [];
   if (!id || !item || !target || !seen || !requestable(steps)) return null;
-  return { id, at: entry.at, who: entry.by.who, ...(entry.by.machine ? { from: entry.by.machine } : {}), item, for: target, seen, steps: [asStep(steps[0])!] };
+  const typed: RequestStep[] = isBacklogPick(steps) ? [{ kind: "move", to: "todo" }, { kind: "lane", lane: "backlog" }] : [asStep(steps[0])!];
+  return { id, at: entry.at, who: entry.by.who, ...(entry.by.machine ? { from: entry.by.machine } : {}), item, for: target, seen, steps: typed };
 }
 
 /** Every request in the lines, oldest first, each with the first answer written for it. Lines of other shapes are skipped. */

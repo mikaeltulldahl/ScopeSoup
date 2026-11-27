@@ -173,7 +173,17 @@ function allPartsDoneTurn(item: WorkItem): Draft {
   return { actor: "anyone", tone: "yours", waits: "ready to close", reason: `Close it if nothing is left: all ${total} sub-item${total === 1 ? " is" : "s are"} done` };
 }
 
-function backlogTurn(situation: Situation, ctx: TurnContext): Draft {
+/** In Backlog (decision 121): nothing starts it; a session there is a triage a person asked for. */
+function waitsInBacklogTurn(situation: Situation, ctx: TurnContext): Draft {
+  const { item, session } = situation;
+  if (session) return sessionTurn(session, ctx);
+  if (item.openChildren > 0) return umbrellaTurn(item);
+  if ((item.children ?? 0) > 0) return allPartsDoneTurn(item);
+  if (item.holder && holdStands(item.holder, ctx.now.getTime()) && !item.holder.actor.bot) return heldTurn(item, ctx);
+  return { actor: "nobody", tone: "waiting", reason: "in Backlog: waits for a person to move it to To do" };
+}
+
+function todoTurn(situation: Situation, ctx: TurnContext): Draft {
   const { item, session } = situation;
   if (session) return sessionTurn(session, ctx);
   if (item.openChildren > 0) return umbrellaTurn(item);
@@ -195,7 +205,7 @@ function backlogTurn(situation: Situation, ctx: TurnContext): Draft {
   if (ctx.index.snapshot.usage?.status === "rejected") return { actor: "nobody", tone: "blocked", reason: `ready, but the usage limit is reached${resetWords(ctx)}` };
   // Its next step is the triage and triage is paused: it waits for that switch, not for a slot. (A stated size skips the triage from level 2.)
   const triageNext = ctx.notTriaged?.has(refKey(item.ref)) && !((ctx.index.snapshot.level ?? 0) >= 2 && clearWithoutTriage(item));
-  if (triageNext && ctx.index.snapshot.triage !== "started") return { actor: "nobody", tone: "blocked", reason: "ready, but triage is paused (Resume on Backlog)" };
+  if (triageNext && ctx.index.snapshot.triage !== "started") return { actor: "nobody", tone: "blocked", reason: "ready, but triage is paused (Resume on To do)" };
   // Its next step is the implement (it is triaged, or needs no triage), and no implementor takes it now: implementors are
   // paused, or the level is below 2. The status line says which; the card says only "ready".
   if (!triageNext && (ctx.index.snapshot.implement !== "started" || (ctx.index.snapshot.level ?? 2) < 2)) return { actor: "nobody", tone: "waiting", reason: "ready" };
@@ -319,7 +329,7 @@ function draft(situation: Situation, ctx: TurnContext): Draft {
   }
   const parked = ctx.index.parkedByWork.get(refKey(item.ref));
   // An item split into sub-items is an umbrella: a "too large, split it" verdict is spent.
-  if (parked?.as === "not-ready" && lane === "backlog" && item.state === "todo") {
+  if (parked?.as === "not-ready" && (lane === "todo" || lane === "backlog") && item.state === "todo") {
     if (item.openChildren > 0) return umbrellaTurn(item);
     if ((item.children ?? 0) > 0) return allPartsDoneTurn(item);
   }
@@ -327,9 +337,10 @@ function draft(situation: Situation, ctx: TurnContext): Draft {
   // An open question in the item's own record does not take the turn from a session that works on the Item.
   if (item.needsDecision && !(situation.session && isLive(situation.session))) return { actor: "anyone", tone: "yours", waits: "1 question", reason: "Answer the question: the item needs a decision" };
   // Another Item's triage proposed a rewrite of the description (decision 110): a person's turn while nothing else runs on the Item.
-  const proposed = (lane === "backlog" || lane === "blocked") && !situation.session ? ctx.index.snapshot.proposedRewrites?.find((each) => refKey(each.subject) === refKey(item.ref)) : undefined;
+  const proposed = (lane === "backlog" || lane === "todo" || lane === "blocked") && !situation.session ? ctx.index.snapshot.proposedRewrites?.find((each) => refKey(each.subject) === refKey(item.ref)) : undefined;
   if (proposed) return { actor: "anyone", tone: "yours", since: proposed.at, waits: "a rewrite to accept", reason: `Accept, edit or reject the rewrite of the description by ${proposed.askedBy}` };
-  if (lane === "backlog" || lane === "blocked") return backlogTurn(situation, ctx);
+  if (lane === "backlog") return waitsInBacklogTurn(situation, ctx);
+  if (lane === "todo" || lane === "blocked") return todoTurn(situation, ctx);
   if (lane === "in-progress" || !change) return progressTurn(situation, ctx);
   if (lane === "in-review") return reviewTurn(situation, change, ctx);
   if (lane === "queued") return queueTurn(situation, change, ctx);

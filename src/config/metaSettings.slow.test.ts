@@ -119,7 +119,7 @@ describe("meta settings", { concurrency: 3 }, () => {
     try {
       assert.ok((await one.save({ repoPath: a, remote: "origin", machine: "laptop-a", by: "Ada", update: () => ({ project: "tides" }) })).ok);
       await two.fetch(b, "origin", "laptop-b");
-      const steps = [{ kind: "move", to: "backlog" }];
+      const steps = [{ kind: "move", to: "todo" }];
       const asked = await one.writeRequest({ repoPath: a, remote: "origin", machine: "laptop-a" }, { kind: "pick", by: { who: "mira", agent: false }, fields: { id: "r-1", item: "meta:work:A-2", for: "laptop-b", seen: "2026-11-25T10:00:00.000Z", steps } });
       assert.ok(asked.ok && asked.sharing.state === "shared");
       assert.deepEqual(two.requests(b), []);

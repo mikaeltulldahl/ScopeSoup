@@ -178,6 +178,8 @@ export async function createItem(backend: Backend, input: NewItem): Promise<{ re
     ...(input.body?.trim() ? { body: jira ? inertText(input.body) : input.body } : {}),
     ...(input.labels && input.labels.length > 0 ? { labels: input.labels } : {}),
     ...(priority && backend.kind !== "github" ? { priority } : {}),
+    // In Backlog (decision 121), unless the person takes it as they file it: then they chose it, and it is in To do.
+    lane: input.claim ? "todo" : "backlog",
     // metaBranch: the item and its first lines (`created`, and the person's `claimed`) are one commit. GitHub: the assignee is part of the create call.
     ...(backend.kind === "metaBranch"
       ? {
@@ -202,7 +204,26 @@ export interface ClaimOptions {
   from?: string;
 }
 
-export async function claimItem(backend: Backend, name: string, options: ClaimOptions = {}): Promise<{ ref: Ref; shared: WriteOutcome["shared"]; message: string }> {
+/**
+ * A person's claim or hand-back puts work under way, which is never in Backlog (decision 121): an Item there moves to To do, with
+ * an `edited` line on a host that keeps a log. True when it moved.
+ */
+async function outOfBacklog(backend: Backend, ref: Ref, before: WorkItem): Promise<boolean> {
+  if (!before.backlog || !backend.write.editWork) return false;
+  await backend.write.editWork(ref, { lane: "todo" });
+  if (backend.kind === "metaBranch" && backend.write.appendLog) await backend.write.appendLog(ref, { kind: "edited", by: byPerson(backend), fields: { changed: ["lane"] } });
+  return true;
+}
+
+const MOVED_WORDS = " It moved from Backlog to To do.";
+
+export async function claimItem(backend: Backend, name: string, options: ClaimOptions = {}): Promise<{ ref: Ref; shared: WriteOutcome["shared"]; message: string; movedToTodo?: true }> {
+  const before = await fetchItem(backend, itemRef(backend, name));
+  const done = await claimOnly(backend, name, options);
+  return (await outOfBacklog(backend, done.ref, before)) ? { ...done, message: `${done.message}${MOVED_WORDS}`, movedToTodo: true } : done;
+}
+
+async function claimOnly(backend: Backend, name: string, options: ClaimOptions): Promise<{ ref: Ref; shared: WriteOutcome["shared"]; message: string }> {
   const ref = itemRef(backend, name);
   const now = backend.now();
   const item = await fetchItem(backend, ref);
@@ -271,7 +292,13 @@ async function remoteTip(backend: Backend, branch: string): Promise<string> {
   return found.sha;
 }
 
-export async function handBackItem(backend: Backend, name: string, input: HandBack = {}): Promise<{ ref: Ref; change?: Ref; shared: WriteOutcome["shared"]; message: string }> {
+export async function handBackItem(backend: Backend, name: string, input: HandBack = {}): Promise<{ ref: Ref; change?: Ref; shared: WriteOutcome["shared"]; message: string; movedToTodo?: true }> {
+  const before = await fetchItem(backend, itemRef(backend, name));
+  const done = await handBackOnly(backend, name, input);
+  return (await outOfBacklog(backend, done.ref, before)) ? { ...done, message: `${done.message}${MOVED_WORDS}`, movedToTodo: true } : done;
+}
+
+async function handBackOnly(backend: Backend, name: string, input: HandBack): Promise<{ ref: Ref; change?: Ref; shared: WriteOutcome["shared"]; message: string }> {
   const ref = itemRef(backend, name);
   const now = backend.now();
   const item = await fetchItem(backend, ref);

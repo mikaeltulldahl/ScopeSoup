@@ -60,7 +60,7 @@ async function project(): Promise<{ host: MetaBranchHost; item: Ref }> {
     now: () => new Date(Date.parse("2026-11-18T09:00:00Z") + 1000 * n++).toISOString(),
   });
   hosts.push(host);
-  const made = await host.write!.createWork!({ title: "Write the parser" });
+  const made = await host.write!.createWork!({ title: "Write the parser", lane: "todo" });
   return { host, item: made.work };
 }
 

@@ -223,8 +223,8 @@ export const postMediaDelete = (ref: string, name: string) => postJson("/api/ite
 /** A person's Approve (with their edit of the text, if any) or Deny of an Item draft. Approve resolves with the new Item's ref key. */
 export const postItemDraft = (id: string, action: "approve" | "deny", text: { title?: string; description?: string; verification?: string } = {}) => postJson("/api/item-draft", { id, action, ...text });
 
-/** Creates an item. Resolves with its ref key. */
-export const postItem = (fields: ItemFields) => postJson("/api/items", fields);
+/** Creates an item, in Backlog, or in To do with `todo` (decision 120). Resolves with its ref key. */
+export const postItem = (fields: ItemFields, todo = false) => postJson("/api/items", { ...fields, ...(todo ? { todo: true } : {}) });
 /** Changes an item's fields. */
 export const postEdit = (ref: string, fields: ItemFields) => postJson("/api/item/edit", { ref, ...fields });
 

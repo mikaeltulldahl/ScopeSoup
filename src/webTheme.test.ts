@@ -57,7 +57,7 @@ test("the theme is remembered, an unknown or missing value is the default, and a
 test("The default theme words the lanes as the core does, and Graveyard Shift has the approved words", () => {
   for (const lane of LANE_KEYS) assert.equal(THEMES.default.words.lanes[lane], LANE_TITLES[lane]);
   const graveyard = THEMES.graveyard.words;
-  assert.deepEqual(Object.values(graveyard.lanes), ["Stakeout", "At large", "On the case", "Cross-examination", "Awaiting DNA", "Autopsy", "Laid to rest"]);
+  assert.deepEqual(Object.values(graveyard.lanes), ["Tip-offs", "Stakeout", "At large", "On the case", "Cross-examination", "Awaiting DNA", "Autopsy", "Laid to rest"]);
   assert.equal(graveyard.abandoned, "Cold case");
   assert.equal(THEMES.default.words.mergeLane, "Merge queue");
   assert.equal(graveyard.mergeLane, "Crime lab");

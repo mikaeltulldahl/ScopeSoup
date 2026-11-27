@@ -596,7 +596,7 @@ describe("each role's switch", { concurrency: 4 }, () => {
     press(low, "implement.pause");
     press(low, "review.pause");
     const quiet = await low.run();
-    assert.equal(quiet.idle, "Nothing was started because no item is ready.");
+    assert.equal(quiet.idle, "Nothing was started because To do is empty.");
 
     const w = world(config(), [item("1")]);
     await w.run();
@@ -754,7 +754,7 @@ test("nothing to do says why", async () => {
   assert.equal(report.idle, "Nothing was started because no item is ready (2 held: 1 waits for a decision by a person, 2 blocked by 1).");
   await w.run();
   assert.equal(w.events("orchestrator.idle").length, 1);
-  assert.equal((await world(config()).run()).idle, "Nothing was started because no item is ready.");
+  assert.equal((await world(config()).run()).idle, "Nothing was started because To do is empty.");
   assert.equal(w.store.getValue("orchestrator.idle_reason"), report.idle, "the board reads the reason from the store");
 });
 
@@ -3186,6 +3186,8 @@ async function githubWorld() {
   const w = world(config(), [ghItem("1"), ghItem("2", { title: "Harbour list", holder: { actor: { id: "p", name: "Pat" } } })]);
   w.store.addUsageSample(usage(0.1, 0.1));
   const fake = fakeIssues("harbour/tides", [1, 2, 3]);
+  // In To do on GitHub (decision 121), so the re-read keeps them there.
+  for (const issue of fake.issues.values()) issue.labels.push({ name: "scopesoup:todo" });
   const host = createGitHubHost({ token: "t", repo: "harbour/tides", apiUrl: ISSUES_API, fetchImpl: fake.fetch, allowWrites: true });
   const real = createHostActions({ host, git: async () => ({ code: 0, stdout: "", stderr: "" }), config: () => config(), store: w.store });
   const deps = w.depsFor();
@@ -3802,6 +3804,7 @@ test("on GitHub the answer closes the Item as a duplicate, with the target's dat
   const w = world(config(), [ghItem("1"), ghItem("2", { title: "Tide units", holder: { actor: { id: "p", name: "Pat" } } })]);
   w.store.addUsageSample(usage(0.1, 0.1));
   const fake = fakeIssues("harbour/tides", [1, 2]);
+  for (const issue of fake.issues.values()) issue.labels.push({ name: "scopesoup:todo" });
   const host = createGitHubHost({ token: "t", repo: "harbour/tides", apiUrl: ISSUES_API, fetchImpl: fake.fetch, allowWrites: true, conventions: true, login: "scopesoup-bot" });
   const real = createHostActions({ host, git: async () => ({ code: 0, stdout: "", stderr: "" }), config: () => config(), store: w.store });
   const deps = w.depsFor();
@@ -3875,6 +3878,7 @@ async function questionWorld(clocked = false) {
   const w = world(config(), [ghItem("1")]);
   w.store.addUsageSample(usage(0.1, 0.1));
   const fake = fakeIssues("harbour/tides", [1]);
+  for (const issue of fake.issues.values()) issue.labels.push({ name: "scopesoup:todo" });
   const host = createGitHubHost({ token: "t", repo: "harbour/tides", apiUrl: ISSUES_API, fetchImpl: fake.fetch, allowWrites: true, conventions: true, login: "scopesoup-bot", ...(clocked ? { now: () => w.clock.ms } : {}) });
   const real = createHostActions({ host, git: async () => ({ code: 0, stdout: "", stderr: "" }), config: () => config(), store: w.store });
   const deps = w.depsFor();
@@ -3892,7 +3896,8 @@ async function questionWorld(clocked = false) {
   return { w, fake, host, deps, sync };
 }
 
-const labelsOn = (fake: ReturnType<typeof fakeIssues>): string[] => fake.issues.get("1")!.labels.map((label) => (typeof label === "string" ? label : label.name));
+/** Issue 1's labels, without `scopesoup:todo`, which the worlds put on so the Item is in To do (decision 121). */
+const labelsOn = (fake: ReturnType<typeof fakeIssues>): string[] => fake.issues.get("1")!.labels.map((label) => (typeof label === "string" ? label : label.name)).filter((name) => name !== "scopesoup:todo");
 
 test("an Item parked on two questions posts two question comments and the label; A2: and A1: replies from trusted authors release it", async () => {
   const { w, fake, deps, sync } = await questionWorld();
@@ -4249,6 +4254,7 @@ async function labelWorld() {
   const w = world(config(), [ghItem("1", { labels: ["question"] })]);
   w.store.addUsageSample(usage(0.1, 0.1));
   const fake = fakeIssues("harbour/tides", [1]);
+  for (const issue of fake.issues.values()) issue.labels.push({ name: "scopesoup:todo" });
   for (const name of ["bug", "question", "scopesoup:needs-decision"]) fake.labels.add(name);
   fake.labelDescriptions.set("bug", "Something does not work");
   fake.labelDescriptions.set("scopesoup:needs-decision", "A Scope Soup question waits for an answer");
@@ -4810,6 +4816,7 @@ test("on GitHub the other Item's rewrite and question are posted there, the agen
   const w = world(config(), [ghItem("1"), ghItem("2", { body: "Wind units." })]);
   w.store.addUsageSample(usage(0.1, 0.1));
   const fake = fakeIssues("harbour/tides", [1, 2]);
+  for (const issue of fake.issues.values()) issue.labels.push({ name: "scopesoup:todo" });
   const host = createGitHubHost({ token: "t", repo: "harbour/tides", apiUrl: ISSUES_API, fetchImpl: fake.fetch, allowWrites: true, conventions: true, login: "scopesoup-bot" });
   const real = createHostActions({ host, git: async () => ({ code: 0, stdout: "", stderr: "" }), config: () => config(), store: w.store });
   const deps = w.depsFor();
@@ -4838,7 +4845,7 @@ test("Jira at level 2: claimed in a property, a question comment answered by a p
   const w = world(config({ level: 2, ...MERGES }));
   // The fake Jira and the host keep the world's clock.
   const jira = writable("cloud", { clock: w.clock });
-  const made = await jira.write.createWork!({ title: "Tide table in metres", body: "Show metres.", verification: "The table says m." });
+  const made = await jira.write.createWork!({ title: "Tide table in metres", body: "Show metres.", verification: "The table says m.", lane: "todo" });
   w.store.put((await jira.host.work.getWork(made.work))!, "sync", new Date(w.clock.ms).toISOString());
   w.queue = fakeQueue();
   w.store.addUsageSample(usage(0.1, 0.1));
@@ -4896,7 +4903,7 @@ test("Jira at level 2: claimed in a property, a question comment answered by a p
   assert.equal(w.store.get<WorkItem>(made.work)?.state, "done");
 });
 
-test("a job a person put back in the backlog on the board is dropped once its session is over, with this machine's claim and workspace", async () => {
+test("a job a person put back in To do on the board is dropped once its session is over, with this machine's claim and workspace", async () => {
   const w = world(config({ level: 2 }), [item("1")]);
   w.claims = true;
   w.claimant = "scopesoup@here";
@@ -4913,7 +4920,7 @@ test("a job a person put back in the backlog on the board is dropped once its se
   w.runner.end("1", "succeeded", TRIAGE_OK);
   await w.run();
   assert.equal(w.job("1"), undefined);
-  assert.match(w.reasons("orchestrator.job_dropped")[0] ?? "", /Ada put 1 back in the backlog/);
+  assert.match(w.reasons("orchestrator.job_dropped")[0] ?? "", /Ada put 1 back in To do/);
   assert.ok(w.calls.includes("release 1"), w.calls.join("\n"));
   assert.ok(w.runner.released.includes(workspaceKey(ref("1"))));
 });
@@ -4988,6 +4995,30 @@ test("a triage a person picked runs at level 0, and its settling clears the ask"
   assert.equal(roles(w).length, 1, "nothing more starts on its own at level 0");
 });
 
+test("Backlog (decision 121): nothing starts there; a person's triage runs and the Item stays; its implement step waits for To do", async () => {
+  const w = world(config(), [item("1", { backlog: true }), item("2", { backlog: true })]);
+  w.store.addUsageSample(usage(0.1, 0.1));
+  const report = await w.run();
+  assert.deepEqual(report.started, []);
+  assert.equal(report.idle, "Nothing was started because To do is empty (2 items wait in Backlog for a person to move them to To do).");
+  const ask = { item: ref("1"), workspace: workspaceKey(ref("1")), branch: "scopesoup/1", step: "triage" as const, failures: 0, fixRounds: 0, startedAt: new Date(T0).toISOString(), triageAskedBy: "Ada" };
+  saveJobs(w.store, { [refKey(ref("1"))]: ask });
+  await w.run();
+  assert.deepEqual(w.runner.requests.map((request) => `${request.role} ${request.subject.id}`), ["triage 1"]);
+  w.runner.end("1", "succeeded", TRIAGE_OK);
+  await w.run();
+  assert.equal(w.job("1")?.step, "implement");
+  w.clock.ms += 60_000;
+  const waits = await w.run();
+  assert.equal(roles(w).length, 1, "nothing more starts while it is in Backlog");
+  assert.match(waits.idle ?? "", /1 is in Backlog: it waits for a person to move it to To do before its implement step/);
+  // A person moves it to To do: the implement step starts.
+  w.store.put({ ...w.store.get<WorkItem>(ref("1"))!, backlog: undefined }, "sync", new Date(w.clock.ms).toISOString());
+  w.clock.ms += 60_000;
+  await w.run();
+  assert.deepEqual(roles(w), ["triage", "implement"]);
+});
+
 // --- Implement anyway and the implementor's model per size (decision 105) ---
 
 /** A job parked by triage's verdict and overruled by a person (src/server/moves.ts): at the implement step, with Ada's ask. */
@@ -5013,6 +5044,29 @@ test("Implement anyway runs the implement step below level 2, even at level 0, w
     await w.run();
     assert.equal(roles(w).length, 1, "nothing more starts on its own");
   }
+});
+
+test("Backlog (decision 121): work a person put under way never stalls there; Implement anyway, then review findings, then the second implement runs", async () => {
+  // The board moves the Item to To do at Implement anyway; this is the safety net if that edit has not been read back yet.
+  const w = world(config({ level: 3 }), [item("1", { backlog: true })]);
+  w.store.addUsageSample(usage(0.1, 0.1));
+  saveJobs(w.store, { [refKey(ref("1"))]: overruled("1", { triage: { ...TRIAGE_OK, hidesDecision: false } }) });
+  await w.run();
+  assert.deepEqual(roles(w), ["implement"]);
+  await step(w, "1", "succeeded", IMPLEMENT_OK);
+  assert.deepEqual(roles(w), ["implement", "review"]);
+  assert.equal(w.job("1")?.implementAskedBy, undefined);
+  assert.ok(w.job("1")?.head, "the first implement step left a revision");
+  await step(w, "1", "succeeded", REVIEW_CHANGES);
+  assert.deepEqual(roles(w), ["implement", "review", "implement"]);
+});
+
+test("Backlog (decision 121): a job with a revision (a person's hand-back sent back by review) goes on to implement", async () => {
+  const w = world(config({ level: 3 }), [item("1", { backlog: true })]);
+  w.store.addUsageSample(usage(0.1, 0.1));
+  saveJobs(w.store, { [refKey(ref("1"))]: overruled("1", { implementAskedBy: undefined, head: "a".repeat(40), triage: { ...TRIAGE_OK, hidesDecision: false } }) });
+  await w.run();
+  assert.deepEqual(roles(w), ["implement"]);
 });
 
 test("the implementor's model by triage's size, and one step stronger after two send-backs by review, said in the start line", async () => {
@@ -5154,7 +5208,7 @@ test("a pick made while the tick prepares a session's start wins: nothing starts
   await w.run();
   // Dropped, and started again from triage, as Backlog says.
   assert.deepEqual(roles(w), ["triage", "triage"]);
-  assert.match(w.reasons("orchestrator.job_dropped")[0] ?? "", /Ada put 1 back in the backlog/);
+  assert.match(w.reasons("orchestrator.job_dropped")[0] ?? "", /Ada put 1 back in To do/);
 });
 
 test("a session a pick could not end is waited for 2 minutes, then the job goes on as the pick left it, with an event", async () => {
@@ -5172,7 +5226,7 @@ test("a session a pick could not end is waited for 2 minutes, then the job goes 
   w.clock.ms += 3 * 60_000;
   await w.run();
   assert.match(w.reasons("orchestrator.interrupt_failed")[0] ?? "", /still there 2 minutes after Ada's pick ended it/);
-  assert.match(w.reasons("orchestrator.job_dropped")[0] ?? "", /Ada put 1 back in the backlog/);
+  assert.match(w.reasons("orchestrator.job_dropped")[0] ?? "", /Ada put 1 back in To do/);
 });
 
 test("meta branch: a handed-over change a person merged is logged as merged and the Item is closed", async () => {

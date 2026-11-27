@@ -8,6 +8,8 @@ import { isItemId } from "./ids.ts";
 export interface ItemFields {
   title: string;
   state: WorkState;
+  /** `backlog`: the Item is in Backlog (decision 121). Absent: To do. */
+  lane?: "backlog";
   labels: string[];
   parent?: string;
   blockedBy: string[];
@@ -26,7 +28,7 @@ export interface ItemFields {
 export type ParsedItem = { ok: true; fields: ItemFields } | { ok: false; problems: string[] };
 
 export const WORK_STATES: readonly WorkState[] = ["todo", "doing", "waiting", "done", "abandoned"];
-const KNOWN = new Set(["id", "title", "state", "labels", "parent", "blockedBy", "duplicateOf", "verification", "priority", "vote"]);
+const KNOWN = new Set(["id", "title", "state", "lane", "labels", "parent", "blockedBy", "duplicateOf", "verification", "priority", "vote"]);
 const KEY_LINE = /^([A-Za-z][A-Za-z0-9]*):(.*)$/;
 
 /** "a, b" and "[a, b]" both give ["a", "b"]. Empty entries are dropped. */
@@ -76,6 +78,9 @@ export function parseItem(text: string, dirId: string): ParsedItem {
   if (!title) problems.push("the title is missing");
   const state = header.get("state") ?? "";
   if (!(WORK_STATES as readonly string[]).includes(state)) problems.push(state ? `the state "${state}" is not one of ${WORK_STATES.join(", ")}` : "the state is missing");
+  // `lane: backlog` puts the Item in Backlog; `todo` or nothing is To do.
+  const lane = header.get("lane") ?? "";
+  if (lane !== "" && lane !== "backlog" && lane !== "todo") problems.push(`the lane "${lane}" is not backlog or todo`);
   const priority = header.get("priority");
   if (priority !== undefined && priority !== "" && !isPriority(priority)) problems.push(`the priority "${priority}" is not one of ${PRIORITIES.join(", ")}`);
   const voteText = header.get("vote");
@@ -91,6 +96,7 @@ export function parseItem(text: string, dirId: string): ParsedItem {
   // The description: everything after the header, without the blank lines around it.
   const body = lines.slice(end + 1).join("\n").replace(/^\s*\n/, "").trimEnd();
   const fields: ItemFields = { title, state: state as WorkState, labels: list(header.get("labels") ?? ""), blockedBy, body, extra };
+  if (lane === "backlog") fields.lane = "backlog";
   if (parent) fields.parent = parent;
   if (duplicateOf) fields.duplicateOf = duplicateOf;
   const verification = header.get("verification");

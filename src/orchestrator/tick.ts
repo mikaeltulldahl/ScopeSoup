@@ -16,7 +16,7 @@ import { labelsPromptText } from "../model/labels.ts";
 import { refKey } from "../model/types.ts";
 import { providerFor } from "./providers/index.ts";
 import { loadVotes, withVotes } from "../store/votes.ts";
-import { busyItems, compareItems, foreignChanges, readyItems, sameFilesWait } from "./candidates.ts";
+import { BACKLOG_REASON, busyItems, compareItems, foreignChanges, readyItems, sameFilesWait } from "./candidates.ts";
 import { sameFilesWords } from "../core/sameFiles.ts";
 import { earlierText } from "../core/earlier.ts";
 import { inertTags, LINKED_TYPES, linkedText } from "../core/linked.ts";
@@ -128,7 +128,7 @@ function recordConfigChanges(ctx: Context, config: ProjectConfig): void {
 }
 
 /** The words of a pick (`interrupt.to`) in the event that ends a session for it. */
-const PICK_WORDS: Record<string, string> = { triage: "Triage", backlog: "Backlog", "in-review": "In review", "merge-queue": "Merge queue", abandoned: "Abandoned" };
+const PICK_WORDS: Record<string, string> = { triage: "Triage", todo: "To do", "in-review": "In review", "merge-queue": "Merge queue", abandoned: "Abandoned" };
 
 /** How long the tick waits for a session a pick ended to be over before it gives up waiting (decision 104). */
 const INTERRUPT_WAIT_MS = 2 * 60_000;
@@ -159,11 +159,11 @@ function interrupted(ctx: Context, key: string, job: Job, item: WorkItem | null)
   return false;
 }
 
-/** Drops a job a person put back in the backlog: its claim on the host (when this machine holds it) and its workspace go back. */
+/** Drops a job a person put back in To do: its claim on the host (when this machine holds it) and its workspace go back. */
 async function dropAsked(ctx: Context, jobs: Jobs, key: string, job: Job, item: WorkItem | null): Promise<void> {
   const { actions, runner } = ctx.deps;
   delete jobs[key];
-  const reason = `${job.dropAskedBy} put ${item?.ref.id ?? key} back in the backlog on the board: the work under way is dropped (the branch stays).`;
+  const reason = `${job.dropAskedBy} put ${item?.ref.id ?? key} back in To do on the board: the work under way is dropped (the branch stays).`;
   ctx.commit("orchestrator.job_dropped", reason, key, { by: job.dropAskedBy });
   if (actions.claims && actions.claimant && item?.holder?.actor.id === actions.claimant) await ctx.act("release the claim", key, () => actions.release(job.item, reason));
   await ctx.act("remove the worktree", key, () => runner.releaseWorkspace(job.workspace));
@@ -467,7 +467,7 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
       running++;
       continue;
     }
-    // A person put the Item back in the backlog on the board (src/server/moves.ts): once its session is over (its result is not
+    // A person put the Item back in To do on the board (src/server/moves.ts): once its session is over (its result is not
     // taken), the job goes with this machine's claim and workspace. The branch stays; the Item starts again at triage.
     if (job.dropAskedBy) {
       const session = job.sessionId ? store.get<Session>({ host: "scopesoup", kind: "session", id: job.sessionId }) : undefined;
@@ -655,6 +655,12 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
       }
       continue;
     }
+    // Backlog is no work (decision 121): a person's moves take an Item with work under way to To do. Left is a person's one-off
+    // triage there, whose implement step waits for To do; a job that has a session, a revision or something to resume never waits.
+    if (item.backlog && job.step === "implement" && job.implementAskedBy === undefined && job.head === undefined && !job.resumeWith && !job.resume) {
+      reasons.push(`${item.ref.id} ${BACKLOG_REASON} before its ${job.step} step`);
+      continue;
+    }
     // Level 0 starts only what a person picked.
     if (level === 0 && !personAsked(job, job.step)) continue;
     // A step above the level waits at it, and keeps no slot: raising the level lets it go on. A person's pick is not held by it.
@@ -695,9 +701,14 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
   const readiness = readyItems(withVotes(withOwnBlockers(store.list<WorkItem>("work"), loadOwnBlockers(store)), loadVotes(store)), others, jobs, at);
   // An item a person handed back that is not taken on yet (its branch is not here, agents are not started) is not started as new.
   const fresh = level === 0 ? [] : readiness.ready.filter((each) => !handbacksWaiting.has(refKey(each.ref))).sort(compare);
-  if (waiting.length + fresh.length === 0 && readiness.held.length > 0) {
-    const some = readiness.held.slice(0, 5).map((held) => `${held.item.ref.id} ${held.reason}`).join(", ");
-    reasons.push(`no item is ready (${readiness.held.length} held: ${some}${readiness.held.length > 5 ? ", ..." : ""})`);
+  // Agents start only from To do (decision 121): with it empty they are idle, and the status line says so.
+  const heldInTodo = readiness.held.filter((held) => !held.item.backlog);
+  if (waiting.length + fresh.length === 0 && readiness.ready.length === 0 && heldInTodo.length === 0) {
+    const inBacklog = readiness.held.length;
+    reasons.push(`To do is empty${inBacklog > 0 ? ` (${plural(inBacklog, "item")} ${inBacklog === 1 ? "waits" : "wait"} in Backlog for a person to move ${inBacklog === 1 ? "it" : "them"} to To do)` : ""}`);
+  } else if (waiting.length + fresh.length === 0 && heldInTodo.length > 0) {
+    const some = heldInTodo.slice(0, 5).map((held) => `${held.item.ref.id} ${held.reason}`).join(", ");
+    reasons.push(`no item is ready (${heldInTodo.length} held: ${some}${heldInTodo.length > 5 ? ", ..." : ""})`);
   }
 
   // 4. The budget. Paid extra usage stops what is running too.
@@ -783,7 +794,7 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
       ? `its ${step} step is due${entry.job.answerArrived ? " (the answer arrived)" : entry.job.resume ? " (continuing the session that was cut off)" : entry.job.resumeWith !== undefined ? (entry.job.agentSession ? " (resuming the implementor's session with what came back)" : " (a fresh implementor, with what came back: the session that wrote the change is not known)") : entry.job.failures > 0 ? ` (attempt ${entry.job.failures + 1})` : ""}`
       : step === "triage"
       ? "it is ready and first in line (triages run oldest first, a higher priority ahead)"
-      : `it is ready and first in line (by the backlog's score, see "How the backlog is ordered")`;
+      : `it is ready and first in line (by To do's score, see "How Items are ordered")`;
     const label = `${step} for ${entry.item.ref.id} "${entry.item.title}"`;
 
     const job: Job = entry.job ?? {

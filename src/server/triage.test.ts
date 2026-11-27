@@ -63,16 +63,16 @@ interface Board {
   yourTurn: { key: string }[];
 }
 const fullBoard = async (): Promise<Board> => (await (await fetch(`${base}/api/board`)).json()) as Board;
-/** The backlog's keys above and below the divider, or null without one. */
+/** To do's keys above and below the divider, or null without one. */
 const divided = async (): Promise<{ above: string[]; below: string[] } | null> => {
-  const backlog = (await fullBoard()).lanes.find((lane) => lane.lane === "backlog")!;
+  const backlog = (await fullBoard()).lanes.find((lane) => lane.lane === "todo")!;
   if (backlog.notTriaged === undefined) return null;
   const keys = backlog.cards.map((card) => card.key);
   return { above: keys.slice(0, keys.length - backlog.notTriaged), below: keys.slice(keys.length - backlog.notTriaged) };
 };
 const triaged = { log: [{ at, by: { who: "scopesoup", agent: true as const }, kind: "session" as const, fields: { role: "triage" } }] };
 
-test("from level 1 the backlog has a divider; an Item moves above it when its triage takes it in", async () => {
+test("from level 1 To do has a divider; an Item moves above it when its triage takes it in", async () => {
   assert.equal(await divided(), null, "level 0: no divider");
   level = 1;
   assert.deepEqual(await divided(), { above: ["fake:work:3"], below: ["fake:work:1", "fake:work:2"] });
@@ -96,7 +96,7 @@ test("an Item parked on its triage's questions stays in Your turn", async () => 
   saveJobs(store, jobs);
   const board = await fullBoard();
   assert.ok(board.yourTurn.some((card) => card.key === "fake:work:1"), "in Your turn");
-  assert.ok(board.lanes.find((lane) => lane.lane === "backlog")!.cards.some((card) => card.key === "fake:work:1"), "still in the backlog");
+  assert.ok(board.lanes.find((lane) => lane.lane === "todo")!.cards.some((card) => card.key === "fake:work:1"), "still in To do");
 });
 
 test("there is no triage endpoint any more", async () => {
