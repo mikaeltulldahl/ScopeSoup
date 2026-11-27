@@ -101,6 +101,11 @@ export interface WorldOptions {
   items: number;
   level: number;
   slots: number;
+  /**
+   * Triages age (#217): a person's commit on main often touches a path a waiting To do Item's triage named, and sometimes a day
+   * passes with it, so Scope Soup has To do Items to triage again within its share. Only the long run's own seeds set it.
+   */
+  ageing?: true;
 }
 
 /** One machine of several (the multiplayer profile, `multi.ts`): its name, its Items' id prefix, and what it shares with the others. */
@@ -216,6 +221,7 @@ export class SimWorld {
   fair = false;
   /** What the last tick reported, when the step was a tick. */
   lastTick: TickReport | null = null;
+  readonly ageing: boolean;
   /** The tick threw: the rules read it (G2). */
   tickError: string | null = null;
   ledger: Ledger = { requests: [], closesAsked: new Map(), texts: new Map(), ended: [], answers: [], asksInFair: new Map(), skipped: 0, seen: new Map() };
@@ -229,6 +235,7 @@ export class SimWorld {
   constructor(options: WorldOptions, machine?: MachineOptions) {
     this.store = openStore(":memory:");
     this.machine = machine?.machine ?? "laptop-a";
+    this.ageing = options.ageing === true;
     this.remote = machine?.remote ?? new MetaRemote();
     this.git = machine?.git ?? new FakeGit();
     this.requests = machine?.requests;
@@ -492,8 +499,20 @@ export class SimWorld {
         return;
       case "main-commit": {
         const r = random(action.v);
-        this.git.outsideCommit([r.pick(PATHS)!]);
+        // With `ageing`, often on a path a triaged To do Item named that waits for its implement step, and sometimes a day passes with it: aged
+        // triages with real input since, what Scope Soup triages again within its share (#217).
+        const items = new Map(this.items().map((item) => [refKey(item.ref), item]));
+        const waiting = Object.values(this.jobs()).filter((job) => job.step === "implement" && !job.implement && !job.head && !job.sessionId && !job.parked && items.get(refKey(job.item))?.backlog !== true && (job.triage?.paths ?? []).length > 0);
+        const named = [...new Set(waiting.flatMap((job) => job.triage!.paths))];
+        const onNamed = this.ageing && named.length > 0 && r.chance(0.8);
+        this.git.outsideCommit([onNamed ? r.pick(named)! : r.pick(PATHS)!]);
         this.count("main-commit");
+        if (onNamed && r.chance(0.5)) {
+          this.ms += 25 * 3600_000;
+          // A reading of the new day comes in (the old one's windows have reset).
+          this.usage(false);
+          this.count("day-passes");
+        }
         return;
       }
       case "person-refs":

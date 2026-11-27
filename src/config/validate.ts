@@ -42,6 +42,7 @@ const SETTING_RANGES: Record<SettingName, { min: number; max: number; whole: boo
   budgetSevenDay: { min: 0, max: 2, whole: false },
   waitingCapTriage: { min: 1, max: 100, whole: true },
   waitingCapWork: { min: 1, max: 100, whole: true },
+  retriageShare: { min: 0, max: 0.5, whole: false },
   persistence: { min: 1, max: 5, whole: true },
   retryBackoffCapSeconds: { min: 10, max: 86400, whole: true },
   checkTimeoutMinutes: { min: 1, max: 1440, whole: false },
@@ -49,7 +50,6 @@ const SETTING_RANGES: Record<SettingName, { min: number; max: number; whole: boo
   queueMaxBatch: { min: 1, max: 100, whole: true },
   queueRerunCost: { min: 0, max: 2, whole: false },
   queueMinOutcomes: { min: 1, max: 1000, whole: true },
-  triageMaxAgeDays: { min: 1, max: 365, whole: true },
 };
 
 const TOP_KEYS = [

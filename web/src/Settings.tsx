@@ -36,7 +36,7 @@ function budgetWords(budget: number): string {
 }
 
 /** The settings the page shows, besides the level. */
-const SETTINGS = ["maxParallelSessions", "budgetFiveHour", "budgetSevenDay", "triageMaxAgeDays", "waitingCapTriage", "waitingCapWork"] as const;
+const SETTINGS = ["maxParallelSessions", "budgetFiveHour", "budgetSevenDay", "waitingCapTriage", "waitingCapWork", "retriageShare"] as const;
 type SettingName = (typeof SETTINGS)[number];
 
 /** What a role set to the Copilot provider is told (`COPILOT_WARNING` in src/orchestrator/providers/copilot/command.ts; the board reads no server code). */
@@ -131,7 +131,7 @@ function draftOf(config: ProjectConfig, raw: unknown, mergeQueue: { remoteUrl?: 
   // The command as the shared file holds it, with {{ownClone}} unexpanded (the configuration in use has this machine's path in it).
   const command = (raw as { setupCommand?: unknown } | null)?.setupCommand;
   const setup = { command: Array.isArray(command) ? commandText(command as string[]) : config.setupCommand ? commandText(config.setupCommand) : "", watch: (config.setupWatch ?? []).join("\n") };
-  return { level: config.level, settings: { maxParallelSessions: setting("maxParallelSessions"), budgetFiveHour: setting("budgetFiveHour"), budgetSevenDay: setting("budgetSevenDay"), triageMaxAgeDays: setting("triageMaxAgeDays"), waitingCapTriage: setting("waitingCapTriage"), waitingCapWork: setting("waitingCapWork") }, roles, mergeQueue: asked, setup, resources: resourceDrafts(config), media: { push: config.media?.push ?? false, keepDays: config.media?.keepDaysAfterClose === null || config.media?.keepDaysAfterClose === undefined ? "" : String(config.media.keepDaysAfterClose), keepMode: config.media?.keepDaysAfterClose === null || config.media?.keepDaysAfterClose === undefined ? "never" : "after" }, multiplayer: config.multiplayer, shouldFindings: config.review?.shouldFindings ?? "fix", aiLabel: config.labels?.aiGenerated || "", jira: { filter: config.host?.kind === "jira" ? config.host.filter ?? "" : "", components: config.host?.kind === "jira" ? (config.host.components ?? []).join(", ") : "" } };
+  return { level: config.level, settings: { maxParallelSessions: setting("maxParallelSessions"), budgetFiveHour: setting("budgetFiveHour"), budgetSevenDay: setting("budgetSevenDay"), waitingCapTriage: setting("waitingCapTriage"), waitingCapWork: setting("waitingCapWork"), retriageShare: setting("retriageShare") }, roles, mergeQueue: asked, setup, resources: resourceDrafts(config), media: { push: config.media?.push ?? false, keepDays: config.media?.keepDaysAfterClose === null || config.media?.keepDaysAfterClose === undefined ? "" : String(config.media.keepDaysAfterClose), keepMode: config.media?.keepDaysAfterClose === null || config.media?.keepDaysAfterClose === undefined ? "never" : "after" }, multiplayer: config.multiplayer, shouldFindings: config.review?.shouldFindings ?? "fix", aiLabel: config.labels?.aiGenerated || "", jira: { filter: config.host?.kind === "jira" ? config.host.filter ?? "" : "", components: config.host?.kind === "jira" ? (config.host.components ?? []).join(", ") : "" } };
 }
 
 /** Component names as typed: comma separated, blanks dropped. */
@@ -578,10 +578,10 @@ export function Settings({ project, openHistory = false }: { project?: ProjectVi
           {draft.level >= 2 && (
             <div class="settings-row">
               <label>
-                <b>Triage again after</b>
-                <input type="number" min={1} max={365} step={1} value={draft.settings.triageMaxAgeDays} onInput={(event) => setSetting("triageMaxAgeDays", (event.target as HTMLInputElement).value)} onBlur={() => setSettingNow("triageMaxAgeDays", draftRef.current!.settings.triageMaxAgeDays, 1, 365)} onKeyDown={leave} />
-                <span>days: an Item whose triage is older is triaged again before its work starts, as it is when its text was edited, a blocker finished, or commits changed the files its triage named</span>
-                <Marked k="triageMaxAgeDays" />
+                <b>Triage again: {Math.round(Number(draft.settings.retriageShare) * 100)} % of usage</b>
+                <input type="range" min={0} max={50} step={1} value={Math.round(Number(draft.settings.retriageShare) * 100)} onInput={(event) => sliderSetting("retriageShare", String(Number((event.target as HTMLInputElement).value) / 100))} />
+                <span>An Item in To do is triaged again only when what its triage read changed (its text, a blocker or linked Item done, commits on the files it named). Within this share of what Scope Soup uses, the stalest is triaged again on its own, one at a time; each is triaged again before its work starts too. Backlog is never triaged again on its own.</span>
+                <Marked k="retriageShare" />
               </label>
             </div>
           )}

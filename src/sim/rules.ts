@@ -323,6 +323,68 @@ export const RULES: Rule[] = [
     },
   },
   {
+    id: "B9",
+    why: "No re-triage without new input: a triage Scope Soup takes again on its own (its triage_again event, before an Item starts or within the share) starts only after something it read changed since the triage before settled: the Item's text, a blocker or a linked Item closed, commits on main on the paths it named. Age alone is no input; a person's answer or Triage pick is theirs (#217, decision 9 of #211).",
+    check(o, prev, memo) {
+      // What each triage read when it started; it becomes the Item's triage once its session settles (a failed or orphaned one does not).
+      type Read = { text: string; blockers: string[]; open: string[]; main: string; paths: string[]; at: string };
+      const pending = (memo.pending ??= {}) as Record<string, { item: string; read: Read }>;
+      const triaged = (memo.triaged ??= {}) as Record<string, Read>;
+      const closedNow = new Set(o.items.filter(isClosed).map((i) => i.key));
+      const refOf = (b: { host: string; kind: string; id: string }): string => `${b.host}:${b.kind}:${b.id}`;
+      const linkedOf = (i: ItemObs): string[] => (i.job?.triage?.links ?? []).map((l) => `${i.item.ref.host}:work:${l.item.replace(/^#/, "")}`);
+      for (const [session, each] of Object.entries(pending)) {
+        const end = o.ledger.ended.find((e) => e.session === session);
+        // Read at the tick that takes its result.
+        if (!end || !isTick(o)) continue;
+        // Settled: the Items its answer linked to, open now, count too (the answer is read once it is taken).
+        const i = o.items.find((x) => x.key === each.item);
+        if (end.settled) triaged[each.item] = { ...each.read, open: [...new Set([...each.read.open, ...(i ? linkedOf(i) : []).filter((k) => !closedNow.has(k))])] };
+        delete pending[session];
+      }
+      const readOf = (i: ItemObs): Read => ({
+        text: JSON.stringify([i.item.title, i.item.body ?? "", i.item.verification ?? ""]), blockers: i.item.blockedBy.map(refOf).sort(),
+        open: [...i.item.blockedBy.map(refOf), ...linkedOf(i)].filter((k) => !closedNow.has(k)), main: o.git.main, paths: i.paths, at: o.at,
+      });
+      // Scope Soup's own choice to triage again is said by its event, written before the session starts (in the same tick, or earlier
+      // when the start then waited).
+      const chosen = (memo.chosen ??= {}) as Record<string, true>;
+      for (const e of o.events) if (e.kind === "orchestrator.triage_again" && e.subject) chosen[e.subject] = true;
+      for (const s of o.started) {
+        if (s.role !== "triage") continue;
+        const i = o.items.find((each) => each.key === s.item);
+        if (!i) continue;
+        const again = chosen[s.item] === true && (s.request.vars.recheck ?? "").trim() !== "";
+        delete chosen[s.item];
+        const before = triaged[s.item];
+        if (again && before) {
+          const now = readOf(i);
+          // The paths it named: its answer's, which the job holds until the triage taken again answers.
+          const paths = [...new Set([...before.paths, ...(prevOf(prev, s.item)?.paths ?? []), ...now.paths])];
+          // A person's edit since, as the Item's history says (on several machines a triage's start may already show an edit its
+          // session did not read).
+          const edited = (i.item.history ?? []).some((h) => h.kind === "edited" && !h.by.bot && Date.parse(h.at) > Date.parse(before.at) - 5 * 60_000);
+          const changed = edited || now.text !== before.text || JSON.stringify(now.blockers) !== JSON.stringify(before.blockers)
+            || before.open.some((k) => closedNow.has(k)) || (paths.length > 0 && o.git.touching(before.main, o.git.main, paths) > 0);
+          if (!changed) return `${i.id}'s triage was taken again with nothing it read changed since its triage of ${before.at}`;
+        }
+        pending[s.session] = { item: s.item, read: readOf(i) };
+      }
+      return null;
+    },
+  },
+  {
+    id: "B10",
+    why: "Re-triage stays within its share: the triages Scope Soup takes again on its own number at most the share of the sessions started, plus one (the share is of expected use, which the fake usage makes about the same per session) (#217).",
+    check(o, _prev, memo) {
+      const count = (memo.count ??= { sessions: 0, retriages: 0 }) as { sessions: number; retriages: number };
+      count.sessions += o.started.length;
+      count.retriages += o.events.filter((e) => e.kind === "orchestrator.triage_again" && (e.data as Record<string, unknown> | undefined)?.background === true).length;
+      const allowed = o.retriageShare * count.sessions + 1;
+      return count.retriages > allowed ? `${count.retriages} triages were taken again on Scope Soup's own choice in ${count.sessions} sessions; the share (${Math.round(o.retriageShare * 100)} %) allows ${Math.floor(allowed)}` : null;
+    },
+  },
+  {
     id: "B8",
     why: "An answer resumes where it was asked, with the work kept: an implementor's question answered goes back to the implementor, not to triage.",
     check(o, prev, memo) {
@@ -801,6 +863,9 @@ export const RULES: Rule[] = [
       if (prev.remote.down || o.remote.down) return null;
       // The pace held the next start (decision 133): the room was the window's, not the slot's. D10 checks the pace from outside.
       if (o.tick.paced) return null;
+      // So did the usage check: at the budget, or one session at a time while every window of the last reading has reset (a day
+      // passing in the fake world, #217): the room was the usage check's, not the slot's.
+      if (o.tick.budgetHeld) return null;
       const waiting = prev.items.find((i) => i.w.kind === "start" && i.w.cause === "slot" && !overlaps(i) && !o.started.some((s) => s.item === i.key) && (() => { const now = o.items.find((each) => each.key === i.key)?.w; return now?.kind === "start" && now.cause === "slot"; })());
       return waiting ? `${waiting.id} waited only for a slot, a slot was free, and the tick did not start it (now ${wText(o.items.find((each) => each.key === waiting.key)!.w)})` : null;
     },
@@ -955,6 +1020,18 @@ export const RULES: Rule[] = [
         if (before[i.key] || prevOf(prev, i.key) || i.card?.lane !== todo) return null;
         const filed = o.requests.some((r) => r.status === 200 && r.path === "/api/items" && r.body.todo === true);
         return filed ? null : `${i.id} is new and landed in To do`;
+      });
+    },
+  },
+  {
+    id: "J4",
+    why: "Backlog is never triaged again on its own: Scope Soup chooses no triage again (its triage_again event) for an Item in Backlog; a person's Triage there, or their answer, is theirs (#217, #221).",
+    check(o, prev) {
+      if (!todoLane(o) || !prev) return null;
+      return first(o.events.filter((e) => e.kind === "orchestrator.triage_again" && e.subject), (e) => {
+        const before = prevOf(prev, e.subject!);
+        const inBacklog = before?.card?.lane === "backlog" || before?.item.backlog === true;
+        return inBacklog ? `${before!.id} is in Backlog and Scope Soup chose to triage it again` : null;
       });
     },
   },

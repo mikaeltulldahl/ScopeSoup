@@ -35,8 +35,10 @@ export const PRIVATE_SETTINGS: readonly string[] = ["maxParallelSessions", "budg
 /** The rule-like numbers: in the shared settings' `settings`. */
 export const SHARED_SETTINGS: readonly string[] = [
   "stallTimeoutMinutes", "sessionTimeoutMinutes", "persistence", "retryBackoffCapSeconds", "checkTimeoutMinutes", "queueMinBatch",
-  "queueMaxBatch", "queueRerunCost", "queueMinOutcomes", "triageMaxAgeDays", "waitingCapTriage", "waitingCapWork",
+  "queueMaxBatch", "queueRerunCost", "queueMinOutcomes", "waitingCapTriage", "waitingCapWork", "retriageShare",
 ];
+/** Shared settings no Scope Soup reads any more: ignored where the shared settings still have them (they are not versioned). */
+export const RETIRED_SHARED_SETTINGS: readonly string[] = ["triageMaxAgeDays"];
 /** A meta branch host's keys that belong to one machine or person: in the private file as `meta.<key>`, never in the shared `host`. */
 export const META_KEYS: readonly string[] = ["authorName", "authorEmail", "prefix"];
 /** A Jira host's keys that belong to one person: in the private file as `jira.<key>`. The Cloud account's email is personal. */
@@ -91,7 +93,8 @@ export function combineFiles(privateRaw: Obj, sharedRaw: Obj): { combined: Obj; 
   if (privateRaw.settings !== undefined || sharedRaw.settings !== undefined) {
     if (privateRaw.settings !== undefined && !isObj(privateRaw.settings)) errors.push(`settings in ${PRIVATE_NAME} must be an object.`);
     if (sharedRaw.settings !== undefined && !isObj(sharedRaw.settings)) errors.push(`settings in ${SHARED_WHERE} must be an object.`);
-    combined.settings = { ...(isObj(sharedRaw.settings) ? sharedRaw.settings : {}), ...(isObj(privateRaw.settings) ? privateRaw.settings : {}) };
+    const shared = isObj(sharedRaw.settings) ? Object.fromEntries(Object.entries(sharedRaw.settings).filter(([name]) => !RETIRED_SHARED_SETTINGS.includes(name))) : {};
+    combined.settings = { ...shared, ...(isObj(privateRaw.settings) ? privateRaw.settings : {}) };
   }
   return { combined, errors };
 }

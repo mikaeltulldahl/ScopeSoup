@@ -153,7 +153,7 @@ test("the loader returns notices only on the read that replaces the configuratio
   const first = loader.load();
   assert.equal(first.changed, true);
   assert.equal(first.notices?.length, 2);
-  assert.match(first.notices?.[0] ?? "", /was migrated from format 0 to format 3/);
+  assert.match(first.notices?.[0] ?? "", /was migrated from format 0 to format 4/);
   assert.match(first.notices?.[1] ?? "", /rules\.oneCoordinator was dropped/);
   const second = loader.load();
   assert.equal(second.changed, false);
@@ -320,7 +320,7 @@ test("within and overlaps compare whole path segments", () => {
 });
 
 test("a bad reload keeps the last good configuration and reports the error", () => {
-  let text = JSON.stringify({ version: 3, machineName: "laptop-a", repoPath: "/srv/clone" });
+  let text = JSON.stringify({ version: 4, machineName: "laptop-a", repoPath: "/srv/clone" });
   let shared = JSON.stringify({ project: "one" });
   const loader = createConfigLoader("/srv/scopesoup/scopesoup.config.json", () => text, { shared: sharedText(() => shared) });
 
@@ -334,7 +334,7 @@ test("a bad reload keeps the last good configuration and reports the error", () 
   assert.equal(second.config?.project, "one");
   assert.match(second.error ?? "", /not valid JSON/);
 
-  text = JSON.stringify({ version: 3, machineName: "laptop-a", repoPath: "/srv/clone" });
+  text = JSON.stringify({ version: 4, machineName: "laptop-a", repoPath: "/srv/clone" });
   shared = JSON.stringify({ project: "" });
   const third = loader.load();
   assert.equal(third.config?.project, "one");
@@ -400,7 +400,7 @@ test("host: mistakes are refused in words", () => {
 });
 
 test("budgetFiveHour and budgetSevenDay: each from 0 to 2, 80 % by default; the waiting caps 2 and 5; the removed reserves are unknown keys", () => {
-  const own = { version: 3, project: "p", machineName: "laptop-a", repoPath: "/srv/clone" };
+  const own = { version: 4, project: "p", machineName: "laptop-a", repoPath: "/srv/clone" };
   const defaults = good(own).settings;
   assert.deepEqual([defaults.budgetFiveHour.value, defaults.budgetSevenDay.value, defaults.waitingCapTriage.value, defaults.waitingCapWork.value], [0.8, 0.8, 2, 5]);
   assert.match(bad({ ...own, settings: { budgetFiveHour: { value: 2.05, reason: "x" } } }), /budgetFiveHour\.value/);
@@ -549,7 +549,7 @@ test("a number in settings needs no reason: without one it loads with an empty r
 });
 
 test("setupCommand and setupWatch are optional keys of format 1, checked for their form", () => {
-  const core = { version: 3, project: "demo", machineName: "laptop-a", repoPath: "/srv/clone" };
+  const core = { version: 4, project: "demo", machineName: "laptop-a", repoPath: "/srv/clone" };
   const plain = good(core);
   assert.equal(plain.setupCommand, undefined);
   assert.equal(plain.setupWatch, undefined);
@@ -585,7 +585,7 @@ test("media: images stay on this machine and are kept unless the project says ot
 });
 
 test("review.shouldFindings: \"fix\" (the default) or \"draft\"; anything else is refused with what it may be", () => {
-  const base = { project: "synthetic", machineName: "laptop-a", repoPath: "/srv/clone", version: 3 };
+  const base = { project: "synthetic", machineName: "laptop-a", repoPath: "/srv/clone", version: 4 };
   const read = (review: unknown) => validateConfig({ ...base, review }, "/srv/scopesoup");
   const fine = read({ shouldFindings: "draft" });
   assert.deepEqual(fine.ok ? fine.config.review : fine.errors, { shouldFindings: "draft" });
@@ -596,7 +596,7 @@ test("review.shouldFindings: \"fix\" (the default) or \"draft\"; anything else i
 });
 
 test("labels.aiGenerated: false (the default), true (\"ai-generated\") or a label name; anything else is refused", () => {
-  const base = { project: "synthetic", machineName: "laptop-a", repoPath: "/srv/clone", version: 3 };
+  const base = { project: "synthetic", machineName: "laptop-a", repoPath: "/srv/clone", version: 4 };
   const read = (labels: unknown) => validateConfig({ ...base, labels }, "/srv/scopesoup");
   assert.deepEqual((read({ aiGenerated: true }) as { config: { labels: unknown } }).config.labels, { aiGenerated: "ai-generated" });
   assert.deepEqual((read({ aiGenerated: " by-ai " }) as { config: { labels: unknown } }).config.labels, { aiGenerated: "by-ai" });

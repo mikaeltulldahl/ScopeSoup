@@ -31,7 +31,8 @@ import { decide } from "./usageCheck.ts";
 import { allowanceDecision } from "./allowance.ts";
 import type { Store } from "../store/store.ts";
 import type { UsageCheckDecision } from "./usageCheck.ts";
-import type { Job, Jobs } from "./jobs.ts";
+import type { Job, Jobs, Recheck } from "./jobs.ts";
+import type { RetriageBudget } from "../core/retriage.ts";
 import { adoptStored, changedMeanwhile, loadJobs, NO_DECISIONS, takenText, WRITING_WAIT_MS } from "./jobs.ts";
 import { workBranch, workspaceKey } from "./paths.ts";
 import { adoptHandbacks } from "./handback.ts";
@@ -41,7 +42,7 @@ import { closeMerged } from "./mergedClose.ts";
 import { readSessionResult } from "./runner.ts";
 import { driveQueue, settleQueueBelowLevel4 } from "./queueMerge.ts";
 import { checkHoldings, readHoldings, WorkNotFound } from "./workspaces.ts";
-import { awaitsImplement, triagedText, recheckPromptText, staleTriage, startRecheck } from "./recheck.ts";
+import { awaitsImplement, retriageCandidate, triagedText, recheckPromptText, staleTriage, startRecheck } from "./recheck.ts";
 import { itemTextHash } from "../core/answerReuse.ts";
 import { loadSlots } from "./slots.ts";
 import { dropOverturns, readOverturns } from "./overturns.ts";
@@ -53,6 +54,10 @@ import { plural } from "../model/plural.ts";
 export type { TickDeps } from "./context.ts";
 
 const SNAPSHOT_KEY = "orchestrator.config";
+/** After a look for a To do Item to triage again found none, the next look waits this long (it may fetch main and read git). */
+const RETRIAGE_LOOK_MS = 10 * 60_000;
+/** When each store's last look for a To do Item to triage again found none: a cache, not state. */
+const retriageLooked = new WeakMap<Store, number>();
 const KEEP_SLOT_MS = 1000;
 
 export interface TickReport {
@@ -70,6 +75,8 @@ export interface TickReport {
   paused?: boolean;
   /** The pace held the next start (decision 133): why. */
   paced?: string;
+  /** The usage check held the next start (at the budget, or one session at a time to get a fresh reading): why. */
+  budgetHeld?: string;
   /** New triage or new work waited for what waits for a person (decision 133): the words, once each. */
   capped?: string[];
 }
@@ -812,10 +819,12 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
   const waitingNow = waitingForPerson(store, store.list<WorkItem>("work"), jobs);
   const caps = waitingCaps(config);
   const capWaits = new Set<string>();
+  let retriageShare: RetriageBudget | undefined;
   const finish = (): TickReport => {
     const ceiling = config.settings.maxParallelSessions.value;
     const fit = pace.fits(ceiling);
-    writePacing(store, { at, running: runningByRole(store), ceiling, cap: fit.count, why: fit.reason, waiting: waitingNow, caps, waits: [...capWaits] });
+    const share = retriageShare ?? pace.retriage();
+    writePacing(store, { at, running: runningByRole(store), ceiling, cap: fit.count, why: fit.reason, waiting: waitingNow, caps, waits: [...capWaits], retriage: { used: share.used, share: share.share, reason: share.reason } });
     reasons.push(...capWaits);
     if (capWaits.size > 0) report.capped = [...capWaits];
     // A blocker this tick closed (the store has it at once) frees what waited for it in this tick.
@@ -976,7 +985,22 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
 
   // 5. Dispatch into free slots.
   const slots = config.settings.maxParallelSessions.value;
-  const queue: { item: WorkItem; job: Job | null }[] = [...waiting, ...fresh.map((item) => ({ item, job: null }))];
+  const queue: { item: WorkItem; job: Job | null; retriage?: Recheck }[] = [...waiting, ...fresh.map((item) => ({ item, job: null }))];
+  // Triage again within its share (#217): one To do Item whose triage is out of date, the stalest, while the share has room and no
+  // other one chosen so is under way; after the steps of work under way, ahead of new work (the share bounds it). Backlog never; at
+  // level 1 no implement step waits, so nothing is chosen.
+  if (level >= 2 && control.triage === "started" && !Object.values(jobs).some((job) => job.recheck?.background && job.step === "triage")) {
+    retriageShare = pace.retriage();
+    const looked = retriageLooked.get(store);
+    if (retriageShare.allow && (looked === undefined || Date.parse(at) - looked >= RETRIAGE_LOOK_MS || Date.parse(at) < looked)) {
+      const found = await retriageCandidate(ctx, waiting, items);
+      if (found) {
+        retriageLooked.delete(store);
+        const newWork = queue.findIndex((entry) => !entry.job || awaitsImplement(entry.job));
+        queue.splice(newWork < 0 ? queue.length : newWork, 0, { item: found.entry.item, job: found.entry.job, retriage: found.recheck });
+      } else retriageLooked.set(store, Date.parse(at));
+    }
+  }
 
   queuedCount = queue.length;
   // The waits for resources are said again by this dispatch, for the Items that still wait.
@@ -987,11 +1011,13 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
   const allAnswers = knownAnswers(store);
   for (const entry of queue) {
     const key = refKey(entry.item.ref);
+    // Started earlier in this tick (an Item chosen to triage again comes up twice in the line).
+    if (entry.job && (entry.job.sessionId || jobs[key]?.sessionId)) continue;
     // An item that states its own size (a `size:small` or `size:medium` label), with nothing waiting on an answer, skips the first
     // look from level 2; every other new item starts with triage. At level 1 nothing goes past triage, so there every new
     // item gets its triage. With risk classes gone the size label alone decides.
     const skipped = entry.job || level < 2 ? null : clearWithoutTriage(entry.item);
-    let step = entry.job?.step ?? (skipped ? "implement" : "triage");
+    let step = entry.retriage ? "triage" : entry.job?.step ?? (skipped ? "implement" : "triage");
     // Its role is paused: it waits, and takes no slot, so the roles that go on may start.
     if (control[step] !== "started" && !personAsked(entry.job, step)) {
       waitsFor[step]++;
@@ -1008,6 +1034,7 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
     const decision = budget(step);
     if (!decision.allow) {
       reasons.push(decision.reason);
+      report.budgetHeld = decision.reason;
       ctx.say("orchestrator.budget_wait", decision.reason, undefined, { resumeAt: decision.resumeAt });
       if (decision.resumeAt && (!report.wakeAt || decision.resumeAt < report.wakeAt)) report.wakeAt = decision.resumeAt;
       break;
@@ -1022,8 +1049,14 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
     }
 
     // The front of the line. A waiting Item whose implement step is next, with its triage out of date (the paths it named
-    // changed on main, its text was edited, a blocker finished, or it is older than triageMaxAgeDays), has its triage again.
+    // changed on main, its text was edited, a blocker or linked Item finished; age alone is no input, #217), has its triage again.
     let again: string | undefined;
+    // Chosen within the share: still waiting at its implement step (an earlier entry of this tick may have started it).
+    if (entry.retriage) {
+      if (!entry.job || !awaitsImplement(entry.job) || entry.job.sessionId) continue;
+      startRecheck(ctx, entry.job, entry.retriage, retriageShare?.reason ?? "");
+      again = entry.retriage.reasons.join("; ");
+    }
     // Implement anyway (decision 105) goes with triage's notes as they are: no triage again first.
     if (entry.job && step === "implement" && awaitsImplement(entry.job) && entry.job.implementAskedBy === undefined) {
       const recheck = await staleTriage(ctx, entry.job, entry.item, items);
@@ -1057,7 +1090,9 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
       continue;
     }
 
-    const why = again
+    const why = again && entry.retriage
+      ? `its triage is out of date (${again}) and is taken again while it waits in To do, the stalest there, within the share for triage again`
+      : again
       ? `its triage is out of date (${again}) and is taken again before its implement step`
       : entry.job
       ? `its ${step} step is due${entry.job.answerArrived ? " (the answer arrived)" : entry.job.resume ? " (continuing the session that was cut off)" : entry.job.resumeWith !== undefined ? (entry.job.agentSession ? " (resuming the implementor's session with what came back)" : " (a fresh implementor, with what came back: the session that wrote the change is not known)") : entry.job.failures > 0 ? ` (attempt ${entry.job.failures + 1})` : ""}`

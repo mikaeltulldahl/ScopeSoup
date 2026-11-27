@@ -375,6 +375,8 @@ export interface Triaged extends TriagedText {
   blockers: string[];
   /** Hashes of texts Scope Soup wrote itself since (an accepted or edited rewrite): seeing one of them is no edit. */
   also?: string[];
+  /** The ref keys of the open Items its answer's links named; one closed since is new input (#217). */
+  linked?: string[];
 }
 
 /** A commit on main that touched the paths a triage named. Its subject was written by a person or an agent: data. */
@@ -398,6 +400,8 @@ export interface Recheck {
   text?: Omit<TriagedText, "textHash">;
   /** The blockers that were open then and are done now, by id. */
   finished: string[];
+  /** Chosen within the re-triage share while the Item waits in To do (#217), not just before its implement step. */
+  background?: true;
 }
 
 /** A question as it was posted on the host: its text and its number there (`Qn`). */

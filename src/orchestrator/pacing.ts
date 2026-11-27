@@ -6,6 +6,8 @@ import type { ProjectConfig } from "../config/types.ts";
 import { estimateSession, paceCheck, sessionsThatFit } from "../core/forecast.ts";
 import type { PaceDecision, PastSession, SessionEstimate } from "../core/forecast.ts";
 import { sessionUse, usageRole } from "../core/usage.ts";
+import { RETRIAGE_WINDOW_MS, retriageBudget } from "../core/retriage.ts";
+import type { RetriageBudget } from "../core/retriage.ts";
 import { countWaiting } from "../core/waitingCaps.ts";
 import type { WaitingCaps } from "../core/waitingCaps.ts";
 import type { Session, SessionRole, UsageWindowKind, WorkItem } from "../model/types.ts";
@@ -43,6 +45,8 @@ export interface PacingState {
   caps: WaitingCaps;
   /** Why starts waited in the last tick that wanted to start something ("new triage waits: ..."). */
   waits: string[];
+  /** Triage again on Scope Soup's own choice (#217): the share of use it took in the last week, its share, and whether one more fits. */
+  retriage?: { used: number; share: number; reason: string };
 }
 
 export interface Pacer {
@@ -52,6 +56,8 @@ export interface Pacer {
   started(role: SessionRole): void;
   /** How many at once the pace allows now, at most `ceiling`. */
   fits(ceiling: number): { count: number; reason: string };
+  /** Whether one more triage taken again on Scope Soup's own choice fits `settings.retriageShare` (#217). */
+  retriage(): RetriageBudget;
 }
 
 /** The pace for this tick, from the store's readings and sessions. Estimates are worked out once, on the first check. */
@@ -93,6 +99,22 @@ export function pacer(store: Store, config: ProjectConfig, at: string): Pacer {
     },
     fits(ceiling) {
       return sessionsThatFit({ sample, now, budget, running: runningNow(), next: estimate("implement") }, ceiling);
+    },
+    retriage() {
+      // Each session counts its role's expected use: the triages taken again on Scope Soup's own choice (their events) against every
+      // session started in the window, a person's chat turns and failed setups aside.
+      const from = now - RETRIAGE_WINDOW_MS;
+      const within = (at: string): boolean => Date.parse(at) >= from && Date.parse(at) <= now;
+      const count = store.eventsOfKinds(["orchestrator.triage_again"], 2000).filter((event) => within(event.at) && (event.data as Record<string, unknown> | undefined)?.background === true).length;
+      const next = estimate("triage").use;
+      const all = { five_hour: 0, seven_day: 0 };
+      for (const session of sessions) {
+        if (session.chat || session.setupFailed || !within(session.startedAt)) continue;
+        const use = estimate(usageRole(session.role)).use;
+        all.five_hour += use.five_hour;
+        all.seven_day += use.seven_day;
+      }
+      return retriageBudget({ share: config.settings.retriageShare.value, retriage: { five_hour: count * next.five_hour, seven_day: count * next.seven_day }, all, next });
     },
   };
 }

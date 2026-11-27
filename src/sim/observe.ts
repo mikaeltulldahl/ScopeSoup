@@ -47,6 +47,8 @@ export interface GitObs {
   mainMoves: { sha: string; how: string; item?: string }[];
   contains(ancestor: string, descendant: string): boolean | null;
   commit(sha: string): Commit | undefined;
+  /** How many commits on `until` since `since` touch any of `paths` (as `git log since..until -- paths` counts them); an unknown `since` counts as one. */
+  touching(since: string, until: string, paths: readonly string[]): number;
 }
 
 export interface StartObs {
@@ -80,6 +82,8 @@ export interface Observation {
   kickBlocked: boolean;
   /** What waits for a person, counted by the checker: Items parked for one (not in the queue's hands) or with decisions to look at, and drafts. */
   waiting: number;
+  /** The share of use the triages Scope Soup takes again on its own may take (`settings.retriageShare`, #217). */
+  retriageShare: number;
   /** The waiting caps the configuration holds. */
   caps: { triage: number; work: number };
   fair: boolean;
@@ -184,14 +188,14 @@ export async function observe(world: SimWorld, seed: number, action: Action, pre
   });
   const requestsBefore = previous ? previous.ledger.requests.filter((r) => r.step < world.step).length : 0;
   return {
-    seed, machine: world.machine, step: world.step, action, at, level: world.configNow.level, slots: world.configNow.settings.maxParallelSessions.value, switches, usageReserve, overPace, kickBlocked, waiting, caps, fair: world.fair,
+    seed, machine: world.machine, step: world.step, action, at, level: world.configNow.level, slots: world.configNow.settings.maxParallelSessions.value, switches, usageReserve, overPace, kickBlocked, waiting, caps, retriageShare: settings.retriageShare.value, fair: world.fair,
     items: itemObs, sessions: store.list<Session>("session"), started, liveCount: live.length, events, lastSeq,
     ...(first ? { firstEvent: JSON.stringify(first) } : {}),
     answers: knownAnswers(store), tick: action.kind === "tick" || action.kind === "inside-tick" ? world.lastTick : null, tickError: world.tickError,
     git: {
       main: git.main, branches: new Map(git.branches), tags: new Map(git.tags), stash: git.stash.map((entry) => ({ ...entry })), unique: uniqueLeftovers(git), worktrees: [...git.worktrees.values()].map((t) => ({ ...t, dirty: [...t.dirty], untracked: [...t.untracked] })),
       owners: new Map(git.owners), deleted: [...git.deleted], mainMoves: [...git.mainMoves],
-      contains: (a, d) => git.contains(a, d), commit: (sha) => git.commits.get(sha),
+      contains: (a, d) => git.contains(a, d), commit: (sha) => git.commits.get(sha), touching: (since, until, paths) => touchingCount(git, since, until, paths),
     },
     ledger: world.ledger,
     requests: world.ledger.requests.slice(requestsBefore).filter((r) => r.step === world.step),
@@ -202,6 +206,12 @@ export async function observe(world: SimWorld, seed: number, action: Action, pre
     queued: [...world.queue.waiting.keys(), ...world.queue.notices.flatMap((n) => (n.kind === "mark-merged" ? n.members.map((m) => refKey(m.change)) : n.kind === "send-back" ? [refKey(n.change)] : []))],
     fairTicks: world.fair && previous ? previous.fairTicks + (action.kind === "tick" ? 1 : 0) : 0,
   };
+}
+
+/** Commits on `until` since `since` that touch any of `paths`; an unknown `since` counts as one (permissive). */
+export function touchingCount(git: FakeGit, since: string, until: string, paths: readonly string[]): number {
+  if (!git.commits.has(since)) return 1;
+  return git.between(since, until).filter((c) => c.paths.some((p) => paths.includes(p))).length;
 }
 
 export function uniqueLeftovers(git: FakeGit): Set<string> {

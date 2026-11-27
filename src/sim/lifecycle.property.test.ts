@@ -2,7 +2,8 @@
 // runner, git and person, with the rules of rules.ts checked after every step and a fair tail at the end. A rule that fails is a
 // bug, unless it is on the known list (known.ts), which may only shrink.
 //
-// Seeds 1 to 8 with 80 random steps by default; 1 to 100 with 600 steps and up to 12 Items with SCOPESOUP_LONG=1 (`pnpm test:long`).
+// Seeds 1 to 8 with 80 random steps by default; 1 to 110 with 600 steps and up to 12 Items with SCOPESOUP_LONG=1 (`pnpm test:long`),
+// seeds 101 to 110 in a world where triages age, so Scope Soup triages To do Items again within its share (#217).
 // The same seeds each time. SCOPESOUP_SIM_SEED=17 plays that seed alone; SCOPESOUP_SIM_TRACE=1 prints every step.
 
 import assert from "node:assert/strict";
@@ -15,7 +16,7 @@ import { RULE_IDS } from "./rules.ts";
 const LONG = process.env.SCOPESOUP_LONG === "1";
 const ONE = process.env.SCOPESOUP_SIM_SEED ? Number(process.env.SCOPESOUP_SIM_SEED) : undefined;
 const TRACE = process.env.SCOPESOUP_SIM_TRACE === "1";
-const SEEDS = LONG ? 100 : 8;
+const SEEDS = LONG ? 110 : 8;
 const STEPS = LONG ? 600 : 80;
 
 async function run(seed: number): Promise<RunResult> {
@@ -25,7 +26,7 @@ async function run(seed: number): Promise<RunResult> {
 it("random runs keep the lifecycle rules, apart from the known failures, and reach what the rules are about", async (t) => {
   const seeds = ONE !== undefined ? [ONE] : Array.from({ length: SEEDS }, (_, i) => i + 1);
   const first = new Map<string, RunResult>();
-  const totals = { steps: 0, merges: 0, answers: 0, restarts: 0, accepted: 0, rejected: 0, closed: 0 };
+  const totals = { steps: 0, merges: 0, answers: 0, restarts: 0, accepted: 0, rejected: 0, closed: 0, retriagedInShare: 0, retriagedBeforeStart: 0 };
   const waits = new Set<string>();
   for (const seed of seeds) {
     const result = await run(seed);
@@ -40,8 +41,11 @@ it("random runs keep the lifecycle rules, apart from the known failures, and rea
     totals.rejected += result.seen.get("rewrite-reject") ?? 0;
     totals.closed += (result.seen.get("close-done") ?? 0) + (result.seen.get("close-abandoned") ?? 0);
     for (const w of result.waits) waits.add(w);
+    // Triages Scope Soup took again on its own (#217): within the share while the Item waits in To do, or just before it starts.
+    totals.retriagedInShare += result.seen.get("retriage-share") ?? 0;
+    totals.retriagedBeforeStart += result.seen.get("retriage-before-start") ?? 0;
   }
-  t.diagnostic(`${seeds.length} seeds, ${totals.steps} steps, ${totals.merges} merges, ${totals.answers} answers, ${totals.accepted} rewrites accepted and ${totals.rejected} rejected, ${totals.closed} closes, ${totals.restarts} restarts`);
+  t.diagnostic(`${seeds.length} seeds, ${totals.steps} steps, ${totals.merges} merges, ${totals.answers} answers, ${totals.accepted} rewrites accepted and ${totals.rejected} rejected, ${totals.closed} closes, ${totals.restarts} restarts, ${totals.retriagedInShare} triages taken again within the share and ${totals.retriagedBeforeStart} before a start`);
 
   // A rule that fails and is not known: the first failure in words, its replay, and the steps shrunk to a test to paste.
   const unknown = [...first.keys()].filter((rule) => !(rule in KNOWN));
@@ -71,6 +75,8 @@ it("random runs keep the lifecycle rules, apart from the known failures, and rea
     const wanted = ["not-started", "session", "nothing", "queue", "person(answer)", "person(rewrite)", "person(not-ready)", "person(holds)", "start(slot)", "start(timer)", "start(same-files)", "start(switch)", "start(level)", "start(usage)", "start(pace)", "tick(paced)"];
     // Seen in the long run only: the normal run's few seeds do not reach an escalation, and reach a blocked Item only by chance (a
     // blockedBy link from a triage that settles while the other Item is open; since #229 none of the 8 seeds does).
+    // B9, B10 and J4 must not hold over nothing: the long run reaches triages taken again within the share.
+    if (LONG) assert.ok(totals.retriagedInShare > 0, "no triage was taken again within the share");
     if (LONG) wanted.push("person(escalated)", "blocker", "start(cap)", "tick(triage-capped)", "tick(work-capped)");
     for (const w of wanted) {
       assert.ok(waits.has(w), `no Item ever waited as ${w}`);

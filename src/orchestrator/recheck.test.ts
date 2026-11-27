@@ -1,5 +1,6 @@
-// A waiting Item's triage again when its paths changed on main, its text was edited, a blocker finished, or it got
-// old; and the pacing of triages (priority first, a few at a time, within the usage reserve). A fake runner; no claude.
+// A waiting Item's triage again when its paths changed on main, its text was edited, or a blocker or linked Item finished (age alone
+// is no input, #217), before its implement step and within the re-triage share; and the pacing of triages (priority first, a few at
+// a time, within the usage reserve). A fake runner; no claude.
 
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
@@ -22,7 +23,7 @@ import type { Actions, AgentRunner, SessionRequest } from "./ports.ts";
 import { adoptWritten, loadJobs, saveJobs } from "./jobs.ts";
 import type { Job } from "./jobs.ts";
 import { realGit } from "./process.ts";
-import { triagedText, staleWithoutGit, usablePaths } from "./recheck.ts";
+import { triagedNow, triagedText, staleWithoutGit, usablePaths } from "./recheck.ts";
 import { sessionResultKey } from "./runner.ts";
 import { tick } from "./tick.ts";
 import { changeStat, commitsTouching } from "./worktree.ts";
@@ -172,30 +173,28 @@ describe("a waiting Item's triage again", { concurrency: 8 }, () => {
     assert.equal(w.touchCalls.length, 0, "main has not moved, so no commits are listed");
   });
 
-  test("a triage older than the limit is taken again, told why and what it said before", async () => {
-    const w = world(config({ settings: { triageMaxAgeDays: { value: 10 } } }), [item("1")]);
+  test("an old triage with nothing changed is not taken again: age alone is no input (#217)", async () => {
+    const w = world(config(), [item("1")]);
     await triaged(w, "1");
-    w.clock.ms += 11 * DAY;
+    w.clock.ms += 400 * DAY;
+    assert.equal((await front(w)).role, "implement");
+    assert.equal(w.events("orchestrator.triage_again").length, 0);
+  });
+
+  test("a triage taken again is told why and what it said before; its answer is taken as a triage's", async () => {
+    const w = world(config(), [item("1")]);
+    await triaged(w, "1");
+    w.put(item("1", { body: "Do 1, and also the export." }));
     const next = await front(w);
     assert.equal(next.role, "triage");
-    assert.match(next.vars.recheck ?? "", /it is 11 days old; the limit is 10 days/);
     assert.match(next.vars.recheck ?? "", /<previous-triage>\nready: true\nsize: small\npaths: src\/a\.ts/);
     assert.equal(w.events("orchestrator.triage_again").length, 1);
-    // Its answer is taken as a triage's: the Item goes on to implement, and is not triaged again.
     w.end("1", "succeeded", TRIAGE_OK);
     await w.run();
     w.clock.ms += 1000;
     await w.run();
     assert.equal(w.requests.at(-1)?.role, "implement");
     assert.equal(w.job("1")?.recheck, undefined);
-  });
-
-  test("the default limit is 30 days", async () => {
-    const w = world(config(), [item("1")]);
-    assert.equal(w.cfg.config.settings.triageMaxAgeDays.value, 30);
-    await triaged(w, "1");
-    w.clock.ms += 30 * DAY;
-    assert.equal((await front(w)).role, "triage");
   });
 
   test("an edited text has the triage again, shown the text it read before", async () => {
@@ -253,8 +252,9 @@ describe("a waiting Item's triage again", { concurrency: 8 }, () => {
   });
 
   test("an Item whose implement step has begun is not triaged again", async () => {
-    const w = world(config({ settings: { triageMaxAgeDays: { value: 1 } } }), [item("1")]);
+    const w = world(config(), [item("1")]);
     await triaged(w, "1");
+    w.put(item("1", { body: "Do 1, and also the export." }));
     const jobs = loadJobs(w.store);
     jobs[refKey(ref("1"))]!.resumeWith = "The reviewer asked for changes.";
     w.store.tx(() => saveJobs(w.store, jobs));
@@ -263,8 +263,9 @@ describe("a waiting Item's triage again", { concurrency: 8 }, () => {
   });
 
   test("at level 1 nothing is triaged again: nothing comes to the front of the implement line", async () => {
-    const w = world(config({ settings: { triageMaxAgeDays: { value: 1 } } }), [item("1")]);
+    const w = world(config({ settings: { retriageShare: { value: 0.5 } } }), [item("1")]);
     await triaged(w, "1");
+    w.put(item("1", { body: "Do 1, and also the export." }));
     w.clock.ms += 5 * DAY;
     const before = w.requests.length;
     await w.run();
@@ -281,21 +282,113 @@ describe("what counts as a change", () => {
       triage: { ready: true, size: "small", paths: [], hidesDecision: false, rewrite: "Do 1 well." },
       triaged: adoptWritten({ at: new Date(T0).toISOString(), ...triagedText(work), blockers: [] }, ["Do 1 well."]),
     };
-    const now = new Date(T0 + DAY).toISOString();
-    assert.deepEqual(staleWithoutGit(job, work, [work], now, 30).reasons, []);
-    assert.deepEqual(staleWithoutGit(job, item("1", { body: "Do 1 well." }), [], now, 30).reasons, []);
-    assert.deepEqual(staleWithoutGit(job, item("1", { body: "Do 1 badly." }), [], now, 30).reasons, ["its text was edited"]);
+    assert.deepEqual(staleWithoutGit(job, work, [work]).reasons, []);
+    assert.deepEqual(staleWithoutGit(job, item("1", { body: "Do 1 well." }), []).reasons, []);
+    assert.deepEqual(staleWithoutGit(job, item("1", { body: "Do 1 badly." }), []).reasons, ["its text was edited"]);
     assert.equal(itemTextHash(work), job.triaged!.textHash);
   });
 
-  test("a triage from earlier has no record of what it saw: only its age counts, from when its job started", () => {
+  test("a triage from earlier has no record of what it saw: nothing counts, not its age either", () => {
     const job: Job = { item: ref("1"), workspace: "w", branch: "scopesoup/1", step: "implement", failures: 0, fixRounds: 0, startedAt: new Date(T0).toISOString(), triage: { ready: true, size: "small", paths: [], hidesDecision: false, rewrite: "" } };
-    assert.deepEqual(staleWithoutGit(job, item("1", { body: "Changed." }), [], new Date(T0 + 2 * DAY).toISOString(), 30).reasons, []);
-    assert.equal(staleWithoutGit(job, item("1"), [], new Date(T0 + 31 * DAY).toISOString(), 30).reasons.length, 1);
+    assert.deepEqual(staleWithoutGit(job, item("1", { body: "Changed." }), []).reasons, []);
+  });
+
+  test("an Item its triage linked to that is closed since is new input; the links are kept as the open Items they named", () => {
+    const work = item("1");
+    const other = item("2");
+    const triaged = triagedNow(triagedText(work), work, [work, other, item("3", { state: "done" })], new Date(T0).toISOString(), MAIN_A, [{ type: "related", item: "#2" }, { type: "related", item: "3" }, { type: "related", item: "#9" }]);
+    assert.deepEqual(triaged.linked, [refKey(ref("2"))]);
+    const job: Job = { item: ref("1"), workspace: "w", branch: "scopesoup/1", step: "implement", failures: 0, fixRounds: 0, startedAt: new Date(T0).toISOString(), triage: { ready: true, size: "small", paths: [], hidesDecision: false, rewrite: "Do 1." }, triaged };
+    assert.deepEqual(staleWithoutGit(job, work, [work, other]).reasons, []);
+    assert.deepEqual(staleWithoutGit(job, work, [work, item("2", { state: "abandoned" })]).reasons, ["an Item it is linked to is closed (2)"]);
   });
 
   test("only plain relative paths from the answer are looked up in git", () => {
     assert.deepEqual(usablePaths(["./src/a.ts", "src/a.ts", "/docs/", ":(exclude)x", "--all", "a/../../etc", "", "src\\b.ts"]), ["src/a.ts", "docs/", "src/b.ts"]);
+  });
+});
+
+describe("triage again within its share (#217)", { concurrency: 4 }, () => {
+  /** A triaged Item waiting at its implement step in To do (or Backlog), its triage taken at `at` and naming `paths`. */
+  function waitingAt(id: string, at: number, over: Partial<Job> = {}): Job {
+    return {
+      item: ref(id), workspace: `w${id}`, branch: `scopesoup/${id}`, step: "implement", failures: 0, fixRounds: 0, startedAt: new Date(at).toISOString(), seenInTodo: true,
+      triage: { ready: true, size: "small", paths: [], hidesDecision: false, rewrite: `Do ${id}.` },
+      triaged: { at: new Date(at).toISOString(), ...triagedText(item(id)), blockers: [] }, ...over,
+    };
+  }
+  /** Sessions that ran in the last week: what the share is measured against (each counts its role's expected use). */
+  function ran(w: World, n: number): void {
+    for (let i = 0; i < n; i++) {
+      const at = new Date(T0 + DAY + i * 60_000).toISOString();
+      w.store.put({ ref: { host: "scopesoup", kind: "session", id: `old${i}` }, role: "implement", subject: ref("9"), status: "succeeded", attempt: 1, startedAt: at, finishedAt: at } as Session, "orchestrator", at);
+    }
+  }
+  /** Two Items wait in To do, 1 first in line; 2's text was edited since its triage two days ago. One session slot. */
+  function setUp(share: number, sessions: number, over: { backlog?: boolean; triagedAt?: number; edited?: boolean } = {}): World {
+    const w = world(config({ level: 2, settings: { retriageShare: { value: share } } }), [item("1", { priority: "critical" }), item("2", over.backlog ? { backlog: true } : {})]);
+    w.clock.ms = T0 + 2 * DAY;
+    const jobs = loadJobs(w.store);
+    jobs[refKey(ref("1"))] = waitingAt("1", T0);
+    jobs[refKey(ref("2"))] = waitingAt("2", over.triagedAt ?? T0);
+    w.store.tx(() => saveJobs(w.store, jobs));
+    if (over.edited !== false) w.put(item("2", { body: "Do 2, and the export too.", ...(over.backlog ? { backlog: true } : {}) }));
+    ran(w, sessions);
+    return w;
+  }
+  const started = (w: World): string[] => w.requests.map((request) => `${request.role} ${request.subject.id}`);
+
+  test("with room in the share, the stale To do Item is triaged again ahead of new work, told what changed", async () => {
+    const w = setUp(0.5, 2);
+    await w.run();
+    assert.deepEqual(started(w), ["triage 2"]);
+    assert.match(w.requests[0]!.vars.recheck ?? "", /its text was edited/);
+    const event = w.store.eventsAfter(0, 10_000).find((each) => each.kind === "orchestrator.triage_again");
+    assert.equal((event?.data as Record<string, unknown>).background, true);
+    assert.match(w.events("orchestrator.triage_again")[0] ?? "", /while it waits in To do, the stalest there, within the share for triage again/);
+    // The Usage tab names re-triage use against its share.
+    const pacing = JSON.parse(w.store.getValue(KEYS.pacing)!) as { retriage: { share: number; used: number } };
+    assert.equal(pacing.retriage.share, 0.5);
+  });
+
+  test("without room in the share it waits: new work goes first, and the Item is triaged again only just before its own start", async () => {
+    const w = setUp(0.05, 2);
+    await w.run();
+    assert.deepEqual(started(w), ["implement 1"]);
+    assert.equal(w.events("orchestrator.triage_again").length, 0);
+    const pacing = JSON.parse(w.store.getValue(KEYS.pacing)!) as { retriage: { reason: string } };
+    assert.match(pacing.retriage.reason, /one more would go past it/);
+  });
+
+  test("the share is a share: about one triage taken again per (1 / share) sessions' worth of use", async () => {
+    // 5 %: one more fits once all use, with it, is 20 triages' worth (each session counts the same default guess here).
+    assert.deepEqual(started(await runOnce(setUp(0.05, 18))), ["implement 1"]);
+    assert.deepEqual(started(await runOnce(setUp(0.05, 19))), ["triage 2"]);
+  });
+  async function runOnce(w: World): Promise<World> {
+    await w.run();
+    return w;
+  }
+
+  test("nothing changed since its triage, or a triage newer than the floor, or an Item in Backlog: not chosen", async () => {
+    assert.deepEqual(started(await runOnce(setUp(0.5, 2, { edited: false }))), ["implement 1"]);
+    assert.deepEqual(started(await runOnce(setUp(0.5, 2, { triagedAt: T0 + 2 * DAY - 3600_000 }))), ["implement 1"]);
+    const backlog = await runOnce(setUp(0.5, 2, { backlog: true }));
+    assert.deepEqual(started(backlog), ["implement 1"]);
+    assert.equal(backlog.events("orchestrator.triage_again").length, 0);
+  });
+
+  test("one at a time: while one chosen within the share is under way, no other is chosen", async () => {
+    const w = setUp(0.5, 2);
+    w.cfg.config = { ...w.cfg.config, settings: { ...w.cfg.config.settings, maxParallelSessions: { value: 3, reason: "test" } } };
+    w.put(item("1", { priority: "critical", body: "Do 1, edited." }));
+    w.store.addUsageSample({
+      at: new Date(w.clock.ms).toISOString(), status: "allowed",
+      windows: [{ kind: "five_hour", utilization: 0.01, resetsAt: new Date(w.clock.ms + 4 * 3600_000).toISOString() }, { kind: "seven_day", utilization: 0.01, resetsAt: new Date(w.clock.ms + 6 * DAY).toISOString() }],
+    });
+    await w.run();
+    const background = w.store.eventsAfter(0, 10_000).filter((each) => each.kind === "orchestrator.triage_again" && (each.data as Record<string, unknown>).background === true);
+    assert.equal(background.length, 1, started(w).join(", "));
   });
 });
 

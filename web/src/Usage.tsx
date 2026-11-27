@@ -120,6 +120,11 @@ function PacingNow({ pacing }: { pacing: PacingView }) {
       <p class="muted">
         {pacing.waiting === 1 ? "1 thing waits" : `${pacing.waiting} things wait`} for you; new triage waits from {pacing.caps.triage}, new work from {pacing.caps.work}.
       </p>
+      {pacing.retriage && (
+        <p class="muted">
+          Triage again in To do took {Math.round(pacing.retriage.used * 100)} % of what Scope Soup used in the last week; its share is {Math.round(pacing.retriage.share * 100)} %.
+        </p>
+      )}
       {pacing.waits.map((wait) => <p key={wait} class="notice">{wait[0]!.toUpperCase() + wait.slice(1)}.</p>)}
     </div>
   );

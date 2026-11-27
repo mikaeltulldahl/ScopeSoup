@@ -1,8 +1,9 @@
-// A waiting Item's triage again, when it is out of date: commits on main changed the paths it named, its text was
-// edited or a blocker finished, or it is older than `settings.triageMaxAgeDays`. Checked only when the Item's implement step
-// is next to start (the front of the line), never for the whole backlog. The triage that runs again is told what changed.
+// A waiting Item's triage again, when it is out of date: commits on main changed the paths it named, its text was edited, or a
+// blocker or linked Item finished. Age alone is no input (#217). Checked when the Item's implement step is next to start (the front
+// of the line), and for To do within the re-triage share (`retriageCandidate`); never for Backlog. The triage that runs again is told
+// what changed.
 
-import type { WorkItem } from "../model/types.ts";
+import type { ItemLinkAnswer, WorkItem } from "../model/types.ts";
 import { refKey } from "../model/types.ts";
 import { itemTextHash } from "../core/answerReuse.ts";
 import type { Context } from "./context.ts";
@@ -10,6 +11,7 @@ import { errorText } from "./context.ts";
 import { watchMain } from "./mainGuard.ts";
 import type { Triaged, TriagedText, Job, Recheck, TriageAnswer } from "./jobs.ts";
 import { plural } from "../model/plural.ts";
+import { pastFloor, staleness, stalest } from "../core/retriage.ts";
 
 /** The most commits a triage that runs again is shown; it is told how many there were in all. */
 export const MAX_COMMITS = 20;
@@ -17,7 +19,6 @@ export const MAX_COMMITS = 20;
 const MAX_PATHS = 50;
 /** Each part of the Item's text kept with a triage (the hash is of the whole text). */
 const TEXT_CHARS = 8000;
-const DAY_MS = 24 * 3600_000;
 
 const clip = (text: string, chars: number): string => (text.length > chars ? `${text.slice(0, chars - 3)}...` : text);
 
@@ -39,9 +40,24 @@ export function openBlockers(item: WorkItem, items: readonly WorkItem[]): string
   return item.blockedBy.map(refKey).filter((key) => isOpen(byKey.get(key)));
 }
 
-/** What a triage saw, once its answer is taken. `text` is the Item's text as the session was given it. */
-export function triagedNow(text: TriagedText, item: WorkItem | null, items: readonly WorkItem[], at: string, main: string | null | undefined): Triaged {
-  return { at, ...text, ...(main ? { main } : {}), blockers: item ? openBlockers(item, items) : [] };
+/** The ref keys of the open Items a triage's links name (`#12`, `12` or a full key on the Item's host); unknown names are left out. */
+export function openLinked(item: WorkItem, links: readonly ItemLinkAnswer[], items: readonly WorkItem[]): string[] {
+  const prefix = `${item.ref.host}:work:`;
+  const out: string[] = [];
+  for (const link of links) {
+    let id = link.item.trim();
+    if (id.startsWith(prefix)) id = id.slice(prefix.length);
+    id = id.replace(/^#/, "");
+    const found = items.find((each) => each.ref.host === item.ref.host && each.ref.id === id && each.ref.id !== item.ref.id);
+    if (found && isOpen(found) && !out.includes(refKey(found.ref))) out.push(refKey(found.ref));
+  }
+  return out;
+}
+
+/** What a triage saw, once its answer is taken. `text` is the Item's text as the session was given it; `links` its answer's links. */
+export function triagedNow(text: TriagedText, item: WorkItem | null, items: readonly WorkItem[], at: string, main: string | null | undefined, links: readonly ItemLinkAnswer[] = []): Triaged {
+  const linked = item ? openLinked(item, links, items) : [];
+  return { at, ...text, ...(main ? { main } : {}), blockers: item ? openBlockers(item, items) : [], ...(linked.length > 0 ? { linked } : {}) };
 }
 
 /**
@@ -65,8 +81,8 @@ export function usablePaths(paths: readonly string[]): string[] {
   return out.slice(0, MAX_PATHS);
 }
 
-/** Why the triage is out of date, apart from the paths (which need git). Pure. */
-export function staleWithoutGit(job: Job, item: WorkItem, items: readonly WorkItem[], now: string, maxAgeDays: number): { reasons: string[]; finished: string[]; edited: boolean; at: string } {
+/** Why the triage is out of date, apart from the paths (which need git). Age is no reason (#217). Pure. */
+export function staleWithoutGit(job: Job, item: WorkItem, items: readonly WorkItem[]): { reasons: string[]; finished: string[]; edited: boolean; at: string } {
   const triaged = job.triaged;
   const at = triaged?.at ?? job.startedAt;
   const reasons: string[] = [];
@@ -76,18 +92,19 @@ export function staleWithoutGit(job: Job, item: WorkItem, items: readonly WorkIt
   const byKey = new Map(items.map((each) => [refKey(each.ref), each]));
   const finished = (triaged?.blockers ?? []).filter((key) => !isOpen(byKey.get(key))).map((key) => byKey.get(key)?.ref.id ?? key);
   if (finished.length > 0) reasons.push(`${finished.length === 1 ? `the Item it waited on is done (${finished[0]})` : `the Items it waited on are done (${finished.join(", ")})`}`);
-  const days = (Date.parse(now) - Date.parse(at)) / DAY_MS;
-  if (Number.isFinite(days) && days >= maxAgeDays) reasons.push(`it is ${Math.floor(days)} days old; the limit is ${maxAgeDays} days`);
+  const linkedDone = (triaged?.linked ?? []).filter((key) => !isOpen(byKey.get(key))).map((key) => byKey.get(key)?.ref.id ?? key);
+  if (linkedDone.length > 0) reasons.push(linkedDone.length === 1 ? `an Item it is linked to is closed (${linkedDone[0]})` : `Items it is linked to are closed (${linkedDone.join(", ")})`);
   return { reasons, finished, edited, at };
 }
 
 /**
  * Whether the triage of a job that `awaitsImplement` is out of date, and if so what the one that runs again is told.
  * The paths are checked only when the triage named some, its main is known and the runner can list commits; main is
- * fetched then (`watchMain`, which also guards it). A failure to read git skips that check, with an event, and does not stop.
+ * fetched then (`watchMain`, which also guards it), unless `knownMain` gives it (null: not readable, the paths are not checked).
+ * A failure to read git skips that check, with an event, and does not stop.
  */
-export async function staleTriage(ctx: Context, job: Job, item: WorkItem, items: readonly WorkItem[]): Promise<Recheck | null> {
-  const base = staleWithoutGit(job, item, items, ctx.at, ctx.config.settings.triageMaxAgeDays.value);
+export async function staleTriage(ctx: Context, job: Job, item: WorkItem, items: readonly WorkItem[], knownMain?: string | null): Promise<Recheck | null> {
+  const base = staleWithoutGit(job, item, items);
   const reasons = [...base.reasons];
   let commits: Recheck["commits"] = [];
   let commitCount = 0;
@@ -95,7 +112,7 @@ export async function staleTriage(ctx: Context, job: Job, item: WorkItem, items:
   const paths = usablePaths(job.triage?.paths ?? []);
   const list = ctx.deps.runner.commitsTouching;
   if (since && paths.length > 0 && list) {
-    const main = await watchMain(ctx, job, `before the implement step for ${item.ref.id}`);
+    const main = knownMain !== undefined ? knownMain : await watchMain(ctx, job, `before the implement step for ${item.ref.id}`);
     if (main && main !== since) {
       try {
         const found = await list.call(ctx.deps.runner, job.branch, since, main, paths, MAX_COMMITS);
@@ -117,15 +134,43 @@ export async function staleTriage(ctx: Context, job: Job, item: WorkItem, items:
   };
 }
 
-/** The job goes back to its triage, with what changed, instead of its implement step. */
-export function startRecheck(ctx: Context, job: Job, recheck: Recheck): void {
+/** The job goes back to its triage, with what changed, instead of its implement step. `share`: chosen within the re-triage share. */
+export function startRecheck(ctx: Context, job: Job, recheck: Recheck, share?: string): void {
   job.step = "triage";
   job.recheck = recheck;
   job.failures = 0;
   delete job.notBefore;
   delete job.base;
   delete job.roundBase;
-  ctx.commit("orchestrator.triage_again", `The triage of ${job.item.id} (${recheck.previousAt}) is out of date: ${recheck.reasons.join("; ")}. It is taken again, told what changed, before the implement step.`, refKey(job.item), { reasons: recheck.reasons, commits: recheck.commitCount });
+  const when = share !== undefined ? `while it waits in To do, the stalest there, within the share for triage again (${share})` : "before the implement step";
+  ctx.commit("orchestrator.triage_again", `The triage of ${job.item.id} (${recheck.previousAt}) is out of date: ${recheck.reasons.join("; ")}. It is taken again, told what changed, ${when}.`, refKey(job.item), { reasons: recheck.reasons, commits: recheck.commitCount, ...(share !== undefined ? { background: true } : {}) });
+}
+
+/** The most To do Items whose paths are looked up in git in one pass for the re-triage share, the oldest triages first. */
+const MAX_PROBED = 8;
+
+/**
+ * The To do Item to triage again within the re-triage share (#217): among the jobs that wait at their implement step in To do (never
+ * Backlog, never Implement anyway) whose triage is past the floor, the stalest by real input since its triage weighted by age. Main
+ * is fetched once for the pass; at most `MAX_PROBED` Items' paths are looked up. Null when none has input since its triage.
+ */
+export async function retriageCandidate<T extends { item: WorkItem; job: Job }>(ctx: Context, waiting: readonly T[], items: readonly WorkItem[]): Promise<{ entry: T; recheck: Recheck } | null> {
+  const triagedAt = (job: Job): string => job.triaged?.at ?? job.startedAt;
+  const open = waiting.filter((each) => !each.item.backlog && awaitsImplement(each.job) && each.job.implementAskedBy === undefined && pastFloor(triagedAt(each.job), ctx.at))
+    .sort((a, b) => Date.parse(triagedAt(a.job)) - Date.parse(triagedAt(b.job)));
+  if (open.length === 0) return null;
+  // Main once for the pass, only when some candidate named paths whose commits can be listed.
+  const probes = open.filter((each) => each.job.triaged?.main && usablePaths(each.job.triage?.paths ?? []).length > 0).slice(0, MAX_PROBED);
+  const main = probes.length > 0 && ctx.deps.runner.commitsTouching ? await watchMain(ctx, probes[0]!.job, "to look for To do Items to triage again") : null;
+  const scored: { entry: T; recheck: Recheck; staleness: number }[] = [];
+  for (const entry of open) {
+    const recheck = await staleTriage(ctx, entry.job, entry.item, items, probes.includes(entry) ? main : null);
+    if (!recheck) continue;
+    const others = recheck.reasons.length - (recheck.commitCount > 0 ? 1 : 0);
+    scored.push({ entry, recheck, staleness: staleness({ commits: recheck.commitCount, others }, triagedAt(entry.job), ctx.at) });
+  }
+  const best = stalest(scored);
+  return best ? { entry: best.entry, recheck: { ...best.recheck, background: true } } : null;
 }
 
 /** `{{recheck}}` in the triage's prompt: empty, or what changed since the triage before. Agent and item text is data. */

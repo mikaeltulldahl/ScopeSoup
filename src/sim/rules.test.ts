@@ -9,7 +9,7 @@ import type { Job } from "../orchestrator/jobs.ts";
 import type { SessionRequest } from "../orchestrator/ports.ts";
 import { FakeGit } from "./git.ts";
 import type { GitObs, ItemObs, Observation, StartObs } from "./observe.ts";
-import { uniqueLeftovers } from "./observe.ts";
+import { touchingCount, uniqueLeftovers } from "./observe.ts";
 import type { RunOptions } from "./play.ts";
 import { play } from "./play.ts";
 import type { Rule } from "./rules.ts";
@@ -23,7 +23,7 @@ const key = (id: string): string => `metaBranch:work:${id}`;
 function gitObs(g: FakeGit = new FakeGit()): GitObs {
   return {
     main: g.main, branches: new Map(g.branches), tags: new Map(g.tags), stash: [...g.stash], unique: uniqueLeftovers(g), worktrees: [...g.worktrees.values()], owners: new Map(g.owners),
-    deleted: [...g.deleted], mainMoves: [...g.mainMoves], contains: (a, d) => g.contains(a, d), commit: (sha) => g.commits.get(sha),
+    deleted: [...g.deleted], mainMoves: [...g.mainMoves], contains: (a, d) => g.contains(a, d), commit: (sha) => g.commits.get(sha), touching: (since, until, paths) => touchingCount(g, since, until, paths),
   };
 }
 
@@ -51,7 +51,7 @@ function item(id: string, w: W, over: Partial<ItemObs> = {}): ItemObs {
 function obs(over: Partial<Observation> = {}): Observation {
   return {
     seed: 1, step: 1, action: { kind: "sync" }, at: AT, level: 3, slots: 2, switches: { triage: "started", implement: "started", review: "started", mergeQueue: "started" },
-    usageReserve: false, overPace: false, kickBlocked: false, waiting: 0, caps: { triage: 2, work: 5 }, fair: false, items: [], sessions: [], started: [], liveCount: 0, events: [], lastSeq: 0, answers: [], tick: null, tickError: null,
+    usageReserve: false, overPace: false, kickBlocked: false, waiting: 0, caps: { triage: 2, work: 5 }, retriageShare: 0.05, fair: false, items: [], sessions: [], started: [], liveCount: 0, events: [], lastSeq: 0, answers: [], tick: null, tickError: null,
     git: gitObs(), ledger: ledger(), requests: [], remote: { refusedRewrites: 0, down: false, items: 0 }, lanes: ["blocked", "backlog", "in-progress", "in-review", "queued", "checking", "done"],
     queued: [], fairTicks: 0, ...over,
   };
@@ -178,6 +178,34 @@ describe("each rule fires on a bad state built by hand", { concurrency: 1 }, () 
     const parked = obs({ items: [item("A-1", { kind: "person", why: "answer", n: 1 }, { job: job("A-1", { step: "implement", parked: { as: "needs-decision", reason: "", at: AT, byStep: true } }) })] });
     const answered = obs({ requests: [{ step: 1, path: "/api/answer", body: {}, status: 200, response: {}, item: "A-1" }], items: parked.items });
     assert.match(fires("B8", parked, answered, obs({ started: [started("A-1", "triage")], items: parked.items })) ?? "", /next session is triage/);
+  });
+  it("B9", "a triage taken again with nothing it read changed: age alone is no input (#217)", () => {
+    const g = new FakeGit();
+    const waiting = (over: Partial<WorkItem> = {}) => item("A-1", NOTHING, { item: workItem("A-1", over), paths: ["src/a.ts"], job: job("A-1", { step: "implement" }) });
+    const first = obs({ git: gitObs(g), items: [waiting()], started: [started("A-1", "triage")] });
+    const settled = ledger({ ended: [{ step: 1, item: key("A-1"), role: "triage", session: "s-A-1", status: "succeeded", settled: true }] });
+    const chose = { ...event(key("A-1"), "orchestrator", "orchestrator.triage_again"), data: {} };
+    const again = (over: Partial<Observation> = {}) => obs({ action: tick, ledger: settled, events: [chose], items: [waiting()], started: [started("A-1", "triage", { vars: { itemTitle: "Item A-1", itemBody: "Do it.", recheck: "It is 40 days old." } })], ...over });
+    assert.match(fires("B9", first, obs({ action: tick, ledger: settled, git: gitObs(g), items: [waiting()] }), again({ git: gitObs(g), at: "2027-01-01T10:00:00.000Z" })) ?? "", /nothing it read changed/);
+    // Its text edited, a commit on main on the paths it named: new input.
+    assert.equal(fires("B9", first, again({ git: gitObs(g), items: [waiting({ title: "Item A-1, edited" })] })), null);
+    const moved = new FakeGit();
+    const base = moved.main;
+    const f = obs({ git: { ...gitObs(moved), main: base }, items: [waiting()], started: [started("A-1", "triage")] });
+    moved.outsideCommit(["src/a.ts"]);
+    assert.equal(fires("B9", f, again({ git: gitObs(moved) })), null);
+    // A triage that did not settle is not the Item's triage: its retry is not checked against it.
+    assert.equal(fires("B9", first, again({ ledger: ledger(), git: gitObs(g) })), null);
+    // Taken again after a person's answer (no triage_again event): theirs, not Scope Soup's choice.
+    assert.equal(fires("B9", first, obs({ action: tick, ledger: settled, git: gitObs(g), items: [waiting()] }), again({ git: gitObs(g), events: [] })), null);
+  });
+  it("B10", "Scope Soup takes more triages again on its own than its share allows (#217)", () => {
+    const again = { ...event(key("A-1"), "orchestrator", "orchestrator.triage_again"), data: { background: true } };
+    const sessions = Array.from({ length: 10 }, (_, n) => started(`A-${n}`, "implement"));
+    assert.match(fires("B10", obs({ started: sessions }), obs({ events: [again, again] })) ?? "", /2 triages were taken again/);
+    assert.equal(fires("B10", obs({ started: sessions }), obs({ events: [again] })), null);
+    // Before an Item starts, a triage taken again is not counted in the share.
+    assert.equal(fires("B10", obs({ events: [{ ...again, data: {} }, { ...again, data: {} }] })), null);
   });
   it("C1", "an Item closed by an answer on another Item (#209, decision 8)", () => {
     assert.match(fires("C1", obs({ items: [item("A-2", SLOT)] }), obs({ items: [item("A-2", NOTHING, { item: workItem("A-2", { state: "abandoned" }) })] })) ?? "", /no person's close/);
@@ -407,6 +435,15 @@ describe("each rule fires on a bad state built by hand", { concurrency: 1 }, () 
     assert.match(fires("J3", obs({ lanes: LANES }), inTodo) ?? "", /landed in To do/);
     // Read back after the store was lost: seen before, so not new (#229).
     assert.equal(fires("J3", inTodo, obs({ lanes: LANES }), inTodo), null);
+  });
+  it("J4", "Scope Soup chooses to triage again an Item in Backlog (#217)", () => {
+    const before = obs({ lanes: LANES, items: [item("A-1", NOTHING, { card: card("A-1", { lane: "backlog" }), job: job("A-1", { step: "implement" }) })] });
+    const chose = { ...event(key("A-1"), "orchestrator", "orchestrator.triage_again"), data: { background: true } };
+    assert.match(fires("J4", before, obs({ lanes: LANES, events: [chose] })) ?? "", /in Backlog and Scope Soup chose to triage it again/);
+    // In To do it may; a person's Triage or answer in Backlog writes no such event.
+    const inTodo = obs({ lanes: LANES, items: [item("A-1", NOTHING, { card: card("A-1", { lane: "todo" as never }), job: job("A-1", { step: "implement" }) })] });
+    assert.equal(fires("J4", inTodo, obs({ lanes: LANES, events: [chose] })), null);
+    assert.equal(fires("J4", before, obs({ lanes: LANES, started: [started("A-1", "triage", { vars: { itemTitle: "Item A-1", itemBody: "Do it.", recheck: "A person answered." } })] })), null);
   });
 });
 

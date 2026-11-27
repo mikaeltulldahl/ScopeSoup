@@ -55,6 +55,8 @@ export function optionsFor(seed: number, long: boolean, steps: number): RunOptio
     steps,
     profile: (["calm", "normal", "normal", "rough"] as const)[rnd.int(4)]!,
     long,
+    // The long run's seeds past 100 play a world where triages age (#217); seeds 1 to 100 stay as they were.
+    ...(long && seed > 100 ? { ageing: true as const } : {}),
   };
 }
 
@@ -103,6 +105,8 @@ export function draw(world: SimWorld, rnd: Rng, options: RunOptions): Action {
     case "sync":
       return { kind: "sync" };
     case "clock":
+      // Where triages age (#217), half the clock steps are a person's commit on main instead (which may let a day pass).
+      if (world.ageing && rnd.chance(0.5)) return { kind: "main-commit", v: v() };
       return { kind: "clock", ms: rnd.pick([1000, 60_000, 31 * 60_000, 3 * 3600_000])! };
     case "world": {
       const roll = rnd.int(7);
@@ -197,6 +201,8 @@ export async function play(seed: number, options: RunOptions, given?: Action[], 
     const before = world.runner.requests.length;
     await world.apply(action);
     const o = await observe(world, seed, action, prev, before);
+    // Triages Scope Soup took again on its own (#217), counted as they happen: a lost store takes its events with it.
+    for (const e of o.events) if (e.kind === "orchestrator.triage_again") world.count((e.data as Record<string, unknown> | undefined)?.background === true ? "retriage-share" : "retriage-before-start");
     recent.push(`${o.step} ${actionText(action)}`);
     if (recent.length > 8) recent.shift();
     if (options.trace) console.log(`seed ${seed} step ${o.step}: ${actionText(action)} | ${o.items.map((i) => `${i.id} ${wText(i.w)}`).join(" · ")}`);
