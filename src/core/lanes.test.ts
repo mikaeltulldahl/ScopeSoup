@@ -74,7 +74,7 @@ test("done and abandoned", () => {
 });
 
 test("an item whose change merged is Done while the host still has it open, even with an open change", () => {
-  const index = buildIndex(snapshot({ works: [work(1), work(2)], changes: [change(30, [1], { state: "open" })], merged: [ref("work", 1)] }));
+  const index = buildIndex(snapshot({ works: [work(1), work(2)], changes: [change(30, [1], { state: "open" })], jobs: [{ subject: ref("work", 1), stage: "queue", step: "implement", phase: { at: "merged", sha: "m", closeOwed: false } }] }));
   assert.deepEqual(index.snapshot.works.map((item) => laneOf(item, index)), ["done", "todo"]);
 });
 
@@ -166,6 +166,10 @@ test("an approved change whose Item is parked for a person's question after revi
       parked: [
         { subject: ref("work", 1), as: "needs-decision", reason: "the fix round asked", at: at(-5), decision: { question: "Which way?", options: [], recommendation: "" } },
         { subject: ref("work", 2), as: "queued", reason: "in the queue", at: at(-5) },
+      ],
+      jobs: [
+        { subject: ref("work", 1), stage: "review", step: "implement", phase: { at: "asked", from: "implement", ask: { is: "question" }, posting: false } },
+        { subject: ref("work", 2), stage: "queue", step: "review", phase: { at: "queued" } },
       ],
     }),
   );

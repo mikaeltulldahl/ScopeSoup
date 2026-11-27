@@ -12,6 +12,9 @@ import type { Index } from "./snapshot.ts";
 import { durationWords, ms, refLabel } from "./snapshot.ts";
 import { sameFilesWords } from "./sameFiles.ts";
 import { clearWithoutTriage } from "./statedSize.ts";
+import { itemTextHash } from "./answerReuse.ts";
+import { waitingRun } from "./phase.ts";
+import { WRITING_WAIT_MS } from "./waits.ts";
 
 /** How a card is coloured: is it moving, waiting its turn, stuck, or a person's? */
 export type Tone = "moving" | "waiting" | "blocked" | "yours" | "done";
@@ -212,9 +215,10 @@ function todoTurn(situation: Situation, ctx: TurnContext): Draft {
 function nextStepTurn(situation: Situation, ctx: TurnContext, slot: Draft): Draft {
   const { item, session } = situation;
   const job = ctx.index.jobByWork.get(refKey(item.ref));
-  const timer = job?.timer && Date.parse(job.timer.until) > ctx.now.getTime() ? job.timer : undefined;
+  const until = job ? waitingRun(job.phase)?.timer : undefined;
+  const timer = until && Date.parse(until.time) > ctx.now.getTime() ? until : undefined;
   if (job && timer) {
-    const left = durationWords(Date.parse(timer.until) - ctx.now.getTime());
+    const left = durationWords(Date.parse(timer.time) - ctx.now.getTime());
     if (session?.status === "limit") return { actor: "nobody", tone: "waiting", since: session.lastEventAt ?? session.startedAt, reason: `the ${session.role} session stopped at the usage limit; it resumes in ${left}` };
     if (timer.failures) return { actor: "agent", tone: "blocked", reason: `the ${job.step} step failed ${timer.failures === 1 ? "once" : `${timer.failures} times`}; it tries again in ${left}` };
     return { actor: "agent", tone: "waiting", reason: `its ${job.step} step starts in ${left}` };
@@ -374,8 +378,10 @@ function draft(situation: Situation, ctx: TurnContext): Draft {
     return { actor: "nobody", tone: "blocked", reason: `blocked by ${list(words)}` };
   }
   const job = ctx.index.jobByWork.get(key);
-  if (job?.text && Date.parse(job.text) > ctx.now.getTime()) {
-    return { actor: "nobody", tone: "waiting", reason: `waits until the description written at a person's Accept is read back from ${item.ref.host} (at most ${durationWords(Date.parse(job.text) - ctx.now.getTime())} more)` };
+  const text = job ? waitingRun(job.phase)?.text : undefined;
+  const textLeft = text && itemTextHash(item) === text.from ? Date.parse(text.at) + WRITING_WAIT_MS - ctx.now.getTime() : 0;
+  if (textLeft > 0) {
+    return { actor: "nobody", tone: "waiting", reason: `waits until the description written at a person's Accept is read back from ${item.ref.host} (at most ${durationWords(textLeft)} more)` };
   }
   // Triaged, and its paths overlap those of a busy Item, or it may conflict with one: it waits for that one, not for a slot.
   const sameFiles = ctx.index.snapshot.sameFiles?.find((each) => refKey(each.subject) === key);

@@ -13,6 +13,8 @@ import { holdStands } from "../model/people.ts";
 import type { WorkItem } from "../model/types.ts";
 import type { Job, Jobs } from "../orchestrator/jobs.ts";
 import { workBranch, workspaceKey } from "../orchestrator/paths.ts";
+import { sessionOf, stepOf, waitsForAnswer as answerAwaited } from "../core/phase.ts";
+import { phaseOf } from "../orchestrator/phase.ts";
 
 export const MOVES = ["triage", "todo", "in-review", "merge-queue", "implement"] as const;
 export type Move = (typeof MOVES)[number];
@@ -49,7 +51,10 @@ const QUEUE_OFF = "the merge queue runs from level 4";
 export const ROLE_WORDS: Record<string, string> = { triage: "the triage", implement: "the implementor", review: "the reviewer" };
 
 /** The role of the step session that runs on the Item here, if one does. */
-export const runningRole = (input: Pick<MoveInput, "job" | "liveRole">): string | undefined => (input.job?.sessionId ? input.job.step : input.liveRole);
+export const runningRole = (input: Pick<MoveInput, "job" | "liveRole">): string | undefined => {
+  const phase = input.job ? phaseOf(input.job) : undefined;
+  return (phase && sessionOf(phase) ? stepOf(phase) : undefined) ?? input.liveRole;
+};
 
 /** Why no move can touch the Item now: an agent of another machine holds it (and no request reaches it), or a person does. */
 function busy(input: MoveInput): { why: string; person?: string } | undefined {
@@ -65,14 +70,15 @@ function busy(input: MoveInput): { why: string; person?: string } | undefined {
 /** What each move would say now. Pure. */
 export function moveWhys(input: MoveInput): MoveWhys {
   const { item, job, lane, level } = input;
+  const phase = job ? phaseOf(job) : undefined;
   const closed = item.state === "done" || item.state === "abandoned";
   const off = busy(input);
   const running = runningRole(input);
   const why = (text: string | undefined) => (text === undefined ? {} : { why: text });
 
   // Implement anyway: only over triage's own not-ready verdict (not a person's stop), on this machine's job.
-  const overrule: MoveWhys = job?.parked?.as === "not-ready" && job.parked.verdict && !closed
-    ? { implement: why(input.needs?.implement ?? off?.why ?? (job.dropAskedBy ? "back to To do already" : undefined)) }
+  const overrule: MoveWhys = phase?.at === "not-ready" && phase.verdict && !closed
+    ? { implement: why(input.needs?.implement ?? off?.why ?? (job?.dropAskedBy ? "back to To do already" : undefined)) }
     : {};
 
   // The work runs on another machine: that machine has the job, so it decides; here only what is known everywhere refuses.
@@ -87,10 +93,10 @@ export function moveWhys(input: MoveInput): MoveWhys {
   }
 
   // The merge queue holds the branch (waiting, in a batch, or merged by it): the job is not taken from under it.
-  const queued = !!job && (job.parked?.as === "queued" || job.queued !== undefined || job.merged !== undefined) || lane === "queued" || lane === "checking";
+  const queued = phase?.at === "queued" || phase?.at === "merged" || job?.queued !== undefined || lane === "queued" || lane === "checking";
   const queuedWhy = lane === "checking" ? "the merge queue is checking it" : "it is in the merge queue";
   // A job parked for a person (a question, an escalation, a rewrite, a restructuring) waits for their answer on the page.
-  const waitsForAnswer = !!job?.parked && job.parked.as !== "queued" && job.parked.as !== "handed-over" && job.parked.retry !== "hand-over";
+  const waitsForAnswer = !!phase && answerAwaited(phase);
   const result: MoveWhys = { ...overrule };
 
   // Triage again: the old triage is dropped and the job starts at triage, ahead of new Items. A step that runs is interrupted.
@@ -103,7 +109,7 @@ export function moveWhys(input: MoveInput): MoveWhys {
       // 120), a person's pick makes the job (decision 104).
       : !job ? (level >= 1 && !item.backlog ? "in line for triage already" : undefined)
       : job.dropAskedBy ? "back to To do already"
-      : job.step === "triage" && !job.parked && !running ? "next for triage already"
+      : phase?.at === "triage" && !running ? "next for triage already"
       : queued ? queuedWhy
       : undefined,
   );
@@ -121,7 +127,7 @@ export function moveWhys(input: MoveInput): MoveWhys {
       : job.dropAskedBy ? "back to To do already"
       : queued ? queuedWhy
       : waitsForAnswer ? "it waits for an answer on this page"
-      : job.step === "review" && !job.parked && !job.owes && !running ? "in review already"
+      : phase?.at === "review" && !running ? "in review already"
       : undefined,
   );
 

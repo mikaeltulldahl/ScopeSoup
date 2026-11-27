@@ -8,6 +8,7 @@ import { refKey } from "../model/types.ts";
 import type { Store } from "../store/store.ts";
 import type { Job } from "./jobs.ts";
 import { loadJobs } from "./jobs.ts";
+import { phaseOf } from "./phase.ts";
 
 /** A person's overturn kept for the running work of an Item. Agent and person text: data. */
 export interface PendingOverturn {
@@ -48,8 +49,8 @@ function writeOverturns(store: Store, pending: PendingOverturns): void {
  */
 export function takesOverturn(job: Job | undefined, item: Pick<WorkItem, "state">): boolean {
   if (!job || item.state === "done" || item.state === "abandoned") return false;
-  if (job.merged !== undefined || job.queued !== undefined || job.owes !== undefined) return false;
-  return job.parked?.as !== "queued" && job.parked?.as !== "handed-over";
+  const at = phaseOf(job).at;
+  return job.queued === undefined && at !== "merged" && at !== "hand-over" && at !== "queued" && at !== "with-person";
 }
 
 /**

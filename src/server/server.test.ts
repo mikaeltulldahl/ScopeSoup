@@ -92,7 +92,7 @@ test("loadSnapshot lists the items whose job says the change merged", () => {
     [refKey(merged.ref)]: job(merged, { merged: "abc1234" }),
     [refKey(open.ref)]: job(open, {}),
   });
-  assert.deepEqual(loadSnapshot(own).merged, [merged.ref]);
+  assert.deepEqual(loadSnapshot(own).jobs?.filter((each) => each.phase.at === "merged").map((each) => each.subject), [merged.ref]);
   own.close();
 });
 

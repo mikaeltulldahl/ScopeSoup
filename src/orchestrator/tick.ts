@@ -50,6 +50,8 @@ import { setupPromptLine } from "./setup.ts";
 import { pacer, runningByRole, usageBudget, waitingCaps, waitingForPerson, writePacing } from "./pacing.ts";
 import { waitingCapWait } from "../core/waitingCaps.ts";
 import { plural } from "../model/plural.ts";
+import { firstImplement, waitingStep } from "../core/phase.ts";
+import { phaseOf } from "./phase.ts";
 
 export type { TickDeps } from "./context.ts";
 
@@ -227,7 +229,7 @@ async function releaseClaimsHeldForNothing(ctx: Context, items: readonly WorkIte
     // Every job holds its claim for as long as it is here (#243): a session runs, its next step waits to start, it is parked for a
     // person, or its change is queued or handed over. A merged one holds nothing: what is left is closing the Item.
     const job = ctx.jobs[key];
-    const holds = !!job && job.merged === undefined;
+    const holds = !!job && phaseOf(job).at !== "merged";
     if (!holder || holder.actor.id !== actions.claimant || holds || live.has(key)) continue;
     const reason = `${item.ref.id} has no work under way here${item.state === "done" || item.state === "abandoned" ? ` (it is ${item.state})` : ""}: this machine's claim on it goes back.`;
     try {
@@ -268,8 +270,9 @@ function readInBacklog(job: Job, item: WorkItem): boolean {
     job.seenInTodo = true;
     return false;
   }
-  if (mayWorkInBacklog(job) || job.merged !== undefined) return false;
-  return job.parked?.as !== "queued" && job.parked?.as !== "handed-over";
+  if (mayWorkInBacklog(job)) return false;
+  const at = phaseOf(job).at;
+  return at !== "merged" && at !== "queued" && at !== "with-person";
 }
 
 /**
@@ -629,7 +632,7 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
   const handbacksWaiting = await adoptHandbacks(ctx, items, store.list<Change>("change"));
 
   // Below level 4 the merge queue finishes what level 4 began and lets every change go (levels 2 and 3, where the implementor merges).
-  const queueLeft = config.level >= 2 && config.level < 4 && Object.values(jobs).some((job) => job.parked?.as === "queued" && job.queued !== undefined && job.merged === undefined)
+  const queueLeft = config.level >= 2 && config.level < 4 && Object.values(jobs).some((job) => phaseOf(job).at === "queued" && job.queued !== undefined)
     && (await settleQueueBelowLevel4(ctx));
 
   // 1b. Sessions that are over move their job to the next step.
@@ -687,7 +690,7 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
     }
     // Questions other Items' agents asked made this job, a person answered them otherwise than recommended, and the Item is in Backlog:
     // its triage does not run again there (decision 121), as `afterRewrite` closes it after answers that keep the recommendations.
-    if (item && !over && item.backlog && job.othersAsked && job.step === "triage" && !job.triageAskedBy && !job.sessionId && !job.parked && !job.rewrite) {
+    if (item && !over && item.backlog && job.othersAsked && !job.triageAskedBy && waitingStep(phaseOf(job)) === "triage" && job.rewrite === undefined) {
       delete jobs[key];
       ctx.commit("orchestrator.job_closed", `A person answered what other Items' agents asked about ${item.ref.id}, which is in Backlog: nothing runs on it until a person moves it to To do, and its triage then has the answers.`, key);
       await ctx.act("remove the worktree", key, () => runner.releaseWorkspace(job.workspace));
@@ -706,9 +709,10 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
       if (!jobs[key]) continue;
     }
     // A person settled the triage's rewrite: triage's other verdicts follow, without a session.
-    if (!job.sessionId && !job.parked && job.step === "triage" && job.rewrite?.settled) await afterRewrite(ctx, job);
+    const settled = phaseOf(job);
+    if (settled.at === "triage" && settled.why === "settled" && settled.run.is === "waiting") await afterRewrite(ctx, job);
     // Below level 2 nothing is built, so nothing is handed over either: the hand-over waits for the level to come back.
-    if (job.owes && merging && config.level >= 2 && !job.parked && !job.sessionId && item && item.state !== "done" && item.state !== "abandoned") {
+    if (phaseOf(job).at === "hand-over" && merging && config.level >= 2 && item && item.state !== "done" && item.state !== "abandoned") {
       // The item holds no clone: it was parked for a person and the clone was freed (a failed hand-over a person retries), or the record was rebuilt from
       // the log and says nothing. A clone is taken again before the hand-over, so the branch can be read; with none free the hand-over waits.
       // Rebuilt from the log with no record of the item's clone: the clone that holds its newest revision is found first.
@@ -741,8 +745,9 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
     if (job.parked && job.parked === parkedBefore && !job.sessionId && item && !over && followLog(ctx, job, item)) continue;
     // A person merged the branch handed over to them, and nothing but Scope Soup closes an Item here: done once main holds the head.
     // So too a hand-over a person's answer asked for again while it cannot run (the implement switch is off, or the level below 2).
-    const handOverWaits = job.owes === "hand-over" && !job.parked && !job.sessionId && !(merging && config.level >= 2);
-    if (item && ctx.deps.actions.closesItself && (job.parked?.as === "handed-over" || handOverWaits) && job.merged === undefined && item.state === "todo") {
+    const handing = phaseOf(job).at;
+    const handOverWaits = handing === "hand-over" && !(merging && config.level >= 2);
+    if (item && ctx.deps.actions.closesItself && (handing === "with-person" || handOverWaits) && item.state === "todo") {
       try {
         const tip = (await runner.fetchMain(job.branch)).main;
         const head = await runner.head(job.branch);
@@ -766,7 +771,7 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
       await retryPost(ctx, job);
       continue;
     }
-    const mergedOrHandedOver = job.parked?.as === "queued" || job.parked?.as === "handed-over";
+    const finished = ["merged", "queued", "with-person"].includes(phaseOf(job).at);
     // An item that is finished or gone needs no job: what the job held goes with it (this machine's claim, the worktree). The
     // branch goes too, unless it may hold work nobody closed: the Item left the store (no person closed it), or a triage again on built
     // work (a recheck) was under way, whose commits are not Scope Soup's to throw away.
@@ -774,7 +779,7 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
       delete jobs[key];
       const kept = !item || job.step === "triage" ? await keptBranch(ctx, job) : null;
       const why = `${item ? `The item is ${item.state}; its job is closed.` : "The item is no longer in the store; its job is closed."}${kept ? ` Its branch ${job.branch} is kept: ${kept}.` : ""}`;
-      ctx.commit(mergedOrHandedOver ? "orchestrator.finished" : "orchestrator.job_closed", why, key);
+      ctx.commit(finished ? "orchestrator.finished" : "orchestrator.job_closed", why, key);
       const { actions } = ctx.deps;
       if (actions.claims && actions.claimant && item?.holder?.actor.id === actions.claimant) await ctx.act("release the claim", key, () => actions.release(job.item, why));
       await ctx.act("remove the worktree", key, () => runner.releaseWorkspace(job.workspace));
@@ -784,13 +789,14 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
     }
     // A person overturned a decision while the work waits (for review, a slot, a retry, or an answer it was given): the
     // implementor's own session is resumed with the answer before the next step. A triage waits until the implement step.
-    if (item && !job.sessionId && !job.parked && !job.owes && job.step !== "triage") overturnsBack(ctx, job);
+    const waits = waitingStep(phaseOf(job));
+    if (item && (waits === "implement" || waits === "review")) overturnsBack(ctx, job);
     // A job at the review step at level 2 (the level was lowered while it waited for a reviewer): nobody reviews at this level, and
     // the implementor merges. Its own session is resumed to merge it, as level 2 does after a build.
-    if (item && config.level === 2 && job.step === "review" && !job.sessionId && !job.parked && !job.owes && !job.reviewAskedBy) reviewOffAtLevel2(ctx, job);
+    if (item && config.level === 2 && waitingStep(phaseOf(job)) === "review" && !job.reviewAskedBy) reviewOffAtLevel2(ctx, job);
     // A change in the merge queue when the level was lowered below 4: the queue is not driven there, and the implementor merges, once
     // nothing of the queue's is in flight for it (`settleQueueBelowLevel4`).
-    if (item && queueLeft && job.parked?.as === "queued" && job.queued !== undefined && job.merged === undefined && !job.sessionId) queueOffBelowLevel4(ctx, job);
+    if (item && queueLeft && phaseOf(job).at === "queued" && job.queued !== undefined) queueOffBelowLevel4(ctx, job);
   }
 
   // This machine's claim on an Item it has no work under way for (its job closed, or the store was lost) goes back.
@@ -843,7 +849,7 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
     if (report.started.length === 0) {
       const paused = off.map((role) => `${SWITCH_WORDS[role]} ${role === "implement" ? "are" : "is"} paused${waitsFor[role] > 0 ? ` (${plural(waitsFor[role], "item")} ${waitsFor[role] === 1 ? "waits" : "wait"} for ${role === "implement" ? "them" : "it"})` : ""}`);
       // The merge queue is no role: its switch holds the hand-over of reviewed changes (and the queue's own work) from level 4.
-      const queueWaits = level >= 4 && !mergeQueueOn(store) ? Object.values(jobs).filter((job) => job.owes === "hand-over" || (job.parked?.as === "queued" && job.queued !== undefined)).length : 0;
+      const queueWaits = level >= 4 && !mergeQueueOn(store) ? Object.values(jobs).filter((job) => phaseOf(job).at === "hand-over" || (phaseOf(job).at === "queued" && job.queued !== undefined)).length : 0;
       if (queueWaits > 0) paused.push(`${SWITCH_WORDS.mergeQueue} is paused (${plural(queueWaits, "item")} ${queueWaits === 1 ? "waits" : "wait"} for it)`);
       const all = [...paused, ...reasons];
       report.idle = `Nothing was started because ${all.length > 0 ? all.join("; ") : "no item is ready"}.`;
@@ -862,7 +868,7 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
   // person can see.
   const personAsked = (job: Job | null | undefined, step: SessionRole): boolean =>
     ((step === "review" && job?.reviewAskedBy !== undefined) || (step === "triage" && job?.triageAskedBy !== undefined) || (step === "implement" && job?.implementAskedBy !== undefined)) && switchOnFor(store, step, level);
-  const personWork = Object.values(jobs).some((job) => !job.parked && !job.sessionId && !job.owes && personAsked(job, job.step));
+  const personWork = Object.values(jobs).some((job) => waitingStep(phaseOf(job)) !== null && personAsked(job, job.step));
   const control = Object.fromEntries(ROLES.map((role) => [role, switchState(store, role)])) as Record<SessionRole, SwitchState>;
   const stoppedRoles = ROLES.filter((role) => control[role] === "stopped");
   if (stoppedRoles.length > 0 && running > 0) {
@@ -899,7 +905,7 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
   for (const [key, job] of Object.entries(jobs)) {
     const item = itemByKey.get(key);
     // A job that owes its hand-over has no session to start: the next tick repeats the hand-over.
-    if (!item || job.parked || job.sessionId || job.owes) continue;
+    if (!item || waitingStep(phaseOf(job)) === null) continue;
     if (runner.busy?.(job.item)) {
       reasons.push(`${item.ref.id} waits: a person is talking to one of its sessions`);
       continue;
@@ -1091,7 +1097,7 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
 
     // Don't outrun the person (decision 133): new triage, and new work (a first implement step), wait while too much waits for a person.
     // Work under way, its fix rounds, the steps an answer resumes and a person's own pick go on; the next entry may start.
-    const newKind = personAsked(entry.job, step) ? null : !entry.job ? (step === "triage" ? "triage" : "work") : step === "implement" && firstImplement(entry.job) ? "work" : null;
+    const newKind = personAsked(entry.job, step) ? null : !entry.job ? (step === "triage" ? "triage" : "work") : step === "implement" && firstImplement(phaseOf(entry.job)) ? "work" : null;
     const capWait = newKind ? waitingCapWait(newKind, waitingNow, caps) : null;
     if (capWait) {
       capWaits.add(capWait);
@@ -1292,7 +1298,3 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
   return finish();
 }
 
-/** The implement step has not begun: no change, no session of it, nothing to resume and no attempt yet. Its start is new work (decision 133). */
-export function firstImplement(job: Job): boolean {
-  return job.step === "implement" && job.head === undefined && !job.implement && job.agentSession === undefined && job.resumeWith === undefined && !job.resume && job.failures === 0 && !job.merge;
-}

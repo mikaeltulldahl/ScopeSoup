@@ -3,6 +3,7 @@
 import type { Batch, BatchMember, Change, Ref, Session, Verdict, WorkItem } from "../model/types.ts";
 import { refKey } from "../model/types.ts";
 import type { Index, JobStage } from "./snapshot.ts";
+import { parkedForPerson as isParkedForPerson } from "./phase.ts";
 
 // Backlog: what a person has not chosen yet, which no agent starts; To do: what agents may start (decision 121).
 export const LANES = ["backlog", "todo", "blocked", "in-progress", "in-review", "queued", "checking", "done"] as const;
@@ -73,8 +74,8 @@ export function isApproved(change: Change, index: Index): boolean {
 
 /** Parked for a person (a question, a hand-over, an escalation, not ready): not waiting in the merge queue, whatever its verdicts. */
 export function parkedForPerson(work: Ref, index: Index): boolean {
-  const parked = index.parkedByWork.get(refKey(work));
-  return parked !== undefined && parked.as !== "queued";
+  const phase = index.jobByWork.get(refKey(work))?.phase;
+  return !!phase && isParkedForPerson(phase);
 }
 
 function currentChange(item: WorkItem, index: Index): Change | undefined {
@@ -133,9 +134,8 @@ function jobLane(job: JobStage, situation: Situation, index: Index): Lane | null
   const held = item.holder !== undefined && !item.holder.actor.bot;
   if (held) return atStage();
   if (session && isLive(session)) return roleLane(session.role, item);
-  const parked = index.parkedByWork.get(refKey(item.ref));
-  if (parked?.as === "handed-over") return "in-review";
-  if (parked && parked.as !== "queued") return atStage() ?? "in-review";
+  if (job.phase.at === "with-person") return "in-review";
+  if (parkedForPerson(item.ref, index)) return atStage() ?? "in-review";
   if (job.stage === "start" && item.backlog) return "backlog";
   if (!item.needsDecision && openBlockers(item, index).length > 0) return "blocked";
   return atStage();
@@ -162,7 +162,7 @@ export function situate(item: WorkItem, index: Index): Situation {
   }
   const working = session !== undefined && WORKING_ROLES.has(session.role);
   // Reviewed and handed to a person to merge: it waits in review, whether or not a pull request exists.
-  const handedOver = index.parkedByWork.get(refKey(item.ref))?.as === "handed-over";
+  const handedOver = job?.phase.at === "with-person";
   if (!change && handedOver && !working) return { ...base, lane: "in-review" };
   if (!change) {
     if (working || item.state === "doing") return { ...base, lane: "in-progress" };

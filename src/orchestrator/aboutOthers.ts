@@ -14,6 +14,8 @@ import type { AboutOther, Decision, Job } from "./jobs.ts";
 import { changedRewrite, sameText } from "./jobs.ts";
 import type { ProposedRewriteView } from "../core/snapshot.ts";
 import { plural } from "../model/plural.ts";
+import { changeHandedOn, sessionOf, stepOf } from "../core/phase.ts";
+import { phaseOf } from "./phase.ts";
 
 /** Questions (and a rewrite) waiting to be written on another Item. Agent text: data. */
 export interface WaitingAbout {
@@ -249,19 +251,20 @@ export function proposeRewrite(ctx: Context, other: WorkItem, askedBy: string, f
 export function busyWhy(ctx: Context, item: WorkItem, job: Job | undefined): string | null {
   const working = workingWhy(ctx, item, job);
   if (working) return working;
-  if (job?.parked?.as === "needs-decision" || job?.parked?.retry === "post") return "it waits for a person's answer to its own questions";
+  if (job && phaseOf(job).at === "asked") return "it waits for a person's answer to its own questions";
   return null;
 }
 
 /** As `busyWhy`, but an Item waiting for an answer to its own questions is free: why the Item's work cannot be taken from it now. */
 export function workingWhy(ctx: Context, item: WorkItem, job: Job | undefined): string | null {
   if (ctx.deps.runner.busy?.(item.ref)) return "a person is talking to one of its sessions";
-  if (job?.sessionId) return `its ${job.step} session runs`;
+  const phase = job ? phaseOf(job) : undefined;
+  if (phase && sessionOf(phase)) return `its ${stepOf(phase)} session runs`;
   const holder = item.holder;
   if (holder && holdStands(holder, Date.parse(ctx.at)) && !(holder.actor.bot && holder.actor.id === ctx.deps.actions.claimant)) return `it is held by ${holder.actor.name}`;
-  if (!job) return null;
+  if (!job || !phase) return null;
   // A change in review (its session about to start, or between attempts) is not pulled back to triage by another Item's question.
-  if (job.step === "review" && !job.parked) return "its change is in review";
-  if (job.owes || job.merged !== undefined || job.queued !== undefined || job.parked?.as === "queued" || job.parked?.as === "handed-over" || job.parked?.retry === "hand-over") return "its change is merged, in the merge queue or handed over";
+  if (phase.at === "review") return "its change is in review";
+  if (changeHandedOn(phase) || job.queued !== undefined) return "its change is merged, in the merge queue or handed over";
   return null;
 }

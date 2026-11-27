@@ -14,7 +14,11 @@ import { loadOwnBlockers } from "../store/blockers.ts";
 import { switchState } from "../store/control.ts";
 import type { Commit, FakeGit, StashEntry, Worktree } from "./git.ts";
 import type { Role, W } from "./waits.ts";
-import { isBusy, waitsFor } from "./waits.ts";
+import { isBusy, personHolds, waitsFor } from "./waits.ts";
+import type { Wait } from "../core/waits.ts";
+import { waitsFor as productWaitsFor } from "../core/waits.ts";
+import { itemTextHash } from "../core/answerReuse.ts";
+import { phaseOf, pickOf } from "../orchestrator/phase.ts";
 import type { Action, Ledger, PageJson, SimWorld } from "./world.ts";
 
 export interface ItemObs {
@@ -25,6 +29,8 @@ export interface ItemObs {
   host: WorkItem | null;
   job?: Job;
   w: W;
+  /** The product's own W (`src/core/waits.ts`) from the job's phase and the same world the checker reads; A1 compares the two. */
+  product?: Wait;
   card?: CardView;
   /** The served page with the server's additions (moves), for Items that wait for a person. */
   served?: PageJson | null;
@@ -171,13 +177,27 @@ export async function observe(world: SimWorld, seed: number, action: Action, pre
       item, job, live: mine.map((each) => each.role), settling: !!job?.sessionId && mine.length === 0, open, ownBlockers: (own[key] ?? []).map(refKey), switches, level: world.configNow.level, usageReserve, now: at,
       workCapped: waiting >= caps.work, paceHolds: live.length === 0 && kickBlocked, liveCount: live.length, slots: world.configNow.settings.maxParallelSessions.value, busy: busy.filter((each) => each.key !== key), claimant,
     });
+    const blockers = [...new Set([...item.blockedBy.map(refKey), ...(own[key] ?? []).map(refKey)])].filter((each) => open.has(each));
+    const others = busy.filter((each) => each.key !== key);
+    const paths = job?.triage?.paths ?? [];
+    const conflicts = (job?.triage?.links ?? []).filter((l) => l.type === "conflictsWith").map((l) => l.item.replace(/^#/, ""));
+    const holder = item.holder;
+    const product = job ? productWaitsFor({
+      phase: phaseOf(job), ...(pickOf(job) ? { pick: pickOf(job)! } : {}),
+      facts: { closed: closedState(item), heldByPerson: personHolds(item, claimant), backlog: !!item.backlog, blockers, textHash: itemTextHash(item) },
+      world: {
+        now: at, switches, level: world.configNow.level, usageReserve, paceHolds: live.length === 0 && kickBlocked, workCapped: waiting >= caps.work,
+        sameFiles: others.filter((other) => other.paths.some((p) => paths.includes(p)) || conflicts.includes(other.key.split(":").pop()!) || other.conflicts.includes(item.ref.id)).map((other) => other.key),
+        claimedElsewhere: !!holder && holder.actor.bot === true && holder.actor.id !== claimant && (!holder.until || holder.until > at),
+      },
+    }) : undefined;
     // The served page is read for an Item that waits for a person, at ticks only (it is the costly part of a step).
     // It is read again only when W changed since the step before.
     const tickStep = action.kind === "tick" || action.kind === "inside-tick";
     const was = previous?.items.find((each) => each.key === key);
     const same = was?.served !== undefined && was.w.kind === w.kind && JSON.stringify(was.w) === JSON.stringify(w);
     const served = w.kind === "person" && tickStep ? (same ? was!.served : await world.page(item.ref.id)) : undefined;
-    itemObs.push({ key, id: item.ref.id, item, paths: job ? pathsOf(job) : [], host: hostItems ? (hostItems.get(key) ?? null) : null, ...(job ? { job } : {}), w, ...(cards.get(key) ? { card: cards.get(key)! } : {}), ...(served !== undefined ? { served } : {}), live: mine });
+    itemObs.push({ key, id: item.ref.id, item, paths: job ? pathsOf(job) : [], host: hostItems ? (hostItems.get(key) ?? null) : null, ...(job ? { job } : {}), w, ...(product ? { product } : {}), ...(cards.get(key) ? { card: cards.get(key)! } : {}), ...(served !== undefined ? { served } : {}), live: mine });
   }
   const lastSeq = store.lastSeq();
   const fromSeq = previous?.lastSeq ?? 0;

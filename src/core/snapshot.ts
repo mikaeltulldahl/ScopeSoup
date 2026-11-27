@@ -3,6 +3,7 @@
 import type { AgentsState, MergeQueueState } from "../model/types.ts";
 import type { Batch, Change, ItemLinkAnswer, RecordedAnswer, Ref, Parked, Run, Runner, Session, UsageSample, WorkItem } from "../model/types.ts";
 import { refKey } from "../model/types.ts";
+import type { Phase, Step } from "./phase.ts";
 
 /** A runner plus when it entered its current online/busy state, when the sync knows. */
 export interface RunnerState extends Runner {
@@ -75,8 +76,6 @@ export interface Snapshot {
   idle?: string;
   /** Items the orchestrator has put down. Absent when no orchestrator runs. */
   parked?: Parked[];
-  /** Items whose change merged on the main branch (through the queue, or merged by the session), whatever the host still says. */
-  merged?: Ref[];
   /** The triage's typed links per Item (from Scope Soup's store). */
   links?: { subject: Ref; links: ItemLinkAnswer[] }[];
   answers?: RecordedAnswer[];
@@ -98,12 +97,10 @@ export interface JobStage {
    * is reviewed or under review; `queue`: the merge queue has it.
    */
   stage: "start" | "implement" | "review" | "queue";
-  /** The step that runs next. */
-  step: "triage" | "implement" | "review";
-  /** Until when it waits for the description Scope Soup wrote at a person's Accept to be read back from the host. */
-  text?: string;
-  /** Its next try waits until `until`: a retry after `failures` failed attempts, the short pause between steps, or a usage limit's reset. */
-  timer?: { until: string; failures?: number };
+  /** The step that runs next, or that parked. */
+  step: Step;
+  /** Where the job is: the lane, the card's wait and its timed waits are read from it. */
+  phase: Phase;
 }
 
 /** A rewrite another Item's triage proposed for this one's description, with no question. Agent text: data. */
@@ -152,7 +149,7 @@ function push<T>(map: Map<string, T[]>, key: string, value: T): void {
  * one undoes the merge, so a reopened merged Item is work again.
  */
 function mergedKeys(snapshot: Snapshot): Set<string> {
-  const keys = new Set((snapshot.merged ?? []).map(refKey));
+  const keys = new Set((snapshot.jobs ?? []).filter((job) => job.phase.at === "merged").map((job) => refKey(job.subject)));
   for (const work of snapshot.works) {
     if (!work.merged) continue;
     if (work.merged.reopened) keys.delete(refKey(work.ref));

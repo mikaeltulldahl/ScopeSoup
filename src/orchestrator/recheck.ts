@@ -6,6 +6,8 @@
 import type { ItemLinkAnswer, WorkItem } from "../model/types.ts";
 import { refKey } from "../model/types.ts";
 import { itemTextHash } from "../core/answerReuse.ts";
+import { firstImplement } from "../core/phase.ts";
+import { phaseOf } from "./phase.ts";
 import type { Context } from "./context.ts";
 import { errorText } from "./context.ts";
 import { watchMain } from "./mainGuard.ts";
@@ -65,9 +67,7 @@ export function triagedNow(text: TriagedText, item: WorkItem | null, items: read
  * nothing came back to it, nothing is on its branch. Only such an Item's triage is redone.
  */
 export function awaitsImplement(job: Job): boolean {
-  return job.step === "implement" && !job.parked && job.triage !== undefined && job.implement === undefined
-    && job.agentSession === undefined && job.resume === undefined && job.resumeWith === undefined && job.head === undefined
-    && job.failures === 0 && (job.triaged !== undefined || job.triage.rewrite !== undefined);
+  return firstImplement(phaseOf(job)) && job.triage !== undefined && (job.triaged !== undefined || job.triage.rewrite !== undefined);
 }
 
 /** The paths of a triage's answer that are looked up in git: plain relative paths, no pathspec magic, no options. */

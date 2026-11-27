@@ -84,6 +84,8 @@ import type { AllowancePlan } from "../orchestrator/allowance.ts";
 import { isFolder, isFolderName, openFolder, projectView } from "./project.ts";
 import type { FolderOpener, ProjectInfo } from "./project.ts";
 import { plural } from "../model/plural.ts";
+import { parkedForAnswer } from "../core/phase.ts";
+import { phaseOf } from "../orchestrator/phase.ts";
 
 export interface ServerOptions {
   store: Store;
@@ -684,7 +686,7 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
             left = done.open;
             continue;
           }
-          const picksUp = !released && parked && (parked.as === "needs-decision" || parked.as === "not-ready" || parked.as === "escalated");
+          const picksUp = !released && !!parked && !!job && parkedForAnswer(phaseOf(job));
           if (picksUp) released = releaseJob(store, subject, by().who, at, `${by().who} answered: ${each.text}`);
         }
         return { released, ...(left !== undefined ? { open: left } : {}) };
@@ -768,7 +770,7 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
     if (job?.parked) {
       const settled = questionsSettled(job, after);
       if (settled && !settled.withdrawn) released = releaseJob(store, item.ref, by().who, at, settled.reason);
-      else if (waits.length === 0 && (job.parked.as === "needs-decision" || job.parked.as === "not-ready" || job.parked.as === "escalated")) {
+      else if (waits.length === 0 && parkedForAnswer(phaseOf(job))) {
         released = releaseJob(store, item.ref, by().who, at, `${by().who} answered: ${posts.map((post) => post.text).join(" | ")}`);
       }
     }
@@ -919,8 +921,9 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
     const onLog = !!write?.appendLog && work.ref.host === items!.host && !(options.questions && work.ref.host === options.questions.host);
     const open = onLog ? work.openQuestions ?? [] : [];
     // A question the job parked on and the store has not read back yet: an answer without `to` takes the newest open one.
-    const parked = loadJobs(store)[refKey(work.ref)]?.parked;
-    const unread = onLog && open.length === 0 && parked !== undefined && parked.as !== "queued" && parked.as !== "handed-over";
+    const parkedJob = loadJobs(store)[refKey(work.ref)];
+    const parked = parkedJob?.parked;
+    const unread = onLog && open.length === 0 && !!parkedJob && parkedForAnswer(phaseOf(parkedJob));
     const asked: (Pick<OpenQuestion, "at" | "by" | "question" | "set"> | null)[] = unread ? [null] : open;
     const set = parked ? parkSet(loadJobs(store)[refKey(work.ref)]!) : "";
     for (const question of asked) {
