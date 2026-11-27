@@ -14,6 +14,8 @@ import { createServer, isLoopback } from "./server.ts";
 import { refKey } from "../model/types.ts";
 import { loadJobs, saveJobs } from "../orchestrator/jobs.ts";
 import { loadSnapshot } from "./snapshot.ts";
+import { buildUsageView } from "./usage.ts";
+import { decide } from "../orchestrator/usageCheck.ts";
 import { loadAnswers } from "../store/answers.ts";
 import { itemTextHash } from "../core/answerReuse.ts";
 import { QUEUE_KEY, recordQueueNote, resumeRequested } from "../orchestrator/queueHealth.ts";
@@ -176,6 +178,21 @@ test("GET /api/usage attributes readings to sessions, reads tokens from streams,
     await usage.stop();
     own.close();
     rmSync(streams, { recursive: true, force: true, maxRetries: 3 });
+  }
+});
+
+test("a window whose reset has passed with no newer reading shows as reset on the Usage page, and the usage check allows a session", () => {
+  const own = openStore(":memory:");
+  try {
+    own.addUsageSample({ at: at(-60), windows: [{ kind: "five_hour", utilization: 0.8, resetsAt: at(-10) }] });
+    const view = buildUsageView(own, loadSnapshot(own), { span: "5h", ms: 5 * 3600_000 }, new Date(T0));
+    const five = view.windows.find((window) => window.kind === "five_hour")!;
+    assert.deepEqual([five.current?.reset, five.current?.utilization, five.forecastLine], [true, 0, []]);
+    assert.equal(five.current?.forecast, undefined);
+    const decision = decide({ sample: loadSnapshot(own).usage!, now: T0, runningSessions: 0, reserve: { five_hour: 0.1, seven_day: 0.2 } });
+    assert.equal(decision.allow, true);
+  } finally {
+    own.close();
   }
 });
 

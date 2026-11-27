@@ -49,7 +49,7 @@ export function StatusLine({ status }: { status: Status }) {
                 <span class="num">{percent(window.utilization)}</span>
               </>
             )}{" "}
-            <span class="muted num">resets {clockTime(window.resetsAt, now)}</span>
+            <span class="muted num">{window.reset ? `reset ${clockTime(window.resetsAt, now)}` : `resets ${clockTime(window.resetsAt, now)}`}</span>
             {window.forecast && <span class={`num ${window.forecast.outcome === "used_up" ? "" : "muted"}`}> · {window.forecast.words}</span>}
           </span>
         ))}
