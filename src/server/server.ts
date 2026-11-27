@@ -926,12 +926,13 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
     const write = items?.write;
     const onLog = !!write?.appendLog && work.ref.host === items!.host && !(options.questions && work.ref.host === options.questions.host);
     const open = onLog ? work.openQuestions ?? [] : [];
-    // A question the job parked on and the store has not read back yet: an answer without `to` takes the newest open one.
+    // A question the job parked on and the store has not read back yet: an answer without `to` takes the newest open one. So too when
+    // the store still reads only questions of earlier parks (a read-back after an answer was lost, #268): each names another set.
     const parkedJob = loadJobs(store)[refKey(work.ref)];
     const parked = where(parkedJob)?.parked;
-    const unread = onLog && open.length === 0 && !!parkedJob && parkedForAnswer(phaseOf(parkedJob));
-    const asked: (Pick<OpenQuestion, "at" | "by" | "question" | "set"> | null)[] = unread ? [null] : open;
-    const set = parked ? parkSet(loadJobs(store)[refKey(work.ref)]!) : "";
+    const set = parked ? parkSet(parkedJob!) : "";
+    const unread = onLog && !!parkedJob && parkedForAnswer(phaseOf(parkedJob)) && open.every((question) => question.set !== undefined && question.set !== set);
+    const asked: (Pick<OpenQuestion, "at" | "by" | "question" | "set"> | null)[] = unread ? [...open, null] : open;
     for (const question of asked) {
       try {
         await write!.appendLog!(work.ref, { kind: "answer", by: by(), fields: { answer: said, ...(question ? { to: question.at, toBy: question.by, toQuestion: question.question, ...(question?.set ? { toSet: question.set } : {}) } : { toSet: set }) } });

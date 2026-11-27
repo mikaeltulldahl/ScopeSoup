@@ -522,6 +522,19 @@ async function holdsOn(id: string, options: Shrunk, actions: Action[]): Promise<
 }
 
 describe("runs the simulator shrank, held since their fix", { concurrency: 1 }, () => {
+  // Fixed (#268): a move answers the park the store has not read back, also when it still reads an earlier park's question.
+  test("A3: a rewrite rejected whose read-back is lost, parked not ready, then Implement anyway: the not-ready question is answered", async () => {
+    await holdsOn("A3", {items: 7, level: 2, slots: 2, steps: 600, profile: "normal", ageing: true}, [
+      {kind: "tick"},
+      {kind: "end", item: "A-1", v: 430985},
+      {kind: "tick"},
+      {kind: "sync"},
+      {kind: "answer", item: "A-1", v: 688638},
+      {kind: "tick"},
+      {kind: "move", item: "A-1", v: 163135},
+    ]);
+  });
+
   // Fixed (#268): a triage's rewrite accepted, and the read-back after the write lost: the card says it waits for the text.
   test("A1: a rewrite accepted whose read-back did not come: the card waits for the text, not for an answer", async () => {
     await holdsOn("A1", {items: 12, level: 2, slots: 2, steps: 600, profile: "normal", ageing: true}, [
