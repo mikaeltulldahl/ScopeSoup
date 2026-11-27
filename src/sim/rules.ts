@@ -406,17 +406,21 @@ export const RULES: Rule[] = [
   },
   {
     id: "B8",
-    why: "An answer resumes where it was asked, with the work kept: an implementor's question answered goes back to the implementor, not to triage.",
+    why: "An answer or a pick resumes where it was given, with the work kept: an implementor's question answered goes back to the implementor, not to triage; a person's Merge queue hands the change over, with no review or triage first.",
     check(o, prev, memo) {
       const expect = (memo.expect ??= {}) as Record<string, string>;
+      // A person's move, start over or edit sends the Item elsewhere, rightly: what an earlier answer or pick expected is over.
+      for (const r of o.requests) if (r.status === 200 && r.item && /move|start-over|edit|pick/.test(r.path)) delete expect[`metaBranch:work:${r.item}`];
       for (const r of o.requests) {
-        if (r.status !== 200 || !r.item || !r.path.startsWith("/api/answer")) continue;
+        if (r.status !== 200 || !r.item) continue;
         const before = prev?.items.find((i) => i.id === r.item);
         const was = where(before?.job);
-        if (before && was?.parked?.byStep && was.step === "implement") expect[before.key] = "implement";
+        if (r.path.startsWith("/api/answer") && before && was?.parked?.byStep && was.step === "implement") expect[before.key] = "implement";
+        // Merge queue (decision 104): the reviewed change goes to the queue; the next session, if any before that, is not a review.
+        if (r.path === "/api/item/move" && r.body.to === "merge-queue" && before) expect[before.key] = "hand-over";
       }
-      // A person's move, start over or edit since then sends the Item elsewhere, rightly.
-      for (const r of o.requests) if (r.status === 200 && r.item && /move|start-over|edit|pick/.test(r.path)) delete expect[`metaBranch:work:${r.item}`];
+      // The hand-over happened (queued, merged, or it failed and waits for a person): the pick is carried out.
+      for (const i of o.items) if (expect[i.key] === "hand-over" && i.job && ["queued", "merged", "parked"].includes(i.job.at.kind)) delete expect[i.key];
       // So does a pick asked on another machine's board and carried out here (decision 104), read at a fetch.
       for (const e of o.events) if (e.kind === "person.moved" && e.subject) delete expect[e.subject];
       // So do questions other Items' agents asked about it, written before the implementor resumed: once answered, it is triaged again
@@ -426,6 +430,7 @@ export const RULES: Rule[] = [
         const want = expect[s.item];
         if (!want) continue;
         delete expect[s.item];
+        if (want === "hand-over") return `${s.item.split(":").pop()} was picked for the merge queue, but a ${s.role} session started before its hand-over`;
         if (s.role !== want) return `${s.item.split(":").pop()} was answered at its implement step, but the next session is ${s.role}`;
       }
       for (const i of o.items) if (isClosed(i) || (i.job === undefined && i.w.kind !== "session")) delete expect[i.key];

@@ -142,6 +142,8 @@ describe("the rules", () => {
     assert.ok(queued.ok && /The reviewer's session is ended now/.test(queued.reason));
     // One ask at a time: the review asked for before is not asked for any more.
     assert.deepEqual([queue[key]!.queueAskedBy, queue[key]!.reviewAskedBy, queue[key]!.interrupt?.to], ["Ada", undefined, "merge-queue"]);
+    // The hand-over is owed while the review the pick ends still runs: once the tick has ended it, the change is handed over.
+    assert.deepEqual([where(queue[key])?.owes, where(queue[key])?.sessionId], ["hand-over", "s"]);
     const back = { [key]: job({ head: "abc", queueAskedBy: "Bo" }) };
     assert.ok(applyMove(back, key, "in-review", input({ job: back[key] }), "Ada", T0).ok);
     assert.deepEqual([back[key]!.reviewAskedBy, back[key]!.queueAskedBy], ["Ada", undefined]);

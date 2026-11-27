@@ -247,7 +247,7 @@ export interface Where {
    * (`from`, by `itemTextHash`) until the next sync: no step starts on that old text. Cleared once the text in the store is another, or
    * after `WRITING_WAIT_MS` from the write (`at`) whatever the store reads, so a write that never comes back cannot hold it for good.
    */
-  writing?: { from: string; at: string };
+  writing?: TextWritten;
   /** The agent session to continue, after a limit or a stop cut it off. */
   resume?: string;
 }
@@ -438,8 +438,15 @@ export type WherePatch = { [K in keyof Where]?: Where[K] | undefined };
 
 /** A step's session: waiting to start (not before `notBefore`, until the written text is read back, to resume `resume`), or running. */
 export type StepRun =
-  | { is: "waiting"; notBefore?: string; writing?: { from: string; at: string }; resume?: string }
-  | { is: "running"; session: string; resume?: string };
+  | { is: "waiting"; notBefore?: string; writing?: TextWritten; resume?: string }
+  /** `owes`: a person's Merge queue ends this session; once the tick has ended it, the hand-over follows. */
+  | { is: "running"; session: string; resume?: string; owes?: "hand-over"; writing?: TextWritten };
+
+/**
+ * The description Scope Soup wrote on the host at `at`, while the store may still read the text before it (`from`, its hash): the next
+ * step waits for it to be read back. Kept through a session, a parked state and an owed hand-over, which the next step follows.
+ */
+export type TextWritten = { from: string; at: string };
 
 /**
  * Where the job is, as it is stored: one case each, carrying only what that case needs. A step runs or waits for its session; parked
@@ -450,9 +457,9 @@ export type JobAt =
   | { kind: "triage"; run: StepRun; recheck?: Recheck }
   | { kind: "implement"; run: StepRun; merge?: true; shouldRound?: true }
   | { kind: "review"; run: StepRun }
-  | { kind: "parked"; step: JobStep; parked: JobParked; merge?: true; shouldRound?: true }
+  | { kind: "parked"; step: JobStep; parked: JobParked; merge?: true; shouldRound?: true; writing?: TextWritten }
   /** `merge`: the reviewer approved it at level 3, so an answer to a failed hand-over resumes the implementor to merge. */
-  | { kind: "hand-over"; step: JobStep; merge?: true }
+  | { kind: "hand-over"; step: JobStep; merge?: true; writing?: TextWritten }
   | { kind: "merged"; step: JobStep; sha: string; closeOwed?: { sha: string; batch?: number }; parked?: JobParked };
 
 const opt = <K extends string, V>(key: K, value: V | undefined): Partial<Record<K, V>> => (value === undefined ? {} : ({ [key]: value } as Record<K, V>));
@@ -461,11 +468,11 @@ const opt = <K extends string, V>(key: K, value: V | undefined): Partial<Record<
 function encode(at: Where): JobAt {
   if (at.merged !== undefined) return { kind: "merged", step: at.step, sha: at.merged, ...opt("closeOwed", at.closeOwed), ...opt("parked", at.parked) };
   const run: StepRun = at.sessionId !== undefined
-    ? { is: "running", session: at.sessionId, ...opt("resume", at.resume) }
+    ? { is: "running", session: at.sessionId, ...opt("resume", at.resume), ...opt("owes", at.owes), ...opt("writing", at.writing) }
     : { is: "waiting", ...opt("notBefore", at.notBefore), ...opt("writing", at.writing), ...opt("resume", at.resume) };
   if (at.sessionId === undefined) {
-    if (at.owes) return { kind: "hand-over", step: at.step, ...opt("merge", at.merge) };
-    if (at.parked) return { kind: "parked", step: at.step, parked: at.parked, ...opt("merge", at.merge), ...opt("shouldRound", at.shouldRound) };
+    if (at.owes) return { kind: "hand-over", step: at.step, ...opt("merge", at.merge), ...opt("writing", at.writing) };
+    if (at.parked) return { kind: "parked", step: at.step, parked: at.parked, ...opt("merge", at.merge), ...opt("shouldRound", at.shouldRound), ...opt("writing", at.writing) };
   }
   switch (at.step) {
     case "triage":
@@ -482,14 +489,14 @@ function decode(at: JobAt): Where {
     case "merged":
       return { step: at.step, merged: at.sha, ...opt("closeOwed", at.closeOwed), ...opt("parked", at.parked) };
     case "hand-over":
-      return { step: at.step, owes: "hand-over", ...opt("merge", at.merge) };
+      return { step: at.step, owes: "hand-over", ...opt("merge", at.merge), ...opt("writing", at.writing) };
     case "parked":
-      return { step: at.step, parked: at.parked, ...opt("merge", at.merge), ...opt("shouldRound", at.shouldRound) };
+      return { step: at.step, parked: at.parked, ...opt("merge", at.merge), ...opt("shouldRound", at.shouldRound), ...opt("writing", at.writing) };
     case "triage":
     case "implement":
     case "review": {
       const run = at.run.is === "running"
-        ? { sessionId: at.run.session, ...opt("resume", at.run.resume) }
+        ? { sessionId: at.run.session, ...opt("resume", at.run.resume), ...opt("owes", at.run.owes), ...opt("writing", at.run.writing) }
         : { ...opt("notBefore", at.run.notBefore), ...opt("writing", at.run.writing), ...opt("resume", at.run.resume) };
       const extra = at.kind === "triage" ? opt("recheck", at.recheck) : at.kind === "implement" ? { ...opt("merge", at.merge), ...opt("shouldRound", at.shouldRound) } : {};
       return { step: at.kind, ...run, ...extra };

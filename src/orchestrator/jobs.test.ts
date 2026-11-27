@@ -217,3 +217,15 @@ test("a stored job of an older shape is dropped with an event at the tick, and i
   assert.deepEqual(store.eventsAfter(0, 10).filter((event) => event.kind === "orchestrator.job_unreadable").map((event) => event.subject), ["meta:work:A-2"]);
   store.close();
 });
+
+test("the wait for a written description outlasts a session, a parked state and an owed hand-over, so the next step still waits for it", () => {
+  const base = { item: { host: "meta", kind: "work" as const, id: "A-1" }, workspace: "w", branch: "scopesoup/A-1", failures: 0, fixRounds: 0, startedAt: "t" };
+  const writing = { from: "old-hash", at: "2026-01-01T00:00:00.000Z" };
+  for (const at of [{ sessionId: "s1" }, { parked: { as: "escalated" as const, reason: "r", at: "t", byStep: true as const } }, { owes: "hand-over" as const }]) {
+    const job = jobOf({ ...base, step: "implement", ...at });
+    setWhere(job, { writing });
+    assert.deepEqual(where(job).writing, writing, JSON.stringify(at));
+    setWhere(job, { sessionId: undefined, parked: undefined, owes: undefined });
+    assert.deepEqual(job.at, { kind: "implement", run: { is: "waiting", writing } }, JSON.stringify(at));
+  }
+});

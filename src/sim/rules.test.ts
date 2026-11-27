@@ -182,6 +182,12 @@ describe("each rule fires on a bad state built by hand", { concurrency: 1 }, () 
     // Questions another Item's agent asked about it were written before the implementor resumed: answered, it is triaged again (#264).
     const written = obs({ events: [event(key("A-1"), "orchestrator", "orchestrator.about_other_written")], items: parked.items });
     assert.equal(fires("B8", parked, answered, written, obs({ started: [started("A-1", "triage")], items: parked.items })), null);
+    // A person's Merge queue over a running review: the review must not start again before the hand-over.
+    const reviewing = obs({ items: [item("A-1", { kind: "session", role: "review" }, { job: job("A-1", { step: "review", sessionId: "s1" }) })] });
+    const picked = obs({ requests: [{ step: 1, path: "/api/item/move", body: { to: "merge-queue" }, status: 200, response: {}, item: "A-1" }], items: reviewing.items });
+    assert.match(fires("B8", reviewing, picked, obs({ started: [started("A-1", "review")], items: reviewing.items })) ?? "", /picked for the merge queue, but a review session started/);
+    const queued = obs({ items: [item("A-1", { kind: "queue" }, { job: job("A-1", { step: "review", parked: { as: "queued", reason: "", at: AT } }) })] });
+    assert.equal(fires("B8", reviewing, picked, queued, obs({ started: [started("A-1", "review")], items: queued.items })), null);
   });
   it("B9", "a triage taken again with nothing it read changed: age alone is no input (#217)", () => {
     const g = new FakeGit();

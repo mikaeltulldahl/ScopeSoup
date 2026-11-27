@@ -46,6 +46,7 @@ import { KEYS } from "../store/keys.ts";
 import { QUEUE_KEY, readQueueHealth, requestQueueResume } from "./queueHealth.ts";
 import { defaultConfig, initialState, step as queueStep } from "../queue/index.ts";
 import type { Job, JobFields, JobParked, Where } from "./jobs.ts";
+import { applyMove } from "../server/moves.ts";
 
 const T0 = Date.parse("2026-11-18T10:00:00.000Z");
 /** The fake remote's main before and after a session merged, and the head of every item branch. */
@@ -4951,6 +4952,29 @@ test("a person's Merge queue pick hands over only the revision the reviewer appr
   assert.deepEqual(other.enqueued, []);
   assert.deepEqual([where(v.job("1"))?.step, v.job("1")?.queueAskedBy, where(v.job("1"))?.owes, v.job("1")?.head], ["review", undefined, undefined, "4".repeat(40)]);
   assert.match(v.reasons("orchestrator.step").at(-1) ?? "", /Ada's Merge queue pick is not carried out: scopesoup\/1 is at 4444444, not at the revision the reviewer approved/);
+});
+
+test("a person's Merge queue over a running review ends that review and hands the change over: no review starts again (B8)", async () => {
+  const queue = fakeQueue();
+  const w = world(config({ level: 4, ...MERGES }), [item("1")]);
+  w.queue = queue;
+  w.store.addUsageSample(usage(0.1, 0.1));
+  // A review a person asked for runs on a change the reviewer approved at this head before.
+  saveJobs(w.store, { [refKey(ref("1"))]: pickedReview("1", { reviewedHead: HEAD, review: { verdict: "approve", findings: [] } }) });
+  await w.run();
+  assert.deepEqual(roles(w), ["review"]);
+  // The person picks Merge queue on the Item page while it runs (src/server/moves.ts).
+  const jobs = loadJobs(w.store);
+  const key = refKey(ref("1"));
+  const now = new Date(w.clock.ms).toISOString();
+  const moved = applyMove(jobs, key, "merge-queue", { item: w.store.get<WorkItem>(ref("1"))!, job: jobs[key], lane: "in-review", level: 4, mergeQueueOn: true, at: w.clock.ms }, "Ada", now);
+  assert.ok(moved.ok);
+  assert.deepEqual([where(jobs[key])?.owes, where(jobs[key])?.sessionId], ["hand-over", "s1"]);
+  saveJobs(w.store, jobs);
+  await w.run();
+  await w.run();
+  assert.deepEqual(roles(w), ["review"], "no review starts again");
+  assert.deepEqual(queue.enqueued, ["1 scopesoup/1"]);
 });
 
 test("a triage a person picked runs at level 0, and its settling clears the ask", async () => {
