@@ -10,9 +10,7 @@ export interface Known {
 }
 
 export const KNOWN: Record<string, Known> = {
-  F3: { seed: 2, what: "the tick after a tick that committed something says its idle line (or a claim lost) again, though nothing changed" },
   // Seen in the long run only (seed in the long run). Less looked into than the ones above: the report says which may be the simulator's own.
   A3: { seed: 7, long: true, what: "a person's Start over drops an escalated job but leaves its question line open on the host (reached again after #243 moved the runs; #253)" },
   // Since #229 (a released claim is read back at once, with an event about the Item) the normal run's seeds no longer show it.
-  F1: { seed: 1, long: true, what: "an Item whose blocker closes goes from blocked to ready with no event about it; a person's release drops a job with none either" },
 };

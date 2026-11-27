@@ -835,6 +835,30 @@ test("nothing to do says why", async () => {
   assert.equal(w.store.getValue("orchestrator.idle_reason"), report.idle, "the board reads the reason from the store");
 });
 
+test("an Item whose blocker closes gets an event about it, once; a quiet tick writes none (#255)", async () => {
+  const w = world(config(), [item("1", { needsDecision: true }), item("2", { blockedBy: [ref("1")] })]);
+  await w.run();
+  await w.run();
+  assert.equal(w.events("orchestrator.unblocked").length, 0);
+  w.store.put(item("1", { state: "done" }), "sync", new Date(w.clock.ms).toISOString());
+  await w.run();
+  assert.match(w.reasons("orchestrator.unblocked")[0] ?? "", /2 waited for 1: 1 is done\. Nothing blocks it now\./);
+  const written = (): number => w.store.eventsAfter(0, 10_000).filter((each) => !each.kind.startsWith("work.")).length;
+  const before = written();
+  await w.run();
+  assert.equal(written() - before, 1, "only the idle line, which says something new now");
+  const again = written();
+  await w.run();
+  assert.equal(written(), again);
+  assert.equal(w.events("orchestrator.unblocked").length, 1);
+  // The blocker reopened: the Item waits again, and that is said too.
+  w.store.put(item("1", { needsDecision: true }), "sync", new Date(w.clock.ms).toISOString());
+  await w.run();
+  assert.match(w.reasons("orchestrator.blocked_by")[0] ?? "", /2 waits for 1\./);
+  await w.run();
+  assert.equal(w.events("orchestrator.blocked_by").length, 1);
+});
+
 test("the idle reason is emptied once something starts", async () => {
   const w = world(config(), [item("1", { blockedBy: [ref("9")] })]);
   await w.run();

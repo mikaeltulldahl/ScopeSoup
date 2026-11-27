@@ -18,6 +18,8 @@ export interface Rule {
 const OWN = "scopesoup@laptop-a";
 const isClosed = (i: ItemObs): boolean => i.item.state === "done" || i.item.state === "abandoned";
 const prevOf = (prev: Observation | undefined, key: string): ItemObs | undefined => prev?.items.find((each) => each.key === key);
+/** The kinds `ctx.say` writes: standing conditions, written again only when their words change. */
+const SAID_KINDS = new Set(["orchestrator.idle", "orchestrator.claim_lost", "orchestrator.about_other_wait", "orchestrator.budget_wait", "orchestrator.resource_wait", "orchestrator.workspace_wait", "orchestrator.merge_queue_wait", "orchestrator.overturn_wait", "orchestrator.handback_waits"]);
 const isTick = (o: Observation): boolean => o.action.kind === "tick" || o.action.kind === "inside-tick";
 const asks = (w: W): boolean => w.kind === "person" && (w.why === "answer" || w.why === "rewrite" || w.why === "restructuring");
 const squash = (text: string): string => text.replace(/\s+/g, " ").trim();
@@ -528,6 +530,13 @@ export const RULES: Rule[] = [
       // Compared at each tick and each request (what Scope Soup or a person did), against the last such step.
       const subjects = ((memo.subjects ??= {}) as Record<string, true>);
       for (const e of o.events) if (e.subject) subjects[e.subject] = true;
+      // A lost store forgets the jobs and the events with them: nothing could say that change, and the next step starts over from
+      // what the rebuilt store shows (J-rules check the rebuild).
+      if (o.action.kind === "lose-store") {
+        memo.last = {};
+        memo.subjects = {};
+        return null;
+      }
       if (!isTick(o) && o.requests.length === 0) return null;
       const last = ((memo.last ??= {}) as Record<string, string>);
       const state = (i: ItemObs): string => `${wText(i.w)}|${i.job?.step ?? "none"}`;
@@ -535,9 +544,12 @@ export const RULES: Rule[] = [
       for (const i of o.items) {
         const was = last[i.key];
         const now = state(i);
+        const [w0] = (was ?? "").split("|");
+        // A blocker a person's request closed or reopened frees or holds the Item at once, but it is the next tick that reads it and says
+        // so: the comparison waits for that tick (#255), unless something was said about the Item already.
+        if (!isTick(o) && was !== undefined && was !== now && (w0!.startsWith("blocker(") || now.startsWith("blocker(")) && !subjects[i.key]) continue;
         last[i.key] = now;
         if (found || was === undefined || was === now) continue;
-        const [w0] = was.split("|");
         // Changes that follow from the world alone (the clock, a switch, usage, a slot) are said once on the status line.
         if (w0!.startsWith(`start(`) && now.startsWith("start(") && w0!.split(",")[0] === now.split(",")[0]) continue;
         if (!subjects[i.key]) found = `${i.id} went from ${was.replace("|", " at ")} to ${now.replace("|", " at ")} with no event about it`;
@@ -560,9 +572,28 @@ export const RULES: Rule[] = [
   {
     id: "F3",
     why: "A quiet tick is quiet: a tick run again at once with no input writes no event and changes no job.",
-    check(o, prev) {
+    check(o, prev, memo) {
+      // The last reason of each standing-condition line (what `say` writes), by kind and subject. A line that says something new
+      // (the tick before started sessions, so now "2 sessions are running") is news, not noise; the same words again are noise.
+      const lastSaid = (memo.said ??= {}) as Record<string, string>;
+      const repeats = new Set<unknown>();
+      for (const e of o.events) {
+        if (!SAID_KINDS.has(e.kind)) continue;
+        const reason = String((e.data as { reason?: unknown }).reason ?? "");
+        const at = `${e.kind}|${e.subject ?? ""}`;
+        if (lastSaid[at] === reason) repeats.add(e);
+        lastSaid[at] = reason;
+      }
       if (!isTick(o) || !prev || prev.action.kind !== "tick" || o.action.kind !== "tick") return null;
-      const loud = o.events.find((e) => !e.kind.startsWith("work.") && e.kind !== "session.updated");
+      // The same words again are noise after any tick (a commit forgot what was said, #255).
+      const again = o.events.find((e) => repeats.has(e));
+      if (again) return `a tick right after a tick wrote ${again.kind}${again.subject ? ` about ${again.subject.split(":").pop()}` : ""} again, with the same words`;
+      // Anything else only after a quiet tick: one that wrote something (started a session, closed an Item, failed on a host that was
+      // down) may leave a follow-up for the next tick, which sees its result (the close, then the job that finishes with it).
+      const wrote = (e: { kind: string }): boolean => !e.kind.startsWith("work.") && !e.kind.startsWith("change.") && e.kind !== "session.updated" && !SAID_KINDS.has(e.kind);
+      // A tick that ran with the host down could not write what it wanted (a claim, a close): the next one, with the host back, does.
+      if (prev.events.some(wrote) || prev.remote.down) return null;
+      const loud = o.events.find((e) => wrote(e) || e.kind.startsWith("change."));
       if (loud) return `a tick right after a tick wrote ${loud.kind}${loud.subject ? ` about ${loud.subject.split(":").pop()}` : ""}`;
       const changed = o.items.find((i) => JSON.stringify(i.job ?? null) !== JSON.stringify(prevOf(prev, i.key)?.job ?? null));
       return changed ? `a tick right after a tick changed ${changed.id}'s job` : null;
