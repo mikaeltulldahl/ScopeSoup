@@ -15,7 +15,7 @@ import { persistenceLimits } from "../config/persistence.ts";
 import type { Context } from "./context.ts";
 import { ACTOR, errorText } from "./context.ts";
 import type { AskedText, Decision, ItemLinkAnswer, Job, ParkedAs, ReviewAnswer, TakenDecision, TriageAnswer } from "./jobs.ts";
-import { ASK_PERSON, asImplement, asReview, asTriage, formatFindings, hasMarkup, recoverFields, keepsRecommendations, picks, questionsSettled, releaseIn, parkedRewrite, changedRewrite, sameText } from "./jobs.ts";
+import { ASK_PERSON, parkSet, asImplement, asReview, asTriage, formatFindings, hasMarkup, recoverFields, keepsRecommendations, picks, questionsSettled, releaseIn, parkedRewrite, changedRewrite, sameText } from "./jobs.ts";
 import { providerFor } from "./providers/index.ts";
 import type { Actions, SessionResultRecord } from "./ports.ts";
 import type { QuestionWrite } from "../ports/host.ts";
@@ -66,6 +66,7 @@ export function backoffMs(failures: number, capMs: number): number {
 export async function park(ctx: Context, job: Job, as: ParkedAs, reason: string, ask?: Parameters<Actions["answerTurn"]>[1], retry?: "hand-over", marks: { byStep?: true; verdict?: true } = {}): Promise<void> {
   const key = refKey(job.item);
   job.parked = { as, reason, at: ctx.at, ...(retry ? { retry } : {}), ...(marks.byStep ? { byStep: true } : {}), ...(marks.verdict ? { verdict: true } : {}) };
+  job.parks = (job.parks ?? 0) + 1;
   // A person's ask was for the step that ended here (decision 104).
   delete job.triageAskedBy;
   delete job.reviewAskedBy;
@@ -92,7 +93,7 @@ export async function park(ctx: Context, job: Job, as: ParkedAs, reason: string,
  */
 export async function retryPost(ctx: Context, job: Job): Promise<void> {
   const parked = job.parked!;
-  await tellPeople(ctx, job, "needs-decision", parked.posting ?? parked.reason, "decision");
+  await tellPeople(ctx, job, parked.postingAs ?? "needs-decision", parked.posting ?? parked.reason, "decision");
 }
 
 /** `park`'s word to a person: the questions, rewrite or split on the item's host (GitHub), else a person's list and the item's log. */
@@ -116,11 +117,10 @@ async function tellPeople(ctx: Context, job: Job, as: ParkedAs, reason: string, 
       ? [{ question: `Proposed restructuring: ${proposal.reason}`, options: [], recommendation: "", proposal: { id: proposal.id, reason: proposal.reason, original: proposal.original, parts: proposal.parts, ...(proposal.carried ? { carried: proposal.carried } : {}) } }]
       : questions.length > 0 ? questions : [decision ?? { question: reason, options: [], recommendation: "" }])));
   if (!posted) {
+    // The questions of one park are one set: a later park's set replaces it in the log (decision 1 of #211).
+    const set = parkSet(job);
     await ctx.act("put the item on a person's list", key, () => actions.answerTurn(job.item, ask, reason));
-    for (const each of questions) {
-      await ctx.act("write the question to the item's log", key, () =>
-        actions.appendLog(job.item, "question", { question: each.question, options: each.options, ...(each.recommendation ? { recommendation: each.recommendation } : {}), ...(each.context ? { context: each.context } : {}), ...(each.multiSelect ? { multiSelect: true } : {}), parked: as }));
-    }
+    const lines: Record<string, unknown>[] = questions.map((each) => ({ question: each.question, options: each.options, ...(each.recommendation ? { recommendation: each.recommendation } : {}), ...(each.context ? { context: each.context } : {}), ...(each.multiSelect ? { multiSelect: true } : {}), parked: as, set }));
     // The parts a restructuring has made so far stay in the store: the log line keeps what a person decides on.
     const fields: Record<string, unknown> = proposal
       ? { question: reason, proposal: { id: proposal.id, reason: proposal.reason, original: proposal.original, parts: proposal.parts, ...(proposal.carried ? { carried: proposal.carried } : {}) } }
@@ -128,17 +128,27 @@ async function tellPeople(ctx: Context, job: Job, as: ParkedAs, reason: string, 
         ? { question: decision.question, options: decision.options, ...(decision.recommendation ? { recommendation: decision.recommendation } : {}), ...(decision.context ? { context: decision.context } : {}), ...(decision.multiSelect ? { multiSelect: true } : {}) }
         : { question: reason };
     fields.parked = as;
+    fields.set = set;
     if (rewriting) fields.rewrite = job.rewrite!.round;
     if (retry) fields.retry = retry;
-    if (questions.length === 0) await ctx.act("write the question to the item's log", key, () => actions.appendLog(job.item, "question", fields));
+    if (questions.length === 0) lines.push(fields);
+    try {
+      for (const line of lines) await actions.appendLog(job.item, "question", line);
+    } catch (error) {
+      // Not in the log, the question is asked nowhere: the parked state says so, and each tick writes it again (`retryPost`) (#230).
+      job.parked = { ...job.parked!, postingAs: job.parked!.retry === "post" ? job.parked!.postingAs : as };
+      await hostFailed(ctx, job, `the question${lines.length > 1 ? "s" : ""} in the item's log`, new WriteLater(errorText(error)), `The question${lines.length > 1 ? "s were" : " was"}: ${lines.map((each) => String(each.question).trim()).join(" ")}`);
+      return;
+    }
+    if (job.parked?.retry === "post" && !posted) job.parked = postedParked(job.parked);
   }
 }
 
 /** The parked state once its questions are posted: a post that was retried shows the parked state's own reason again. */
 function postedParked(parked: NonNullable<Job["parked"]>): NonNullable<Job["parked"]> {
   if (parked.retry !== "post") return parked;
-  const { retry: _retry, posting, ...rest } = parked;
-  return { ...rest, as: "needs-decision", reason: posting ?? rest.reason };
+  const { retry: _retry, posting, postingAs, ...rest } = parked;
+  return { ...rest, as: postingAs ?? "needs-decision", reason: posting ?? rest.reason };
 }
 
 /** What was posted, in order: each question's text and its number on the host. */
@@ -1695,6 +1705,7 @@ function askersOpen(ctx: Context, item: WorkItem, entries: readonly WaitingAbout
 /** `park` for an Item with no claim or workspace of its own to give back (no job, or one parked before). */
 async function parkFresh(ctx: Context, job: Job, reason: string): Promise<void> {
   job.parked = { as: "needs-decision", reason, at: ctx.at };
+  job.parks = (job.parks ?? 0) + 1;
   delete job.sessionId;
   ctx.commit(PARK_EVENT["needs-decision"], reason, refKey(job.item), { step: job.step });
   await tellPeople(ctx, job, "needs-decision", reason, "decision");

@@ -59,6 +59,8 @@ export interface StartObs {
 
 export interface Observation {
   seed: number;
+  /** The machine observed (one of several in the multiplayer profile). */
+  machine?: string;
   step: number;
   action: Action;
   at: string;
@@ -101,7 +103,8 @@ const closedState = (item: WorkItem): boolean => item.state === "done" || item.s
 export async function observe(world: SimWorld, seed: number, action: Action, previous: Observation | undefined, startedBefore: number): Promise<Observation> {
   const store = world.store;
   const at = world.now();
-  const snapshot = loadSnapshot(store);
+  // As the server's board: the project's level with the snapshot.
+  const snapshot = { ...loadSnapshot(store), level: world.configNow.level };
   const board = buildBoard(snapshot, new Date(world.ms));
   const cards = new Map<string, CardView>();
   for (const lane of board.lanes) for (const card of lane.cards) cards.set(card.key, card);
@@ -124,7 +127,8 @@ export async function observe(world: SimWorld, seed: number, action: Action, pre
   const onMain = (head: string | undefined): boolean => !!head && world.git.contains(head, world.git.main) === true;
   // The paths an Item's work is known by: what its triage named (#187 compares these; what the branch changes is not looked at).
   const pathsOf = (job: Job): string[] => [...new Set(job.triage?.paths ?? [])];
-  const busy = Object.values(jobs).filter((job) => isBusy(job, onMain(job.head)) && open.has(refKey(job.item))).map((job) => ({ key: refKey(job.item), paths: pathsOf(job), conflicts: (job.triage?.links ?? []).filter((l) => l.type === "conflictsWith").map((l) => l.item.replace(/^#/, "")) }));
+  // A change the merge queue pushed is on main before the tick reads the queue's notice: until then it is busy, as the tick sees it.
+  const busy = Object.values(jobs).filter((job) => isBusy(job, job.parked?.as !== "queued" && onMain(job.head)) && open.has(refKey(job.item))).map((job) => ({ key: refKey(job.item), paths: pathsOf(job), conflicts: (job.triage?.links ?? []).filter((l) => l.type === "conflictsWith").map((l) => l.item.replace(/^#/, "")) }));
   const claimant = `scopesoup@${world.machine}`;
   const itemObs: ItemObs[] = [];
   for (const item of items) {
@@ -155,7 +159,7 @@ export async function observe(world: SimWorld, seed: number, action: Action, pre
   });
   const requestsBefore = previous ? previous.ledger.requests.filter((r) => r.step < world.step).length : 0;
   return {
-    seed, step: world.step, action, at, level: world.configNow.level, slots: world.configNow.settings.maxParallelSessions.value, switches, usageReserve, fair: world.fair,
+    seed, machine: world.machine, step: world.step, action, at, level: world.configNow.level, slots: world.configNow.settings.maxParallelSessions.value, switches, usageReserve, fair: world.fair,
     items: itemObs, sessions: store.list<Session>("session"), started, liveCount: live.length, events, lastSeq,
     ...(first ? { firstEvent: JSON.stringify(first) } : {}),
     answers: knownAnswers(store), tick: action.kind === "tick" || action.kind === "inside-tick" ? world.lastTick : null, tickError: world.tickError,
