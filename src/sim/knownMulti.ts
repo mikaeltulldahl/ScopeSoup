@@ -13,5 +13,4 @@ export const KNOWN_MULTI: Record<string, Known> = {
   J1: { seed: 6, long: true, what: "an Item a person moved to Backlog on another machine is triaged from Backlog by the machine whose job it had: that job is not dropped when the lane arrives by fetch" },
   M2: { seed: 4, long: true, what: "an answer accepted while the machine cannot reach the meta remote is kept in its store only (logged: false) and never written to the log later" },
   M3: { seed: 5, long: true, what: "a re-triage runs without a claim (the implement claim released first), so another machine claims the Item and triages it at the same time" },
-  M4: { seed: 31, long: true, what: "a pick carried out whose answer line could not be pushed (the remote kept moving) is never answered on the meta remote, so other boards show it waiting" },
 };
