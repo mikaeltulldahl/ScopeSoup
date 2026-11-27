@@ -663,7 +663,9 @@ export function askedInLog(job: Job, item: Pick<WorkItem, "log" | "openQuestions
   const lines = log.filter((line) => line.kind === "question" && line.by.agent && typeof line.fields.question === "string" && texts.has(line.fields.question));
   const ofSet = (set: unknown, by?: { who: string; machine?: string }): LogRecord[] => lines.filter((line) => line.fields.set === set && (!by || sameWriter(line.by, by)));
   const own = ofSet(parkSet(job));
-  const first = own.length > 0 ? undefined : lines.find((line) => Date.parse(line.at) === Date.parse(parked.at));
+  // A job parked here (it counts its parks) reads only its own set: until the store has read that set back, an earlier park's line
+  // of the same instant is not its.
+  const first = own.length > 0 || job.parks !== undefined ? undefined : lines.find((line) => Date.parse(line.at) === Date.parse(parked.at));
   const asked = own.length > 0 ? own : !first ? [] : typeof first.fields.set === "string" ? ofSet(first.fields.set, first.by) : [first];
   if (asked.length === 0) return null;
   const open = item.openQuestions ?? [];
