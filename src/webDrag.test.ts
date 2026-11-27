@@ -4,7 +4,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { CardView, LaneView } from "./core/views.ts";
-import { beforeKey, dropVerdict, insertionIndex, keyMove, laneState, placeText, withShown } from "../web/src/drag.ts";
+import { beforeKey, dropVerdict, insertionIndex, keyMove, keyMoves, laneState, placeText, rangeKeys, selectedInOrder, withShown } from "../web/src/drag.ts";
 import type { MenuPage } from "../web/src/stateMenu.ts";
 import { currentState, stateOptions } from "../web/src/stateMenu.ts";
 import { THEMES } from "../web/src/theme.ts";
@@ -98,4 +98,42 @@ test("drag: Alt and the arrow keys move a card one place in its lane, or to the 
   assert.equal(keyMove([lane("todo", [card("a", "todo", 1), card("u", "todo")])], "u", "up"), undefined);
   // A lane without an order: no up or down.
   assert.equal(keyMove([lane("in-progress", [card("p", "in-progress"), card("q", "in-progress")])], "q", "up"), undefined);
+});
+
+test("multi-select: the selection in board order, and Shift+click's range within one lane", () => {
+  const lanes = [lane("backlog", [card("x", "backlog"), card("y", "backlog"), card("z", "backlog")]), lane("todo", [card("a", "todo", 1), card("b", "todo", 2)])];
+  assert.deepEqual(selectedInOrder(lanes, ["b", "z", "x"]), ["x", "z", "b"]);
+  assert.deepEqual(rangeKeys(lanes, "z", "x"), ["x", "y", "z"]);
+  assert.deepEqual(rangeKeys(lanes, undefined, "y"), ["y"]);
+  // The anchor is in another lane: just the card.
+  assert.deepEqual(rangeKeys(lanes, "x", "b"), ["b"]);
+});
+
+test("multi-select: cards moved together land in their order above the same card", () => {
+  const lanes = [lane("backlog", [card("x", "backlog"), card("y", "backlog"), card("z", "backlog")]), lane("todo", [card("a", "todo", 1), card("b", "todo", 2)])];
+  const above = withShown(lanes, [{ key: "x", lane: "todo", before: "b" }, { key: "z", lane: "todo", before: "b" }]);
+  assert.deepEqual(above.map((each) => each.cards.map((one) => one.key)), [["y"], ["a", "x", "z", "b"]]);
+  const last = withShown(lanes, [{ key: "x", lane: "todo", before: null }, { key: "z", lane: "todo", before: null }]);
+  assert.deepEqual(last[1]!.cards.map((one) => one.key), ["a", "b", "x", "z"]);
+});
+
+test("multi-select: Alt and the arrow keys move the selection together", () => {
+  const lanes = [lane("backlog", [card("x", "backlog")]), lane("todo", [card("a", "todo", 1), card("b", "todo", 2), card("c", "todo", 3), card("d", "todo", 4)]), lane("in-progress", [])];
+  assert.deepEqual(keyMoves(lanes, ["b"], "up"), [{ key: "b", lane: "todo", before: "a" }]);
+  // Up: the block goes above the card that was above the first; at the top nothing moves.
+  assert.deepEqual(keyMoves(lanes, ["b", "c"], "up"), [{ key: "b", lane: "todo", before: "a" }, { key: "c", lane: "todo", before: "a" }]);
+  assert.deepEqual(keyMoves(lanes, ["a", "b"], "up"), []);
+  // Down: below the card after the last one.
+  assert.deepEqual(keyMoves(lanes, ["a", "b"], "down"), [{ key: "a", lane: "todo", before: "d" }, { key: "b", lane: "todo", before: "d" }]);
+  assert.deepEqual(keyMoves(lanes, ["c", "d"], "down"), []);
+  assert.deepEqual(keyMoves(lanes, ["b", "c"], "down"), [{ key: "b", lane: "todo", before: null }, { key: "c", lane: "todo", before: null }]);
+  // Left and right: each to the lane beside its own; one at the edge stays.
+  assert.deepEqual(keyMoves(lanes, ["x", "a"], "left"), [{ key: "a", lane: "backlog" }]);
+  assert.deepEqual(keyMoves(lanes, ["x", "a"], "right"), [{ key: "x", lane: "todo" }, { key: "a", lane: "in-progress" }]);
+});
+
+test("multi-select: queued back to front, each above the one after it, the cards keep their order", () => {
+  const lanes = [lane("backlog", [card("x", "backlog"), card("y", "backlog"), card("z", "backlog")]), lane("todo", [card("a", "todo", 1), card("b", "todo", 2)])];
+  const chained = withShown(lanes, [{ key: "z", lane: "todo", before: "b" }, { key: "y", lane: "todo", before: "z" }, { key: "x", lane: "todo", before: "y" }]);
+  assert.deepEqual(chained[1]!.cards.map((one) => one.key), ["a", "x", "y", "z", "b"]);
 });

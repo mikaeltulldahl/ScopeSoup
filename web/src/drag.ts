@@ -107,3 +107,67 @@ export function keyMove(lanes: readonly { lane: string; cards: readonly Pick<Car
   if (index >= cards.length - 1) return undefined;
   return { lane: lane.lane, before: beforeKey(rest, index + 1) };
 }
+
+/** The selected cards among the lanes' shown cards, in board order (lanes left to right, cards top to bottom). */
+export function selectedInOrder(lanes: readonly { cards: readonly Pick<CardView, "key">[] }[], selected: readonly string[]): string[] {
+  return lanes.flatMap((lane) => lane.cards.map((card) => card.key)).filter((key) => selected.includes(key));
+}
+
+/**
+ * The cards from `anchor` to `key` in the lane that shows both (Shift+click); just `key` when they are not in one lane.
+ */
+export function rangeKeys(lanes: readonly { cards: readonly Pick<CardView, "key">[] }[], anchor: string | undefined, key: string): string[] {
+  const lane = lanes.find((each) => each.cards.some((card) => card.key === key));
+  if (!lane || anchor === undefined) return [key];
+  const from = lane.cards.findIndex((card) => card.key === anchor);
+  const to = lane.cards.findIndex((card) => card.key === key);
+  if (from < 0) return [key];
+  return lane.cards.slice(Math.min(from, to), Math.max(from, to) + 1).map((card) => card.key);
+}
+
+/** One card's move from Alt and an arrow key on a selection. */
+export interface GroupMove {
+  key: string;
+  lane: string;
+  before?: string | null;
+}
+
+/**
+ * Alt and an arrow key with several cards selected: left and right take each to the lane beside it; up and down move the cards of
+ * each ordered lane together, as one block, one place (above the card that was above the first one, or below the last one).
+ * With one card selected it is `keyMove`.
+ */
+export function keyMoves(lanes: readonly { lane: string; cards: readonly Pick<CardView, "key" | "position" | "lane">[] }[], keys: readonly string[], arrow: "up" | "down" | "left" | "right"): GroupMove[] {
+  if (keys.length === 1) {
+    const move = keyMove(lanes, keys[0]!, arrow);
+    return move ? [{ key: keys[0]!, ...move }] : [];
+  }
+  const moves: GroupMove[] = [];
+  if (arrow === "left" || arrow === "right") {
+    for (const key of keys) {
+      const move = keyMove(lanes, key, arrow);
+      if (move) moves.push({ key, ...move });
+    }
+    return moves;
+  }
+  for (const lane of lanes) {
+    if (!ORDERED_LANES.includes(lane.lane)) continue;
+    const mine = lane.cards.filter((card) => keys.includes(card.key) && inOrder(card));
+    if (mine.length === 0) continue;
+    const rest = lane.cards.filter((card) => !keys.includes(card.key));
+    const first = lane.cards.findIndex((card) => card.key === mine[0]!.key);
+    const last = lane.cards.findIndex((card) => card.key === mine[mine.length - 1]!.key);
+    const restBefore = lane.cards.slice(0, last).filter((card) => !keys.includes(card.key)).length;
+    let before: string | null;
+    if (arrow === "up") {
+      const above = lane.cards.slice(0, first).filter((card) => !keys.includes(card.key)).length;
+      if (above === 0) continue;
+      before = beforeKey(rest, above - 1);
+    } else {
+      if (restBefore >= rest.length) continue;
+      before = beforeKey(rest, restBefore + 1);
+    }
+    for (const card of mine) moves.push({ key: card.key, lane: lane.lane, before });
+  }
+  return moves;
+}

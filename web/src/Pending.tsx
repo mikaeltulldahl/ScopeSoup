@@ -22,6 +22,8 @@ export interface Change extends Pending {
   shown?: Shown;
   /** Also place it in its lane's order, right above `shown.before` (null: last), after the steps (`/api/item/place`). */
   place?: boolean;
+  /** Moves made together (multi-select, #235) share one toast and one Undo; sent one after the other, in the order queued. */
+  group?: number;
 }
 
 let pending: Change[] = [];
@@ -34,6 +36,9 @@ const tell = () => watchers.forEach((watcher) => watcher());
 
 /** The pick as one request: the server runs its steps in order and checks `seen` once, before the first (`POST /api/item/pick`). */
 const body = (change: Change): Record<string, unknown> => ({ ref: change.itemKey, seen: change.seen, steps: change.steps, ...(change.blockedBy ? { blockedBy: change.blockedBy } : {}) });
+
+/** What is sending: a group's places must reach the server in order, so one send starts when the one before it is done. */
+let sending: Promise<void> = Promise.resolve();
 
 async function send(change: Change): Promise<void> {
   try {
@@ -61,7 +66,7 @@ function schedule(): void {
   timer = window.setTimeout(() => {
     const { due, rest } = duePending(pending, Date.now());
     pending = rest;
-    due.forEach((change) => void send(change));
+    due.forEach((change) => (sending = sending.then(() => send(change))));
     tell();
     schedule();
   }, Math.max(0, next - Date.now()));
@@ -76,8 +81,21 @@ export function queueChange(change: Omit<Change, "id" | "at">): void {
   schedule();
 }
 
+/** Puts moves made together in the wait: one toast with `text`, one Undo for all of them. */
+export function queueGroup(changes: readonly Omit<Change, "id" | "at" | "group" | "text">[], text: string): void {
+  if (changes.length === 0) return;
+  failure = null;
+  notice = null;
+  const group = nextId++;
+  const now = Date.now();
+  for (const change of changes) pending = addPending(pending, { ...change, text, group, id: nextId++ }, now);
+  tell();
+  schedule();
+}
+
 function undo(id: number): void {
-  pending = cancelPending(pending, id);
+  const group = pending.find((change) => change.id === id)?.group;
+  pending = group === undefined ? cancelPending(pending, id) : pending.filter((change) => change.group !== group);
   tell();
   schedule();
 }
@@ -135,7 +153,7 @@ export function Toasts() {
   const theme = words();
   return (
     <div class="toasts" role="status" aria-live="polite">
-      {pending.map((change) => (
+      {pending.filter((change, at) => change.group === undefined || pending.findIndex((other) => other.group === change.group) === at).map((change) => (
         <div class="toast" key={change.id}>
           <span>{change.text}</span>
           <button type="button" onClick={() => undo(change.id)}>{theme.undo}</button>
