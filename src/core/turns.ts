@@ -186,8 +186,8 @@ function waitsInBacklogTurn(situation: Situation, ctx: TurnContext): Draft {
   if ((item.children ?? 0) > 0) return allPartsDoneTurn(item);
   if (item.holder && holdStands(item.holder, ctx.now.getTime()) && !item.holder.actor.bot) return heldTurn(item, ctx);
   const backlog: Draft = { actor: "nobody", tone: "waiting", reason: "in Backlog: waits for a person to move it to To do" };
-  // A person's one-off triage (or the triage again after their answer) runs there: its timer is said.
-  return ctx.index.jobByWork.get(refKey(item.ref))?.step === "triage" ? nextStepTurn(situation, ctx, backlog) : backlog;
+  // A person's one-off triage (or the triage again after their answer) runs there: its wait for written text, or its timer, is said.
+  return ctx.index.jobByWork.get(refKey(item.ref))?.step === "triage" ? (textWaitTurn(situation, ctx) ?? nextStepTurn(situation, ctx, backlog)) : backlog;
 }
 
 function todoTurn(situation: Situation, ctx: TurnContext): Draft {
@@ -225,6 +225,15 @@ function settledAsks(situation: Situation, ctx: TurnContext): boolean {
   const job = ctx.index.jobByWork.get(refKey(situation.item.ref));
   const open = situation.item.openQuestions ?? [];
   return !!job && open.length > 0 && open.every((question) => earlierPark(question, job.parks, parkedForAnswer(job.phase)));
+}
+
+/** The words of a step that waits for the description written at a person's Accept to be read back, or null when it does not. */
+function textWaitTurn(situation: Situation, ctx: TurnContext): Draft | null {
+  const { item } = situation;
+  const job = ctx.index.jobByWork.get(refKey(item.ref));
+  const text = job ? waitingRun(job.phase)?.text : undefined;
+  const textLeft = text && itemTextHash(item) === text.from ? Date.parse(text.at) + WRITING_WAIT_MS - ctx.now.getTime() : 0;
+  return textLeft > 0 ? { actor: "nobody", tone: "waiting", reason: `waits until the description written at a person's Accept is read back from ${item.ref.host} (at most ${durationWords(textLeft)} more)` } : null;
 }
 
 /** The Item's next step waits for the description written at a person's Accept, and the store still reads the text before it. */
@@ -400,12 +409,8 @@ function draft(situation: Situation, ctx: TurnContext): Draft {
     const words = blockers.map((blocker) => `${refLabel(blocker.ref)}${blocker.needsDecision ? " (needs your decision)" : ""}`);
     return { actor: "nobody", tone: "blocked", reason: `blocked by ${list(words)}` };
   }
-  const job = ctx.index.jobByWork.get(key);
-  const text = job ? waitingRun(job.phase)?.text : undefined;
-  const textLeft = text && itemTextHash(item) === text.from ? Date.parse(text.at) + WRITING_WAIT_MS - ctx.now.getTime() : 0;
-  if (textLeft > 0) {
-    return { actor: "nobody", tone: "waiting", reason: `waits until the description written at a person's Accept is read back from ${item.ref.host} (at most ${durationWords(textLeft)} more)` };
-  }
+  const textWait = textWaitTurn(situation, ctx);
+  if (textWait) return textWait;
   // Triaged, and its paths overlap those of a busy Item, or it may conflict with one: it waits for that one, not for a slot.
   const sameFiles = ctx.index.snapshot.sameFiles?.find((each) => refKey(each.subject) === key);
   if (sameFiles) return { actor: "nobody", tone: "waiting", reason: sameFilesWords(sameFiles.waitsFor, sameFiles.mayConflict) };

@@ -526,6 +526,35 @@ async function holdsOn(id: string, options: Shrunk, actions: Action[]): Promise<
 }
 
 describe("runs the simulator shrank, held since their fix", { concurrency: 1 }, () => {
+  // Fixed (#268): a person's triage in Backlog that waits for the text a proposed rewrite's Accept wrote: the card says so.
+  test("A1: Triage picked in Backlog, then a proposed rewrite accepted whose read-back is lost: the card waits for the text", async () => {
+    await holdsOn("A1", {items: 5, level: 3, slots: 2, steps: 600, profile: "normal", ageing: true}, [
+      {kind: "tick"},
+      {kind: "new-item", v: 43420},
+      {kind: "end", item: "A-1", v: 23580},
+      {kind: "new-item", v: 441631},
+      {kind: "end", item: "A-2", v: 867770},
+      {kind: "tick"},
+      {kind: "answer", item: "A-1", v: 304340},
+      {kind: "tick"},
+      {kind: "end", item: "A-1", v: 54964},
+      {kind: "tick"},
+      {kind: "answer", item: "A-1", v: 587039},
+      {kind: "tick"},
+      {kind: "answer", item: "A-1", v: 857647},
+      {kind: "new-item", v: 86385},
+      {kind: "end", item: "A-3", v: 620734},
+      {kind: "move", item: "A-8", v: 398028},
+      {kind: "tick"},
+      {kind: "answer", item: "A-2", v: 855481},
+      {kind: "end", item: "A-8", v: 121842},
+      {kind: "tick"},
+      {kind: "move", item: "A-7", v: 588930},
+      {kind: "proposed", item: "A-7", v: 510000},
+      {kind: "tick"},
+    ]);
+  });
+
   // Fixed (#268): the dropped result's event is committed after the job's change, so a paused tick keeps the change.
   test("G1: Triage picked over a running implement session, then a restart: the first tick drops its result once, for good", async () => {
     await holdsOn("G1", {items: 6, level: 3, slots: 3, steps: 600, profile: "calm", ageing: true}, [

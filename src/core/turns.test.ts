@@ -429,4 +429,8 @@ test("with a job, the lane and the reason follow what the Item waits for (decisi
   assert.equal(going(q(`2@${at(-5)}`), 2), "ready; waiting for a free agent slot");
   assert.equal(going(q(`3@${at(-5)}`), 2), "Answer the question: the item needs a decision");
   assert.equal(going(q(), 2), "Answer the question: the item needs a decision");
+  // In Backlog, a person's one-off triage that waits for the text their Accept wrote says so too (#268).
+  const inBacklog = work(1, { backlog: true });
+  const backlogTriage = turnOf(snapshot({ works: [inBacklog], jobs: [{ subject, stage: "start", step: "triage", phase: { at: "triage", run: { is: "waiting", text: { from: itemTextHash(inBacklog), at: at(-1) } }, why: "first" } }] }), 1).reason;
+  assert.match(backlogTriage, /read back from demo/);
 });
