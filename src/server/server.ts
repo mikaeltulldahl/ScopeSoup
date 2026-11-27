@@ -569,7 +569,9 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
         if (refused === "parked-changed") return sendError(response, 409, "PARKED_CHANGED", `${ref} parked on other questions now: reload the item.`);
         if (refused) return sendError(response, 409, "NO_OPEN_QUESTIONS", `${ref} does not wait on that question (any more): reload the item.`);
       }
-      const lines = resolved.map((each) => ({ kind: "answer", by: by(), fields: { answer: each.text, ...(each.asked ? { to: each.asked.at, toBy: each.asked.by, toQuestion: each.asked.question } : {}) } }));
+      // A question the store has not read back is named by the park that asked it (`toSet`) and its text.
+      const set = job?.parked ? String(job.parks ?? 0) : undefined;
+      const lines = resolved.map((each) => ({ kind: "answer", by: by(), fields: { answer: each.text, ...(each.asked ? { to: each.asked.at, toBy: each.asked.by, toQuestion: each.asked.question } : set ? { toSet: set, ...(each.target ? { toQuestion: each.target.question } : {}) } : {}) } }));
       try {
         if (lines.length > 1 && write.appendLogs) logged = await write.appendLogs(subject, lines);
         else for (const line of lines) logged = await write.appendLog(subject, line);
@@ -839,9 +841,10 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
     const parked = loadJobs(store)[refKey(work.ref)]?.parked;
     const unread = onLog && open.length === 0 && parked !== undefined && parked.as !== "queued" && parked.as !== "handed-over";
     const asked: (Pick<OpenQuestion, "at" | "by" | "question"> | null)[] = unread ? [null] : open;
+    const set = String(loadJobs(store)[refKey(work.ref)]?.parks ?? 0);
     for (const question of asked) {
       try {
-        await write!.appendLog!(work.ref, { kind: "answer", by: by(), fields: { answer: said, ...(question ? { to: question.at, toBy: question.by, toQuestion: question.question } : {}) } });
+        await write!.appendLog!(work.ref, { kind: "answer", by: by(), fields: { answer: said, ...(question ? { to: question.at, toBy: question.by, toQuestion: question.question } : { toSet: set }) } });
       } catch (error) {
         return error instanceof Error ? error.message : String(error);
       }
@@ -1126,7 +1129,7 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
       const asked = (item.openQuestions ?? []).filter((question) => !question.proposal && question.question === parkedReason).pop();
       const said = !keeps ? `Answered the triage's questions: ${answers.join(" | ")}` : `${action === "reject" ? "Rejected" : action === "edit" ? "Edited and accepted" : "Accepted"} the triage's rewrite${answers.length > 0 ? `, keeping the recommendations: ${answers.join(" | ")}` : ""}.`;
       try {
-        await write!.appendLog!(subject, { kind: "answer", by: by(), fields: { answer: said, ...(asked ? { to: asked.at, toBy: asked.by, toQuestion: asked.question } : {}) } });
+        await write!.appendLog!(subject, { kind: "answer", by: by(), fields: { answer: said, ...(asked ? { to: asked.at, toBy: asked.by, toQuestion: asked.question } : { toSet: String(job!.parks ?? 0) }) } });
       } catch (error) {
         return sendError(response, 502, "WRITE_REFUSED", `The answer is not recorded: it could not be written to ${subject.id}'s log (${error instanceof Error ? error.message : String(error)}). Try again.`);
       }

@@ -195,7 +195,9 @@ function todoTurn(situation: Situation, ctx: TurnContext): Draft {
   if (ctx.index.snapshot.paused) return { actor: "nobody", tone: "blocked", reason: "ready, but agents are paused (press Resume all)" };
   if (ctx.index.snapshot.usage?.status === "rejected") return { actor: "nobody", tone: "blocked", reason: `ready, but the usage limit is reached${resetWords(ctx)}` };
   // Its next step is the triage and triage is paused: it waits for that switch, not for a slot. (A stated size skips the triage from level 2.)
-  const triageNext = ctx.notTriaged?.has(refKey(item.ref)) && !((ctx.index.snapshot.level ?? 0) >= 2 && clearWithoutTriage(item));
+  // With a job, its step says it.
+  const step = ctx.index.jobByWork.get(refKey(item.ref))?.step;
+  const triageNext = step ? step === "triage" : ctx.notTriaged?.has(refKey(item.ref)) && !((ctx.index.snapshot.level ?? 0) >= 2 && clearWithoutTriage(item));
   if (triageNext && ctx.index.snapshot.triage !== "started") return { actor: "nobody", tone: "blocked", reason: "ready, but triage is paused (Resume on To do)" };
   // Its next step is the implement (it is triaged, or needs no triage), and no implementor takes it now: implementors are
   // paused, or the level is below 2. The status line says which; the card says only "ready".

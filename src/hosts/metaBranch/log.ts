@@ -224,7 +224,8 @@ function foldOrder(a: LogEntry, b: LogEntry): number {
  *   the newest revision's.
  * - `question` is open until an `answer` names it by its `at` in `to` (and, when the answer has
  *   it, its writer in `toBy` and its text in `toQuestion`, for several asked at once), whichever of the two folds first, or, without `to`, until the next
- *   answer (which takes the newest question open at the end of its own instant), or until a question of
+ *   answer (which takes the newest question open at the end of its own instant; with `toSet`, the question of that set, by
+ *   `toQuestion` when given, whichever folds first), or until a question of
  *   another `set` by the same writer replaces it (each park of Scope Soup's writes one set).
  */
 export function foldLog(log: ParsedLog): LogPicture {
@@ -235,6 +236,8 @@ export function foldLog(log: ParsedLog): LogPicture {
   const merges: MergedLine[] = [];
   // Answers that named a question not folded yet.
   const earlyAnswers: { to: number; toBy?: LogActor; toQuestion?: string }[] = [];
+  // Answers that named a set of questions not folded yet.
+  const setAnswers: { set: string; toQuestion?: string }[] = [];
   // Answers without `to`, by their instant: each takes the newest open question once its instant is folded, so a question of the same
   // instant that folds after it (an earlier `by` as text) is the one it answers.
   const newestAnswers: number[] = [];
@@ -339,20 +342,36 @@ export function foldLog(log: ParsedLog): LogPicture {
           // answers it any more, so it is not an open question and the item is not held by it.
           else if (reason && (text(fields.description) || text(fields.verification))) break;
         }
+        // A new set of questions from the same writer replaces the set still open (decision 1 of #211).
+        if (set) picture.openQuestions = picture.openQuestions.filter((open) => !(open.set !== undefined && open.set !== set && sameActor(open.by, by)));
         // An answer naming this question may fold before it: the same instant with an earlier `by` as text, or another clock.
         const early = earlyAnswers.findIndex((answer) => answer.to === Date.parse(at) && (answer.toBy === undefined || sameActor(by, answer.toBy)) && (answer.toQuestion === undefined || answer.toQuestion === question));
         if (early >= 0) {
           earlyAnswers.splice(early, 1);
           break;
         }
-        // A new set of questions from the same writer replaces the set still open (decision 1 of #211).
-        if (set) picture.openQuestions = picture.openQuestions.filter((open) => !(open.set !== undefined && open.set !== set && sameActor(open.by, by)));
+        const bySet = set ? setAnswers.findIndex((answer) => answer.set === set && (answer.toQuestion === undefined || answer.toQuestion === question)) : -1;
+        if (bySet >= 0) {
+          setAnswers.splice(bySet, 1);
+          break;
+        }
         picture.openQuestions.push(line);
         break;
       }
       case "answer": {
         if (!text(data.answer)) {
           bad("an answer line needs `answer`");
+          break;
+        }
+        // Named by its park's `set` (and text): Scope Soup's store had not read the question back when the answer was given.
+        const toSet = text(data.toSet);
+        if (data.to === undefined && toSet) {
+          const toQuestion = text(data.toQuestion);
+          const match = (open: QuestionLine): boolean => open.set === toSet && (toQuestion === undefined || open.question === toQuestion);
+          let index = -1;
+          picture.openQuestions.forEach((open, i) => void (match(open) && (index = i)));
+          if (index >= 0) picture.openQuestions.splice(index, 1);
+          else setAnswers.push({ set: toSet, ...(toQuestion ? { toQuestion } : {}) });
           break;
         }
         if (data.to === undefined) {

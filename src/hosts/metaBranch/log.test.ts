@@ -256,3 +256,21 @@ test("log: an answer to one of several questions asked in the same instant close
   ));
   assert.deepEqual(picture.openQuestions.map((line) => line.question), ["First?"]);
 });
+
+test("log: an answer named by its park's set closes that set's question, also one that folds after it (#230)", () => {
+  const soup = { who: "scopesoup", machine: "laptop-a", agent: true };
+  const ada = { who: "Ada", machine: "laptop-a" };
+  const t = "2026-11-18T10:00:00Z";
+  // Set 1 is answered (folding before its question), and set 2, asked in the same instant, stays open.
+  const picture = fold(jsonl(
+    { at: t, by: soup, kind: "question", question: "First park?", parked: "needs-decision", set: "1" },
+    { at: t, by: ada, kind: "answer", answer: "Yes", toSet: "1" },
+  ));
+  assert.equal(picture.openQuestions.length, 0);
+  const later = fold(jsonl(
+    { at: t, by: soup, kind: "question", question: "First park?", parked: "needs-decision", set: "1" },
+    { at: t, by: ada, kind: "answer", answer: "Yes", toSet: "1" },
+    { at: t, by: soup, kind: "question", question: "Second park?", parked: "needs-decision", set: "2" },
+  ));
+  assert.deepEqual(later.openQuestions.map((line) => line.question), ["Second park?"]);
+});
