@@ -12,7 +12,7 @@ import { cloneTestRepo, createTestRepo } from "../hosts/metaBranch/testRepo.ts";
 import { createHostActions } from "./hostActions.ts";
 import type { Actions } from "./ports.ts";
 import { readyItems } from "./candidates.ts";
-import type { Store } from "../store/store.ts";
+import { openStore } from "../store/store.ts";
 
 const REF = "refs/scopesoup/meta";
 const cleanups: (() => void)[] = [];
@@ -43,7 +43,7 @@ function laptop(remote: TestRepo, machine: string, prefix: string, start = "2026
     now: () => new Date((clock.ms += 1000)).toISOString(), fetchIntervalMs: 0,
   });
   cleanups.push(() => void host.stop?.());
-  const actions = createHostActions({ host, git: async () => ({ code: 0, stdout: "", stderr: "" }), config: () => ({}) as ProjectConfig, store: {} as Store });
+  const actions = createHostActions({ host, git: async () => ({ code: 0, stdout: "", stderr: "" }), config: () => ({}) as ProjectConfig, store: openStore(":memory:") });
   return { host, actions, clock, clone };
 }
 
@@ -126,10 +126,10 @@ test("a shared meta branch with writes on is claimed on by itself, with no rule 
   cleanups.push(() => clone.cleanup());
   const local = createMetaBranchHost({ repoDir: clone.dir, ref: REF, allowWrites: true, person: { name: "laptop-c", email: "laptop-c@example.invalid" }, machine: "laptop-c", idPrefix: "C", remote: null });
   cleanups.push(() => void local.stop?.());
-  const actions = createHostActions({ host: local, git: async () => ({ code: 0, stdout: "", stderr: "" }), config: () => ({}) as ProjectConfig, store: {} as Store });
+  const actions = createHostActions({ host: local, git: async () => ({ code: 0, stdout: "", stderr: "" }), config: () => ({}) as ProjectConfig, store: openStore(":memory:") });
   assert.equal(local.info.shared, undefined);
   assert.equal(actions.claims, undefined);
   const readOnly = createMetaBranchHost({ repoDir: clone.dir, ref: REF });
-  assert.equal(createHostActions({ host: readOnly, git: async () => ({ code: 0, stdout: "", stderr: "" }), config: () => ({}) as ProjectConfig, store: {} as Store }).claims, undefined);
+  assert.equal(createHostActions({ host: readOnly, git: async () => ({ code: 0, stdout: "", stderr: "" }), config: () => ({}) as ProjectConfig, store: openStore(":memory:") }).claims, undefined);
 });
 });

@@ -115,6 +115,11 @@ test("fold: a question stays open until answered, by `to` or else the newest ope
   const empty = fold(jsonl(q(0, "First?"), { at: "2026-11-18T12:05:00Z", by: robin, kind: "answer" }));
   assert.equal(empty.openQuestions.length, 1);
   assert.equal(empty.malformed.length, 1);
+  // A close ends what the Item asked, also after a reopen; another edit does not (#229).
+  const edited = (minute: number, fields: object) => ({ at: `2026-11-18T12:0${minute}:00Z`, by: robin, kind: "edited", ...fields });
+  const closed = fold(jsonl(q(0, "First?"), edited(1, { changed: ["state"], state: "abandoned" }), edited(2, { changed: ["state"], state: "todo" }), q(3, "Later?")));
+  assert.deepEqual(closed.openQuestions.map((line) => line.question), ["Later?"]);
+  assert.equal(fold(jsonl(q(0, "First?"), edited(1, { changed: ["description"] }))).openQuestions.length, 1);
 });
 
 test("fold: a question keeps options as { label, description } and the context, and plain text options too", () => {

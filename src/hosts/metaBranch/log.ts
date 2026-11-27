@@ -351,8 +351,11 @@ export function foldLog(log: ParsedLog): LogPicture {
         // A save of the shared settings, in the settings' own log (settings/log.jsonl): what changed.
         if (!Array.isArray(data.changes)) bad("a settings line needs `changes`, a list of { key, from?, to? }");
         break;
-      case "created":
       case "edited":
+        // Closing an Item ends what it asked: a question open when it was closed stays closed, also after a reopen.
+        if (data.state === "done" || data.state === "abandoned") picture.openQuestions = [];
+        break;
+      case "created":
       case "session":
       case "assumption":
       // A person's verdict on an implementor's recorded decision; read by `assumptionsOf` (map.ts).
