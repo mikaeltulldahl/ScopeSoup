@@ -103,7 +103,7 @@ export interface WorldOptions {
   slots: number;
   /**
    * Triages age (#217): a person's commit on main often touches a path a waiting To do Item's triage named, and sometimes a day
-   * passes with it, so Scope Soup has To do Items to triage again within its share. Only the long run's own seeds set it.
+   * passes with it, so Scope Soup has To do Items to triage again within its share. The long runs set it on every seed.
    */
   ageing?: true;
 }

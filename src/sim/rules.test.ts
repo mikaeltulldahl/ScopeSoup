@@ -52,7 +52,7 @@ function obs(over: Partial<Observation> = {}): Observation {
   return {
     seed: 1, step: 1, action: { kind: "sync" }, at: AT, level: 3, slots: 2, switches: { triage: "started", implement: "started", review: "started", mergeQueue: "started" },
     usageReserve: false, overPace: false, kickBlocked: false, waiting: 0, caps: { triage: 2, work: 5 }, retriageShare: 0.05, fair: false, items: [], sessions: [], started: [], liveCount: 0, events: [], lastSeq: 0, answers: [], tick: null, tickError: null,
-    git: gitObs(), ledger: ledger(), requests: [], remote: { refusedRewrites: 0, down: false, items: 0 }, lanes: ["blocked", "backlog", "in-progress", "in-review", "queued", "checking", "done"],
+    git: gitObs(), ledger: ledger(), requests: [], remote: { refusedRewrites: 0, down: false, items: 0, retries: 0 }, lanes: ["blocked", "backlog", "in-progress", "in-review", "queued", "checking", "done"],
     queued: [], fairTicks: 0, ...over,
   };
 }
@@ -269,7 +269,7 @@ describe("each rule fires on a bad state built by hand", { concurrency: 1 }, () 
     assert.match(fires("D8", obs({ git: gitObs(g), started: [started("A-1", "review")] })) ?? "", /empty branch/);
   });
   it("E1", "an Item appears with no person's request", () => {
-    assert.match(fires("E1", obs({ remote: { refusedRewrites: 0, down: false, items: 3 } }), obs({ remote: { refusedRewrites: 0, down: false, items: 4 } })) ?? "", /appeared/);
+    assert.match(fires("E1", obs({ remote: { refusedRewrites: 0, down: false, items: 3, retries: 0 } }), obs({ remote: { refusedRewrites: 0, down: false, items: 4, retries: 0 } })) ?? "", /appeared/);
     // A leftover of an agent's with nothing unique may go; a person's tag, or a leftover with unique work, may not.
     const g = new FakeGit();
     g.deleted.push({ ref: "refs/tags/wip-A-1", madeBy: { item: key("A-1"), scopesoup: true }, unmerged: false });
@@ -278,7 +278,7 @@ describe("each rule fires on a bad state built by hand", { concurrency: 1 }, () 
     assert.match(fires("E1", obs({ git: gitObs(g) })) ?? "", /v1.0 was deleted/);
   });
   it("E2", "a log line on the host was to be changed", () => {
-    assert.match(fires("E2", obs({ remote: { refusedRewrites: 1, down: false, items: 0 } })) ?? "", /log line/);
+    assert.match(fires("E2", obs({ remote: { refusedRewrites: 1, down: false, items: 0, retries: 0 } })) ?? "", /log line/);
   });
   it("E3", "an answer the person never sent", () => {
     assert.match(fires("E3", obs({ answers: [{ subject: { host: "metaBranch", kind: "work", id: "A-1" }, answer: "feet", by: "Ada", at: AT }] })) ?? "", /never sent/);
@@ -357,6 +357,9 @@ describe("each rule fires on a bad state built by hand", { concurrency: 1 }, () 
   });
   it("H5", "a free slot and an Item waiting only for one, and the tick starts nothing", () => {
     assert.match(fires("H5", obs({ items: [item("A-1", SLOT)] }), obs({ action: tick, tick: report(), items: [item("A-1", SLOT)] })) ?? "", /did not start it/);
+    // Other machines' pushes got in first 5 times: the claim gave up ("the remote kept moving"), and the next tick tries again (#264).
+    const raced = { refusedRewrites: 0, down: false, items: 0, retries: 5 };
+    assert.equal(fires("H5", obs({ items: [item("A-1", SLOT)] }), obs({ action: tick, tick: report(), remote: raced, items: [item("A-1", SLOT)] })), null);
   });
   it("I1", "a branch of Scope Soup's belongs to no Item", () => {
     const g = new FakeGit();

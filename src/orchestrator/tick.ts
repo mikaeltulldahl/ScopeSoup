@@ -685,6 +685,14 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
       await dropAsked(ctx, jobs, key, job, item);
       continue;
     }
+    // Questions other Items' agents asked made this job, a person answered them otherwise than recommended, and the Item is in Backlog:
+    // its triage does not run again there (decision 121), as `afterRewrite` closes it after answers that keep the recommendations.
+    if (item && !over && item.backlog && job.othersAsked && job.step === "triage" && !job.triageAskedBy && !job.sessionId && !job.parked && !job.rewrite) {
+      delete jobs[key];
+      ctx.commit("orchestrator.job_closed", `A person answered what other Items' agents asked about ${item.ref.id}, which is in Backlog: nothing runs on it until a person moves it to To do, and its triage then has the answers.`, key);
+      await ctx.act("remove the worktree", key, () => runner.releaseWorkspace(job.workspace));
+      continue;
+    }
     if (job.sessionId) {
       const session = store.get<Session>({ host: "scopesoup", kind: "session", id: job.sessionId });
       if (session && !OVER.includes(session.status) && !session.finishedAt) {

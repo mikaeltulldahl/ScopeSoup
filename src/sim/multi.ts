@@ -180,6 +180,8 @@ export function multiOptionsFor(seed: number, long: boolean, steps: number): Mul
     steps,
     profile: (["calm", "normal", "normal", "rough"] as const)[rnd.int(4)] as Profile,
     long,
+    // The long run plays a world where triages age and days pass (#264).
+    ...(long ? { ageing: true as const } : {}),
   };
 }
 
@@ -365,7 +367,11 @@ export class MultiWorld {
         const a = step.a;
         if (a.kind === "clock") return this.setClock(this.ms + a.ms);
         // The world's own "host down" is this machine offline (its link), counted down by its ticks.
-        return m.world.apply(a);
+        const before = m.world.ms;
+        await m.world.apply(a);
+        // A day passed with a person's commit (ageing): it passes on the shared clock, for every machine (each reads its usage itself).
+        if (m.world.ms !== before) this.setClock(m.world.ms - m.skew);
+        return;
       }
     }
   }

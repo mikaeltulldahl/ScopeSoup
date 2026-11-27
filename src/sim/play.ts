@@ -55,8 +55,8 @@ export function optionsFor(seed: number, long: boolean, steps: number): RunOptio
     steps,
     profile: (["calm", "normal", "normal", "rough"] as const)[rnd.int(4)]!,
     long,
-    // The long run's seeds past 100 play a world where triages age (#217); seeds 1 to 100 stay as they were.
-    ...(long && seed > 100 ? { ageing: true as const } : {}),
+    // Every seed of the long run plays a world where triages age and days pass (#217, #264).
+    ...(long ? { ageing: true as const } : {}),
   };
 }
 

@@ -861,6 +861,8 @@ export const RULES: Rule[] = [
       const overlaps = (i: ItemObs): boolean => o.started.some((s) => s.role === "implement" && (prevOf(prev, s.item)?.paths ?? []).some((p) => i.paths.includes(p)));
       // The host did not answer: claims cannot be written, so nothing may start.
       if (prev.remote.down || o.remote.down) return null;
+      // Nor while other machines' pushes kept getting in first: a claim gives up after 5 refused swaps, and the next tick tries again.
+      if (o.remote.retries - prev.remote.retries >= 5) return null;
       // The pace held the next start (decision 133): the room was the window's, not the slot's. D10 checks the pace from outside.
       if (o.tick.paced) return null;
       // So did the usage check: at the budget, or one session at a time while every window of the last reading has reset (a day

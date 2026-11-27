@@ -1742,7 +1742,7 @@ export async function writeAboutOthers(ctx: Context): Promise<void> {
     const rewrite = changedRewrite([...entries].reverse().find((each) => each.rewrite)?.rewrite, item.body, item.verification) || original;
     // A job parked before gave back its workspace then; one between steps holds it still.
     const holds = existing !== undefined && !existing.parked;
-    const job: Job = existing ?? { item: item.ref, workspace: workspaceKey(item.ref), branch: workBranch(item.ref), step: "triage", failures: 0, fixRounds: 0, startedAt: ctx.at };
+    const job: Job = existing ?? { item: item.ref, workspace: workspaceKey(item.ref), branch: workBranch(item.ref), step: "triage", failures: 0, fixRounds: 0, startedAt: ctx.at, othersAsked: true };
     // Work paused on it keeps its branch, its implementor's session and the findings it is to be told; what it was about to do
     // next waits until the triage has run again with the answers.
     job.step = "triage";
