@@ -85,6 +85,8 @@ export interface Observation {
   ledger: Ledger;
   /** Requests made in this step (a slice of the ledger). */
   requests: Ledger["requests"];
+  /** The multiplayer profile: the answers people gave on the other machines' boards, which this machine reads from the logs (B1). */
+  answersElsewhere?: Ledger["answers"];
   remote: { refusedRewrites: number; down: boolean; items: number };
   /** The host's Items as read at a version of the remote, so an unchanged remote is not read again; the last read while it is down. */
   hostRead?: { version: number; items: Map<string, WorkItem> };

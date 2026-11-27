@@ -11,6 +11,5 @@ export interface Known {
 
 export const KNOWN: Record<string, Known> = {
   // Seen in the long run only (seed in the long run). Less looked into than the ones above: the report says which may be the simulator's own.
-  A3: { seed: 7, long: true, what: "a person's Start over drops an escalated job but leaves its question line open on the host (reached again after #243 moved the runs; #253)" },
   // Since #229 (a released claim is read back at once, with an event about the Item) the normal run's seeds no longer show it.
 };

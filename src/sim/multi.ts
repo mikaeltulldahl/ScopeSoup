@@ -441,7 +441,9 @@ export async function playMulti(seed: number, options: MultiOptions, multiRules:
     const elsewhere = world.machines.filter((each) => each !== m).flatMap((each) => each.world.ledger.requests.filter((r) => r.step > since && r.step <= world.step))
       .map((r) => (r.path === "/api/item/edit" && r.body.state === "todo" ? { ...r, body: { ...r.body, lane: "todo" } } : r));
     const anyBoard: Observation = elsewhere.length > 0 ? { ...o, requests: [...o.requests, ...elsewhere] } : o;
-    for (const s of o.started) m.started.push({ step: world.step, request: s.request });
+    o.answersElsewhere = world.machines.filter((each) => each !== m).flatMap((each) => each.world.ledger.answers);
+    // The end's H1 check reads every request again (from 0): those sessions were counted when they started.
+    if (!only) for (const s of o.started) m.started.push({ step: world.step, request: s.request });
     for (const rule of m.rules) {
       if (reports.has(rule.id) || (only && rule.id !== only)) continue;
       // A claim is released on the remote: the ticks of a machine offline "for a while" do not count against it.
