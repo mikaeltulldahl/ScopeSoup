@@ -177,7 +177,7 @@ test("the implementor merges at level 2 and after an approval at level 3, and co
   const at = (level: number, merge?: true): string => {
     const levelled = validateConfig({ project: "synthetic", machineName: "laptop-a", repoPath: "/srv/clone", level, ...(level === 4 ? { remoteUrl: "https://example.invalid/synthetic", checkCommand: ["true"] } : {}) }, "/srv/scopesoup");
     if (!levelled.ok) assert.fail(levelled.errors.join("\n"));
-    return renderTemplate(loadRole(levelled.config.promptsDir, "implement").template, promptVars(levelled.config, item, { ...job, ...(merge ? { merge } : {}) }));
+    return renderTemplate(loadRole(levelled.config.promptsDir, "implement").template, promptVars(levelled.config, item, jobOf({ ...job, ...(merge ? { merge } : {}) })));
   };
   const merges = /When you judge it done, merge it to main and push the way CLAUDE\.md says \(or open a pull request if it says so\)\./;
   const stops = /When you judge it done, commit on scopesoup\/7 and stop; do not merge\./;
@@ -211,7 +211,7 @@ test("the triage may run the item commands that read, with Scope Soup's folder f
   assert.ok(!tools.some((tool) => tool.includes("{{scopesoup}}")));
   assert.ok(!config.roles.implement.allowedTools.some((tool) => tool.includes(" item ")));
   const item: WorkItem = { ref: { host: "fake", kind: "work", id: "7" }, title: "T", state: "todo", hostState: "open", labels: [], blockedBy: [], openChildren: 0, updatedAt: "2026-11-01T00:00:00Z" };
-  const job = { item: item.ref, workspace: "w", branch: "scopesoup/7", step: "triage", failures: 0, fixRounds: 0, startedAt: "2026-11-01T00:00:00Z" } as Job;
+  const job = jobOf({ item: item.ref, workspace: "w", branch: "scopesoup/7", step: "triage", failures: 0, fixRounds: 0, startedAt: "2026-11-01T00:00:00Z" });
   const prompt = renderTemplate(loadRole(config.promptsDir, "triage").template, promptVars(config, item, job));
   assert.ok(prompt.includes(`\`pnpm --dir ${folder} item list\`, \`pnpm --dir ${folder} item show\``), prompt);
   assert.match(prompt, /`item list --search`, `item show`/);

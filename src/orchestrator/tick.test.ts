@@ -47,7 +47,7 @@ import { QUEUE_KEY, readQueueHealth, requestQueueResume } from "./queueHealth.ts
 import { defaultConfig, initialState, step as queueStep } from "../queue/index.ts";
 import { setWhere, where } from "./jobs.ts";
 import { jobOf } from "./jobs.ts";
-import type { Job, JobParked, Where } from "./jobs.ts";
+import type { Job, JobFields, JobParked, Where } from "./jobs.ts";
 
 const T0 = Date.parse("2026-11-18T10:00:00.000Z");
 /** The fake remote's main before and after a session merged, and the head of every item branch. */
@@ -321,7 +321,7 @@ test("ready items: todo, not blocked, not held, no decision pending, no open cha
 test("order: Items with a triage first, bugs first by label, then smaller, then older; the rest oldest first", () => {
   const triaged = { log: [{ at: new Date(T0).toISOString(), by: { who: "scopesoup", agent: true as const }, kind: "session" as const, fields: { role: "triage" } }] };
   const items = [item("30", triaged), item("7", { ...triaged, labels: ["Bug"] }), item("4"), item("12"), item("5", { ...triaged, labels: ["bug"] }), item("2", { labels: ["bug"] }), item("1")];
-  const jobs = { [refKey(ref("12"))]: { triage: { size: "small" } }, [refKey(ref("4"))]: { triage: { size: "large" } } } as unknown as ReturnType<typeof loadJobs>;
+  const jobs = { [refKey(ref("12"))]: jobOf({ triage: { size: "small" } } as unknown as Job), [refKey(ref("4"))]: jobOf({ triage: { size: "large" } } as unknown as Job) };
   assert.deepEqual(items.sort(compareItems(["bug"], jobs, items)).map((entry) => entry.ref.id), ["5", "7", "12", "30", "4", "1", "2"]);
   const named = [item("b", { updatedAt: "2026-11-02T00:00:00Z" }), item("a", { updatedAt: "2026-11-03T00:00:00Z" })];
   assert.deepEqual(named.sort(compareItems([], {}, named)).map((entry) => entry.ref.id), ["b", "a"]);
@@ -1802,85 +1802,6 @@ test("at level 2 the built change is merged by the session without a review sess
 });
 
 /** A store written before the checklist stage was removed: one job at the old `check-review` step, its session gone. */
-function storedAt(step: string, rules: Record<string, unknown>, extra: Record<string, unknown> = {}) {
-  const w = world(config({ rules }), [item("1")]);
-  w.store.addUsageSample(usage(0.1, 0.1));
-  const job = {
-    item: ref("1"), workspace: workspaceKey(ref("1")), branch: "scopesoup/1", step, sessionId: "gone", failures: 1, fixRounds: 0,
-    startedAt: new Date(T0).toISOString(), implement: { done: true, summary: "Did it.", risk: "low", riskReason: "plain code" }, ...extra,
-  };
-  saveJobs(w.store, { [refKey(ref("1"))]: job as never });
-  return w;
-}
-
-test("a stored check-review job goes to review after the upgrade from level 3", async () => {
-  const w = storedAt("check-review", STAGE1);
-  await w.run();
-  assert.deepEqual(w.runner.requests.map((request) => request.role), ["review"]);
-  assert.equal(where(w.job("1"))?.step, "review");
-  assert.equal(w.job("1")?.failures, 0);
-  assert.match(w.reasons("orchestrator.step_migrated")[0] ?? "", /check-review step was removed/);
-  await step(w, "1", "succeeded", REVIEW_OK);
-  await step(w, "1", "succeeded", IMPLEMENT_OK);
-  assert.equal(where(w.job("1"))?.parked?.as, "queued");
-});
-
-test("a stored check-review job is released after the upgrade below level 3; the item starts over", async () => {
-  const w = storedAt("check-review", {});
-  await w.run();
-  assert.match(w.reasons("orchestrator.job_released")[0] ?? "", /level 2 has no review/);
-  assert.deepEqual(w.runner.requests.map((request) => request.role), ["triage"]);
-  assert.equal(where(w.job("1"))?.step, "triage");
-});
-
-test("a stored fix job keeps the findings a failed checklist left, as the findings the implementor works from", async () => {
-  const w = storedAt("fix", STAGE1, { sessionId: undefined, fixRounds: 1, fixFindings: [{ severity: "must", text: "Checklist rule failed: no debug output." }] });
-  await w.run();
-  assert.deepEqual(w.runner.requests.map((request) => request.role), ["implement"]);
-  assert.match(w.runner.requests[0]!.message ?? "", /no debug output/);
-  assert.equal("fixFindings" in (w.job("1") ?? {}), false);
-  assert.equal(w.events("orchestrator.job_migrated").length, 1);
-});
-
-test("a stored fix job (role removed) resumes the implementor's own session with the review's findings", async () => {
-  const findings = [{ severity: "must", file: "src/a.ts", text: "Off by one." }];
-  const w = storedAt("fix", STAGE1, { sessionId: undefined, fixRounds: 1, review: { verdict: "changes", findings, risk: "low", riskReason: "" } });
-  const implement: Session = {
-    ref: { host: "scopesoup", kind: "session", id: "old-implement" }, role: "implement", subject: ref("1"), status: "succeeded", attempt: 1,
-    startedAt: new Date(T0 - 60_000).toISOString(), finishedAt: new Date(T0 - 30_000).toISOString(), agentSessionId: "agent-old",
-  };
-  w.store.put(implement, "orchestrator", new Date(T0).toISOString());
-  await w.run();
-  assert.match(w.reasons("orchestrator.step_migrated")[0] ?? "", /fix step was removed .*own session is resumed/);
-  const request = w.runner.requests[0];
-  assert.deepEqual([request?.role, request?.resume], ["implement", "agent-old"]);
-  assert.equal(request?.message, "The reviewer asked for these changes:\n- [must] src/a.ts: Off by one.\nFix them and commit. Answer as before.");
-  assert.equal(w.job("1")?.fixRounds, 1);
-  await step(w, "1", "succeeded", IMPLEMENT_OK);
-  assert.equal(w.runner.requests.at(-1)?.role, "review");
-});
-
-test("a stored fix job whose implementor session is not known starts a fresh implementor with the findings; a parked one stays parked", async () => {
-  const findings = [{ severity: "must", text: "Off by one." }];
-  const w = storedAt("fix", STAGE1, { sessionId: undefined, review: { verdict: "changes", findings } });
-  await w.run();
-  assert.match(w.reasons("orchestrator.step_migrated")[0] ?? "", /not known, so a fresh implementor starts with the findings/);
-  const request = w.runner.requests[0];
-  assert.deepEqual([request?.role, request?.resume], ["implement", undefined]);
-  assert.match(request?.message ?? "", /^Earlier work on this Item is on the branch already\.\nThe reviewer asked for these changes:\n- \[must\] Off by one\./);
-
-  const held = storedAt("fix", STAGE1, { sessionId: undefined, review: { verdict: "changes", findings }, parked: { as: "escalated", reason: "git commit was refused", at: new Date(T0).toISOString(), byStep: true } });
-  await held.run();
-  assert.equal(held.runner.requests.length, 0);
-  assert.deepEqual([where(held.job("1"))?.step, where(held.job("1"))?.parked?.as], ["implement", "escalated"]);
-  const at = new Date(held.clock.ms).toISOString();
-  assert.ok(releaseJob(held.store, ref("1"), "Ada", at, "try again"));
-  held.clock.ms += 60_000;
-  await held.run();
-  assert.equal(held.runner.requests[0]?.role, "implement");
-  assert.match(held.runner.requests[0]?.message ?? "", /Off by one\./);
-});
-
 const STATED = { labels: ["size:small"] };
 
 test("an item that states its size (size:small or size:medium) goes straight to implement, with no triage session and no setting (no risk needed)", async () => {
@@ -2674,28 +2595,6 @@ test("a hand-over a person asked for (Try again) is logged as theirs, with who i
   assert.deepEqual((event?.data as { by?: string } | undefined)?.by, "Ada");
 });
 
-test("a stored job that owed a hand-over during a pre-approval check is handed to the queue by the tick after the upgrade, its old risk ignored; old pre-check events still read", async () => {
-  const w = world(config(QUEUE), [item("1")]);
-  w.queue = fakeQueue();
-  w.store.addUsageSample(usage(0.1, 0.1));
-  const at = new Date(T0).toISOString();
-  w.store.appendEvent({ kind: "orchestrator.precheck_started", subject: refKey(ref("1")), actor: "scopesoup", data: { reason: "The check command runs before the change is put to a person." } }, at);
-  w.store.appendEvent({ kind: "orchestrator.precheck_failed", subject: refKey(ref("1")), actor: "scopesoup", data: { reason: "The check did not pass." } }, at);
-  const job = {
-    item: ref("1"), workspace: workspaceKey(ref("1")), branch: "scopesoup/1", step: "review", failures: 0, fixRounds: 0, startedAt: at,
-    implement: { done: true, summary: "Did it.", risk: "low", riskReason: "plain code" }, review: OLD_REVIEW,
-    owes: "hand-over", preCheckStarts: { count: 2, since: at },
-  };
-  saveJobs(w.store, { [refKey(ref("1"))]: job as never });
-  await w.run();
-  assert.equal(where(w.job("1"))?.parked?.as, "queued");
-  assert.equal((w.job("1") as { preCheckStarts?: unknown } | undefined)?.preCheckStarts, undefined);
-  assert.match(w.reasons("orchestrator.job_migrated")[0] ?? "", /pre-approval check starts is dropped/);
-  // Nobody asked for this hand-over: it is logged as the tick's own.
-  assert.match(w.reasons("orchestrator.handover_retry")[0] ?? "", /by the tick itself: nobody asked/);
-  assert.equal(w.events("orchestrator.precheck_failed").length, 1);
-});
-
 test("a reviewed change goes to the queue without a check before it; the queue does that", async () => {
   const w = world(config(QUEUE), [item("1")]);
   const queue = fakeQueue();
@@ -3032,16 +2931,6 @@ test("a proposed rewrite of the item's text in an answer (removed) is dropped: n
   assert.equal(where(w.job("1"))?.parked, undefined);
   assert.equal(where(w.job("1"))?.step, "review");
   assert.equal(w.lines.filter((line) => line.includes(" question ")).length, 0);
-});
-
-test("a job stored parked on a proposed rewrite (removed) is released after the upgrade; the item starts over at triage", async () => {
-  const at = new Date(T0).toISOString();
-  const w = storedAt("implement", STAGE1, { sessionId: undefined, parked: { as: "needs-decision", reason: "A implement session proposes a new description for the item: Because.", at }, proposal: { description: "New text.", reason: "Because." } });
-  await w.run();
-  assert.match(w.reasons("orchestrator.job_released")[0] ?? "", /proposed rewrite of its text/);
-  assert.deepEqual(w.runner.requests.map((request) => request.role), ["triage"]);
-  assert.equal(where(w.job("1"))?.step, "triage");
-  assert.equal(w.job("1")?.proposal, undefined);
 });
 
 const PARTS = [
@@ -4413,7 +4302,7 @@ test("a rewrite that parked only on a label proposal puts scopesoup:needs-decisi
 test("while a person's chat turn runs on an item, the cycle starts nothing on it and leaves its job alone", async () => {
   const w = world(config({ level: 2, settings: { maxParallelSessions: { value: 3, reason: "test" } } }), [item("1", { state: "doing" }), item("2"), item("3", { state: "done" })]);
   w.store.addUsageSample(usage(0.1, 0.1));
-  const due = { item: ref("1"), workspace: workspaceKey(ref("1")), branch: "scopesoup/1", step: "implement" as const, failures: 0, fixRounds: 1, agentSession: "agent-1", resumeWith: "Fix it.", startedAt: new Date(T0).toISOString() };
+  const due = jobOf({ item: ref("1"), workspace: workspaceKey(ref("1")), branch: "scopesoup/1", step: "implement" as const, failures: 0, fixRounds: 1, agentSession: "agent-1", resumeWith: "Fix it.", startedAt: new Date(T0).toISOString() } as JobFields & Partial<Where>);
   // Item 3 is done, which would close its job and remove its worktree and branch: not while a person talks to its session.
   const closing = { ...due, item: ref("3"), workspace: workspaceKey(ref("3")), branch: "scopesoup/3" };
   w.store.tx(() => saveJobs(w.store, { [refKey(ref("1"))]: due, [refKey(ref("3"))]: closing }));
@@ -4440,7 +4329,7 @@ test("while a person's chat turn runs on an item, the cycle starts nothing on it
 test("a chat turn a person starts while the tick prepares the item's step keeps the item: the step is not started", async () => {
   const w = world(config({ level: 2 }), [item("1", { state: "doing" })]);
   w.store.addUsageSample(usage(0.1, 0.1));
-  const due = { item: ref("1"), workspace: workspaceKey(ref("1")), branch: "scopesoup/1", step: "implement" as const, failures: 0, fixRounds: 1, agentSession: "agent-1", resumeWith: "Fix it.", startedAt: new Date(T0).toISOString(), seenInTodo: true as const };
+  const due = jobOf({ item: ref("1"), workspace: workspaceKey(ref("1")), branch: "scopesoup/1", step: "implement" as const, failures: 0, fixRounds: 1, agentSession: "agent-1", resumeWith: "Fix it.", startedAt: new Date(T0).toISOString(), seenInTodo: true as const } as JobFields & Partial<Where>);
   w.store.tx(() => saveJobs(w.store, { [refKey(ref("1"))]: due }));
   // Not busy when the tick picks the item; a person's turn starts while the tick awaits the workspace, before its start.
   let talking = false;
@@ -4566,12 +4455,12 @@ test("the reviewer's send-back for a decision that should have been a question r
 test("after a started Item whose answer arrived counts as started; a blocker still starts first", async () => {
   for (const answered of [true, false]) {
     const w = world(config({ settings: { maxParallelSessions: { value: 1, reason: "test" } } }), [item("1"), item("2", { labels: ["bug"], priority: "blocker" })]);
-    const job = (id: string) => ({ item: ref(id), workspace: workspaceKey(ref(id)), branch: `scopesoup/${id}`, step: "implement" as const, failures: 0, fixRounds: 0, startedAt: new Date(T0).toISOString() });
+    const job = (id: string) => jobOf({ item: ref(id), workspace: workspaceKey(ref(id)), branch: `scopesoup/${id}`, step: "implement" as const, failures: 0, fixRounds: 0, startedAt: new Date(T0).toISOString() } as JobFields & Partial<Where>);
     saveJobs(w.store, { [refKey(ref("1"))]: { ...job("1"), ...(answered ? { answerArrived: new Date(T0).toISOString() } : {}) }, [refKey(ref("2"))]: job("2") });
     await w.run();
     assert.deepEqual(w.runner.requests.map((request) => request.subject.id), ["2"]);
   }
-  const jobs = { [refKey(ref("1"))]: { answerArrived: "2026-11-18T10:00:00Z" } } as unknown as ReturnType<typeof loadJobs>;
+  const jobs = { [refKey(ref("1"))]: jobOf({ answerArrived: "2026-11-18T10:00:00Z" } as unknown as Job) };
   const triagedLog = [{ at: new Date(T0).toISOString(), by: { who: "scopesoup", agent: true as const }, kind: "session" as const, fields: { role: "triage" } }];
   const both = [item("2", { priority: "blocker", log: triagedLog }), item("1")];
   assert.deepEqual([...both].sort(compareItems([], jobs, both)).map((each) => each.ref.id), ["2", "1"]);
@@ -5016,10 +4905,10 @@ test("a job a person put back in To do on the board is dropped once its session 
 // --- A person's picks on the board (decision 104): at any level, ending the running session at once ---
 
 /** A job at the review step with a revision, as a person's In review leaves it (src/server/moves.ts). */
-const pickedReview = (id: string, over: Record<string, unknown> = {}) => ({
+const pickedReview = (id: string, over: Record<string, unknown> = {}) => jobOf({
   item: ref(id), workspace: workspaceKey(ref(id)), branch: `scopesoup/${id}`, step: "review" as const, failures: 0, fixRounds: 0,
   startedAt: new Date(T0).toISOString(), head: HEAD, reviewAskedBy: "Ada", ...over,
-});
+} as JobFields & Partial<Where>);
 
 test("a review step a person picked runs below level 3, even at level 0 with its hidden switch paused; only Stop holds it", async () => {
   for (const level of [0, 1, 2]) {
@@ -5070,7 +4959,7 @@ test("a triage a person picked runs at level 0, and its settling clears the ask"
   const w = world(config({ level: 0 }), [item("1"), item("2")]);
   w.store.addUsageSample(usage(0.1, 0.1));
   applyControl(w.store, "pause", new Date(T0).toISOString(), "test");
-  const ask = { item: ref("1"), workspace: workspaceKey(ref("1")), branch: "scopesoup/1", step: "triage" as const, failures: 0, fixRounds: 0, startedAt: new Date(T0).toISOString(), triageAskedBy: "Ada" };
+  const ask = jobOf({ item: ref("1"), workspace: workspaceKey(ref("1")), branch: "scopesoup/1", step: "triage" as const, failures: 0, fixRounds: 0, startedAt: new Date(T0).toISOString(), triageAskedBy: "Ada" } as JobFields & Partial<Where>);
   saveJobs(w.store, { [refKey(ref("1"))]: ask });
   await w.run();
   assert.deepEqual(w.runner.requests.map((request) => `${request.role} ${request.subject.id}`), ["triage 1"]);
@@ -5089,7 +4978,7 @@ test("Backlog (decision 121): nothing starts there; a person's triage runs and t
   const report = await w.run();
   assert.deepEqual(report.started, []);
   assert.equal(report.idle, "Nothing was started because To do is empty (2 items wait in Backlog for a person to move them to To do).");
-  const ask = { item: ref("1"), workspace: workspaceKey(ref("1")), branch: "scopesoup/1", step: "triage" as const, failures: 0, fixRounds: 0, startedAt: new Date(T0).toISOString(), triageAskedBy: "Ada" };
+  const ask = jobOf({ item: ref("1"), workspace: workspaceKey(ref("1")), branch: "scopesoup/1", step: "triage" as const, failures: 0, fixRounds: 0, startedAt: new Date(T0).toISOString(), triageAskedBy: "Ada" } as JobFields & Partial<Where>);
   saveJobs(w.store, { [refKey(ref("1"))]: ask });
   await w.run();
   assert.deepEqual(w.runner.requests.map((request) => `${request.role} ${request.subject.id}`), ["triage 1"]);
@@ -5111,7 +5000,7 @@ test("Backlog read at a fetch (#243): a job no person put under way is dropped, 
   // Another machine's person moved the Items to Backlog while this machine had their jobs waiting at triage (seen in To do before).
   const w = world(config(), [item("1", { backlog: true }), item("2", { backlog: true })]);
   w.store.addUsageSample(usage(0.1, 0.1));
-  const waiting = (id: string, over: Record<string, unknown> = {}) => ({ item: ref(id), workspace: workspaceKey(ref(id)), branch: `scopesoup/${id}`, step: "triage" as const, failures: 0, fixRounds: 0, startedAt: new Date(T0).toISOString(), ...over });
+  const waiting = (id: string, over: Record<string, unknown> = {}) => jobOf({ item: ref(id), workspace: workspaceKey(ref(id)), branch: `scopesoup/${id}`, step: "triage" as const, failures: 0, fixRounds: 0, startedAt: new Date(T0).toISOString(), ...over } as JobFields & Partial<Where>);
   saveJobs(w.store, { [refKey(ref("1"))]: waiting("1", { seenInTodo: true }), [refKey(ref("2"))]: waiting("2", { seenInTodo: true, triageAskedBy: "Ada" }) });
   await w.run();
   assert.equal(w.job("1"), undefined, "the job on 1 is given up");
@@ -5138,10 +5027,10 @@ test("Backlog (decision 121): a question another Item's triage asked about an It
 // --- Implement anyway and the implementor's model per size (decision 105) ---
 
 /** A job parked by triage's verdict and overruled by a person (src/server/moves.ts): at the implement step, with Ada's ask. */
-const overruled = (id: string, over: Record<string, unknown> = {}) => ({
+const overruled = (id: string, over: Record<string, unknown> = {}) => jobOf({
   item: ref(id), workspace: workspaceKey(ref(id)), branch: `scopesoup/${id}`, step: "implement" as const, failures: 0, fixRounds: 0,
   startedAt: new Date(T0).toISOString(), triage: { ready: false, notReadyReason: "Vague.", size: "large" as const, paths: ["src/a.ts"], hidesDecision: false }, implementAskedBy: "Ada", ...over,
-});
+} as JobFields & Partial<Where>);
 
 test("Implement anyway runs the implement step below level 2, even at level 0, with triage's notes as they are; its settling clears the ask", async () => {
   for (const level of [0, 1]) {
@@ -5264,7 +5153,8 @@ test("a pick that replaces the running step ends its session at once, as Stop do
   // The person's In review (src/server/moves.ts) over the running implementor.
   const jobs = loadJobs(w.store);
   const key = refKey(ref("1"));
-  Object.assign(jobs[key]!, { step: "review", head: HEAD, reviewAskedBy: "Ada", interrupt: { by: "Ada", at: new Date(T0).toISOString(), to: "in-review" } });
+  Object.assign(jobs[key]!, { head: HEAD, reviewAskedBy: "Ada", interrupt: { by: "Ada", at: new Date(T0).toISOString(), to: "in-review" } });
+  setWhere(jobs[key]!, { step: "review" });
   saveJobs(w.store, jobs);
   await w.run();
   assert.match(w.runner.stops[0] ?? "", /^Stopped: Ada picked In review for 1 on the board: the implement session s2 is ended now/);

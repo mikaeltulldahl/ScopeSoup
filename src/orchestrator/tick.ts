@@ -33,10 +33,10 @@ import type { Store } from "../store/store.ts";
 import type { UsageCheckDecision } from "./usageCheck.ts";
 import type { Job, Jobs, Recheck } from "./jobs.ts";
 import type { RetriageBudget } from "../core/retriage.ts";
-import { adoptStored, changedMeanwhile, loadJobs, NO_DECISIONS, takenText, WRITING_WAIT_MS } from "./jobs.ts";
+import { adoptStored, changedMeanwhile, dropUnreadable, loadJobs, NO_DECISIONS, takenText, WRITING_WAIT_MS } from "./jobs.ts";
 import { workBranch, workspaceKey } from "./paths.ts";
 import { adoptHandbacks } from "./handback.ts";
-import { migrateRemovedSteps, recoverFromLogs } from "./recover.ts";
+import { recoverFromLogs } from "./recover.ts";
 import { watchMain } from "./mainGuard.ts";
 import { closeMerged } from "./mergedClose.ts";
 import { readSessionResult } from "./runner.ts";
@@ -582,6 +582,8 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
     return report;
   }
 
+  // A job an older Scope Soup stored is dropped with its event, not read (decision 136).
+  store.tx(() => dropUnreadable(store, at));
   jobs = loadJobs(store);
   const ctx: Context = {
     deps, config, at, jobs, ...log,
@@ -629,8 +631,6 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
   noteBlockersChanged(ctx, seq0);
   // A new store (data/ deleted): jobs and answers come back from the items' logs (meta branch).
   recoverFromLogs(ctx, items);
-  // Jobs left at a step that was removed (an upgrade) move on before anything reads their step.
-  migrateRemovedSteps(ctx);
   // A person handed an item back with a branch: the cycle goes on from the review (docs/PEOPLE.md).
   const handbacksWaiting = await adoptHandbacks(ctx, items, store.list<Change>("change"));
 

@@ -323,22 +323,6 @@ test("a log read back: mid-session starts that step again, a new item and a pers
   assert.equal(jobFromLog({ ...workItem([line("session", { role: "triage", next: "implement" })]), state: "done" }), null);
 });
 
-test("a log whose last session sent the item to the removed check-review step is read back at that step, for the tick to move on", () => {
-  const old = jobFromLog(workItem([
-    line("session", { role: "implement", outcome: "succeeded", summary: "Added it.", next: "check-review" }),
-    line("revision", { sha: SHA1, branch: "scopesoup/A-9" }),
-  ]));
-  assert.equal(where(old)?.step as string, "check-review");
-  assert.equal(old?.head, SHA1);
-});
-
-test("a log whose last session sent the item to the removed fix step is read back at that step, for the tick to move on", () => {
-  const old = jobFromLog(workItem([
-    line("session", { role: "review", outcome: "succeeded", summary: "changes, 1 finding(s)", next: "fix" }),
-  ]));
-  assert.equal(where(old)?.step as string, "fix");
-});
-
 test("a log whose last review sent the change back to the implementor is read back with the findings for it", () => {
   const back = jobFromLog(workItem([
     line("session", { role: "implement", outcome: "succeeded", summary: "Added it.", next: "review" }),

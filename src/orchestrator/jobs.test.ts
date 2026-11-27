@@ -3,7 +3,8 @@ import { test } from "node:test";
 import type { LogRecord, OpenQuestion } from "../model/types.ts";
 import type { Job } from "./jobs.ts";
 import { asImplement, askedInLog, asReview, asTriage, changedRewrite, hasMarkup, recoverFields, sameText, withoutVerification } from "./jobs.ts";
-import { where } from "./jobs.ts";
+import { dropUnreadable, loadJobs, saveJobs, setWhere, where } from "./jobs.ts";
+import { openStore } from "../store/store.ts";
 import { jobOf } from "./jobs.ts";
 
 test("a stored answer that carries the removed tests or untested fields is still read", () => {
@@ -185,4 +186,36 @@ test("of several questions each is read on its own; another park's lines and oth
   // Nothing in the log (a GitHub Item, or a post tried again): nothing to read.
   assert.equal(askedInLog(parkedJob(false), { openQuestions: [] }), null);
   assert.equal(askedInLog(jobOf({ ...parkedJob(false), parked: { ...where(parkedJob(false)).parked!, retry: "post" } }), { log: [first!], openQuestions: [] }), null);
+});
+
+test("where a job is is stored as one case: a parked job runs no session, an owed hand-over is not parked, merged is the end", () => {
+  const base = { item: { host: "meta", kind: "work" as const, id: "A-1" }, workspace: "w", branch: "scopesoup/A-1", failures: 0, fixRounds: 0, startedAt: "2026-01-01T00:00:00Z" };
+  const running = jobOf({ ...base, step: "implement", sessionId: "s1", merge: true });
+  assert.deepEqual(running.at, { kind: "implement", run: { is: "running", session: "s1" }, merge: true });
+  setWhere(running, { sessionId: undefined, parked: { as: "escalated", reason: "r", at: "t", byStep: true } });
+  assert.deepEqual(running.at, { kind: "parked", step: "implement", parked: { as: "escalated", reason: "r", at: "t", byStep: true }, merge: true });
+  // Parked and running at once cannot be written: the running session wins, as the tick settles it first.
+  setWhere(running, { sessionId: "s2" });
+  assert.equal(running.at.kind, "implement");
+  assert.equal(where(running).parked, undefined);
+  const owed = jobOf({ ...base, step: "review", owes: "hand-over", notBefore: "n" });
+  assert.deepEqual(owed.at, { kind: "hand-over", step: "review" });
+  const merged = jobOf({ ...owed, merged: "abc", sessionId: "s3" });
+  assert.deepEqual(merged.at, { kind: "merged", step: "review", sha: "abc" });
+  // A spread job keeps where it is; a field given as undefined clears it.
+  assert.deepEqual(jobOf({ ...running, sessionId: undefined }).at, { kind: "implement", run: { is: "waiting" }, merge: true });
+});
+
+test("a stored job of an older shape is dropped with an event at the tick, and is never read", () => {
+  const store = openStore(":memory:");
+  const good = jobOf({ item: { host: "meta", kind: "work", id: "A-1" }, workspace: "w", branch: "scopesoup/A-1", step: "triage", failures: 0, fixRounds: 0, startedAt: "t" });
+  store.setValue("orchestrator.jobs", JSON.stringify({ "meta:work:A-1": good, "meta:work:A-2": { item: { host: "meta", kind: "work", id: "A-2" }, workspace: "w", branch: "scopesoup/A-2", step: "implement", sessionId: "s", failures: 0, fixRounds: 0, startedAt: "t" } }));
+  assert.deepEqual(Object.keys(loadJobs(store)), ["meta:work:A-1"]);
+  // A save before the tick keeps it, so it is not lost without its event.
+  saveJobs(store, loadJobs(store));
+  assert.ok("meta:work:A-2" in JSON.parse(store.getValue("orchestrator.jobs")!));
+  store.tx(() => dropUnreadable(store, "2026-01-01T00:00:00.000Z"));
+  assert.deepEqual(Object.keys(JSON.parse(store.getValue("orchestrator.jobs")!)), ["meta:work:A-1"]);
+  assert.deepEqual(store.eventsAfter(0, 10).filter((event) => event.kind === "orchestrator.job_unreadable").map((event) => event.subject), ["meta:work:A-2"]);
+  store.close();
 });

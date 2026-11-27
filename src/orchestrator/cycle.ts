@@ -14,7 +14,7 @@ import { answersText, knownAnswers } from "../store/answers.ts";
 import { persistenceLimits } from "../config/persistence.ts";
 import type { Context } from "./context.ts";
 import { ACTOR, errorText } from "./context.ts";
-import type { AskedText, Decision, ItemLinkAnswer, Job, JobParked, JobStep, ParkedAs, ReviewAnswer, TakenDecision, TriageAnswer } from "./jobs.ts";
+import type { AskedText, Decision, ItemLinkAnswer, Job, JobParked, JobStep, ParkedAs, WherePatch, ReviewAnswer, TakenDecision, TriageAnswer } from "./jobs.ts";
 import { ASK_PERSON, answerIn, askedInLog, jobQuestions, nextPark, parkSet, asImplement, asReview, asTriage, formatFindings, hasMarkup, recoverFields, keepsRecommendations, picks, questionsSettled, releaseIn, parkedRewrite, changedRewrite, sameText } from "./jobs.ts";
 import { providerFor } from "./providers/index.ts";
 import type { Actions, ClaimResult, SessionResultRecord } from "./ports.ts";
@@ -69,7 +69,7 @@ export function backoffMs(failures: number, capMs: number): number {
 /** Ends the cycle for now. `ask` puts the item on everyone's list (or the person's whose hand-back it is). */
 export async function park(ctx: Context, job: Job, as: ParkedAs, reason: string, ask?: Parameters<Actions["answerTurn"]>[1], retry?: "hand-over", marks: { byStep?: true; verdict?: true } = {}): Promise<void> {
   const key = refKey(job.item);
-  setWhere(job, { parked: { as, reason, at: ctx.at, ...(retry ? { retry } : {}), ...(marks.byStep ? { byStep: true } : {}), ...(marks.verdict ? { verdict: true } : {}) } });
+  setWhere(job, { parked: { as, reason, at: ctx.at, ...(retry ? { retry } : {}), ...(marks.byStep ? { byStep: true } : {}), ...(marks.verdict ? { verdict: true } : {}) }, sessionId: undefined, notBefore: undefined, resume: undefined });
   job.parks = nextPark(job, ctx.deps.store.get<WorkItem>(job.item)?.log);
   // A person's ask was for the step that ended here (decision 104).
   delete job.triageAskedBy;
@@ -78,7 +78,6 @@ export async function park(ctx: Context, job: Job, as: ParkedAs, reason: string,
   delete job.implementAskedBy;
   // Answers to an earlier set of questions do not count for this parked Item.
   delete job.answered;
-  setWhere(job, { sessionId: undefined, notBefore: undefined, resume: undefined });
   ctx.commit(PARK_EVENT[as], reason, key, { step: where(job).step });
   const { runner } = ctx.deps;
   if (ask) await tellPeople(ctx, job, as, reason, ask, retry);
@@ -450,7 +449,10 @@ function parkRestructure(ctx: Context, job: Job, proposed: NonNullable<TriageAns
  * Sends the change back to the implementor: its own agent session is resumed with `message` (review findings, a failed
  * merging), so it keeps its context. Without a known session the implement step starts afresh with the message after its prompt.
  */
-function backToImplementor(ctx: Context, job: Job, message: string, reason: string): void {
+/** What the implementor is told besides its message: merge the approved change, or the round for an approval's `should` findings. */
+type Told = Pick<WherePatch, "merge" | "shouldRound">;
+
+function backToImplementor(ctx: Context, job: Job, message: string, reason: string, told: Told = {}): void {
   const key = refKey(job.item);
   // A person's overturns kept for the work go with it, and are taken out of the list in the same transaction.
   const overturns = handable(ctx, job);
@@ -460,7 +462,7 @@ function backToImplementor(ctx: Context, job: Job, message: string, reason: stri
       job.overturned = [...(job.overturned ?? []), ...overturns.map((each) => each.id)].slice(-100);
     }
     job.resumeWith = overturns.length > 0 ? [message, overturnMessage(overturns)].filter(Boolean).join("\n") : message;
-    next(ctx, job, "implement", overturns.length > 0 ? `${reason} A person's overturn of ${overturns.length === 1 ? "a decision" : `${overturns.length} decisions`} goes with it.` : reason);
+    next(ctx, job, "implement", overturns.length > 0 ? `${reason} A person's overturn of ${overturns.length === 1 ? "a decision" : `${overturns.length} decisions`} goes with it.` : reason, told);
   });
 }
 
@@ -490,10 +492,9 @@ export function overturnsBack(ctx: Context, job: Job): boolean {
 }
 
 /** The step succeeded; the next one starts after the short continuation delay. */
-function next(ctx: Context, job: Job, step: JobStep, reason: string): void {
-  setWhere(job, { step: step });
+function next(ctx: Context, job: Job, step: JobStep, reason: string, told: Told = {}): void {
   job.failures = 0;
-  setWhere(job, { sessionId: undefined, resume: undefined, notBefore: later(ctx.at, CONTINUE_MS) });
+  setWhere(job, { step, sessionId: undefined, resume: undefined, notBefore: later(ctx.at, CONTINUE_MS), ...told });
   ctx.commit("orchestrator.step", reason, refKey(job.item), { next: step });
 }
 
@@ -666,9 +667,8 @@ async function handOver(ctx: Context, job: Job, item: WorkItem | null, askedBy?:
     return;
   }
   if (!mergeQueueOn(ctx.deps.store)) {
-    setWhere(job, { owes: "hand-over" });
     // The session is over: the tick hands it over by itself once the merge queue is resumed, and settles nothing again meanwhile.
-    setWhere(job, { sessionId: undefined, resume: undefined });
+    setWhere(job, { owes: "hand-over", sessionId: undefined, resume: undefined });
     ctx.commit("orchestrator.merge_queue_paused", `The merge queue is paused: ${job.branch} is not handed to the queue now; it is when the merge queue is resumed.`, refKey(job.item));
     return;
   }
@@ -837,10 +837,10 @@ export function queueOffBelowLevel4(ctx: Context, job: Job): void {
   const was = job.queued;
   setWhere(job, { parked: undefined });
   delete job.queued;
-  setWhere(job, { merge: true });
   backToImplementor(
     ctx, job, APPROVED,
     `${job.branch}${was ? ` (${was.slice(0, 7)})` : ""} waited in the merge queue, but the project is at level ${ctx.config.level} now, where Scope Soup merges nothing and the implementor merges. It leaves the queue. Next: the implementor's own session merges it.`,
+    { merge: true },
   );
 }
 
@@ -965,6 +965,8 @@ export async function settle(ctx: Context, job: Job, session: Session | null, re
 
 async function settleStep(ctx: Context, job: Job, session: Session | null, record: SessionResultRecord, item: WorkItem | null, main?: string | null): Promise<void> {
   const key = refKey(job.item);
+  // The session is over: what follows (parked, an owed hand-over, merged, the next step) is not beside a running one.
+  setWhere(job, { sessionId: undefined });
   if (!session) {
     await failed(ctx, job, "The session's record is missing from the store.");
     return;
@@ -1159,17 +1161,16 @@ async function settleStep(ctx: Context, job: Job, session: Session | null, recor
       const should = answer.findings.filter((finding) => finding.severity === "should" && finding.text.trim());
       if (should.length > 0 && reviewSettings(ctx.config).shouldFindings === "fix" && job.shouldSent === undefined) {
         job.shouldSent = should.map(findingKey);
-        setWhere(job, { shouldRound: true });
         return backToImplementor(
           ctx, job, `The reviewer approves, and asks for these smaller changes before the merge:\n${formatFindings(should)}\nFix them and commit.`,
           `The review approves with ${plural(should.length, "\`should\` finding")}. Next: the implementor fixes them before the merge (review.shouldFindings "fix"); this round is not counted toward the limit of rounds.`,
+          { shouldRound: true },
         );
       }
       if (should.length > 0) draftShould(ctx, job, item, should);
       if (ctx.config.level >= 4) return handOver(ctx, job, item);
       // Level 3: Scope Soup merges nothing below level 4. The implementor's own session is resumed to merge it.
-      setWhere(job, { merge: true });
-      return backToImplementor(ctx, job, APPROVED, "The review approves. Next: the implementor merges it as the project's CLAUDE.md says.");
+      return backToImplementor(ctx, job, APPROVED, "The review approves. Next: the implementor merges it as the project's CLAUDE.md says.", { merge: true });
     }
     const max = persistenceLimits(ctx.config.settings.persistence.value).maxFixRounds;
     if (job.fixRounds >= max) {
@@ -1204,8 +1205,7 @@ async function shouldNothingNew(ctx: Context, job: Job, item: WorkItem | null): 
   const should = (job.review?.findings ?? []).filter((finding) => finding.severity === "should" && finding.text.trim());
   if (should.length > 0) draftShould(ctx, job, item, should);
   if (ctx.config.level >= 4) return handOver(ctx, job, item);
-  setWhere(job, { merge: true });
-  return backToImplementor(ctx, job, APPROVED, "The implementor committed nothing for the review's `should` findings; the approved change goes on. Next: the implementor merges it as the project's CLAUDE.md says.");
+  return backToImplementor(ctx, job, APPROVED, "The implementor committed nothing for the review's `should` findings; the approved change goes on. Next: the implementor merges it as the project's CLAUDE.md says.", { merge: true });
 }
 
 /** An agent's `drafts`: filed as Item drafts for a person, linked to this Item (decision 95). One filed before is not filed again. */

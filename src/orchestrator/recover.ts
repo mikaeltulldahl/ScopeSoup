@@ -31,8 +31,6 @@ import { jobOf, setWhere, where } from "./jobs.ts";
 const SEEN_KEY = "orchestrator.logs_read";
 
 const STEPS: readonly string[] = ["triage", "implement", "review"];
-/** Steps that were removed (the checklist's "check-review"; "fix"). A job stored or rebuilt at one is moved on by `migrateRemovedSteps`. */
-const REMOVED_STEPS: readonly string[] = ["check-review", "fix"];
 const PARKED_AS: readonly string[] = ["queued", "handed-over", "needs-decision", "not-ready", "escalated"];
 
 const isScopeSoup = (line: { by: { who: string; agent: boolean } }): boolean => line.by.agent && line.by.who === SCOPESOUP.who;
@@ -174,7 +172,7 @@ function parkOnQuestion(job: Job, asked: OpenQuestion): void {
 function resumeFromLines(job: Job, sessions: readonly LogRecord[], newest: LogRecord | undefined, review: LogRecord | undefined): Job | null {
   // 2. The last session said which step comes next: that step starts again.
   const next = str(sessions[sessions.length - 1]?.fields.next);
-  if (STEPS.includes(next) || REMOVED_STEPS.includes(next)) {
+  if (STEPS.includes(next)) {
     setWhere(job, { step: next as JobStep });
     // A review that asked for changes sent the change back to the implementor: a fresh one gets the findings.
     if (next === "implement" && sessions[sessions.length - 1]?.fields.role === "review" && job.review?.verdict === "changes" && job.review.findings.length > 0) {
@@ -245,69 +243,3 @@ export function recoverFromLogs(ctx: Context, items: readonly WorkItem[]): void 
   store.setValue(SEEN_KEY, JSON.stringify([...seen, ...fresh.map((item) => refKey(item.ref))]));
 }
 
-/**
- * Moves on jobs left at a step that was removed, from the store or rebuilt from a log, so none is stuck after an upgrade.
- * A "check-review" job (the checklist stage) goes to review from level 3, else it is released and the
- * item starts over. The findings a failed checklist left for the next fix session become the review's findings it reads.
- * A job parked on a proposed rewrite of the item's text (removed) is released: the item starts over at triage,
- * which asks a question if the text is still wrong.
- * A "fix" job (the fix role) goes back to implement with the review's findings: the implementor's own session is
- * resumed when the store still knows it, else a fresh implementor gets the findings. A fix session that was running at the
- * upgrade is settled as an implementor's (its answer has the same shape), and a parked Item stays parked.
- */
-export function migrateRemovedSteps(ctx: Context): void {
-  for (const [key, job] of Object.entries(ctx.jobs)) {
-    if (job.proposal && !(Array.isArray(job.proposal.parts) && job.proposal.parts.length > 0)) {
-      delete ctx.jobs[key];
-      ctx.commit("orchestrator.job_released", "The item was parked on a proposed rewrite of its text, which Scope Soup no longer asks about: the job is released and the item starts over at triage.", key, { was: where(job).parked });
-      continue;
-    }
-    // The pre-approval check was removed: its start count goes, and an owed hand-over is simply repeated by the
-    // next hand-over. A check that was running
-    // lived only in memory and ended with the old process.
-    const precheck = job as Job & { preCheckStarts?: unknown };
-    if (precheck.preCheckStarts !== undefined) {
-      delete precheck.preCheckStarts;
-      ctx.commit("orchestrator.job_migrated", "The count of pre-approval check starts is dropped: that check was removed.", key);
-    }
-    // Other fields the checklist stage left (`checklist`, `seenRules`, `messageRoundUsed`) are no longer read and do no harm.
-    const legacy = job as Job & { fixFindings?: Finding[] };
-    if (legacy.fixFindings) {
-      const carried = (where(job).step as string) === "fix" && legacy.fixFindings.length > 0;
-      if (carried) job.review = { verdict: "changes", findings: legacy.fixFindings };
-      delete legacy.fixFindings;
-      ctx.commit("orchestrator.job_migrated", carried ? "The findings of a failed checklist are kept as the findings the implementor works from." : "The findings of a failed checklist are dropped: nothing reads them now.", key);
-    }
-    if (!REMOVED_STEPS.includes(where(job).step)) continue;
-    if ((where(job).step as string) === "fix") {
-      migrateFix(ctx, key, job);
-      continue;
-    }
-    const was = where(job).step as string;
-    // A checklist session's answer is no longer read: whatever it was doing, the job moves on without it.
-    setWhere(job, { sessionId: undefined, resume: undefined, notBefore: undefined });
-    job.failures = 0;
-    if (ctx.config.level >= 3) {
-      setWhere(job, { step: "review" });
-      ctx.commit("orchestrator.step_migrated", `The ${was} step was removed (the checklist stage is gone): the change goes to review instead.`, key, { from: was, to: "review" });
-    } else {
-      delete ctx.jobs[key];
-      ctx.commit("orchestrator.job_released", `The ${was} step was removed (the checklist stage is gone) and level ${ctx.config.level} has no review: the job is released and the item starts over.`, key, { from: was, was: where(job).parked });
-    }
-  }
-}
-
-/** A job at the removed "fix" step goes back to the implementor with the findings it was to fix. */
-function migrateFix(ctx: Context, key: string, job: Job): void {
-  setWhere(job, { step: "implement" });
-  const findings = job.review?.findings ?? [];
-  job.resumeWith = findings.length > 0 ? `The reviewer asked for these changes:\n${formatFindings(findings)}\nFix them and commit.` : "The change was sent back. Look at it again, fix what is wrong and commit.";
-  // The implementor's own session, when the store still has it: the newest implement session of the item that names one.
-  const known = ctx.deps.store.list<Session>("session")
-    .filter((session) => refKey(session.subject) === key && session.role === "implement" && session.agentSessionId)
-    .sort((a, b) => a.startedAt.localeCompare(b.startedAt))
-    .pop();
-  if (known?.agentSessionId && !job.agentSession) job.agentSession = known.agentSessionId;
-  const how = job.agentSession ? "the implementor's own session is resumed with the findings" : "the implementor's session is not known, so a fresh implementor starts with the findings";
-  ctx.commit("orchestrator.step_migrated", `The fix step was removed (findings go back to the implementor): ${how}.`, key, { from: "fix", to: "implement" });
-}

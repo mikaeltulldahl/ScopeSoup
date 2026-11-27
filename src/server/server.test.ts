@@ -89,7 +89,7 @@ test("loadSnapshot lists the items whose job says the change merged", () => {
   const own = openStore(":memory:");
   const merged = work(5);
   const open = work(6);
-  const job = (item: typeof merged, extra: object) => ({ item: item.ref, workspace: "w", branch: `scopesoup/${item.ref.id}`, step: "triage" as const, failures: 0, fixRounds: 0, startedAt: T0, ...extra });
+  const job = (item: typeof merged, extra: object) => jobOf({ item: item.ref, workspace: "w", branch: `scopesoup/${item.ref.id}`, step: "triage" as const, failures: 0, fixRounds: 0, startedAt: T0, ...extra });
   saveJobs(own, {
     [refKey(merged.ref)]: job(merged, { merged: "abc1234" }),
     [refKey(open.ref)]: job(open, {}),

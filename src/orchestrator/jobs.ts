@@ -253,6 +253,8 @@ export interface Where {
 }
 
 export interface Job {
+  /** Where the job is (`JobAt`); read and moved with `where` and `setWhere`. */
+  at: JobAt;
   /** The implement session started last: the level it started at, and whether its finish text told it to merge (decision 108). */
   sessionStart?: { level: number; mayMerge: boolean };
   /** Sessions of this step left by an earlier run of Scope Soup in a row (`Session.orphaned`); at the attempts' limit a person is asked. */
@@ -434,50 +436,172 @@ const WHERE_KEYS = ["step", "sessionId", "parked", "owes", "merged", "merge", "r
 /** A change to where a job is: each field given is set, and one given as undefined is cleared. */
 export type WherePatch = { [K in keyof Where]?: Where[K] | undefined };
 
-/** Where the job is (`Where`). */
+/** A step's session: waiting to start (not before `notBefore`, until the written text is read back, to resume `resume`), or running. */
+export type StepRun =
+  | { is: "waiting"; notBefore?: string; writing?: { from: string; at: string }; resume?: string }
+  | { is: "running"; session: string; resume?: string };
+
+/**
+ * Where the job is, as it is stored: one case each, carrying only what that case needs. A step runs or waits for its session; parked
+ * keeps the step it parked at (an answer may resume it); the hand-over is owed; merged is the end. A combination nobody meant (parked
+ * and running, owed and parked, merged at a step with a session) cannot be stored.
+ */
+export type JobAt =
+  | { kind: "triage"; run: StepRun; recheck?: Recheck }
+  | { kind: "implement"; run: StepRun; merge?: true; shouldRound?: true }
+  | { kind: "review"; run: StepRun }
+  | { kind: "parked"; step: JobStep; parked: JobParked; merge?: true; shouldRound?: true }
+  /** `merge`: the reviewer approved it at level 3, so an answer to a failed hand-over resumes the implementor to merge. */
+  | { kind: "hand-over"; step: JobStep; merge?: true }
+  | { kind: "merged"; step: JobStep; sha: string; closeOwed?: { sha: string; batch?: number }; parked?: JobParked };
+
+const opt = <K extends string, V>(key: K, value: V | undefined): Partial<Record<K, V>> => (value === undefined ? {} : ({ [key]: value } as Record<K, V>));
+
+/** Where-fields as the stored case, in the order the tick acts on them: merged, a running session, an owed hand-over, parked, the step. */
+function encode(at: Where): JobAt {
+  if (at.merged !== undefined) return { kind: "merged", step: at.step, sha: at.merged, ...opt("closeOwed", at.closeOwed), ...opt("parked", at.parked) };
+  const run: StepRun = at.sessionId !== undefined
+    ? { is: "running", session: at.sessionId, ...opt("resume", at.resume) }
+    : { is: "waiting", ...opt("notBefore", at.notBefore), ...opt("writing", at.writing), ...opt("resume", at.resume) };
+  if (at.sessionId === undefined) {
+    if (at.owes) return { kind: "hand-over", step: at.step, ...opt("merge", at.merge) };
+    if (at.parked) return { kind: "parked", step: at.step, parked: at.parked, ...opt("merge", at.merge), ...opt("shouldRound", at.shouldRound) };
+  }
+  switch (at.step) {
+    case "triage":
+      return { kind: "triage", run, ...opt("recheck", at.recheck) };
+    case "implement":
+      return { kind: "implement", run, ...opt("merge", at.merge), ...opt("shouldRound", at.shouldRound) };
+    case "review":
+      return { kind: "review", run };
+  }
+}
+
+function decode(at: JobAt): Where {
+  switch (at.kind) {
+    case "merged":
+      return { step: at.step, merged: at.sha, ...opt("closeOwed", at.closeOwed), ...opt("parked", at.parked) };
+    case "hand-over":
+      return { step: at.step, owes: "hand-over", ...opt("merge", at.merge) };
+    case "parked":
+      return { step: at.step, parked: at.parked, ...opt("merge", at.merge), ...opt("shouldRound", at.shouldRound) };
+    case "triage":
+    case "implement":
+    case "review": {
+      const run = at.run.is === "running"
+        ? { sessionId: at.run.session, ...opt("resume", at.run.resume) }
+        : { ...opt("notBefore", at.run.notBefore), ...opt("writing", at.run.writing), ...opt("resume", at.run.resume) };
+      const extra = at.kind === "triage" ? opt("recheck", at.recheck) : at.kind === "implement" ? { ...opt("merge", at.merge), ...opt("shouldRound", at.shouldRound) } : {};
+      return { step: at.kind, ...run, ...extra };
+    }
+  }
+}
+
+/** Where the job is (`Where`), read from its stored case. */
 export function where(job: Job): Readonly<Where>;
 export function where(job: Job | null | undefined): Readonly<Where> | undefined;
 export function where(job: Job | null | undefined): Readonly<Where> | undefined {
-  if (!job) return undefined;
-  const stored = job as Job & Where;
-  const out: Partial<Where> = {};
-  for (const key of WHERE_KEYS) if (stored[key] !== undefined) (out as Record<string, unknown>)[key] = stored[key];
-  return out as Where;
+  return job ? decode(job.at) : undefined;
 }
 
-/** Moves the job: the fields of `patch` are set, those given as undefined cleared. */
+/** Moves the job: the fields of `patch` are set, those given as undefined cleared, and the result stored as its case. */
 export function setWhere(job: Job, patch: WherePatch): void {
-  const stored = job as Job & Record<string, unknown>;
-  for (const [key, value] of Object.entries(patch)) {
-    if (value === undefined) delete stored[key];
-    else stored[key] = value;
-  }
+  job.at = encode(applied(decode(job.at), patch));
 }
+
+function applied(at: Where, patch: WherePatch): Where {
+  const next: Record<string, unknown> = { ...at };
+  for (const [key, value] of Object.entries(patch)) {
+    if (value === undefined) delete next[key];
+    else next[key] = value;
+  }
+  return next as unknown as Where;
+}
+
+/** A job's fields other than where it is. */
+export type JobFields = Omit<Job, "at">;
 
 /**
  * A job from its fields and where it is, given as one object. Where-fields left out are kept from a job spread into it; a job with no
  * step at all is at triage.
  */
-export function jobOf(all: Job & Partial<Where>): Job {
-  const job: Job & Partial<Where> = { ...all };
-  const at: WherePatch = {};
+export function jobOf(all: JobFields & Partial<Where> & { at?: JobAt }): Job {
+  const { at, ...rest } = all;
+  const fields: Record<string, unknown> = { ...rest };
+  const patch: WherePatch = {};
   for (const key of WHERE_KEYS) {
-    (at as Record<string, unknown>)[key] = job[key];
-    delete job[key];
+    if (key in fields) (patch as Record<string, unknown>)[key] = fields[key];
+    delete fields[key];
   }
-  setWhere(job, at);
-  return job;
+  const start: Where = at ? decode(at) : { step: "triage" };
+  return { ...(fields as unknown as JobFields), at: encode(applied(start, patch)) };
 }
+
+/** The job as stored, or null when it is not of the stored shape (an older one): such a job is dropped, not read (decision 136). */
+function parseJob(value: unknown): Job | null {
+  if (typeof value !== "object" || value === null) return null;
+  const job = value as Partial<Job> & Record<string, unknown>;
+  const at = job.at as Partial<JobAt> | undefined;
+  if (!job.item || typeof job.branch !== "string" || typeof at !== "object" || at === null) return null;
+  if (WHERE_KEYS.some((key) => key in job)) return null;
+  switch (at.kind) {
+    case "triage":
+    case "implement":
+    case "review":
+      return typeof at.run === "object" && at.run !== null && (at.run.is === "waiting" || (at.run.is === "running" && typeof at.run.session === "string")) ? (job as Job) : null;
+    case "parked":
+      return isStep(at.step) && typeof at.parked === "object" && at.parked !== null ? (job as Job) : null;
+    case "hand-over":
+      return isStep(at.step) ? (job as Job) : null;
+    case "merged":
+      return isStep(at.step) && typeof at.sha === "string" ? (job as Job) : null;
+    default:
+      return null;
+  }
+}
+
+const isStep = (value: unknown): value is JobStep => value === "triage" || value === "implement" || value === "review";
 
 const KEY = "orchestrator.jobs";
 
-function readStored(store: Store): Jobs {
+function readRaw(store: Store): Record<string, unknown> {
   const text = store.getValue(KEY);
   if (!text) return {};
   try {
-    return JSON.parse(text) as Jobs;
+    const value: unknown = JSON.parse(text);
+    return typeof value === "object" && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
   } catch {
     return {};
+  }
+}
+
+/** The stored jobs that have the stored shape; the others are left for `dropUnreadable`. */
+function readStored(store: Store): Jobs {
+  const jobs: Jobs = {};
+  for (const [key, value] of Object.entries(readRaw(store))) {
+    const job = parseJob(value);
+    if (job) jobs[key] = job;
+  }
+  return jobs;
+}
+
+/** The keys of stored jobs that do not have the stored shape. */
+function unreadable(store: Store): string[] {
+  return Object.entries(readRaw(store)).filter(([, value]) => !parseJob(value)).map(([key]) => key);
+}
+
+/**
+ * Drops the stored jobs that do not have the stored shape (a job an older Scope Soup wrote), each with an event, as a lost store loses
+ * them: the Item is rebuilt from its log or starts again at triage (decision 136). No older shape is read. Call it in a transaction.
+ */
+export function dropUnreadable(store: Store, at: string): void {
+  const gone = unreadable(store);
+  if (gone.length === 0) return;
+  const raw = readRaw(store);
+  for (const key of gone) delete raw[key];
+  store.setValue(KEY, JSON.stringify(raw));
+  for (const key of gone) {
+    store.appendEvent({ kind: "orchestrator.job_unreadable", subject: key, actor: "orchestrator", data: { reason: `The stored job of ${key} is of an older shape, which this Scope Soup does not read: it is dropped, and the Item is rebuilt from its log or starts again at triage.` } }, at);
   }
 }
 
@@ -556,7 +680,10 @@ export function saveJobs(store: Store, jobs: Jobs): void {
   }
   for (const key of Object.keys(jobs)) if (!(key in merged)) delete jobs[key];
   for (const [key, job] of Object.entries(merged)) if (jobs[key] !== job) jobs[key] = job;
-  store.setValue(KEY, JSON.stringify(merged));
+  // A job of an older shape stays as it is until the tick drops it with its event (`dropUnreadable`).
+  const raw = readRaw(store);
+  const kept = Object.fromEntries(unreadable(store).filter((key) => !(key in merged)).map((key) => [key, raw[key]]));
+  store.setValue(KEY, JSON.stringify({ ...kept, ...merged }));
   baselines.set(jobs, snapshotOf(merged));
 }
 
