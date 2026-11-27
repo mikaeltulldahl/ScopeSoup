@@ -180,10 +180,13 @@ export class SimWorld {
     this.usage(false);
   }
 
-  /** Files the starting Items; separate from the constructor so it can await. */
+  /**
+   * Files the starting Items; separate from the constructor so it can await. A person filed them in To do (#221), so the runs pasted
+   * before Backlog existed keep their meaning; Items filed later land in Backlog, and the lane action moves them.
+   */
   async init(items: number): Promise<void> {
     for (let i = 0; i < items; i++) {
-      await this.host.write!.createWork!({ title: `Item ${i + 1}`, body: `Do thing ${i + 1}.`, log: [{ kind: "created", by: { who: PERSON, agent: false } }] });
+      await this.host.write!.createWork!({ title: `Item ${i + 1}`, body: `Do thing ${i + 1}.`, lane: "todo", log: [{ kind: "created", by: { who: PERSON, agent: false } }] });
     }
     await this.sync();
   }
@@ -369,8 +372,9 @@ export class SimWorld {
         return;
       }
       case "lane": {
-        // Backlog and To do (#221): a person pulls an Item into To do or puts it back. Refused as an unknown move until #221 lands.
-        const got = await this.request("POST", "/api/item/move", { ref: this.key(action.item), to: action.to }, action.item);
+        // Backlog and To do (#221): a person pulls an Item into To do or puts it back, the lane edit the State menu sends (Backlog
+        // drops work under way first, or is refused).
+        const got = await this.request("POST", "/api/item/edit", { ref: this.key(action.item), lane: action.to }, action.item);
         if (got.status === 200) this.count(`lane-${action.to}`);
         return;
       }

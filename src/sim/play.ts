@@ -137,7 +137,7 @@ function fairRound(world: SimWorld, round: number): Action[] {
     const id = item.ref.id;
     const job = jobs[`metaBranch:work:${id}`];
     if (item.holder && item.holder.actor.bot !== true) out.push({ kind: "release", item: id });
-    // Backlog and To do (#221): under Fair a person pulls every Item into To do. Refused, and harmless, until #221 lands.
+    // Backlog and To do (#221): under Fair a person pulls every Item into To do.
     if (round === 0) out.push({ kind: "lane", item: id, to: "todo" });
     if (world.liveFor(id)) out.push({ kind: "end", item: id, v: round * 31 + Number(id.slice(2)) });
     if (job?.parked?.as === "handed-over") out.push({ kind: "person-merge", item: id });

@@ -116,6 +116,8 @@ export function metaHost(options: MetaHostOptions): Host {
         title: input.title, ...(input.body !== undefined ? { body: input.body } : {}), ...(input.state ? { state: input.state } : {}),
         ...(input.labels ? { labels: input.labels } : {}), ...(input.blockedBy ? { blockedBy: input.blockedBy.map(idOf) } : {}),
         ...(input.verification ? { verification: input.verification } : {}), ...(input.priority ? { priority: input.priority } : {}),
+        // As the real adapter: new Items land in Backlog (decision 121).
+        ...(input.lane !== "todo" && (input.state ?? "todo") === "todo" ? { lane: "backlog" as const } : {}),
       });
       return write(null, (files, id) => {
         const lines = (input.log ?? []).map(line);
