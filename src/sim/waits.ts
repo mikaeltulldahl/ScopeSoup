@@ -118,12 +118,12 @@ export function waitsFor(input: WaitInput): W {
 }
 
 /**
- * Something of the implement step has begun, as the product counts it (#268): a change, an answer, a session to resume (one a limit cut
- * off), a failed attempt, an approval to merge. Only a first implement step waits for the same files; work under way has its files in hand.
+ * Something of the implement step has begun: a change, an implementor's result, or a session to resume (one a limit cut off, #268: its
+ * files are in that session's hands). Only a first implement step waits for the same files. Kept apart from the product's own count, so
+ * the checker can catch a mistake there.
  */
 export function implementBegun(job: Job): boolean {
-  const at = where(job);
-  return !!(job.head || job.implement || job.agentSession || at?.resume || job.resumeWith !== undefined || job.failures > 0 || at?.merge);
+  return !!(job.head || job.implement || where(job)?.resume);
 }
 
 /**
