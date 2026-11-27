@@ -182,7 +182,8 @@ export const RULES: Rule[] = [
       const lost = o.ledger.answers.find((a) => a.step > ((memo.lostAt as number | undefined) ?? -1) && !known.has(`${a.item}|${a.text}`));
       if (lost) return `the answer "${lost.text}" on ${lost.item.split(":").pop()} (step ${lost.step}) is not in the store's answers`;
       const given = new Map<string, number>();
-      for (const a of o.ledger.answers) given.set(`${a.item}|${a.text}`, (given.get(`${a.item}|${a.text}`) ?? 0) + 1);
+      // With several machines an answer given on another board is an answer here too (decision 131).
+      for (const a of [...o.ledger.answers, ...(o.answersElsewhere ?? [])]) given.set(`${a.item}|${a.text}`, (given.get(`${a.item}|${a.text}`) ?? 0) + 1);
       const had = new Map<string, number>();
       for (const a of o.answers) {
         const k = `${a.subject.host}:${a.subject.kind}:${a.subject.id}|${a.answer}`;

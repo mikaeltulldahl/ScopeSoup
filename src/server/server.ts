@@ -634,7 +634,11 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
       }
       // A question the store has not read back is named by the park that asked it (`toSet`) and its text.
       const set = job?.parked ? parkSet(job) : undefined;
-      const lines = resolved.map((each) => ({ kind: "answer", by: by(), fields: { answer: each.text, ...(each.asked ? { to: each.asked.at, toBy: each.asked.by, toQuestion: each.asked.question } : set ? { toSet: set, ...(each.target ? { toQuestion: each.target.question } : {}) } : {}) } }));
+      // The question as the store records it, when the line does not name it otherwise, so every machine reads the same answer back.
+      const lines = resolved.map((each) => {
+        const named = each.asked?.question ?? (set ? each.target?.question : undefined);
+        return { kind: "answer", by: by(), fields: { answer: each.text, ...(each.asked ? { to: each.asked.at, toBy: each.asked.by, toQuestion: each.asked.question } : set ? { toSet: set, ...(each.target ? { toQuestion: each.target.question } : {}) } : {}), ...(each.question && each.question !== named ? { question: each.question } : {}) } };
+      });
       let written = 0;
       try {
         if (lines.length > 1 && write.appendLogs) {
@@ -1238,49 +1242,71 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
     // The line park wrote for the rewrite is answered in the item's log (meta branch) first: a log that does not take it leaves the rewrite
     // waiting, so no question stays open there for a job that goes on (#230).
     const logs = !!write?.appendLog && subject.host === items!.host;
-    if (logs) {
-      const asked = (item.openQuestions ?? []).filter((question) => !question.proposal && question.question === parkedReason).pop();
-      const said = !keeps ? `Answered the triage's questions: ${answers.join(" | ")}` : `${action === "reject" ? "Rejected" : action === "edit" ? "Edited and accepted" : "Accepted"} the triage's rewrite${answers.length > 0 ? `, keeping the recommendations: ${answers.join(" | ")}` : ""}.`;
-      try {
-        await write!.appendLog!(subject, { kind: "answer", by: by(), fields: { answer: said, ...(asked ? { to: asked.at, toBy: asked.by, toQuestion: asked.question } : { toSet: parkSet(job!) }) } });
-      } catch (error) {
-        return sendError(response, 502, "WRITE_REFUSED", `The answer is not recorded: it could not be written to ${subject.id}'s log (${error instanceof Error ? error.message : String(error)}). Try again.`);
-      }
-    }
-    // The description is written next: when the host refuses, nothing is recorded and the rewrite still waits.
-    // On the meta branch the labels are written in the same edit: the proposed changes that still make sense on the Item now.
-    let written = false;
-    // The description itself was written here (not only labels): the job then waits until the store reads it back.
-    let bodyWritten = false;
-    let labelsDone: { added: string[]; removed: string[] } | undefined;
+    // The edit is worked out before anything is written, so the log's answer line can say what the store records. On the meta branch
+    // the labels go in the same edit: the proposed changes that still make sense on the Item now.
+    const patch: WorkPatch = {};
+    let labelsPlanned: { added: string[]; removed: string[] } | undefined;
     if (writable && (newText !== undefined || !isEmptyChange(labelChange))) {
-      const patch: WorkPatch = {};
       if (newText !== undefined && newText !== (item.body ?? "").trim()) patch.body = newText;
       if (!isEmptyChange(labelChange)) {
         const current = (await items!.work?.getWork(subject).catch(() => null)) ?? item;
         const next = applyChange(current.labels, labelChange!);
         if (next.add.length > 0 || next.remove.length > 0) {
           patch.labels = next.labels;
-          labelsDone = { added: next.add, removed: next.remove };
-        }
-      }
-      if (Object.keys(patch).length > 0) {
-        try {
-          const done = await write!.editWork!(subject, patch);
-          const changed = [...(patch.body !== undefined ? ["description"] : []), ...(patch.labels !== undefined ? ["labels"] : [])];
-          if (write!.appendLog) await write!.appendLog(done.work, { kind: "edited", by: by(), fields: { changed, via: `triage, round ${rewrite.round}`, ...(patch.body !== undefined ? { was: rewrite.original } : {}), ...(labelsDone ? { labels: changeText({ add: labelsDone.added, remove: labelsDone.removed }) } : {}) } });
-          written = true;
-          bodyWritten = patch.body !== undefined;
-        } catch (error) {
-          return sendError(response, 400, "WRITE_REFUSED", error instanceof Error ? error.message : String(error));
+          labelsPlanned = { added: next.add, removed: next.remove };
         }
       }
     }
-    // On GitHub only the issue's body is replaced. A refusal does not stop the answer: the text is kept as the answer.
+    // On GitHub only the issue's body is replaced (below). The issue already reads so: nothing is sent, and the description above is the text.
     const describe = options.description;
     const describable = newText !== undefined && !writable && describe !== undefined && subject.host === describe.host;
-    // The issue already reads so: nothing is sent, and the description above is the text.
     const unchanged = describable && newText === (item.body ?? "").trim();
+    /** The decision, recorded as an answer when every recommendation was kept, with how the description and labels went. */
+    const decided = (replacedNow: boolean, replaceProblem: string | undefined, labels: { added: string[]; removed: string[] } | undefined, labelsFailed: string): string => {
+      const said = newText === undefined
+        ? "Rejected the triage's rewrite: work from the description as it stands."
+        : writable || replacedNow || unchanged
+          ? `${action === "edit" ? "Edited and accepted" : "Accepted"} the triage's rewrite: the description above is the new text.`
+          : replaceProblem !== undefined
+            ? `${action === "edit" ? "Edited and accepted" : "Accepted"} the triage's rewrite, but Scope Soup could not write it to the issue (${replaceProblem}). Use this description instead of the one written above:\n${newText}`
+            : `${action === "edit" ? "Edited and accepted" : "Accepted"} the triage's rewrite. Use this description instead of the one written above (the item is edited on its host, not here):\n${newText}`;
+      const labelsSaid = labels && (labels.added.length > 0 || labels.removed.length > 0) ? ` Labels: ${changeText({ add: labels.added, remove: labels.removed })}.` : "";
+      return `${said}${labelsSaid}${labelsFailed}`;
+    };
+    /** The answers recorded: one per question, and the decision when there is one. */
+    const recorded = (decision: string | undefined): { question: string; answer: string }[] => [
+      ...rewrite.questions.map((question, index) => ({ question: question.question, answer: answers[index]! })),
+      ...(decision !== undefined ? [{ question: `Triage rewrite, round ${rewrite.round}`, answer: decision }] : []),
+    ];
+    // On the meta branch the store records the answers the log's line names (`answers`), so every machine reads back the same ones.
+    const loggedDecision = logs && keeps ? decided(false, undefined, labelsPlanned, "") : undefined;
+    if (logs) {
+      const asked = (item.openQuestions ?? []).filter((question) => !question.proposal && question.question === parkedReason).pop();
+      const said = !keeps ? `Answered the triage's questions: ${answers.join(" | ")}` : `${action === "reject" ? "Rejected" : action === "edit" ? "Edited and accepted" : "Accepted"} the triage's rewrite${answers.length > 0 ? `, keeping the recommendations: ${answers.join(" | ")}` : ""}.`;
+      try {
+        await write!.appendLog!(subject, { kind: "answer", by: by(), fields: { answer: said, answers: recorded(loggedDecision), ...(asked ? { to: asked.at, toBy: asked.by, toQuestion: asked.question } : { toSet: parkSet(job!) }) } });
+      } catch (error) {
+        return sendError(response, 502, "WRITE_REFUSED", `The answer is not recorded: it could not be written to ${subject.id}'s log (${error instanceof Error ? error.message : String(error)}). Try again.`);
+      }
+    }
+    // The description is written next: when the host refuses, nothing is recorded and the rewrite still waits.
+    let written = false;
+    // The description itself was written here (not only labels): the job then waits until the store reads it back.
+    let bodyWritten = false;
+    let labelsDone: { added: string[]; removed: string[] } | undefined;
+    if (Object.keys(patch).length > 0) {
+      try {
+        const done = await write!.editWork!(subject, patch);
+        labelsDone = labelsPlanned;
+        const changed = [...(patch.body !== undefined ? ["description"] : []), ...(patch.labels !== undefined ? ["labels"] : [])];
+        if (write!.appendLog) await write!.appendLog(done.work, { kind: "edited", by: by(), fields: { changed, via: `triage, round ${rewrite.round}`, ...(patch.body !== undefined ? { was: rewrite.original } : {}), ...(labelsDone ? { labels: changeText({ add: labelsDone.added, remove: labelsDone.removed }) } : {}) } });
+        written = true;
+        bodyWritten = patch.body !== undefined;
+      } catch (error) {
+        return sendError(response, 400, "WRITE_REFUSED", error instanceof Error ? error.message : String(error));
+      }
+    }
+    // A refusal does not stop the answer: the text is kept as the answer.
     let replaced = false;
     let replaceProblem: string | undefined;
     if (describable && !unchanged) {
@@ -1299,25 +1325,17 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
         labelProblem = error instanceof Error ? error.message : String(error);
       }
     }
-    const labelsSaid = labelsDone && (labelsDone.added.length > 0 || labelsDone.removed.length > 0) ? ` Labels: ${changeText({ add: labelsDone.added, remove: labelsDone.removed })}.` : "";
     const labelsFailed = labelProblem !== undefined ? ` Scope Soup could not change the labels (${labelProblem}): ${changeText(labelChange)}.` : "";
     const at = now().toISOString();
     const outcome = store.tx(() => {
       const refused = rewriteRefusal(loadJobs(store)[ref], parkedAt, answers);
       if (refused) return { refused };
-      rewrite.questions.forEach((question, index) => {
-        addAnswer(store, { subject, answer: answers[index]!, by: by().who, at, textHash: itemTextHash(item), question: question.question, ...(question.options.length > 0 ? { options: optionTexts(question.options) } : {}) });
+      // As the log's line names them (meta branch), else as the writes went.
+      const decision = !keeps ? undefined : (loggedDecision ?? decided(replaced, replaceProblem, labelsDone, labelsFailed));
+      recorded(decision).forEach((each, index) => {
+        const question = rewrite.questions[index];
+        addAnswer(store, { subject, answer: each.answer, by: by().who, at, question: each.question, ...(question ? { textHash: itemTextHash(item), ...(question.options.length > 0 ? { options: optionTexts(question.options) } : {}) } : {}) });
       });
-      if (keeps) {
-        const said = newText === undefined
-          ? "Rejected the triage's rewrite: work from the description as it stands."
-          : writable || replaced || unchanged
-            ? `${action === "edit" ? "Edited and accepted" : "Accepted"} the triage's rewrite: the description above is the new text.`
-            : replaceProblem !== undefined
-              ? `${action === "edit" ? "Edited and accepted" : "Accepted"} the triage's rewrite, but Scope Soup could not write it to the issue (${replaceProblem}). Use this description instead of the one written above:\n${newText}`
-              : `${action === "edit" ? "Edited and accepted" : "Accepted"} the triage's rewrite. Use this description instead of the one written above (the item is edited on its host, not here):\n${newText}`;
-        addAnswer(store, { subject, answer: `${said}${labelsSaid}${labelsFailed}`, by: by().who, at, question: `Triage rewrite, round ${rewrite.round}` });
-      }
       if (labelProblem !== undefined) {
         store.appendEvent({ kind: "orchestrator.host_write_failed", subject: ref, actor: by().who, data: { reason: `Could not change the labels of ${subject.id} on ${subject.host}: ${labelProblem}.` } }, at);
       }
