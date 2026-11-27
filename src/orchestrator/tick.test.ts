@@ -280,6 +280,12 @@ function usage(five: number | undefined, week: number | undefined, extra: Partia
   };
 }
 
+/** A reading a minute before both windows reset: each pace line is at its budget, so only the stop at the budget holds a start. */
+function nearReset(five: number, week: number): UsageSample {
+  const resetsAt = new Date(T0 + 60_000).toISOString();
+  return { at: new Date(T0).toISOString(), status: "allowed", windows: [{ kind: "five_hour", utilization: five, resetsAt }, { kind: "seven_day", utilization: week, resetsAt }] };
+}
+
 // --- pure parts ---
 
 test("ready items: todo, not blocked, not held, no decision pending, no open change, no job", () => {
@@ -758,21 +764,33 @@ test("at level 1 with the default config the stop at the 80 % budget is always o
   assert.equal(weekly.runner.requests.length, 0);
   // With more than 20 % left the triage starts.
   const room = world(cfg, [item("1")]);
-  room.store.addUsageSample(usage(0.79, 0.1));
+  room.store.addUsageSample(nearReset(0.79, 0.1));
   await room.run();
   assert.deepEqual(room.runner.requests.map((request) => request.role), ["triage"]);
 });
 
-test("the budget: with nothing running one session starts (the kick), even with a week used ahead of its pace line", async () => {
-  // Half the week gone, 60 % used: under the budget, but over the pace line (40 %).
-  const without = world(config({ rules: STAGE1 }), [item("1")]);
-  without.store.addUsageSample(usage(0.1, 0.6));
-  await without.run();
-  assert.equal(without.runner.requests.length, 1);
+test("the pace holds one session at a time too: with nothing running a session starts only at or under the pace line, or in a fresh window", async () => {
+  // Half the week gone, 60 % used: under the budget, but over the pace line (40 %). Nothing starts, and the status line says why.
+  const ahead = world(config({ rules: STAGE1 }), [item("1")]);
+  ahead.store.addUsageSample(usage(0.1, 0.6));
+  const held = await ahead.run();
+  assert.equal(ahead.runner.requests.length, 0);
+  assert.match(held.idle ?? "", /the weekly window is at 60 %, over its pace line \(40 % now\)/);
+  // At the line it starts (the kick).
+  const under = world(config({ rules: STAGE1 }), [item("1")]);
+  under.store.addUsageSample(usage(0.1, 0.4));
+  await under.run();
+  assert.equal(under.runner.requests.length, 1);
+  // A fresh window: its line starts at 0 at the reset, so a session may start while the window has had about one session's worth.
+  const fresh: UsageSample = { at: new Date(T0).toISOString(), status: "allowed", windows: [{ kind: "five_hour", utilization: 0.04, resetsAt: new Date(T0 + 5 * 3600_000 - 60_000).toISOString() }, { kind: "seven_day", utilization: 0.01, resetsAt: new Date(T0 + 7 * 24 * 3600_000 - 60_000).toISOString() }] };
+  const start = world(config({ rules: STAGE1 }), [item("1")]);
+  start.store.addUsageSample(fresh);
+  await start.run();
+  assert.equal(start.runner.requests.length, 1);
 
   // An old file that still switches pacing on loads with a notice and changes nothing.
   const paced = world(config({ rules: { ...STAGE1, weeklyPacing: { on: true, reason: "test" } } }), [item("1")]);
-  paced.store.addUsageSample(usage(0.1, 0.6));
+  paced.store.addUsageSample(usage(0.1, 0.4));
   await paced.run();
   assert.equal(paced.runner.requests.length, 1);
 });
@@ -1715,7 +1733,7 @@ test("budget: each window has its own budget, and the scheduler stops at each fo
     const settings = { budgetFiveHour: { value: 1 - five, reason: "test" }, budgetSevenDay: { value: 1 - week, reason: "test" } };
     const starts = async (fiveUsed: number, weekUsed: number): Promise<boolean> => {
       const w = world(config({ rules: STAGE1, settings }), [item("1")]);
-      w.store.addUsageSample(usage(fiveUsed, weekUsed));
+      w.store.addUsageSample(nearReset(fiveUsed, weekUsed));
       await w.run();
       return w.runner.requests.length === 1;
     };
@@ -5392,7 +5410,7 @@ test("the waiting caps: new triage stops while 2 things wait for a person, new w
   // Item 1's first implement step started (1 waiting is under 5). Five drafts now: no first implement step of a new Item starts.
   assert.deepEqual(one.runner.requests.map((request) => request.role), ["triage", "implement"]);
 
-  const work = world(config({ settings: { ...CEILING_4, waitingCapTriage: { value: 9, reason: "test" } } }), [item("1")]);
+  const work = world(config({ settings: { ...CEILING_4, waitingCapTriage: { value: 5, reason: "test" } } }), [item("1")]);
   work.store.addUsageSample(usage(0.1, 0.1));
   await work.run();
   fileDrafts(work.store, { host: "fake", kind: "work", id: "8" }, "reviewer", [1, 2, 3, 4, 5].map(draft), "test", new Date(T0).toISOString());
@@ -5400,7 +5418,7 @@ test("the waiting caps: new triage stops while 2 things wait for a person, new w
   assert.deepEqual(work.runner.requests.map((request) => request.role), ["triage"]);
   assert.match(waits.idle ?? "", /new work waits: 5 things wait for you \(it starts below 5\)/);
   // A size label skips triage, which is new work too.
-  const sized = world(config({ settings: { ...CEILING_4, waitingCapTriage: { value: 9, reason: "test" } } }), [item("1", { labels: ["size:small"] })]);
+  const sized = world(config({ settings: { ...CEILING_4, waitingCapTriage: { value: 5, reason: "test" } } }), [item("1", { labels: ["size:small"] })]);
   sized.store.addUsageSample(usage(0.1, 0.1));
   fileDrafts(sized.store, { host: "fake", kind: "work", id: "8" }, "reviewer", [1, 2, 3, 4, 5].map(draft), "test", new Date(T0).toISOString());
   assert.equal((await sized.run()).started.length, 0);

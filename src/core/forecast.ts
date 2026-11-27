@@ -139,7 +139,8 @@ export function estimateSession(past: readonly PastSession[], maxMs: number): Se
   for (const kind of ["five_hour", "seven_day"] as const) {
     const known = newest.flatMap((each) => (each.use[kind] === undefined ? [] : [each.use[kind]!])).slice(0, RECENT_SESSIONS);
     if (known.length >= MIN_HISTORY) {
-      use[kind] = median(known);
+      // Held at the default at least: coarse readings give many sessions no rise at all, and a median of 0 would let a burst start.
+      use[kind] = Math.max(DEFAULT_ESTIMATE.use[kind], median(known));
       from = Math.max(from, known.length);
     }
   }
@@ -179,15 +180,22 @@ function pct(share: number): string {
 }
 
 /**
- * Whether one more session may start by the pace: with it, each window's use (the reading, what the running sessions are still
- * expected to add, and the new session's expected use) stays at or under the window's pace line by the time the new session would
- * end (at most the reset). Both windows are checked; the one furthest over decides. With nothing running, one session may always
- * start (the kick: a fresh window's line starts at 0); the usage check's stop at the budget stays the limit then.
+ * A window is fresh while its use is at most this: about one session's worth of the default guess. With nothing running a session may
+ * start in a fresh window whatever its pace line, which starts at 0 at the reset (the kick).
+ */
+export const FRESH_USE: Record<UsageWindowKind, number> = DEFAULT_ESTIMATE.use;
+
+/**
+ * Whether one more session may start by the pace. With sessions running: with it, each window's use (the reading, what the running
+ * sessions are still expected to add, and the new session's expected use) stays at or under the window's pace line by the time the new
+ * session would end (at most the reset). With nothing running (the kick): each window's use is at or under its pace line now, or the
+ * window is fresh (`FRESH_USE`), so one session at a time also waits above the line. Both windows are checked; the one furthest over
+ * decides. Without a live reading (none, or every window's reset passed) only one session may start, to get a reading.
  */
 export function paceCheck(input: PaceInput): PaceDecision {
-  if (input.running.length === 0) return { allow: true, reason: "Nothing runs: one session may start while the windows are under their budgets." };
+  const idle = input.running.length === 0;
   const sample = input.sample;
-  if (!sample) return { allow: true, reason: "No usage reading to pace by." };
+  if (!sample) return idle ? { allow: true, reason: "No usage reading yet: one session may start to get one." } : { allow: false, reason: "no usage reading to pace by; waiting for one from the running sessions" };
   const readAt = Date.parse(sample.at);
   let worst: { kind: UsageWindowKind; over: number; expect: number; line: number; end: number; used: number } | undefined;
   const parts: string[] = [];
@@ -195,6 +203,12 @@ export function paceCheck(input: PaceInput): PaceDecision {
     const resetsAt = Date.parse(window.resetsAt);
     if (window.utilization === undefined || Number.isNaN(resetsAt) || resetsAt <= input.now) continue;
     const kind = window.kind;
+    if (idle) {
+      const line = paceLevel(input.budget[kind], resetsAt, kind, input.now);
+      parts.push(`${PACE_NAMES[kind]} ${pct(window.utilization)} of its ${pct(line)}`);
+      if (window.utilization > line && window.utilization > FRESH_USE[kind] && (!worst || window.utilization - line > worst.over)) worst = { kind, over: window.utilization - line, expect: window.utilization, line, end: input.now, used: window.utilization };
+      continue;
+    }
     // What the running sessions have not shown in the reading yet: the share of each one's expected run still ahead of the reading.
     const ahead = input.running.reduce((sum, each) => sum + each.estimate.use[kind] * Math.min(1, Math.max(0, 1 - (readAt - each.startedAt) / each.estimate.durationMs)), 0);
     const end = Math.min(input.now + input.next.durationMs, resetsAt);
@@ -203,7 +217,9 @@ export function paceCheck(input: PaceInput): PaceDecision {
     parts.push(`${PACE_NAMES[kind]} ${pct(expect)} of its ${pct(line)}`);
     if (expect > line && (!worst || expect - line > worst.over)) worst = { kind, over: expect - line, expect, line, end, used: window.utilization };
   }
-  if (!worst) return { allow: true, reason: parts.length > 0 ? `Within the pace: with one more session ${parts.join(", ")}.` : "No window to pace by." };
+  if (parts.length === 0) return idle ? { allow: true, reason: "No live usage reading (the windows reset since): one session may start to get one." } : { allow: false, reason: "the windows reset since the last usage reading; waiting for a new one from the running sessions" };
+  if (!worst) return { allow: true, reason: idle ? `Within the pace: ${parts.join(", ")}.` : `Within the pace: with one more session ${parts.join(", ")}.` };
+  if (idle) return { allow: false, window: worst.kind, reason: `the ${PACE_NAMES[worst.kind]} is at ${pct(worst.used)}, over its pace line (${pct(worst.line)} now); the next session starts when the line has caught up` };
   const when = clock(new Date(worst.end), new Date(input.now));
   return {
     allow: false,

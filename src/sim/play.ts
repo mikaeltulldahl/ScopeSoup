@@ -91,7 +91,7 @@ export function draw(world: SimWorld, rnd: Rng, options: RunOptions): Action {
     if (roll < 12) return items.length < (options.long ? 14 : 8) ? { kind: "new-item", v: v() } : { kind: "edit", item: id, v: v() };
     if (roll < 14) return { kind: "switch", to: rnd.pick(["pause", "resume", "resume", "stop"] as const)! };
     if (roll < 15) return { kind: "level", to: rnd.pick([1, 2, 3, 4, 4, 3])! };
-    return rnd.chance(0.75) ? { kind: "slots", to: 1 + rnd.int(3) } : { kind: "caps", triage: 1 + rnd.int(2), work: 1 + rnd.int(3) };
+    return rnd.chance(0.75) ? { kind: "slots", to: 1 + rnd.int(3) } : ((triage: number) => ({ kind: "caps" as const, triage, work: triage + rnd.int(3) }))(1 + rnd.int(2));
   };
   switch (kind) {
     case "end":

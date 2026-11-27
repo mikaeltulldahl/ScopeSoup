@@ -37,6 +37,8 @@ emit({ type: "active_goal" });
 emit({ type: "system", subtype: "init", session_id: sessionId, model: "fake" });
 emit({ type: "system", subtype: "fake", args: process.argv.slice(2), cwd: process.cwd(), prompt, hasApiKey: process.env.ANTHROPIC_API_KEY !== undefined, ...(process.env.FAKE_CLAUDE_UNIT ? { unit: process.env.FAKE_CLAUDE_UNIT } : {}) });
 
+// The readings are on the real clock while a test runs on its own: they show fresh windows (about one session's worth used), which
+// the pace lets one session at a time start in whatever the test's clock (decision 133).
 const soon = Math.floor(Date.now() / 1000) + 3600;
 const reset = Number(process.env.FAKE_CLAUDE_RESET ?? soon);
 
@@ -58,7 +60,7 @@ if (mode === "hang") {
   emit({ type: "assistant", message: { content: [{ type: "text", text: reply }] } });
   emit({
     type: "rate_limit_event",
-    rate_limit_info: { status: "allowed", unifiedWindows: { five_hour: { utilization: 0.1, resetsAt: reset }, seven_day: { utilization: 0.2, resetsAt: reset + 86400 } } },
+    rate_limit_info: { status: "allowed", unifiedWindows: { five_hour: { utilization: 0.05, resetsAt: reset }, seven_day: { utilization: 0.01, resetsAt: reset + 86400 } } },
   });
   emit({ type: "result", subtype: "success", is_error: false, result: reply, session_id: sessionId, num_turns: 1, total_cost_usd: 0.01 });
 } else if (mode === "fail") {
@@ -105,7 +107,7 @@ if (mode === "hang") {
   }
   emit({
     type: "rate_limit_event",
-    rate_limit_info: { status: "allowed", unifiedWindows: { five_hour: { utilization: 0.1, resetsAt: reset }, seven_day: { utilization: 0.2, resetsAt: reset + 86400 } } },
+    rate_limit_info: { status: "allowed", unifiedWindows: { five_hour: { utilization: 0.05, resetsAt: reset }, seven_day: { utilization: 0.01, resetsAt: reset + 86400 } } },
   });
   emit({
     type: "result", subtype: "success", is_error: false, result: "ok", session_id: sessionId, num_turns: 2, total_cost_usd: 0.01,

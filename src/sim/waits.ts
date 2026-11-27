@@ -7,7 +7,7 @@ import { itemTextHash } from "../core/answerReuse.ts";
 
 export type Role = "triage" | "implement" | "review";
 export type PersonWait = "answer" | "rewrite" | "restructuring" | "not-ready" | "escalated" | "merge" | "holds";
-export type StartCause = "backlog" | "switch" | "level" | "usage" | "timer" | "text" | "same-files" | "claim" | "cap" | "slot";
+export type StartCause = "backlog" | "switch" | "level" | "usage" | "pace" | "timer" | "text" | "same-files" | "claim" | "cap" | "slot";
 
 export type W =
   | { kind: "nothing" }
@@ -32,6 +32,8 @@ export interface WaitInput {
   switches: Record<Role, string>;
   level: number;
   usageReserve: boolean;
+  /** Nothing runs and a window is over its pace line and not fresh: no session starts (decision 133). */
+  paceHolds?: boolean;
   /** As many things wait for a person as the cap on new work, or more (decision 133). */
   workCapped?: boolean;
   now: string;
@@ -101,6 +103,7 @@ export function waitsFor(input: WaitInput): W {
   if (input.switches[role] !== "started" && (!picked || input.level >= STEP_LEVEL[role])) return start("switch");
   if (STEP_LEVEL[role] > input.level && !picked) return start("level");
   if (input.usageReserve) return start("usage");
+  if (input.paceHolds) return start("pace");
   if (job.notBefore && job.notBefore > input.now) return start("timer");
   const holder = item.holder;
   if (holder && holder.actor.bot === true && holder.actor.id !== input.claimant && (!holder.until || holder.until > input.now)) return start("claim");

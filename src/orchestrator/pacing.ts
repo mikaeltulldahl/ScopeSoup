@@ -80,13 +80,12 @@ export function pacer(store: Store, config: ProjectConfig, at: string): Pacer {
     }
     return estimates[role];
   };
-  const running = sessions.filter(isLive).map((session) => ({ role: usageRole(session.role), startedAt: Date.parse(session.startedAt) }));
+  // A person's chat turn is not a step: the tick does not count it as running either.
+  const running = sessions.filter((session) => isLive(session) && !session.chat).map((session) => ({ role: usageRole(session.role), startedAt: Date.parse(session.startedAt) }));
   const runningNow = () => running.map((each) => ({ estimate: estimate(each.role), startedAt: each.startedAt }));
   return {
     check(role) {
       if (providerFor(config, role).allowance) return { allow: true, reason: "Paced by its monthly allowance." };
-      // The kick needs no estimate: with nothing running one session may start.
-      if (running.length === 0) return paceCheck({ sample, now, budget, running: [], next: estimate(role) });
       return paceCheck({ sample, now, budget, running: runningNow(), next: estimate(role) });
     },
     started(role) {
@@ -144,6 +143,6 @@ export function readPacing(store: Store): PacingState | undefined {
 /** Live sessions by role, for the Usage tab. */
 export function runningByRole(store: Store): Record<SessionRole, number> {
   const count: Record<SessionRole, number> = { triage: 0, implement: 0, review: 0 };
-  for (const session of store.list<Session>("session")) if (isLive(session)) count[usageRole(session.role)]++;
+  for (const session of store.list<Session>("session")) if (isLive(session) && !session.chat) count[usageRole(session.role)]++;
   return count;
 }

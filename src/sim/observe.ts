@@ -73,6 +73,11 @@ export interface Observation {
    * start then but by the kick, one while nothing runs (decision 133).
    */
   overPace: boolean;
+  /**
+   * Some window's use is over its pace line now and more than a fresh window's (about one session's worth): with nothing running, no
+   * session may start either (the kick is for a fresh window, decision 133).
+   */
+  kickBlocked: boolean;
   /** What waits for a person, counted by the checker: Items parked for one (not in the queue's hands) or with decisions to look at, and drafts. */
   waiting: number;
   /** The waiting caps the configuration holds. */
@@ -136,6 +141,7 @@ export async function observe(world: SimWorld, seed: number, action: Action, pre
   const usageReserve = (sample?.windows ?? []).some((window) => (window.utilization ?? 0) >= 0.9);
   const settings = world.configNow.settings;
   const overPace = overThePace(sample, Date.parse(at), { five_hour: settings.budgetFiveHour.value, seven_day: settings.budgetSevenDay.value }, settings.sessionTimeoutMinutes.value * 60_000);
+  const kickBlocked = overThePace(sample, Date.parse(at), { five_hour: settings.budgetFiveHour.value, seven_day: settings.budgetSevenDay.value }, 0, FRESH);
   const caps = { triage: settings.waitingCapTriage.value, work: settings.waitingCapWork.value };
   const waiting = items.filter((item) => !closedState(item)).filter((item) => {
     const job = jobs[refKey(item.ref)];
@@ -156,7 +162,7 @@ export async function observe(world: SimWorld, seed: number, action: Action, pre
     const mine = live.filter((each) => refKey(each.session.subject) === key).map((each) => ({ id: each.session.ref.id, role: each.session.role as Role }));
     const w = waitsFor({
       item, job, live: mine.map((each) => each.role), settling: !!job?.sessionId && mine.length === 0, open, ownBlockers: (own[key] ?? []).map(refKey), switches, level: world.configNow.level, usageReserve, now: at,
-      workCapped: waiting >= caps.work, liveCount: live.length, slots: world.configNow.settings.maxParallelSessions.value, busy: busy.filter((each) => each.key !== key), claimant,
+      workCapped: waiting >= caps.work, paceHolds: live.length === 0 && kickBlocked, liveCount: live.length, slots: world.configNow.settings.maxParallelSessions.value, busy: busy.filter((each) => each.key !== key), claimant,
     });
     // The served page is read for an Item that waits for a person, at ticks only (it is the costly part of a step).
     // It is read again only when W changed since the step before.
@@ -178,7 +184,7 @@ export async function observe(world: SimWorld, seed: number, action: Action, pre
   });
   const requestsBefore = previous ? previous.ledger.requests.filter((r) => r.step < world.step).length : 0;
   return {
-    seed, machine: world.machine, step: world.step, action, at, level: world.configNow.level, slots: world.configNow.settings.maxParallelSessions.value, switches, usageReserve, overPace, waiting, caps, fair: world.fair,
+    seed, machine: world.machine, step: world.step, action, at, level: world.configNow.level, slots: world.configNow.settings.maxParallelSessions.value, switches, usageReserve, overPace, kickBlocked, waiting, caps, fair: world.fair,
     items: itemObs, sessions: store.list<Session>("session"), started, liveCount: live.length, events, lastSeq,
     ...(first ? { firstEvent: JSON.stringify(first) } : {}),
     answers: knownAnswers(store), tick: action.kind === "tick" || action.kind === "inside-tick" ? world.lastTick : null, tickError: world.tickError,
@@ -214,12 +220,16 @@ export function uniqueLeftovers(git: FakeGit): Set<string> {
  * The checker's own pace (decision 133): a live window whose use is over the line from 0 at its start to its budget at its reset, at
  * the latest moment a session started now could end (the session timeout from now, at most the reset).
  */
-export function overThePace(sample: UsageSample | null, now: number, budget: Record<UsageWindowKind, number>, longestMs: number): boolean {
+/** A fresh window: at most about one session's worth used (the simulator's own copy of the product's floor). */
+const FRESH: Record<UsageWindowKind, number> = { five_hour: 0.05, seven_day: 0.01 };
+
+export function overThePace(sample: UsageSample | null, now: number, budget: Record<UsageWindowKind, number>, longestMs: number, floor?: Record<UsageWindowKind, number>): boolean {
   const length: Record<UsageWindowKind, number> = { five_hour: 5 * 3600_000, seven_day: 7 * 24 * 3600_000 };
   return (sample?.windows ?? []).some((window) => {
     const reset = Date.parse(window.resetsAt);
     if (window.utilization === undefined || !(reset > now)) return false;
     const end = Math.min(reset, now + longestMs);
+    if (floor && window.utilization <= floor[window.kind]) return false;
     return window.utilization > (budget[window.kind] * (end - (reset - length[window.kind]))) / length[window.kind];
   });
 }

@@ -1071,6 +1071,12 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
       step, failures: 0, fixRounds: 0, startedAt: at, ...(entry.item.backlog ? {} : { seenInTodo: true as const }),
       ...(skipped ? { triage: { ready: true, size: skipped.size, paths: [], hidesDecision: false } } : {}),
     };
+    // The ceiling as it is now, before anything is taken for the start: a person may have lowered it during this tick.
+    const ceilingFirst = Math.min(slots, deps.config.load().config?.settings.maxParallelSessions.value ?? slots);
+    if (running >= ceilingFirst) {
+      reasons.push(ceilingFirst === 1 ? "the 1 session slot is in use" : `all ${ceilingFirst} session slots are in use`);
+      break;
+    }
     // A unit of each resource the step needs, before its workspace and claim. Without one the item waits and the next may start.
     const units = deps.resources ? await deps.resources.take(key, `${step} for ${entry.item.ref.id}`, step) : { ok: true as const, env: {} };
     if (!units.ok) {

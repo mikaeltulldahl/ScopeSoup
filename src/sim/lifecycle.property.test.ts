@@ -41,7 +41,6 @@ it("random runs keep the lifecycle rules, apart from the known failures, and rea
     totals.closed += (result.seen.get("close-done") ?? 0) + (result.seen.get("close-abandoned") ?? 0);
     for (const w of result.waits) waits.add(w);
   }
-  t.diagnostic(`WAITS ${[...waits].join(" ")}`);
   t.diagnostic(`${seeds.length} seeds, ${totals.steps} steps, ${totals.merges} merges, ${totals.answers} answers, ${totals.accepted} rewrites accepted and ${totals.rejected} rejected, ${totals.closed} closes, ${totals.restarts} restarts`);
 
   // A rule that fails and is not known: the first failure in words, its replay, and the steps shrunk to a test to paste.
@@ -69,7 +68,7 @@ it("random runs keep the lifecycle rules, apart from the known failures, and rea
     assert.ok(totals.accepted > 0 && totals.rejected > 0, "no rewrite was both accepted and rejected");
     assert.ok(totals.restarts > 0, "no restart");
     assert.ok(totals.closed > 0, "no close by a person");
-    const wanted = ["not-started", "session", "nothing", "queue", "person(answer)", "person(rewrite)", "person(not-ready)", "person(holds)", "start(slot)", "start(timer)", "start(same-files)", "start(switch)", "start(level)", "start(usage)", "tick(paced)"];
+    const wanted = ["not-started", "session", "nothing", "queue", "person(answer)", "person(rewrite)", "person(not-ready)", "person(holds)", "start(slot)", "start(timer)", "start(same-files)", "start(switch)", "start(level)", "start(usage)", "start(pace)", "tick(paced)"];
     // Seen in the long run only: the normal run's few seeds do not reach an escalation, and reach a blocked Item only by chance (a
     // blockedBy link from a triage that settles while the other Item is open; since #229 none of the 8 seeds does).
     if (LONG) wanted.push("person(escalated)", "blocker", "start(cap)", "tick(triage-capped)", "tick(work-capped)");

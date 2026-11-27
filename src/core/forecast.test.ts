@@ -138,11 +138,25 @@ test("paceCheck: what the running sessions have not shown in the reading yet cou
   assert.equal(paceCheck(pace({ sample: reading(0.46, 0.1), running: [{ estimate: est(0.05, 0.01), startedAt: nowMs - 10 * MIN }] })).allow, false);
 });
 
-test("paceCheck: the kick, with nothing running one session may start; a window whose reset passed is not paced by", () => {
-  assert.equal(paceCheck(pace({ sample: reading(0.7, 0.7), running: [] })).allow, true);
+test("paceCheck with nothing running (the kick): only at or under the pace line now, or in a fresh window", () => {
+  // Line now: 5-hour 48 %, week 40 %.
+  assert.equal(paceCheck(pace({ sample: reading(0.48, 0.4), running: [] })).allow, true);
+  const over = paceCheck(pace({ sample: reading(0.5, 0.1), running: [] }));
+  assert.equal(over.allow, false);
+  assert.match(over.reason, /^the 5-hour window is at 50 %, over its pace line \(48 % now\)/);
+  // Just reset: the line is near 0, but a window that has had about one session's worth (the default guess) is fresh.
+  const fresh: UsageSample = { at: at(0), windows: [{ kind: "five_hour", utilization: 0.05, resetsAt: at(299) }, { kind: "seven_day", utilization: 0.01, resetsAt: at(7 * 24 * 60 - 1) }] };
+  assert.equal(paceCheck(pace({ sample: fresh, running: [] })).allow, true);
+  const used: UsageSample = { at: at(0), windows: [{ kind: "five_hour", utilization: 0.06, resetsAt: at(299) }] };
+  assert.equal(paceCheck(pace({ sample: used, running: [] })).allow, false);
+});
+
+test("paceCheck without a live reading (none, or every window's reset passed): only the one session that gets a reading", () => {
   const passed: UsageSample = { at: at(-300), windows: [{ kind: "five_hour", utilization: 0.9, resetsAt: at(-10) }] };
-  assert.equal(paceCheck(pace({ sample: passed })).allow, true);
-  assert.equal(paceCheck(pace({ sample: null })).allow, true);
+  assert.equal(paceCheck(pace({ sample: passed, running: [] })).allow, true);
+  assert.equal(paceCheck(pace({ sample: passed })).allow, false);
+  assert.equal(paceCheck(pace({ sample: null, running: [] })).allow, true);
+  assert.equal(paceCheck(pace({ sample: null })).allow, false);
 });
 
 test("paceCheck: a session that would end after the reset is held to the line at the reset", () => {
@@ -159,8 +173,9 @@ test("sessionsThatFit: as many at once as the pace allows, at most the ceiling",
   assert.match(tight.reason, /5-hour window/);
   // Over the line already: the running ones, no more.
   assert.equal(sessionsThatFit(pace({ sample: reading(0.6, 0.1) }), 8).count, 1);
-  // Nothing runs: the kick lets one.
-  assert.equal(sessionsThatFit(pace({ sample: reading(0.6, 0.1), running: [] }), 8).count, 1);
+  // Nothing runs: the kick lets one only under the line now (48 %), and none above it.
+  assert.equal(sessionsThatFit(pace({ sample: reading(0.45, 0.1), running: [] }), 8).count, 1);
+  assert.equal(sessionsThatFit(pace({ sample: reading(0.6, 0.1), running: [] }), 8).count, 0);
 });
 
 test("estimateSession: the median of the role's newest sessions per window, the default until there are three, the run time held to the timeout", () => {
@@ -170,11 +185,13 @@ test("estimateSession: the median of the role's newest sessions per window, the 
   assert.deepEqual([two.use, two.durationMs, two.from], [DEFAULT_ESTIMATE.use, DEFAULT_ESTIMATE.durationMs, 0]);
   const three = estimateSession([past(10, 0.1, 0.02), past(30, 0.3), past(50, 0.2, 0.04), past(200, undefined, 0.03)], 60 * MIN);
   assert.deepEqual(three.use, { five_hour: 0.2, seven_day: 0.03 });
+  // Coarse readings show no rise for most sessions: a median of 0 is held at the default, so a burst cannot start.
+  assert.deepEqual(estimateSession([past(10, 0, 0), past(10, 0, 0), past(10, 0.2, 0)], 60 * MIN).use, DEFAULT_ESTIMATE.use);
   assert.equal(three.from, 3);
   // Run times 10, 30, 50, 200 minutes: median 40, under the 60-minute timeout; held to a 30-minute one.
   assert.equal(three.durationMs, 40 * MIN);
   assert.equal(estimateSession([past(10, 0.1), past(30, 0.3), past(50, 0.2), past(200)], 30 * MIN).durationMs, 30 * MIN);
   // Only the newest ten count.
-  const many = [...Array.from({ length: 10 }, (_, i) => past(10, 0.01, undefined, i)), ...Array.from({ length: 5 }, (_, i) => past(10, 0.9, undefined, 100 + i))];
-  assert.equal(estimateSession(many, 60 * MIN).use.five_hour, 0.01);
+  const many = [...Array.from({ length: 10 }, (_, i) => past(10, 0.07, undefined, i)), ...Array.from({ length: 5 }, (_, i) => past(10, 0.9, undefined, 100 + i))];
+  assert.equal(estimateSession(many, 60 * MIN).use.five_hour, 0.07);
 });

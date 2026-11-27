@@ -381,6 +381,9 @@ export function validateConfig(given: unknown, baseDir: string): ConfigResult {
   const names = resources.map((each) => each.name);
   for (const [index, name] of names.entries()) if (names.indexOf(name) !== index) err(`The resource name "${name}" is used twice: each resource needs its own name, in resources and sharedResources together.`);
 
+  if (settings.waitingCapTriage.value > settings.waitingCapWork.value) {
+    err(`settings.waitingCapTriage (${settings.waitingCapTriage.value}) is larger than settings.waitingCapWork (${settings.waitingCapWork.value}): new triage must stop no later than new work, so an implementor's questions are not crowded out.`);
+  }
   if (settings.queueMinBatch.value > settings.queueMaxBatch.value) {
     err(`settings.queueMinBatch (${settings.queueMinBatch.value}) is larger than settings.queueMaxBatch (${settings.queueMaxBatch.value}).`);
   }

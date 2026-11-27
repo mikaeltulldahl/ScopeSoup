@@ -166,6 +166,8 @@ export const RULES: Rule[] = [
         // A triage whose Item's text changed under it is stopped and started again (decision 6).
         if (w.kind === "session" && w.role === "triage" && s.role === "triage") return null;
         if (w.kind === "start" && w.cause === "timer") return null;
+        // The pace line rises with the clock: another machine's clock step since this one's last step may have let it start (decision 133).
+        if (w.kind === "start" && w.cause === "pace") return null;
         // Another machine's claim as this store last read it: the start's claim reads the host, and won when that claim was let go
         // meanwhile (#243). The Item is this machine's now.
         if (w.kind === "start" && w.cause === "claim" && o.items.find((each) => each.key === s.item)?.item.holder?.actor.id === (o.machine ? `scopesoup@${o.machine}` : OWN)) return null;
@@ -468,11 +470,14 @@ export const RULES: Rule[] = [
   },
   {
     id: "D10",
-    why: "Pace by the pace line (decision 133): while a window is over its line even at the end of the longest session, at most the kick starts, one session while nothing ran.",
+    why: "Pace by the pace line (decision 133): with sessions running none starts while a window is over its line even at the end of the longest session; with none running none starts while a window is over its line now and not fresh, so one session at a time waits too.",
     check(o, prev) {
-      if (!prev || !isTick(o) || !prev.overPace) return null;
-      const allowed = prev.liveCount === 0 ? 1 : 0;
-      return o.started.length > allowed ? `${o.started.length} session(s) started while a usage window was over its pace line, with ${prev.liveCount} running before` : null;
+      if (!prev || !isTick(o) || o.started.length === 0) return null;
+      // Read at the tick's own time (its reading is not changed by the tick; with several machines the clock may have moved since this
+      // machine's step before), with what ran before it.
+      if (prev.liveCount === 0 && o.kickBlocked) return `${o.started.length} session(s) started with nothing running while a usage window was over its pace line and not fresh`;
+      if (prev.liveCount > 0 && o.overPace) return `${o.started.length} session(s) started while a usage window was over its pace line, with ${prev.liveCount} running before`;
+      return null;
     },
   },
   {

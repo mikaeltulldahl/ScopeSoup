@@ -405,6 +405,7 @@ test("budgetFiveHour and budgetSevenDay: each from 0 to 2, 80 % by default; the 
   assert.deepEqual([defaults.budgetFiveHour.value, defaults.budgetSevenDay.value, defaults.waitingCapTriage.value, defaults.waitingCapWork.value], [0.8, 0.8, 2, 5]);
   assert.match(bad({ ...own, settings: { budgetFiveHour: { value: 2.05, reason: "x" } } }), /budgetFiveHour\.value/);
   assert.match(bad({ ...own, settings: { waitingCapWork: { value: 0, reason: "x" } } }), /waitingCapWork\.value/);
+  assert.match(bad({ ...own, settings: { waitingCapTriage: { value: 6, reason: "x" } } }), /settings\.waitingCapTriage \(6\) is larger than settings\.waitingCapWork \(5\)/);
   assert.match(bad({ ...own, settings: { reserveFiveHour: { value: 0.2, reason: "x" } } }), /unknown key "reserveFiveHour"/);
   const set = good({ ...own, settings: { budgetFiveHour: { value: 1.5, reason: "x" }, budgetSevenDay: { value: 0, reason: "x" } } });
   assert.deepEqual([set.settings.budgetFiveHour.value, set.settings.budgetSevenDay.value], [1.5, 0]);
