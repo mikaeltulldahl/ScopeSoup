@@ -78,7 +78,7 @@ export interface MetaBranchHost extends Host {
 }
 
 /** An item's fields with a patch applied. */
-function patched(current: ItemFields, patch: WorkPatch, idOf: (ref: Ref) => string): ItemFields {
+export function patched(current: ItemFields, patch: WorkPatch, idOf: (ref: Ref) => string): ItemFields {
   const next: ItemFields = { ...current, labels: [...current.labels], blockedBy: [...current.blockedBy], extra: [...current.extra] };
   if (patch.title !== undefined) next.title = patch.title;
   if (patch.body !== undefined) next.body = patch.body;
