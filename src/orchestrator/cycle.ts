@@ -15,7 +15,7 @@ import { persistenceLimits } from "../config/persistence.ts";
 import type { Context } from "./context.ts";
 import { ACTOR, errorText } from "./context.ts";
 import type { AskedText, Decision, ItemLinkAnswer, Job, ParkedAs, ReviewAnswer, TakenDecision, TriageAnswer } from "./jobs.ts";
-import { ASK_PERSON, asImplement, asReview, asTriage, formatFindings, hasMarkup, recoverFields, keepsRecommendations, picks, questionsSettled, releaseIn, parkedRewrite, changedRewrite, sameText } from "./jobs.ts";
+import { ASK_PERSON, parkSet, asImplement, asReview, asTriage, formatFindings, hasMarkup, recoverFields, keepsRecommendations, picks, questionsSettled, releaseIn, parkedRewrite, changedRewrite, sameText } from "./jobs.ts";
 import { providerFor } from "./providers/index.ts";
 import type { Actions, SessionResultRecord } from "./ports.ts";
 import type { QuestionWrite } from "../ports/host.ts";
@@ -118,7 +118,7 @@ async function tellPeople(ctx: Context, job: Job, as: ParkedAs, reason: string, 
       : questions.length > 0 ? questions : [decision ?? { question: reason, options: [], recommendation: "" }])));
   if (!posted) {
     // The questions of one park are one set: a later park's set replaces it in the log (decision 1 of #211).
-    const set = String(job.parks ?? 0);
+    const set = parkSet(job);
     await ctx.act("put the item on a person's list", key, () => actions.answerTurn(job.item, ask, reason));
     const lines: Record<string, unknown>[] = questions.map((each) => ({ question: each.question, options: each.options, ...(each.recommendation ? { recommendation: each.recommendation } : {}), ...(each.context ? { context: each.context } : {}), ...(each.multiSelect ? { multiSelect: true } : {}), parked: as, set }));
     // The parts a restructuring has made so far stay in the store: the log line keeps what a person decides on.

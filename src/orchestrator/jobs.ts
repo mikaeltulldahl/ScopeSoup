@@ -694,6 +694,11 @@ export function settleRewrite(store: Store, item: Ref, answers: readonly string[
   return { settled };
 }
 
+/** The set a park's questions carry in the item's log: the park's count and moment, so a job rebuilt from the log does not reuse an old one (#230). */
+export function parkSet(job: Job): string {
+  return `${job.parks ?? 0}@${job.parked?.at ?? ""}`;
+}
+
 /** How long a job waits at most for the description Scope Soup wrote to be read back from the host (`Job.writing`). */
 export const WRITING_WAIT_MS = 30 * 60_000;
 
