@@ -522,6 +522,18 @@ async function holdsOn(id: string, options: Shrunk, actions: Action[]): Promise<
 }
 
 describe("runs the simulator shrank, held since their fix", { concurrency: 1 }, () => {
+  // Fixed (#268): a triage's rewrite accepted, and the read-back after the write lost: the card says it waits for the text.
+  test("A1: a rewrite accepted whose read-back did not come: the card waits for the text, not for an answer", async () => {
+    await holdsOn("A1", {items: 12, level: 2, slots: 2, steps: 600, profile: "normal", ageing: true}, [
+      {kind: "tick"},
+      {kind: "end", item: "A-1", v: 276319},
+      {kind: "tick"},
+      {kind: "sync"},
+      {kind: "answer", item: "A-1", v: 524467},
+      {kind: "tick"},
+    ]);
+  });
+
   // Fixed (#268): a person who merges the branch of finished work whose hand-over failed (escalated) makes the Item done.
   test("C2: done but not merged, escalated, then merged by a person: done within the ticks", async () => {
     await holdsOn("C2", {items: 9, level: 2, slots: 1, steps: 600, profile: "calm", ageing: true}, [

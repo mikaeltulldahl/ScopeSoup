@@ -416,4 +416,10 @@ test("with a job, the lane and the reason follow what the Item waits for (decisi
   const picked = (level: number) => turnOf({ ...snapshot({ works: [work(1)], jobs: [{ subject, stage: "start", step: "implement", picked: true, phase: { at: "implement", run: { is: "waiting", ...timer(at(1)) }, why: "first" } }] }), paused: true, implement: "paused", level }, 1).reason;
   assert.equal(picked(1), "its implement step starts in 1 min");
   assert.equal(picked(2), "ready, but agents are paused (press Resume all)");
+  // An answer wrote the description; until it is read back the store reads the Item as before, its open question too: the card says
+  // it waits for the text, not that the question needs an answer (#268). Read back, an open question takes the turn again.
+  const answered = work(1, { needsDecision: true });
+  const written = (from: string) => turnOf(snapshot({ works: [answered], jobs: [{ subject, stage: "start", step: "implement", phase: { at: "implement", run: { is: "waiting", text: { from, at: at(-1) } }, why: "first" } }] }), 1).reason;
+  assert.match(written(itemTextHash(answered)), /read back from demo/);
+  assert.equal(written("another text"), "Answer the question: the item needs a decision");
 });

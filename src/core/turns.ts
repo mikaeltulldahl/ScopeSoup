@@ -216,6 +216,13 @@ function todoTurn(situation: Situation, ctx: TurnContext): Draft {
  * The last three causes of decision 3, after the lane's own switch, level and usage words: the retry timer, a claim by an agent (another
  * machine's, or Scope Soup's own left over), then `slot`, the words for a free agent slot.
  */
+/** The Item's next step waits for the description written at a person's Accept, and the store still reads the text before it. */
+function waitsForWrittenText(situation: Situation, ctx: TurnContext): boolean {
+  const job = ctx.index.jobByWork.get(refKey(situation.item.ref));
+  const text = job ? waitingRun(job.phase)?.text : undefined;
+  return !!text && itemTextHash(situation.item) === text.from && Date.parse(text.at) + WRITING_WAIT_MS > ctx.now.getTime();
+}
+
 function nextStepTurn(situation: Situation, ctx: TurnContext, slot: Draft): Draft {
   const { item, session } = situation;
   const job = ctx.index.jobByWork.get(refKey(item.ref));
@@ -370,8 +377,9 @@ function draft(situation: Situation, ctx: TurnContext): Draft {
     if ((item.children ?? 0) > 0) return allPartsDoneTurn(item);
   }
   if (parked && parked.as !== "queued") return parkedTurn(parked, situation);
-  // An open question in the item's own record does not take the turn from a session that works on the Item.
-  if (item.needsDecision && !(situation.session && isLive(situation.session))) return { actor: "anyone", tone: "yours", waits: "1 question", reason: "Answer the question: the item needs a decision" };
+  // An open question in the item's own record does not take the turn from a session that works on the Item, nor from a step that waits
+  // for the description a person's answer wrote: the store reads the Item as it was before that answer, its question too (#268).
+  if (item.needsDecision && !(situation.session && isLive(situation.session)) && !waitsForWrittenText(situation, ctx)) return { actor: "anyone", tone: "yours", waits: "1 question", reason: "Answer the question: the item needs a decision" };
   // Another Item's triage proposed a rewrite of the description (decision 110): a person's turn while nothing else runs on the Item.
   const proposed = (lane === "backlog" || lane === "todo" || lane === "blocked") && !situation.session ? ctx.index.snapshot.proposedRewrites?.find((each) => refKey(each.subject) === refKey(item.ref)) : undefined;
   if (proposed) return { actor: "anyone", tone: "yours", since: proposed.at, waits: "a rewrite to accept", reason: `Accept, edit or reject the rewrite of the description by ${proposed.askedBy}` };

@@ -836,7 +836,9 @@ export class SimWorld {
       const action = roll < 5 ? "accept" : roll < 7 ? "edit" : "reject";
       const text = `Edited by a person, ${v % 1000}.`;
       fairCount();
-      const got = await this.request("POST", "/api/rewrite", { ref: key, parkedAt, answers, action, ...(action === "edit" ? { text } : {}) }, id);
+      // Now and then the read-back after the description is written does not come, as when a fetch fails after the write (from `v`, so
+      // the draws stay as they were; single machine only).
+      const got = await this.lagging(!this.fair && ((v >> 4) & 1) === 1, () => this.request("POST", "/api/rewrite", { ref: key, parkedAt, answers, action, ...(action === "edit" ? { text } : {}) }, id));
       if (got.status === 200) {
         this.count(`rewrite-${action}`);
         const settled = (got.json as { settled?: string }).settled;
