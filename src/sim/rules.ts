@@ -7,7 +7,7 @@
 
 import type { ItemObs, Observation } from "./observe.ts";
 import type { W } from "./waits.ts";
-import { isBusy, newWork, personHolds, stageLane, wText } from "./waits.ts";
+import { implementBegun, isBusy, newWork, personHolds, stageLane, wText } from "./waits.ts";
 import { where } from "../orchestrator/jobs.ts";
 
 export interface Rule {
@@ -24,6 +24,8 @@ const SAID_KINDS = new Set(["orchestrator.idle", "orchestrator.claim_lost", "orc
 const isTick = (o: Observation): boolean => o.action.kind === "tick" || o.action.kind === "inside-tick";
 const asks = (w: W): boolean => w.kind === "person" && (w.why === "answer" || w.why === "rewrite" || w.why === "restructuring");
 const squash = (text: string): string => text.replace(/\s+/g, " ").trim();
+/** The card gives the turn to a person for a rewrite another Item's triage proposed (decision 110), ahead of the job's own wait words. */
+const proposalTurn = (reason: string | undefined): boolean => /^Accept, edit or reject the rewrite of the description by /.test(reason ?? "");
 const first = <T>(list: T[], f: (each: T) => string | null): string | null => {
   for (const each of list) {
     const found = f(each);
@@ -116,7 +118,7 @@ export const RULES: Rule[] = [
         if (i.w.kind === "nothing" && i.item.state === "done" && lane !== "done") return `${i.id} is done but in ${lane}`;
         // The words of the cause (decision 3): the two timed waits have their own. Read after a tick: between ticks the card is the
         // last tick's, while W reads git as it is now (a session's merge makes another Item no longer busy before any tick saw it, #238).
-        if (!isTick(o)) return null;
+        if (!isTick(o) || proposalTurn(card.reason)) return null;
         if (i.w.kind === "start" && i.w.cause === "text" && !/read back/.test(card.reason)) return `${i.id} waits for its written text to be read back, but the card says "${card.reason}"`;
         if (i.w.kind === "start" && i.w.cause === "timer" && !/(tries again|resumes|starts) in /.test(card.reason)) return `${i.id} waits for a timer, but the card says "${card.reason}"`;
         return null;
@@ -326,7 +328,10 @@ export const RULES: Rule[] = [
         const beforeSettled = before !== undefined && o.ledger.ended.some((e) => e.session === before && e.settled);
         // An Item with no job on this machine, or one a person's move drops, starts anew (as does one whose claim went to another machine), and a job with a failure counted is retried: an implementor's "done" with no commit is settled in the ledger but a failure to the tick.
         const dropped = prev !== undefined && prev.items.some((i) => i.key === s.item && (i.job === undefined || i.job.dropAskedBy !== undefined || i.job.failures > 0));
-        if (before && beforeSettled && last?.settled && !dropped) return `a ${s.role} session started again on ${s.item.split(":").pop()} with the same input as session ${before}, after it succeeded`;
+        // A person who picks the step again (Review on a change reviewed before, decision 104) gives it new input: their ask (#268).
+        const asked = prev?.items.find((i) => i.key === s.item)?.job;
+        const picked = (s.role === "review" && asked?.reviewAskedBy) || (s.role === "triage" && asked?.triageAskedBy) || (s.role === "implement" && asked?.implementAskedBy);
+        if (before && beforeSettled && last?.settled && !dropped && !picked) return `a ${s.role} session started again on ${s.item.split(":").pop()} with the same input as session ${before}, after it succeeded`;
         seen[key] = s.session;
       }
       for (const [key, n] of o.ledger.asksInFair) if (n > 3) return `under Fair, ${key.split(":").pop()} was asked ${n} times`;
@@ -411,6 +416,7 @@ export const RULES: Rule[] = [
       const expect = (memo.expect ??= {}) as Record<string, string>;
       // A person's move, start over or edit sends the Item elsewhere, rightly: what an earlier answer or pick expected is over.
       for (const r of o.requests) if (r.status === 200 && r.item && /move|start-over|edit|pick/.test(r.path)) delete expect[`metaBranch:work:${r.item}`];
+      const asked = new Set<string>();
       for (const r of o.requests) {
         if (r.status !== 200 || !r.item) continue;
         const before = prev?.items.find((i) => i.id === r.item);
@@ -418,11 +424,13 @@ export const RULES: Rule[] = [
         if (r.path.startsWith("/api/answer") && before && was?.parked?.byStep && was.step === "implement") expect[before.key] = "implement";
         // Merge queue (decision 104): the reviewed change goes to the queue; the next session, if any before that, is not a review.
         if (r.path === "/api/item/move" && r.body.to === "merge-queue" && before) expect[before.key] = "hand-over";
+        if (before) asked.add(before.key);
       }
       // The hand-over happened (queued, merged, or it failed and waits for a person): the pick is carried out.
       for (const i of o.items) if (expect[i.key] === "hand-over" && i.job && ["queued", "merged", "parked"].includes(i.job.at.kind)) delete expect[i.key];
-      // So does a pick asked on another machine's board and carried out here (decision 104), read at a fetch.
-      for (const e of o.events) if (e.kind === "person.moved" && e.subject) delete expect[e.subject];
+      // So does a pick asked on another machine's board and carried out here (decision 104), read at a fetch. Not the event of this
+      // step's own pick, which is what is expected (#268: that event cleared it at once, so B8 checked no pick).
+      for (const e of o.events) if (e.kind === "person.moved" && e.subject && !asked.has(e.subject)) delete expect[e.subject];
       // So do questions other Items' agents asked about it, written before the implementor resumed: once answered, it is triaged again
       // with the answers, and the implementor's work waits for that (#264).
       for (const e of o.events) if (e.kind === "orchestrator.about_other_written" && e.subject) delete expect[e.subject];
@@ -435,6 +443,36 @@ export const RULES: Rule[] = [
       }
       for (const i of o.items) if (isClosed(i) || (i.job === undefined && i.w.kind !== "session")) delete expect[i.key];
       return null;
+    },
+  },
+  {
+    id: "B11",
+    why: "A step starts on the text a person accepted: after Scope Soup wrote a description at a person's Accept or Edit of a rewrite on an Item with a job, while the store still reads the text before it and for at most 30 minutes from the write, the job keeps waiting for it and no session on the Item starts without it, whatever the job was doing then: running a session, parked, or owing a hand-over (#211 step 3, #268).",
+    check(o, prev, memo) {
+      const owed = (memo.owed ??= {}) as Record<string, { was: string; text: string; at: string; step: number }>;
+      if (o.action.kind === "lose-store") for (const k of Object.keys(owed)) delete owed[k];
+      for (const r of o.requests) {
+        if (r.status !== 200 || !r.item) continue;
+        const k = `metaBranch:work:${r.item}`;
+        // A person's own edit since then is the text that counts (B2), read back by the edit's own sync.
+        if (r.path === "/api/item/edit") delete owed[k];
+        if (!/^\/api\/(proposed-)?rewrite$/.test(r.path) || (r.response as { written?: boolean } | null)?.written !== true) continue;
+        const before = prev?.items.find((i) => i.key === k);
+        const text = o.ledger.texts.get(k);
+        if (before?.job && text) owed[k] = { was: squash(before.item.body ?? ""), text: squash(text.body), at: o.at, step: o.step };
+      }
+      // Read back (the store has another text now), past the wait, or closed: nothing is owed any more.
+      for (const i of o.items) {
+        const w = owed[i.key];
+        if (w && (squash(i.item.body ?? "") !== w.was || Date.parse(o.at) - Date.parse(w.at) >= 30 * 60_000 || isClosed(i) || !i.job)) delete owed[i.key];
+      }
+      const lost = o.items.find((i) => owed[i.key] && !where(i.job)?.writing);
+      if (lost) return `${lost.id}'s job no longer waits for the text written at a person's accept at step ${owed[lost.key]!.step}, which the store has not read back yet`;
+      return first(o.started, (s) => {
+        const w = owed[s.item];
+        if (!w || squash(String(s.request.vars.itemBody ?? "")).includes(w.text)) return null;
+        return `a ${s.role} session on ${s.item.split(":").pop()} started on the text before the one written at a person's accept at step ${w.step}, which the store has not read back yet`;
+      });
     },
   },
   // --- C. Closed Items ---
@@ -509,7 +547,7 @@ export const RULES: Rule[] = [
       return first(o.started, (s) => {
         if (s.role !== "implement") return null;
         const before = prevOf(prev, s.item);
-        if (!before?.job || before.job.head || before.job.implement || before.job.implementAskedBy) return null;
+        if (!before?.job || implementBegun(before.job) || before.job.implementAskedBy) return null;
         const paths = before.paths;
         // Busy before the tick and still busy after it: a session that ended in this tick and merged its change is over, and the start
         // that follows in the same tick is rightly let go.
@@ -772,6 +810,8 @@ export const RULES: Rule[] = [
         memo.reposts = prev.items.filter((i) => where(i.job)?.parked?.retry === "post").map((i) => i.key);
         // A job a person dropped (back to To do, or Backlog) while its session ran is dropped by the first tick, restart or not (#243).
         memo.dropped = prev.items.filter((i) => i.job?.dropAskedBy !== undefined).map((i) => i.key);
+        // A step a person picked over the running session (Triage, Review: `interrupt`) is the step that comes next, restart or not (#268).
+        memo.picked = Object.fromEntries(prev.items.filter((i) => i.job?.interrupt !== undefined).map((i) => [i.key, where(i.job)!.step]));
         return null;
       }
       const before = memo.before as Record<string, W> | undefined;
@@ -799,6 +839,8 @@ export const RULES: Rule[] = [
         // the implementor merges instead (a review at level 2, a queued change below level 4), as it would have without the restart (#264).
         const lowered = (w.kind === "session" && w.role === "review" && o.level < 3) || (w.kind === "queue" && o.level < 4);
         if (lowered && i.w.kind === "start" && i.w.role === "implement") return null;
+        const picked = ((memo.picked as Record<string, string> | undefined) ?? {})[i.key];
+        if (w.kind === "session" && picked && (i.w.kind === "start" || i.w.kind === "session") && i.w.role === picked) return null;
         if (w.kind === "session") return i.w.kind === "start" && i.w.role === w.role ? null : `${i.id} had a ${w.role} session before the restart and is ${wText(i.w)} after the first tick`;
         if (["person", "queue", "blocker", "nothing"].includes(w.kind) && wText(w) !== wText(i.w)) return `${i.id} was ${wText(w)} before the restart and is ${wText(i.w)} after the first tick`;
         return null;
@@ -855,7 +897,7 @@ export const RULES: Rule[] = [
     check(o, _prev, memo) {
       return first(o.items, (i) => {
         const writing = where(i.job)?.writing;
-        if (writing && Date.parse(o.at) - Date.parse(writing.at) > 31 * 60_000 && isTick(o) && /written|its text|description/i.test(i.card?.reason ?? "")) return `${i.id} still waits for its text, written at ${writing.at}`;
+        if (writing && Date.parse(o.at) - Date.parse(writing.at) > 31 * 60_000 && isTick(o) && /read back/.test(i.card?.reason ?? "")) return `${i.id} still waits for its text, written at ${writing.at}`;
         // A change waiting in this machine's merge queue is work under way here: its claim keeps other machines off it. So is any job
         // here, waiting to start its next step or parked for a person: its claim lasts as long as the job (#243). A merged one holds
         // nothing.

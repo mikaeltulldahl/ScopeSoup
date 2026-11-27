@@ -13,8 +13,9 @@ import { durationWords, ms, refLabel } from "./snapshot.ts";
 import { sameFilesWords } from "./sameFiles.ts";
 import { clearWithoutTriage } from "./statedSize.ts";
 import { itemTextHash } from "./answerReuse.ts";
-import { waitingRun } from "./phase.ts";
-import { WRITING_WAIT_MS } from "./waits.ts";
+import { parkedForAnswer, waitingRun } from "./phase.ts";
+import { STEP_LEVEL, WRITING_WAIT_MS } from "./waits.ts";
+import { earlierPark } from "./questions.ts";
 
 /** How a card is coloured: is it moving, waiting its turn, stuck, or a person's? */
 export type Tone = "moving" | "waiting" | "blocked" | "yours" | "done";
@@ -185,8 +186,8 @@ function waitsInBacklogTurn(situation: Situation, ctx: TurnContext): Draft {
   if ((item.children ?? 0) > 0) return allPartsDoneTurn(item);
   if (item.holder && holdStands(item.holder, ctx.now.getTime()) && !item.holder.actor.bot) return heldTurn(item, ctx);
   const backlog: Draft = { actor: "nobody", tone: "waiting", reason: "in Backlog: waits for a person to move it to To do" };
-  // A person's one-off triage (or the triage again after their answer) runs there: its timer is said.
-  return ctx.index.jobByWork.get(refKey(item.ref))?.step === "triage" ? nextStepTurn(situation, ctx, backlog) : backlog;
+  // A person's one-off triage (or the triage again after their answer) runs there: its wait for written text, or its timer, is said.
+  return ctx.index.jobByWork.get(refKey(item.ref))?.step === "triage" ? (textWaitTurn(situation, ctx) ?? nextStepTurn(situation, ctx, backlog)) : backlog;
 }
 
 function todoTurn(situation: Situation, ctx: TurnContext): Draft {
@@ -195,16 +196,20 @@ function todoTurn(situation: Situation, ctx: TurnContext): Draft {
   if (item.openChildren > 0) return umbrellaTurn(item);
   if ((item.children ?? 0) > 0 && item.state === "todo") return allPartsDoneTurn(item);
   if (item.state === "waiting") return { actor: "nobody", tone: "blocked", reason: `waiting on the host (status "${item.hostState}")` };
-  if (ctx.index.snapshot.paused) return { actor: "nobody", tone: "blocked", reason: "ready, but agents are paused (press Resume all)" };
+  const job = ctx.index.jobByWork.get(refKey(item.ref));
+  // A step a person picked runs whatever the switches, below the level that shows its switch (decision 104): no switch words then.
+  const level = ctx.index.snapshot.level;
+  const pickRuns = !!job?.picked && level !== undefined && level < STEP_LEVEL[job.step];
+  if (ctx.index.snapshot.paused && !pickRuns) return { actor: "nobody", tone: "blocked", reason: "ready, but agents are paused (press Resume all)" };
   if (ctx.index.snapshot.usage?.status === "rejected") return { actor: "nobody", tone: "blocked", reason: `ready, but the usage limit is reached${resetWords(ctx)}` };
   // Its next step is the triage and triage is paused: it waits for that switch, not for a slot. (A stated size skips the triage from level 2.)
   // With a job, its step says it.
-  const step = ctx.index.jobByWork.get(refKey(item.ref))?.step;
+  const step = job?.step;
   const triageNext = step ? step === "triage" : ctx.notTriaged?.has(refKey(item.ref)) && !((ctx.index.snapshot.level ?? 0) >= 2 && clearWithoutTriage(item));
-  if (triageNext && ctx.index.snapshot.triage !== "started") return { actor: "nobody", tone: "blocked", reason: "ready, but triage is paused (Resume on To do)" };
+  if (triageNext && ctx.index.snapshot.triage !== "started" && !pickRuns) return { actor: "nobody", tone: "blocked", reason: "ready, but triage is paused (Resume on To do)" };
   // Its next step is the implement (it is triaged, or needs no triage), and no implementor takes it now: implementors are
   // paused, or the level is below 2. The status line says which; the card says only "ready".
-  if (!triageNext && (ctx.index.snapshot.implement !== "started" || (ctx.index.snapshot.level ?? 2) < 2)) return { actor: "nobody", tone: "waiting", reason: "ready" };
+  if (!triageNext && !pickRuns && (ctx.index.snapshot.implement !== "started" || (ctx.index.snapshot.level ?? 2) < 2)) return { actor: "nobody", tone: "waiting", reason: "ready" };
   return nextStepTurn(situation, ctx, { actor: "agent", tone: "waiting", reason: "ready; waiting for a free agent slot" });
 }
 
@@ -212,6 +217,32 @@ function todoTurn(situation: Situation, ctx: TurnContext): Draft {
  * The last three causes of decision 3, after the lane's own switch, level and usage words: the retry timer, a claim by an agent (another
  * machine's, or Scope Soup's own left over), then `slot`, the words for a free agent slot.
  */
+/**
+ * Every open question the store reads on the Item is of a park its job settled already: the answer is written, and its read-back was
+ * lost (#268). They ask nothing now.
+ */
+function settledAsks(situation: Situation, ctx: TurnContext): boolean {
+  const job = ctx.index.jobByWork.get(refKey(situation.item.ref));
+  const open = situation.item.openQuestions ?? [];
+  return !!job && open.length > 0 && open.every((question) => earlierPark(question, job.parks, parkedForAnswer(job.phase)));
+}
+
+/** The words of a step that waits for the description written at a person's Accept to be read back, or null when it does not. */
+function textWaitTurn(situation: Situation, ctx: TurnContext): Draft | null {
+  const { item } = situation;
+  const job = ctx.index.jobByWork.get(refKey(item.ref));
+  const text = job ? waitingRun(job.phase)?.text : undefined;
+  const textLeft = text && itemTextHash(item) === text.from ? Date.parse(text.at) + WRITING_WAIT_MS - ctx.now.getTime() : 0;
+  return textLeft > 0 ? { actor: "nobody", tone: "waiting", reason: `waits until the description written at a person's Accept is read back from ${item.ref.host} (at most ${durationWords(textLeft)} more)` } : null;
+}
+
+/** The Item's next step waits for the description written at a person's Accept, and the store still reads the text before it. */
+function waitsForWrittenText(situation: Situation, ctx: TurnContext): boolean {
+  const job = ctx.index.jobByWork.get(refKey(situation.item.ref));
+  const text = job ? waitingRun(job.phase)?.text : undefined;
+  return !!text && itemTextHash(situation.item) === text.from && Date.parse(text.at) + WRITING_WAIT_MS > ctx.now.getTime();
+}
+
 function nextStepTurn(situation: Situation, ctx: TurnContext, slot: Draft): Draft {
   const { item, session } = situation;
   const job = ctx.index.jobByWork.get(refKey(item.ref));
@@ -366,8 +397,9 @@ function draft(situation: Situation, ctx: TurnContext): Draft {
     if ((item.children ?? 0) > 0) return allPartsDoneTurn(item);
   }
   if (parked && parked.as !== "queued") return parkedTurn(parked, situation);
-  // An open question in the item's own record does not take the turn from a session that works on the Item.
-  if (item.needsDecision && !(situation.session && isLive(situation.session))) return { actor: "anyone", tone: "yours", waits: "1 question", reason: "Answer the question: the item needs a decision" };
+  // An open question in the item's own record does not take the turn from a session that works on the Item, nor from a step that waits
+  // for the description a person's answer wrote: the store reads the Item as it was before that answer, its question too (#268).
+  if (item.needsDecision && !(situation.session && isLive(situation.session)) && !waitsForWrittenText(situation, ctx) && !settledAsks(situation, ctx)) return { actor: "anyone", tone: "yours", waits: "1 question", reason: "Answer the question: the item needs a decision" };
   // Another Item's triage proposed a rewrite of the description (decision 110): a person's turn while nothing else runs on the Item.
   const proposed = (lane === "backlog" || lane === "todo" || lane === "blocked") && !situation.session ? ctx.index.snapshot.proposedRewrites?.find((each) => refKey(each.subject) === refKey(item.ref)) : undefined;
   if (proposed) return { actor: "anyone", tone: "yours", since: proposed.at, waits: "a rewrite to accept", reason: `Accept, edit or reject the rewrite of the description by ${proposed.askedBy}` };
@@ -377,12 +409,8 @@ function draft(situation: Situation, ctx: TurnContext): Draft {
     const words = blockers.map((blocker) => `${refLabel(blocker.ref)}${blocker.needsDecision ? " (needs your decision)" : ""}`);
     return { actor: "nobody", tone: "blocked", reason: `blocked by ${list(words)}` };
   }
-  const job = ctx.index.jobByWork.get(key);
-  const text = job ? waitingRun(job.phase)?.text : undefined;
-  const textLeft = text && itemTextHash(item) === text.from ? Date.parse(text.at) + WRITING_WAIT_MS - ctx.now.getTime() : 0;
-  if (textLeft > 0) {
-    return { actor: "nobody", tone: "waiting", reason: `waits until the description written at a person's Accept is read back from ${item.ref.host} (at most ${durationWords(textLeft)} more)` };
-  }
+  const textWait = textWaitTurn(situation, ctx);
+  if (textWait) return textWait;
   // Triaged, and its paths overlap those of a busy Item, or it may conflict with one: it waits for that one, not for a slot.
   const sameFiles = ctx.index.snapshot.sameFiles?.find((each) => refKey(each.subject) === key);
   if (sameFiles) return { actor: "nobody", tone: "waiting", reason: sameFilesWords(sameFiles.waitsFor, sameFiles.mayConflict) };

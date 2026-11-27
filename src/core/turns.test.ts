@@ -411,4 +411,26 @@ test("with a job, the lane and the reason follow what the Item waits for (decisi
   // Past their moment they say nothing; nor does a text read back already.
   assert.equal(timed(timer(at(-1))), "ready; waiting for a free agent slot");
   assert.equal(timed({ text: { from: "another text", at: at(-10) } }), "ready; waiting for a free agent slot");
+  // A step a person picked runs whatever the switches below the level that shows its switch (decision 104): its timer is said, not
+  // that agents are paused (#268). At the level that shows the switch, the switch holds it.
+  const picked = (level: number) => turnOf({ ...snapshot({ works: [work(1)], jobs: [{ subject, stage: "start", step: "implement", picked: true, phase: { at: "implement", run: { is: "waiting", ...timer(at(1)) }, why: "first" } }] }), paused: true, implement: "paused", level }, 1).reason;
+  assert.equal(picked(1), "its implement step starts in 1 min");
+  assert.equal(picked(2), "ready, but agents are paused (press Resume all)");
+  // An answer wrote the description; until it is read back the store reads the Item as before, its open question too: the card says
+  // it waits for the text, not that the question needs an answer (#268). Read back, an open question takes the turn again.
+  const answered = work(1, { needsDecision: true });
+  const written = (from: string) => turnOf(snapshot({ works: [answered], jobs: [{ subject, stage: "start", step: "implement", phase: { at: "implement", run: { is: "waiting", text: { from, at: at(-1) } }, why: "first" } }] }), 1).reason;
+  assert.match(written(itemTextHash(answered)), /read back from demo/);
+  assert.equal(written("another text"), "Answer the question: the item needs a decision");
+  // The store still reads the question of park 2, which the job settled (it rejected a rewrite, say): it asks nothing now (#268). The
+  // question of a park the job waits on, or one with no park, still does.
+  const q = (set?: string) => work(1, { needsDecision: true, openQuestions: [{ at: at(-5), by: { who: "scopesoup", agent: true }, question: "Accept the rewrite?", options: [], ...(set ? { set } : {}) }] });
+  const going = (item: ReturnType<typeof q>, parks: number) => turnOf(snapshot({ works: [item], jobs: [{ subject, stage: "start", step: "implement", parks, phase: { at: "implement", run: { is: "waiting" }, why: "first" } }] }), 1).reason;
+  assert.equal(going(q(`2@${at(-5)}`), 2), "ready; waiting for a free agent slot");
+  assert.equal(going(q(`3@${at(-5)}`), 2), "Answer the question: the item needs a decision");
+  assert.equal(going(q(), 2), "Answer the question: the item needs a decision");
+  // In Backlog, a person's one-off triage that waits for the text their Accept wrote says so too (#268).
+  const inBacklog = work(1, { backlog: true });
+  const backlogTriage = turnOf(snapshot({ works: [inBacklog], jobs: [{ subject, stage: "start", step: "triage", phase: { at: "triage", run: { is: "waiting", text: { from: itemTextHash(inBacklog), at: at(-1) } }, why: "first" } }] }), 1).reason;
+  assert.match(backlogTriage, /read back from demo/);
 });

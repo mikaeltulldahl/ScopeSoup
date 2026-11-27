@@ -85,6 +85,7 @@ import { isFolder, isFolderName, openFolder, projectView } from "./project.ts";
 import type { FolderOpener, ProjectInfo } from "./project.ts";
 import { plural } from "../model/plural.ts";
 import { parkedForAnswer } from "../core/phase.ts";
+import { earlierPark } from "../core/questions.ts";
 import { phaseOf } from "../orchestrator/phase.ts";
 
 export interface ServerOptions {
@@ -582,6 +583,11 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
     const several = parked?.questions ?? [];
     const open = item.openQuestions ?? [];
     const resolved: { text: string; index: number; target?: ParkedQuestion; asked?: OpenQuestion; question?: string }[] = [];
+    // The newest open question the store reads, unless it is an earlier park's while this park's question is not read back yet (a lost
+    // read-back after an answer, #268): then the answer names this park's set instead.
+    const parkedJob = loadJobs(store)[ref];
+    const newestOpen = open[open.length - 1];
+    const newest = newestOpen && !(parkedJob && where(parkedJob).parked && earlierPark(newestOpen, parkedJob.parks)) ? newestOpen : undefined;
     for (const { text, to, index: given } of entries) {
       // `question` only means something while the item parked on several questions; a stale page or a re-triage is refused below.
       if (given !== undefined && several.length === 0) return sendError(response, 409, "NO_OPEN_QUESTIONS", `${ref} does not wait on several questions (any more): reload the item.`);
@@ -594,7 +600,7 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
       if (index >= several.length) return sendError(response, 404, "QUESTION_NOT_FOUND", `No open question ${index} on ${ref}.`);
       const target = index >= 0 ? several[index] : undefined;
       // For one of several, the log's question line written for it, so the answer closes it there too.
-      const asked = named ?? (target ? open.find((question) => !question.proposal && question.question === target.question) : open[open.length - 1]);
+      const asked = named ?? (target ? open.find((question) => !question.proposal && question.question === target.question) : newest);
       const question = target?.question ?? asked?.question ?? parked?.decision?.question;
       resolved.push({ text, index, ...(target ? { target } : {}), ...(asked ? { asked } : {}), ...(question ? { question } : {}) });
     }
@@ -926,12 +932,13 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
     const write = items?.write;
     const onLog = !!write?.appendLog && work.ref.host === items!.host && !(options.questions && work.ref.host === options.questions.host);
     const open = onLog ? work.openQuestions ?? [] : [];
-    // A question the job parked on and the store has not read back yet: an answer without `to` takes the newest open one.
+    // A question the job parked on and the store has not read back yet: an answer without `to` takes the newest open one. So too when
+    // the store still reads only questions of earlier parks (a read-back after an answer was lost, #268).
     const parkedJob = loadJobs(store)[refKey(work.ref)];
     const parked = where(parkedJob)?.parked;
-    const unread = onLog && open.length === 0 && !!parkedJob && parkedForAnswer(phaseOf(parkedJob));
-    const asked: (Pick<OpenQuestion, "at" | "by" | "question" | "set"> | null)[] = unread ? [null] : open;
-    const set = parked ? parkSet(loadJobs(store)[refKey(work.ref)]!) : "";
+    const set = parked ? parkSet(parkedJob!) : "";
+    const unread = onLog && !!parkedJob && parkedForAnswer(phaseOf(parkedJob)) && open.every((question) => earlierPark(question, parkedJob.parks));
+    const asked: (Pick<OpenQuestion, "at" | "by" | "question" | "set"> | null)[] = unread ? [...open, null] : open;
     for (const question of asked) {
       try {
         await write!.appendLog!(work.ref, { kind: "answer", by: by(), fields: { answer: said, ...(question ? { to: question.at, toBy: question.by, toQuestion: question.question, ...(question?.set ? { toSet: question.set } : {}) } : { toSet: set }) } });

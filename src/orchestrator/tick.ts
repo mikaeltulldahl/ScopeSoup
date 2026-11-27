@@ -178,12 +178,12 @@ function interrupted(ctx: Context, key: string, job: Job, item: WorkItem | null)
     if (Date.parse(ctx.at) - Date.parse(asked.at) <= INTERRUPT_WAIT_MS) return true;
     ctx.commit("orchestrator.interrupt_failed", `The ${session.role} session ${session.ref.id} on ${item?.ref.id ?? key} is still there ${Math.round(INTERRUPT_WAIT_MS / 60_000)} minutes after ${asked.by}'s pick ended it; the job goes on as the pick left it, and nothing starts on the Item while that session runs.`, key, { by: asked.by, session: session.ref.id });
   }
-  else if (own && where(job).sessionId) {
-    // The session was over before the pick reached it: its result, not yet read, is not taken, and that is a change of the job.
-    ctx.commit("orchestrator.result_dropped", `${asked.by} picked ${PICK_WORDS[asked.to] ?? asked.to} for ${item?.ref.id ?? key} on the board: the result of its ${own.role} session ${own.ref.id}, which had ended, is not taken.`, key, { by: asked.by, step: stepAt(job) });
-  }
+  const dropped = !session && own && where(job).sessionId ? own : undefined;
   delete job.interrupt;
   setWhere(job, { sessionId: undefined, resume: undefined });
+  // The session was over before the pick reached it: its result, not yet read, is not taken, and that is a change of the job. Committed
+  // after the change, so the job is saved with its event even when nothing else in this tick commits (#268).
+  if (dropped) ctx.commit("orchestrator.result_dropped", `${asked.by} picked ${PICK_WORDS[asked.to] ?? asked.to} for ${item?.ref.id ?? key} on the board: the result of its ${dropped.role} session ${dropped.ref.id}, which had ended, is not taken.`, key, { by: asked.by, step: stepAt(job) });
   return false;
 }
 
@@ -204,12 +204,12 @@ function stopForClosed(ctx: Context, key: string, job: Job, item: WorkItem | nul
     if (stopped > 0) ctx.commit("orchestrator.stopped", reason, key, { role: session.role, session: session.ref.id });
     const after = store.get<Session>(session.ref);
     if (after && isLive(after)) return true;
-  } else if (own && where(job).sessionId) {
-    if (takeEnded) return false;
-    ctx.commit("orchestrator.result_dropped", `${item ? `${item.ref.id} is ${item.state}` : `${key} is no longer in the store`}: the result of its ${own.role} session ${own.ref.id} is not taken.`, key, { step: stepAt(job) });
-  }
+  } else if (own && where(job).sessionId && takeEnded) return false;
+  const dropped = !session && own && where(job).sessionId ? own : undefined;
   delete job.interrupt;
   setWhere(job, { sessionId: undefined, resume: undefined });
+  // Committed after the change, so the job is saved with its event (#268).
+  if (dropped) ctx.commit("orchestrator.result_dropped", `${item ? `${item.ref.id} is ${item.state}` : `${key} is no longer in the store`}: the result of its ${dropped.role} session ${dropped.ref.id} is not taken.`, key, { step: stepAt(job) });
   return false;
 }
 
@@ -747,14 +747,21 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
     // The questions it is parked on in the item's log were answered on another machine's board (#248).
     if (where(job).parked && where(job).parked === parkedBefore && !where(job).sessionId && item && !over && followLog(ctx, job, item)) continue;
     // A person merged the branch handed over to them, and nothing but Scope Soup closes an Item here: done once main holds the head.
-    // So too a hand-over a person's answer asked for again while it cannot run (the implement switch is off, or the level below 2).
-    const handing = phaseOf(job).at;
+    // So too a hand-over a person's answer asked for again while it cannot run (the implement switch is off, or the level below 2), and
+    // finished work whose hand-over failed and waits for a person (escalated): their merge is the answer (#268).
+    const phase = phaseOf(job);
+    const handing = phase.at;
     const handOverWaits = handing === "hand-over" && !(merging && config.level >= 2);
-    if (item && ctx.deps.actions.closesItself && (handing === "with-person" || handOverWaits) && item.state === "todo") {
+    const handOverStuck = phase.at === "stuck" && phase.from === "hand-over";
+    if (item && ctx.deps.actions.closesItself && (handing === "with-person" || handOverWaits || handOverStuck) && item.state === "todo") {
       try {
         const tip = (await runner.fetchMain(job.branch)).main;
         const head = await runner.head(job.branch);
-        if ((await runner.contains(job.branch, head, tip)) === true) {
+        // An escalated hand-over may be one whose check failed before the base was compared (main could not be read): a head that is
+        // still the base, or in it, is no work done, not a person's merge. Without a base, only the revision the reviewer approved
+        // counts (#268).
+        const ownWork = !handOverStuck || (job.base !== undefined ? head !== job.base && (await runner.contains(job.branch, head, job.base)) !== true : head === job.reviewedHead);
+        if (ownWork && (await runner.contains(job.branch, head, tip)) === true) {
           setWhere(job, { merged: head });
           ctx.commit("orchestrator.merged", `${job.branch} is on ${config.mainBranch} of ${config.remote} as ${head.slice(0, 7)}: a person merged it.`, key, { sha: head, main: tip, by: "person" });
           await ctx.act("write the merge to the item's log", key, () => ctx.deps.actions.appendLog(job.item, "merged", { sha: head, target: config.mainBranch }));

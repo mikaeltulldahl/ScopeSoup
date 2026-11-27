@@ -56,7 +56,7 @@ export function jobFromLog(item: WorkItem): Job | null {
     if (as === "needs-decision") parkOnQuestion(job, asked);
     return job;
   }
-  return resumeFromLines(job, sessions, newest, review);
+  return resumeFromLines(job, log, sessions, newest, review);
 }
 
 /**
@@ -106,7 +106,7 @@ export function jobFromHost(item: WorkItem): Job | null {
     setWhere(job, { parked: { ...where(job).parked!, questions: ids, askedAt: asked.at } });
     return job;
   }
-  return resumeFromLines(job, sessions, newest, review);
+  return resumeFromLines(job, log, sessions, newest, review);
 }
 
 /** The job's start from Scope Soup's log lines: branch, head, review rounds, and what the sessions answered as far as the cycle reads it. */
@@ -141,6 +141,8 @@ function fromLines(item: WorkItem, log: readonly LogRecord[], startedAt: string)
     const findings: Finding[] = (Array.isArray(review.fields.findings) ? review.fields.findings : []).filter((text): text is string => typeof text === "string").map((text) => ({ severity: "must", text }));
     job.review = { verdict: review.fields.verdict === "pass" ? "approve" : "changes", findings };
     if (str(review.fields.sha)) job.reviewedHead = str(review.fields.sha);
+    // No revision line (a host outage lost it): the revision the review read is the newest known (#268).
+    if (!newest && str(review.fields.sha)) job.head = str(review.fields.sha);
   }
   return { job, of, sessions, newest, review };
 }
@@ -168,7 +170,7 @@ function parkOnQuestion(job: Job, asked: OpenQuestion): void {
 }
 
 /** When the store has nothing parked: the step the last session named starts again, or a reviewed change that has not merged is handed over again. */
-function resumeFromLines(job: Job, sessions: readonly LogRecord[], newest: LogRecord | undefined, review: LogRecord | undefined): Job | null {
+function resumeFromLines(job: Job, log: readonly LogRecord[], sessions: readonly LogRecord[], newest: LogRecord | undefined, review: LogRecord | undefined): Job | null {
   // 2. The last session said which step comes next: that step starts again.
   const next = str(sessions[sessions.length - 1]?.fields.next);
   if (STEPS.includes(next)) {
@@ -181,8 +183,12 @@ function resumeFromLines(job: Job, sessions: readonly LogRecord[], newest: LogRe
     return job;
   }
 
-  // 3. Reviewed and not merged: the hand-over (merging) is done again, without a session.
-  if (newest && review && review.fields.sha === newest.fields.sha && review.fields.verdict === "pass") {
+  // 3. Reviewed and not merged: the hand-over (merging) is done again, without a session. Not when a triage ran after that review:
+  // the work was dropped and started again from triage (a person's To do or Triage pick), so the old approval hands nothing over.
+  const triagedSince = review !== undefined && sessions.some((line) => line.fields.role === "triage" && log.indexOf(line) > log.indexOf(review));
+  // A revision line a host outage lost: the review names the revision it read (#268).
+  const reviewedNewest = review !== undefined && (newest ? review.fields.sha === newest.fields.sha : str(review.fields.sha) !== "");
+  if (reviewedNewest && review.fields.verdict === "pass" && !triagedSince) {
     setWhere(job, { step: "review", owes: "hand-over" });
     return job;
   }
@@ -234,6 +240,14 @@ export function recoverFromLogs(ctx: Context, items: readonly WorkItem[]): void 
     if (!item.log && !onHost) continue;
     const job = onHost ? jobFromHost(item) : jobFromLog(item);
     if (!job) continue;
+    // Backlog is no work (decision 121): a step that would start again there is not rebuilt, as a move to Backlog drops it (the
+    // move's drop may have been lost with the store). What waits for a person there still waits. Said with an event, as an owed
+    // hand-over of approved work is not made either (a GitHub Item whose To do label was taken off, say).
+    if (item.backlog && !where(job).parked) {
+      const what = where(job).owes ? "the hand-over of its reviewed change is not made" : `its ${where(job).step} step does not start again`;
+      ctx.commit("orchestrator.recover_skipped", `Not rebuilt from the item's ${onHost ? `comments on ${item.ref.host}` : "log"}: ${item.ref.id} is in Backlog, so ${what}. A person moves it to To do to start it again.`, key, { step: where(job).step, ...(where(job).owes ? { owes: where(job).owes } : {}) });
+      continue;
+    }
     ctx.jobs[key] = job;
     const at = where(job);
     const said = at.parked ? `parked as "${at.parked.as}": ${at.parked.reason}` : at.owes ? "reviewed and not merged: the hand-over is done again" : `the ${at.step} step starts again`;

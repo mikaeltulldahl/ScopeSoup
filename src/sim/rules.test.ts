@@ -165,6 +165,11 @@ describe("each rule fires on a bad state built by hand", { concurrency: 1 }, () 
     // The session with this input never ended with a result (a restart left it with no process): its step starts again (#238).
     const older = ledger({ ended: [{ step: 1, item: key("A-1"), role: "triage", session: "s0", status: "succeeded", settled: true }] });
     assert.equal(fires("B7", obs({ started: [started("A-1", "triage")] }), obs({ ledger: older, started: [started("A-1", "triage")] })), null);
+    // A person picked the review again on a change reviewed before: their ask is new input (#268).
+    const reviewed = ledger({ ended: [{ step: 1, item: key("A-1"), role: "review", session: "s-A-1", status: "succeeded", settled: true }] });
+    const picked = obs({ ledger: reviewed, items: [item("A-1", SLOT, { job: job("A-1", { step: "review", reviewAskedBy: "Ada" }) })] });
+    assert.equal(fires("B7", obs({ started: [started("A-1", "review")] }), picked, obs({ ledger: reviewed, started: [started("A-1", "review")] })), null);
+    assert.match(fires("B7", obs({ started: [started("A-1", "review")] }), obs({ ledger: reviewed, started: [started("A-1", "review")] })) ?? "", /same input/);
     assert.match(fires("B7", obs({ ledger: ledger({ asksInFair: new Map([[key("A-1"), 4]]) }) })) ?? "", /asked 4 times/);
     const shown = (text: string, body: string, questions: number): string | null => {
       const rewrite = { original: body.trim(), text, questions: Array.from({ length: questions }, () => ({ question: "?", options: [], recommendation: "" })), round: 1 };
@@ -186,6 +191,10 @@ describe("each rule fires on a bad state built by hand", { concurrency: 1 }, () 
     const reviewing = obs({ items: [item("A-1", { kind: "session", role: "review" }, { job: job("A-1", { step: "review", sessionId: "s1" }) })] });
     const picked = obs({ requests: [{ step: 1, path: "/api/item/move", body: { to: "merge-queue" }, status: 200, response: {}, item: "A-1" }], items: reviewing.items });
     assert.match(fires("B8", reviewing, picked, obs({ started: [started("A-1", "review")], items: reviewing.items })) ?? "", /picked for the merge queue, but a review session started/);
+    // The pick's own event (person.moved) does not clear what the pick expects (#268); one read from another machine's board does.
+    const own = obs({ ...picked, events: [event(key("A-1"), "Ada", "person.moved")] });
+    assert.match(fires("B8", reviewing, own, obs({ started: [started("A-1", "review")], items: reviewing.items })) ?? "", /picked for the merge queue/);
+    assert.equal(fires("B8", reviewing, picked, obs({ events: [event(key("A-1"), "Ada", "person.moved")], items: reviewing.items }), obs({ started: [started("A-1", "review")], items: reviewing.items })), null);
     const queued = obs({ items: [item("A-1", { kind: "queue" }, { job: job("A-1", { step: "review", parked: { as: "queued", reason: "", at: AT } }) })] });
     assert.equal(fires("B8", reviewing, picked, queued, obs({ started: [started("A-1", "review")], items: queued.items })), null);
   });
@@ -216,6 +225,24 @@ describe("each rule fires on a bad state built by hand", { concurrency: 1 }, () 
     assert.equal(fires("B10", obs({ started: sessions }), obs({ events: [again] })), null);
     // Before an Item starts, a triage taken again is not counted in the share.
     assert.equal(fires("B10", obs({ events: [{ ...again, data: {} }, { ...again, data: {} }] })), null);
+  });
+  it("B11", "a step starts on the old text after a person accepted a rewrite the store has not read back, or the job forgets to wait (#268)", () => {
+    const body = { item: workItem("A-1", { body: "Do thing 1." }) };
+    const running = item("A-1", { kind: "session", role: "triage" }, { ...body, job: job("A-1", { sessionId: "s1" }) });
+    const waits = item("A-1", { kind: "session", role: "triage" }, { ...body, job: job("A-1", { sessionId: "s1", writing: { from: "h", at: AT } }) });
+    const old = obs({ items: [running] });
+    const texts = new Map([[key("A-1"), { title: "Item A-1", body: "Rewritten." }]]);
+    const accepted = (i: ItemObs) => obs({ step: 2, requests: [{ step: 2, path: "/api/proposed-rewrite", body: { action: "accept" }, status: 200, response: { written: true }, item: "A-1" }], ledger: ledger({ texts }), items: [i] });
+    const next = (text: string) => obs({ step: 3, action: tick, started: [started("A-1", "implement", { vars: { itemTitle: "Item A-1", itemBody: text } })], items: [waits] });
+    assert.match(fires("B11", old, accepted(waits), next("Do thing 1.")) ?? "", /started on the text before the one written at a person's accept at step 2/);
+    assert.equal(fires("B11", old, accepted(waits), next("Rewritten.")), null);
+    // The job running a session dropped the wait at the accept (the bug fixed in #211 step 3).
+    assert.match(fires("B11", old, accepted(running)) ?? "", /A-1's job no longer waits for the text written at a person's accept at step 2/);
+    // Read back by a sync, the old text is gone from the store: nothing is owed any more.
+    const read = obs({ step: 3, items: [item("A-1", NOTHING, { item: workItem("A-1", { body: "Rewritten." }), job: job("A-1") })] });
+    assert.equal(fires("B11", old, accepted(waits), read, next("Do thing 1.")), null);
+    // Past the 30 minutes the product waits, it goes on with the text the store has.
+    assert.equal(fires("B11", old, accepted(waits), { ...next("Do thing 1."), at: "2026-11-18T10:30:00.000Z" }), null);
   });
   it("C1", "an Item closed by an answer on another Item (#209, decision 8)", () => {
     assert.match(fires("C1", obs({ items: [item("A-2", SLOT)] }), obs({ items: [item("A-2", NOTHING, { item: workItem("A-2", { state: "abandoned" }) })] })) ?? "", /no person's close/);
@@ -344,6 +371,13 @@ describe("each rule fires on a bad state built by hand", { concurrency: 1 }, () 
     const merges = obs({ level: 2, action: tick, switches: paused, items: [item("A-1", { kind: "start", role: "implement", cause: "switch" })] });
     assert.equal(fires("G1", queued, obs({ action: { kind: "restart" }, switches: paused, items: queued.items }), merges), null);
     assert.match(fires("G1", queued, obs({ action: { kind: "restart" }, switches: paused, items: queued.items }), { ...merges, level: 4 }) ?? "", /was queue before the restart/);
+    // A person picked Triage over the running implement session: after the restart the triage comes next, not the implement step (#268).
+    const interrupted = job("A-1", { step: "triage", sessionId: "s1", interrupt: { by: "Ada", at: AT, to: "triage" } });
+    const implementing = obs({ items: [item("A-1", { kind: "session", role: "implement" }, { job: interrupted })] });
+    const triageNext = obs({ action: tick, switches: paused, items: [item("A-1", { kind: "start", role: "triage", cause: "switch" })] });
+    const restarted = obs({ action: { kind: "restart" }, switches: paused, items: implementing.items });
+    assert.equal(fires("G1", implementing, restarted, triageNext), null);
+    assert.match(fires("G1", implementing, restarted, { ...triageNext, items: [item("A-1", { kind: "start", role: "review", cause: "switch" })] }) ?? "", /had a implement session before the restart/);
   });
   it("G2", "the tick threw", () => {
     assert.match(fires("G2", obs({ tickError: "boom" })) ?? "", /threw: boom/);
@@ -366,6 +400,11 @@ describe("each rule fires on a bad state built by hand", { concurrency: 1 }, () 
     // A change waiting in this machine's merge queue is work under way: its claim stands (#229).
     const queued = (ms: number) => obs({ at: new Date(Date.parse(AT) + ms).toISOString(), items: [item("A-1", { kind: "queue" }, { item: claimed })] });
     assert.equal(fires("H3", queued(0), queued(3 * 3600_000)), null);
+    // A text wait past 30 minutes that the card still gives as the reason; a parked job keeps the wait for its next step, and its card
+    // asks the person, so that is no text wait (#268).
+    const text = (reason: string, over: Partial<Where> = {}) => obs({ action: tick, at: "2026-11-18T11:00:00.000Z", items: [item("A-1", SLOT, { job: job("A-1", { writing: { from: "h", at: AT }, ...over }), card: card("A-1", { reason }) })] });
+    assert.match(fires("H3", text("waits until the description written at a person's Accept is read back from metaBranch (at most 1 minute more)")) ?? "", /still waits for its text/);
+    assert.equal(fires("H3", text("Answer the question: a rewrite of the description waits for a person", { parked: { as: "needs-decision", reason: "r", at: AT } })), null);
   });
   it("H4", "a person is waited for and the page offers nothing (#183)", () => {
     const o = obs({ items: [item("A-1", { kind: "person", why: "escalated" }, { served: { item: { ref: { host: "metaBranch", kind: "work", id: "A-1" }, title: "Item", state: "todo" }, lane: "backlog" } })] });
@@ -487,6 +526,381 @@ async function holdsOn(id: string, options: Shrunk, actions: Action[]): Promise<
 }
 
 describe("runs the simulator shrank, held since their fix", { concurrency: 1 }, () => {
+  // Fixed (#268): a host outage lost the revision line; recovery takes the revision the passing review names, so the merge is found.
+  test("E5: the revision line lost to a host outage, merged by the queue, the store lost: no second merge", async () => {
+    await holdsOn("E5", {items: 12, level: 4, slots: 2, steps: 600, profile: "normal", ageing: true}, [
+      {kind: "close", item: "A-2", state: "done"},
+      {kind: "tick"},
+      {kind: "close", item: "A-1", state: "done"},
+      {kind: "move", item: "A-3", v: 146012},
+      {kind: "tick"},
+      {kind: "move", item: "A-3", v: 836288},
+      {kind: "tick"},
+      {kind: "end", item: "A-5", v: 141136},
+      {kind: "tick"},
+      {kind: "lose-store"},
+      {kind: "switch", to: "resume"},
+      {kind: "tick"},
+      {kind: "host-down", steps: 1},
+      {kind: "end", item: "A-5", v: 853882},
+      {kind: "tick"},
+      {kind: "clock", ms: 60000},
+      {kind: "tick"},
+      {kind: "end", item: "A-5", v: 139211},
+      {kind: "tick"},
+      {kind: "queue", item: "A-5", merge: true},
+      {kind: "lose-store"},
+      {kind: "fair"},
+      {kind: "tick"},
+      {kind: "end", item: "A-5", v: 67},
+      {kind: "tick"},
+      {kind: "clock", ms: 1860000},
+      {kind: "tick"},
+      {kind: "end", item: "A-5", v: 98},
+      {kind: "tick"},
+      {kind: "clock", ms: 1000},
+      {kind: "tick"},
+      {kind: "end", item: "A-5", v: 129},
+      {kind: "tick"},
+      {kind: "queue", item: "A-5", merge: true},
+    ]);
+  });
+
+  // Fixed (#268): a hand-over finds the reviewed revision on main already (the queue merged it, its notice lost with the store): merged.
+  test("E5: merged by the queue, then the store lost: the rebuilt hand-over closes it, nothing is merged again", async () => {
+    await holdsOn("E5", {items: 12, level: 4, slots: 2, steps: 600, profile: "normal", ageing: true}, [
+      {kind: "close", item: "A-2", state: "done"},
+      {kind: "tick"},
+      {kind: "close", item: "A-1", state: "done"},
+      {kind: "move", item: "A-3", v: 146012},
+      {kind: "tick"},
+      {kind: "move", item: "A-3", v: 836288},
+      {kind: "tick"},
+      {kind: "end", item: "A-5", v: 141136},
+      {kind: "tick"},
+      {kind: "lose-store"},
+      {kind: "switch", to: "resume"},
+      {kind: "tick"},
+      {kind: "end", item: "A-5", v: 853882},
+      {kind: "tick"},
+      {kind: "clock", ms: 60000},
+      {kind: "tick"},
+      {kind: "end", item: "A-5", v: 139211},
+      {kind: "tick"},
+      {kind: "queue", item: "A-5", merge: true},
+      {kind: "lose-store"},
+      {kind: "fair"},
+      {kind: "tick"},
+      {kind: "clock", ms: 1860000},
+      {kind: "tick"},
+      {kind: "end", item: "A-5", v: 98},
+      {kind: "tick"},
+      {kind: "clock", ms: 1000},
+      {kind: "tick"},
+      {kind: "end", item: "A-5", v: 129},
+      {kind: "tick"},
+      {kind: "queue", item: "A-5", merge: true},
+    ]);
+  });
+
+  // Fixed (#268): a move back to To do drops a hand-over the job owed, so its wait is the drop's.
+  test("A1: an escalated hand-over answered, then put back in To do: no hand-over is waited for", async () => {
+    await holdsOn("A1", {items: 9, level: 2, slots: 3, steps: 600, profile: "normal", ageing: true}, [
+      {kind: "close", item: "A-5", state: "done"},
+      {kind: "close", item: "A-2", state: "abandoned"},
+      {kind: "tick"},
+      {kind: "end", item: "A-3", v: 455629},
+      {kind: "close", item: "A-1", state: "abandoned"},
+      {kind: "level", to: 1},
+      {kind: "tick"},
+      {kind: "end", item: "A-7", v: 920581},
+      {kind: "tick"},
+      {kind: "end", item: "A-4", v: 10737},
+      {kind: "end", item: "A-8", v: 728507},
+      {kind: "tick"},
+      {kind: "answer", item: "A-8", v: 731861},
+      {kind: "tick"},
+      {kind: "move", item: "A-8", v: 140223},
+      {kind: "tick"},
+      {kind: "end", item: "A-8", v: 299078},
+      {kind: "tick"},
+      {kind: "answer", item: "A-8", v: 640417},
+      {kind: "move", item: "A-8", v: 118405},
+    ]);
+  });
+
+  // Fixed (#268): a person's triage in Backlog that waits for the text a proposed rewrite's Accept wrote: the card says so.
+  test("A1: Triage picked in Backlog, then a proposed rewrite accepted whose read-back is lost: the card waits for the text", async () => {
+    await holdsOn("A1", {items: 5, level: 3, slots: 2, steps: 600, profile: "normal", ageing: true}, [
+      {kind: "tick"},
+      {kind: "new-item", v: 43420},
+      {kind: "end", item: "A-1", v: 23580},
+      {kind: "new-item", v: 441631},
+      {kind: "end", item: "A-2", v: 867770},
+      {kind: "tick"},
+      {kind: "answer", item: "A-1", v: 304340},
+      {kind: "tick"},
+      {kind: "end", item: "A-1", v: 54964},
+      {kind: "tick"},
+      {kind: "answer", item: "A-1", v: 587039},
+      {kind: "tick"},
+      {kind: "answer", item: "A-1", v: 857647},
+      {kind: "new-item", v: 86385},
+      {kind: "end", item: "A-3", v: 620734},
+      {kind: "move", item: "A-8", v: 398028},
+      {kind: "tick"},
+      {kind: "answer", item: "A-2", v: 855481},
+      {kind: "end", item: "A-8", v: 121842},
+      {kind: "tick"},
+      {kind: "move", item: "A-7", v: 588930},
+      {kind: "proposed", item: "A-7", v: 510000},
+      {kind: "tick"},
+    ]);
+  });
+
+  // Fixed (#268): the dropped result's event is committed after the job's change, so a paused tick keeps the change.
+  test("G1: Triage picked over a running implement session, then a restart: the first tick drops its result once, for good", async () => {
+    await holdsOn("G1", {items: 6, level: 3, slots: 3, steps: 600, profile: "calm", ageing: true}, [
+      {kind: "tick"},
+      {kind: "end", item: "A-3", v: 784039},
+      {kind: "tick"},
+      {kind: "clock", ms: 1000},
+      {kind: "tick"},
+      {kind: "move", item: "A-3", v: 164546},
+      {kind: "restart"},
+      {kind: "tick"},
+    ]);
+  });
+
+  // Fixed (#268): a rewrite rejected whose read-back is lost: the store's stale question of the settled park asks nothing on the card.
+  test("A1: a rewrite rejected whose read-back did not come: the card says the next step, not that it needs a decision", async () => {
+    await holdsOn("A1", {items: 12, level: 2, slots: 3, steps: 600, profile: "calm", ageing: true}, [
+      {kind: "tick"},
+      {kind: "end", item: "A-2", v: 584883},
+      {kind: "tick"},
+      {kind: "sync"},
+      {kind: "answer", item: "A-2", v: 390002},
+      {kind: "tick"},
+    ]);
+  });
+
+  // Held (#268): a job rebuilt from the log counts no parks, so its question line's set is not an earlier park's; the answer names it.
+  test("A3: a question parked, the store lost and the job rebuilt, then answered: the question closes on the host", async () => {
+    await holdsOn("A3", {items: 7, level: 4, slots: 1, steps: 600, profile: "calm", ageing: true}, [
+      {kind: "tick"},
+      {kind: "end", item: "A-1", v: 307922},
+      {kind: "tick"},
+      {kind: "lose-store"},
+      {kind: "tick"},
+      {kind: "answer", item: "A-1", v: 270589},
+    ]);
+  });
+
+  // Fixed (#268): two triages running at once each find the other a blocker; the second link would close a ring and is not kept.
+  test("H2: A-4's triage finds A-8 a blocker while A-8's triage runs, which then finds A-4 one: no ring", async () => {
+    await holdsOn("H2", {items: 11, level: 3, slots: 3, steps: 600, profile: "normal", ageing: true}, [
+      {kind: "tick"},
+      {kind: "move", item: "A-2", v: 910517},
+      {kind: "tick"},
+      {kind: "end", item: "A-2", v: 96918},
+      {kind: "tick"},
+      {kind: "claim", item: "A-7"},
+      {kind: "answer", item: "A-2", v: 807226},
+      {kind: "end", item: "A-3", v: 391925},
+      {kind: "end", item: "A-4", v: 854919},
+      {kind: "close", item: "A-5", state: "done"},
+      {kind: "tick"},
+      {kind: "end", item: "A-8", v: 248149},
+      {kind: "tick"},
+    ]);
+  });
+
+  // The checker's W fixed (#268): a session that ended and is not settled yet keeps its own role, not the step a person's pick set.
+  test("F1: Triage picked over a running implement session, which then ends: W stays the implement session until the tick", async () => {
+    await holdsOn("F1", {items: 8, level: 2, slots: 2, steps: 600, profile: "normal", ageing: true}, [
+      {kind: "claim", item: "A-2"},
+      {kind: "close", item: "A-1", state: "done"},
+      {kind: "close", item: "A-4", state: "done"},
+      {kind: "close", item: "A-3", state: "done"},
+      {kind: "close", item: "A-6", state: "abandoned"},
+      {kind: "tick"},
+      {kind: "end", item: "A-7", v: 35970},
+      {kind: "new-item", v: 556275},
+      {kind: "tick"},
+      {kind: "move", item: "A-8", v: 561826},
+      {kind: "tick"},
+      {kind: "claim", item: "A-9"},
+      {kind: "release", item: "A-9"},
+      {kind: "move", item: "A-8", v: 428887, keen: true},
+      {kind: "tick"},
+      {kind: "end", item: "A-9", v: 894786},
+      {kind: "tick"},
+      {kind: "answer", item: "A-9", v: 630237},
+      {kind: "tick"},
+      {kind: "clock", ms: 10800000},
+      {kind: "tick"},
+      {kind: "move", item: "A-9", v: 785856},
+      {kind: "end", item: "A-9", v: 9},
+      {kind: "lane", item: "A-10", to: "todo"},
+    ]);
+  });
+
+  // Fixed (#268): an answer to the park names it, also when the store still reads an earlier park's question.
+  test("A3: a rewrite accepted whose read-back is lost, parked not ready, then answered: the not-ready question closes", async () => {
+    await holdsOn("A3", {items: 9, level: 4, slots: 3, steps: 600, profile: "normal", ageing: true}, [
+      {kind: "tick"},
+      {kind: "end", item: "A-3", v: 59958},
+      {kind: "tick"},
+      {kind: "end", item: "A-4", v: 90194},
+      {kind: "level", to: 2},
+      {kind: "answer", item: "A-3", v: 6498},
+      {kind: "tick"},
+      {kind: "answer", item: "A-3", v: 295300},
+      {kind: "close", item: "A-6", state: "abandoned"},
+      {kind: "tick"},
+      {kind: "end", item: "A-3", v: 503417},
+      {kind: "end", item: "A-1", v: 181024},
+      {kind: "tick"},
+      {kind: "main-commit", v: 208949},
+      {kind: "tick"},
+      {kind: "end", item: "A-1", v: 7487},
+      {kind: "close", item: "A-5", state: "abandoned"},
+      {kind: "tick"},
+      {kind: "end", item: "A-7", v: 724465},
+      {kind: "tick"},
+      {kind: "sync"},
+      {kind: "answer", item: "A-7", v: 353567},
+      {kind: "tick"},
+      {kind: "answer", item: "A-7", v: 730785},
+    ]);
+  });
+
+  // Fixed (#268): a move answers the park the store has not read back, also when it still reads an earlier park's question.
+  test("A3: a rewrite rejected whose read-back is lost, parked not ready, then Implement anyway: the not-ready question is answered", async () => {
+    await holdsOn("A3", {items: 7, level: 2, slots: 2, steps: 600, profile: "normal", ageing: true}, [
+      {kind: "tick"},
+      {kind: "end", item: "A-1", v: 430985},
+      {kind: "tick"},
+      {kind: "sync"},
+      {kind: "answer", item: "A-1", v: 688638},
+      {kind: "tick"},
+      {kind: "move", item: "A-1", v: 163135},
+    ]);
+  });
+
+  // Fixed (#268): a triage's rewrite accepted, and the read-back after the write lost: the card says it waits for the text.
+  test("A1: a rewrite accepted whose read-back did not come: the card waits for the text, not for an answer", async () => {
+    await holdsOn("A1", {items: 12, level: 2, slots: 2, steps: 600, profile: "normal", ageing: true}, [
+      {kind: "tick"},
+      {kind: "end", item: "A-1", v: 276319},
+      {kind: "tick"},
+      {kind: "sync"},
+      {kind: "answer", item: "A-1", v: 524467},
+      {kind: "tick"},
+    ]);
+  });
+
+  // Fixed (#268): a person who merges the branch of finished work whose hand-over failed (escalated) makes the Item done.
+  test("C2: done but not merged, escalated, then merged by a person: done within the ticks", async () => {
+    await holdsOn("C2", {items: 9, level: 2, slots: 1, steps: 600, profile: "calm", ageing: true}, [
+      {kind: "tick"},
+      {kind: "end", item: "A-1", v: 996598},
+      {kind: "tick"},
+      {kind: "end", item: "A-2", v: 658503},
+      {kind: "tick"},
+      {kind: "end", item: "A-3", v: 885157},
+      {kind: "tick"},
+      {kind: "answer", item: "A-3", v: 347857},
+      {kind: "tick"},
+      {kind: "end", item: "A-3", v: 501425},
+      {kind: "tick"},
+      {kind: "clock", ms: 1000},
+      {kind: "tick"},
+      {kind: "end", item: "A-3", v: 178759},
+      {kind: "tick"},
+      {kind: "person-merge", item: "A-3"},
+      {kind: "tick"},
+      {kind: "tick"},
+      {kind: "tick"},
+    ]);
+  });
+
+  // The checker's W fixed (#268): an implement step whose session a limit cut off has begun, so it waits for its timer, not the same files.
+  test("A1: an implement session cut off by the limit resumes on its timer, held by no same-files wait", async () => {
+    await holdsOn("A1", {items: 9, level: 2, slots: 1, steps: 600, profile: "calm", ageing: true}, [
+      {kind: "tick"},
+      {kind: "end", item: "A-1", v: 995829},
+      {kind: "tick"},
+      {kind: "end", item: "A-2", v: 686222},
+      {kind: "answer", item: "A-1", v: 715631},
+      {kind: "tick"},
+      {kind: "answer", item: "A-2", v: 298307},
+      {kind: "tick"},
+      {kind: "clock", ms: 1000},
+      {kind: "tick"},
+      {kind: "end", item: "A-1", v: 996598},
+      {kind: "tick"},
+    ]);
+  });
+
+  // Fixed (#268): a lost store does not hand over a change approved before the work was dropped and triaged again.
+  test("A1: approved, put back in To do, triaged blocked, then the store is lost: no hand-over is rebuilt", async () => {
+    await holdsOn("A1", {items: 7, level: 2, slots: 3, steps: 600, profile: "rough", ageing: true}, [
+      {kind: "level", to: 3},
+      {kind: "tick"},
+      {kind: "end", item: "A-2", v: 534778},
+      {kind: "tick"},
+      {kind: "clock", ms: 1860000},
+      {kind: "tick"},
+      {kind: "end", item: "A-2", v: 984367},
+      {kind: "tick"},
+      {kind: "clock", ms: 60000},
+      {kind: "tick"},
+      {kind: "end", item: "A-2", v: 752435},
+      {kind: "tick"},
+      {kind: "move", item: "A-2", v: 973302, keen: true},
+      {kind: "move", item: "A-2", v: 51184, keen: true},
+      {kind: "tick"},
+      {kind: "end", item: "A-2", v: 86247},
+      {kind: "tick"},
+      {kind: "lose-store"},
+      {kind: "tick"},
+    ]);
+  });
+
+  // Fixed (#268): a step a person picked at a level below its switch runs while the agents are paused; the card says its timer.
+  test("A1: Implement anyway at level 1, cut off by a restart: the card says when it starts, not that agents are paused", async () => {
+    await holdsOn("A1", {items: 7, level: 3, slots: 2, steps: 600, profile: "rough", ageing: true}, [
+      {kind: "close", item: "A-1", state: "abandoned"},
+      {kind: "foreign-claim", item: "A-2"},
+      {kind: "slots", to: 3},
+      {kind: "level", to: 1},
+      {kind: "tick"},
+      {kind: "end", item: "A-5", v: 411021},
+      {kind: "end", item: "A-3", v: 652790},
+      {kind: "tick"},
+      {kind: "end", item: "A-7", v: 844819},
+      {kind: "tick"},
+      {kind: "move", item: "A-7", v: 578128},
+      {kind: "tick"},
+      {kind: "restart"},
+      {kind: "tick"},
+    ]);
+  });
+
+  // Fixed (#268): a step Scope Soup's lost store would rebuild from the log is not rebuilt for an Item a person moved to Backlog.
+  test("J1: the store lost after a move to Backlog, and the Item still claimed: no triage starts there", async () => {
+    await holdsOn("J1", {items: 3, level: 4, slots: 2, steps: 600, profile: "calm", ageing: true}, [
+      {kind: "tick"},
+      {kind: "end", item: "A-2", v: 64492},
+      {kind: "tick"},
+      {kind: "lane", item: "A-2", to: "backlog"},
+      {kind: "lose-store"},
+      {kind: "switch", to: "resume"},
+      {kind: "tick"},
+    ]);
+  });
+
   // Fixed (#223): a move's words, written by the park's set before the store read its questions back, answer every question of the set.
   test("A3: a move answers both questions of a park the store has not read back", async () => {
     await holdsOn("A3", {items: 6, level: 2, slots: 2, steps: 600, profile: "rough"}, [

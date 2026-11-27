@@ -26,6 +26,8 @@ export interface WaitInput {
   live: Role[];
   /** The job names a session that is over and the tick has not settled yet. */
   settling?: boolean;
+  /** That session's role, which may differ from the job's step: a person's pick over it changed the step (#268). */
+  settlingRole?: Role;
   /** Open items by ref key, for blockers. */
   open: ReadonlyMap<string, WorkItem>;
   /** Scope Soup's own blockers of the item (ref keys). */
@@ -66,7 +68,7 @@ export function waitsFor(input: WaitInput): W {
   const role = (at?.step ?? "triage") as Role;
   if (input.live.length > 0) return { kind: "session", role: input.live[input.live.length - 1]! };
   // A session that ended and that the tick has not read yet is still the step's session.
-  if (input.settling) return { kind: "session", role, settling: true };
+  if (input.settling) return { kind: "session", role: input.settlingRole ?? role, settling: true };
   const parked = at?.parked;
   if (job && at && parked) {
     if (parked.as === "queued") return { kind: "queue" };
@@ -94,7 +96,7 @@ export function waitsFor(input: WaitInput): W {
   if (item.backlog && role === "implement" && !job.implementAskedBy && !job.head && !job.resumeWith && !at.resume) return start("backlog");
   const writing = at.writing;
   if (writing && writing.from === itemTextHash(item) && Date.parse(input.now) - Date.parse(writing.at) < 30 * 60_000) return start("text");
-  const begun = !!(job.head || job.implement);
+  const begun = implementBegun(job);
   if (role === "implement" && !begun) {
     const paths = job.triage?.paths ?? [];
     const mine = (job.triage?.links ?? []).filter((l) => l.type === "conflictsWith").map((l) => l.item.replace(/^#/, ""));
@@ -113,6 +115,15 @@ export function waitsFor(input: WaitInput): W {
   // New work waits while too much waits for a person; a person's pick does not (decision 133).
   if (input.workCapped && newWork(job) && !job.implementAskedBy) return start("cap");
   return start("slot");
+}
+
+/**
+ * Something of the implement step has begun: a change, an implementor's result, or a session to resume (one a limit cut off, #268: its
+ * files are in that session's hands). Only a first implement step waits for the same files. Kept apart from the product's own count, so
+ * the checker can catch a mistake there.
+ */
+export function implementBegun(job: Job): boolean {
+  return !!(job.head || job.implement || where(job)?.resume);
 }
 
 /**

@@ -8,7 +8,7 @@
 
 import assert from "node:assert/strict";
 import { it } from "node:test";
-import { KNOWN } from "./known.ts";
+import { isKnown, KNOWN } from "./known.ts";
 import type { RunResult } from "./play.ts";
 import { optionsFor, pasteable, play, shrink } from "./play.ts";
 import { RULE_IDS } from "./rules.ts";
@@ -25,12 +25,20 @@ async function run(seed: number): Promise<RunResult> {
 
 it("random runs keep the lifecycle rules, apart from the known failures, and reach what the rules are about", async (t) => {
   const seeds = ONE !== undefined ? [ONE] : Array.from({ length: SEEDS }, (_, i) => i + 1);
+  // The first failure not on the known list, per rule; and every failure as rule and seed, for the list's entries.
   const first = new Map<string, RunResult>();
+  const failed = new Set<string>();
   const totals = { steps: 0, merges: 0, answers: 0, restarts: 0, accepted: 0, rejected: 0, closed: 0, retriagedInShare: 0, retriagedBeforeStart: 0 };
   const waits = new Set<string>();
+  // A person's picks and rewrite accepts while the Item's work is busy (#268): how often, and on how many seeds.
+  const BUSY = ["queue-pick-over-session", "queue-pick-over-review", "pick-over-session", "pick-over-parked", "pick-over-hand-over", "accept-over-session", "accept-over-parked", "accept-over-hand-over"] as const;
+  const busy = new Map<string, { times: number; seeds: number }>(BUSY.map((each) => [each, { times: 0, seeds: 0 }]));
   for (const seed of seeds) {
     const result = await run(seed);
-    for (const failure of result.failures) if (!first.has(failure.rule)) first.set(failure.rule, result);
+    for (const failure of result.failures) {
+      failed.add(`${failure.rule}|${seed}`);
+      if (!isKnown(KNOWN, failure.rule, seed, LONG) && !first.has(failure.rule)) first.set(failure.rule, result);
+    }
     totals.steps += result.steps;
     totals.merges += result.merges;
     // A person's answers: to questions, and to a triage's rewrite (with its questions). Since questions close when answered (#230),
@@ -44,11 +52,19 @@ it("random runs keep the lifecycle rules, apart from the known failures, and rea
     // Triages Scope Soup took again on its own (#217): within the share while the Item waits in To do, or just before it starts.
     totals.retriagedInShare += result.seen.get("retriage-share") ?? 0;
     totals.retriagedBeforeStart += result.seen.get("retriage-before-start") ?? 0;
+    for (const each of BUSY) {
+      const n = result.seen.get(each) ?? 0;
+      const sum = busy.get(each)!;
+      sum.times += n;
+      if (n > 0) sum.seeds++;
+    }
   }
   t.diagnostic(`${seeds.length} seeds, ${totals.steps} steps, ${totals.merges} merges, ${totals.answers} answers, ${totals.accepted} rewrites accepted and ${totals.rejected} rejected, ${totals.closed} closes, ${totals.restarts} restarts, ${totals.retriagedInShare} triages taken again within the share and ${totals.retriagedBeforeStart} before a start`);
+  const said = (each: string): string => `${busy.get(each)!.times} (${busy.get(each)!.seeds} seeds)`;
+  t.diagnostic(`while busy: Merge queue picks over a running session ${said("queue-pick-over-session")}, a review among them ${said("queue-pick-over-review")}; picks over a session ${said("pick-over-session")}, a parked job ${said("pick-over-parked")}, an owed hand-over ${said("pick-over-hand-over")}; rewrites accepted and written over a session ${said("accept-over-session")}, a parked job ${said("accept-over-parked")}, an owed hand-over ${said("accept-over-hand-over")}`);
 
-  // A rule that fails and is not known: the first failure in words, its replay, and the steps shrunk to a test to paste.
-  const unknown = [...first.keys()].filter((rule) => !(rule in KNOWN));
+  // A failure not on the known list (its rule on its seed): the first per rule in words, its replay, and the steps shrunk to a test.
+  const unknown = [...first.keys()];
   if (unknown.length > 0) {
     const parts: string[] = [];
     for (const rule of unknown) {
@@ -56,14 +72,14 @@ it("random runs keep the lifecycle rules, apart from the known failures, and rea
       parts.push(result.reports.get(rule)!);
       if (ONE === undefined || !TRACE) parts.push(`shrunk, to paste into src/sim/rules.test.ts:\n${pasteable(result, rule, await shrink(result, rule))}`);
     }
-    assert.fail(`rules that fail and are not on the known list:\n\n${parts.join("\n\n")}`);
+    assert.fail(`failures that are not on the known list (a rule on a seed):\n\n${parts.join("\n\n")}`);
   }
-  // The known list only shrinks: a known rule that no longer fails comes off it. (A single seed does not tell.)
+  // The known list only shrinks: an entry of this run whose rule no longer fails on its seed comes off it. (A single seed does not tell.)
   if (ONE === undefined) {
-    const fixed = Object.keys(KNOWN).filter((rule) => !first.has(rule) && (LONG || !KNOWN[rule]!.long));
-    assert.deepEqual(fixed, [], `these rules no longer fail on any seed: take them off the known list in src/sim/known.ts`);
+    const fixed = KNOWN.filter((each) => each.long === LONG && !failed.has(`${each.rule}|${each.seed}`)).map((each) => `${each.rule} on seed ${each.seed}`);
+    assert.deepEqual(fixed, [], `these no longer fail: take them off the known list in src/sim/known.ts`);
   }
-  for (const rule of Object.keys(KNOWN)) assert.ok(RULE_IDS.includes(rule), `the known list names ${rule}, which is not a rule`);
+  for (const each of KNOWN) assert.ok(RULE_IDS.includes(each.rule), `the known list names ${each.rule}, which is not a rule`);
 
   // The runs reach what the rules are about; otherwise a rule would hold for nothing.
   if (ONE === undefined) {

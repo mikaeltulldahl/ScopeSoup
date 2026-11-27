@@ -333,6 +333,27 @@ test("a log whose last review sent the change back to the implementor is read ba
   assert.equal(back?.resumeWith, "The reviewer asked for these changes:\n- [must] src/a.ts: Off by one.\nFix them and commit.");
 });
 
+test("an approval the work was dropped after is not handed over again: a triage since starts it as new (#268)", () => {
+  const reviewed = [
+    line("session", { role: "implement", outcome: "succeeded", summary: "Added it.", next: "review" }),
+    line("revision", { sha: SHA1, branch: "scopesoup/A-9" }),
+    line("review", { sha: SHA1, verdict: "pass", findings: [] }),
+    line("session", { role: "review", outcome: "succeeded", summary: "approve" }),
+  ];
+  assert.equal(where(jobFromLog(workItem(reviewed)))?.owes, "hand-over");
+  // A person put it back in To do; its triage ran again and found it blocked (no step next).
+  assert.equal(jobFromLog(workItem([...reviewed, line("session", { role: "triage", outcome: "succeeded", summary: "Blocked by A-1." })])), null);
+});
+
+test("a passing review whose revision line was lost (a host outage) still hands over the revision it names (#268)", () => {
+  const job = jobFromLog(workItem([
+    line("session", { role: "triage", outcome: "succeeded", summary: "Ready.", next: "implement" }),
+    line("review", { sha: SHA1, verdict: "pass", findings: [] }),
+    line("session", { role: "review", outcome: "succeeded", summary: "approve" }),
+  ]));
+  assert.deepEqual([where(job)?.owes, job?.head, job?.reviewedHead], ["hand-over", SHA1, SHA1]);
+});
+
 test("a parked decision read back from the log keeps its options as { label, description } and its context", () => {
   const at = "2026-11-18T09:05:00.000Z";
   const by = { who: "scopesoup", machine: "laptop-a", agent: true };

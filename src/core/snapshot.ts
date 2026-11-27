@@ -101,6 +101,10 @@ export interface JobStage {
   step: Step;
   /** Where the job is: the lane, the card's wait and its timed waits are read from it. */
   phase: Phase;
+  /** A person picked the step that runs next (decision 104): below the level that shows its switch, no switch holds it. */
+  picked?: true;
+  /** How many times the job parked: a question line of a lower park number is one it settled already (`earlierPark`). */
+  parks?: number;
 }
 
 /** A rewrite another Item's triage proposed for this one's description, with no question. Agent text: data. */

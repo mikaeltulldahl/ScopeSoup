@@ -138,6 +138,8 @@ describe("the log comment", () => {
 
 describe("recovery from GitHub", () => {
   test("after a store delete, an Item whose last session said next: review resumes at review", async () => {
+    // In To do (its label): work under way is never in Backlog (decision 121).
+    fake.issues.get("4")!.labels.push("scopesoup:todo");
     const actions = actionsOn(openStore(":memory:"));
     await actions.appendLog(ref("4"), "session", { role: "triage", outcome: "succeeded", summary: "Ready.", next: "implement", size: "small" });
     await actions.appendLog(ref("4"), "revision", { sha: "c".repeat(40), branch: "scopesoup/4" });
@@ -145,6 +147,10 @@ describe("recovery from GitHub", () => {
     const { jobs, events } = await deletedStore();
     const job = jobs[key("4")]!;
     assert.equal(stepAt(job), "review");
+    // Issue 1's log says its implement step comes next, but it has no To do label: in Backlog no step is rebuilt (#268).
+    assert.ok(logOf("1").length > 0);
+    assert.equal(jobs[key("1")], undefined);
+    assert.ok(events.some((each) => /^orchestrator\.recover_skipped: Not rebuilt from the item's comments on github: 1 is in Backlog, so its implement step does not start again/.test(each)), events.join("\n"));
     assert.equal(job.head, "c".repeat(40));
     assert.equal(job.branch, "scopesoup/4");
     assert.equal(job.triage?.size, "small");

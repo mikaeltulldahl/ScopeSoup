@@ -5,7 +5,7 @@ import type { Batch, Change, CreatedPart, ProposedPart, Ref, Parked, ParkedQuest
 import { refKey } from "../model/types.ts";
 import type { Job } from "../orchestrator/jobs.ts";
 import { loadJobs, jobQuestions, resumesStep, where, stepAt } from "../orchestrator/jobs.ts";
-import { phaseOf } from "../orchestrator/phase.ts";
+import { phaseOf, pickOf } from "../orchestrator/phase.ts";
 import { busyItems, sameFilesWait } from "../orchestrator/candidates.ts";
 import { markedParts, partLinked } from "../orchestrator/restructure.ts";
 import { readQueueHealth } from "../orchestrator/queueHealth.ts";
@@ -99,7 +99,7 @@ export function loadSnapshot(store: Store): Snapshot {
 export function jobStage(job: Job): JobStage {
   const phase = phaseOf(job);
   const stage: JobStage["stage"] = phase.at === "queued" ? "queue" : stepAt(job) === "review" || job.reviewedHead ? "review" : job.head || (stepAt(job) === "implement" && job.implement) ? "implement" : "start";
-  return { subject: job.item, stage, step: stepAt(job), phase };
+  return { subject: job.item, stage, step: stepAt(job), phase, ...(pickOf(job)?.to === stepAt(job) ? { picked: true as const } : {}), ...(job.parks ? { parks: job.parks } : {}) };
 }
 
 /** The parts of an item's restructuring that exist on its host, found by their part lines; a child is `linked` when it is a sub-issue of the item. */

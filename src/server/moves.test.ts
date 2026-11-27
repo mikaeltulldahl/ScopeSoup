@@ -116,6 +116,10 @@ describe("the rules", () => {
     assert.equal(applyMove(drop, key, "todo", input(), "Ada", T0).ok, true);
     assert.equal(drop[key]?.dropAskedBy, "Ada");
     assert.equal(moveWhys(input({ job: drop[key] })).todo!.why, "back to To do already");
+    // A hand-over it owed is not made: the job waits only for the drop (#268).
+    const owed = { [key]: job({ head: "abc", step: "implement", owes: "hand-over" }) };
+    assert.equal(applyMove(owed, key, "todo", input({ job: owed[key] }), "Ada", T0).ok, true);
+    assert.deepEqual([owed[key]!.dropAskedBy, where(owed[key])!.owes], ["Ada", undefined]);
   });
 
   test("a move that replaces the step that runs marks the job for the tick to end that session; In review and Merge queue are marked as a person's", () => {
@@ -287,6 +291,44 @@ describe("Implement anyway answers the not-ready question the log holds open", (
       const response = await fetch(`${base}/api/item/move`, { method: "POST", headers: { "Content-Type": "application/json", "X-ScopeSoup-Person": "Ada" }, body: JSON.stringify({ ref: key, to: "implement" }) });
       assert.equal(response.status, 200);
       assert.deepEqual(written.map((line) => [line.kind, line.fields.to]), [["answer", asked.at]]);
+    } finally {
+      await server.stop();
+      store.close();
+    }
+  });
+
+  test("when the store still reads only an earlier park's question (a lost read-back), the answer also names this park's set (#268)", async () => {
+    const stale = { at: "2026-11-20T09:00:00Z", by: { id: "scopesoup", name: "scopesoup", bot: true }, question: "Triage, round 1: a rewrite.", options: [], set: "1@2026-11-20T09:00:00Z" };
+    const store = openStore(":memory:");
+    store.put({ ...item, needsDecision: true, openQuestions: [stale] }, "sync", T0);
+    saveJobs(store, { [key]: job({ step: "triage", parks: 2, parked: { as: "not-ready", reason: "Triage: not ready.", at: T0, verdict: true } }) });
+    const written: { kind: string; fields: Record<string, unknown> }[] = [];
+    const write = { appendLog: async (_ref: unknown, line: { kind: string; fields: Record<string, unknown> }) => { written.push(line); return { shared: true }; } };
+    const server = createServer({ store, now: () => new Date(T0), port: 0, heartbeatMs: 20, configFile: "scopesoup.config.json", planning: () => ({ bugLabels: [], level: 3 }), items: { host: item.ref.host, write: write as never } });
+    try {
+      const base = (await server.start()).url;
+      const response = await fetch(`${base}/api/item/move`, { method: "POST", headers: { "Content-Type": "application/json", "X-ScopeSoup-Person": "Ada" }, body: JSON.stringify({ ref: key, to: "implement" }) });
+      assert.equal(response.status, 200);
+      assert.deepEqual(written.map((line) => [line.kind, line.fields.to ?? line.fields.toSet]), [["answer", stale.at], ["answer", `2@${T0}`]]);
+    } finally {
+      await server.stop();
+      store.close();
+    }
+  });
+
+  test("an answer to this park, while the store still reads only an earlier park's question, names this park's set (#268)", async () => {
+    const stale = { at: "2026-11-20T09:00:00Z", by: { id: "scopesoup", name: "scopesoup", bot: true }, question: "Triage, round 1: a rewrite.", options: [], set: "1@2026-11-20T09:00:00Z" };
+    const store = openStore(":memory:");
+    store.put({ ...item, needsDecision: true, openQuestions: [stale] }, "sync", T0);
+    saveJobs(store, { [key]: job({ step: "triage", parks: 2, parked: { as: "not-ready", reason: "Triage: not ready.", at: T0, verdict: true } }) });
+    const written: { kind: string; fields: Record<string, unknown> }[] = [];
+    const write = { appendLog: async (_ref: unknown, line: { kind: string; fields: Record<string, unknown> }) => { written.push(line); return { shared: true }; } };
+    const server = createServer({ store, now: () => new Date(T0), port: 0, heartbeatMs: 20, configFile: "scopesoup.config.json", planning: () => ({ bugLabels: [], level: 3 }), items: { host: item.ref.host, write: write as never } });
+    try {
+      const base = (await server.start()).url;
+      const response = await fetch(`${base}/api/answer`, { method: "POST", headers: { "Content-Type": "application/json", "X-ScopeSoup-Person": "Ada" }, body: JSON.stringify({ ref: key, answer: "Go on with it.", parkedAt: T0 }) });
+      assert.equal(response.status, 200);
+      assert.deepEqual(written.map((line) => [line.kind, line.fields.to, line.fields.toSet]), [["answer", undefined, `2@${T0}`]]);
     } finally {
       await server.stop();
       store.close();
