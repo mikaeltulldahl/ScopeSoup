@@ -110,12 +110,15 @@ async function apply(ctx: Context, notice: Notice): Promise<void> {
         const key = refKey(member.change);
         const job = ctx.jobs[key];
         if (!job) continue;
-        // Applied only to the job that waits in the queue with this revision: one that moved on is not marked from an old notice.
-        if (parkedOf(job)?.as !== "queued" || (job.queued !== undefined && member.head !== undefined && job.queued !== member.head)) {
+        // Applied only to the job that waits in the queue with this revision: one that moved on is not marked from an old notice. A
+        // notice delivered again (a restart before the outbox let it go) finds the job merged as it says, and is carried out again
+        // without merging it twice; one that names another commit for a merged job is stale.
+        const merged = job.at.kind === "merged" ? job.at.sha : undefined;
+        if (parkedOf(job)?.as !== "queued" || (merged !== undefined && merged !== member.sha) || (job.queued !== undefined && member.head !== undefined && job.queued !== member.head)) {
           ctx.commit("orchestrator.queue_notice_stale", `The merge queue says ${job.branch} merged as ${member.sha.slice(0, 7)} (batch ${notice.batch}), but ${key.split(":").pop()} no longer waits in the queue with that revision: the notice is not applied to it.`, key, { sha: member.sha, batch: notice.batch });
           continue;
         }
-        markMerged(job, member.sha);
+        if (merged === undefined) markMerged(job, member.sha);
         ctx.commit("orchestrator.merged", `${job.branch} merged through the queue (batch ${notice.batch}): ${member.sha.slice(0, 7)} is on ${main} of ${config.remote}${notice.outside ? " (the main branch was moved to it by someone else; the queue did not test it)" : `; ${command} passed on ${(notice.tested ?? member.sha).slice(0, 7)}, the tip of the tested chain`}.`, key, { sha: member.sha, batch: notice.batch });
         await ctx.act("write the revision to the item's log", key, () => actions.appendLog(job.item, "revision", { sha: member.sha, branch: job.branch }));
         // The check that let it merge (not when someone else moved the main branch: the queue tested nothing then).

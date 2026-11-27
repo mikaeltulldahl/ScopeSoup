@@ -2211,6 +2211,25 @@ test("merging by queue: a change the queue merged gets its revision and merged l
   assert.match(w.reasons("orchestrator.merged")[0] ?? "", /merged through the queue \(batch 3\).*node check\.js passed on bbbbbbb/);
 });
 
+test("merging by queue: a notice delivered again (a restart before the outbox let it go) merges nothing twice; one naming another commit is stale", async () => {
+  const w = world(config(QUEUE), [item("1")]);
+  const queue = fakeQueue();
+  w.queue = queue;
+  await toHandOver(w);
+  const notice = { kind: "mark-merged" as const, batch: 3, tested: SHA2, members: [{ change: ref("1"), sha: SHA2, head: SHA }] };
+  queue.notices.push(notice);
+  await w.run();
+  queue.notices.push(notice);
+  await w.run();
+  assert.equal(shaOf(w.job("1")), SHA2);
+  assert.deepEqual([w.events("orchestrator.queue_notice_stale").length, w.events("orchestrator.queue_problem").length, w.events("orchestrator.merged").length], [0, 0, 2]);
+  const other = "c".repeat(40);
+  queue.notices.push({ ...notice, batch: 4, members: [{ change: ref("1"), sha: other, head: SHA }] });
+  await w.run();
+  assert.equal(shaOf(w.job("1")), SHA2);
+  assert.match(w.reasons("orchestrator.queue_notice_stale")[0] ?? "", /merged as ccccccc \(batch 4\)/);
+});
+
 test("merging by queue: the merged item is closed on its host once", async () => {
   const w = world(config(QUEUE), [item("1")]);
   const queue = fakeQueue();
@@ -2789,6 +2808,24 @@ test("claims across machines: a claim lost at renewal stops the Item's session a
     await w.run();
     assert.deepEqual(roles(w), ["triage"]);
   }
+});
+
+test("claims across machines: a claim lost on an owed hand-over is only reported, as for a change queued or handed over", async () => {
+  const mine = { id: "scopesoup@laptop-a", name: "scopesoup on laptop-a", bot: true };
+  const w = world(config({ level: 4, ...MERGES }), [item("1")]);
+  w.claimant = mine.id;
+  w.claims = true;
+  // The reviewed change owes its hand-over, which waits while the merge queue is paused.
+  applyControl(w.store, "pause", new Date(T0).toISOString(), "test");
+  saveJobs(w.store, { [refKey(ref("1"))]: pickedReview("1", { reviewAskedBy: undefined, reviewedHead: HEAD, review: { verdict: "approve", findings: [] }, at: { kind: "hand-over", step: "review" } }) });
+  w.store.put(item("1", { holder: { actor: mine, until: new Date(w.clock.ms + 50 * 60_000).toISOString() } }), "sync", new Date(w.clock.ms).toISOString());
+  // The renewal is not taken, tick after tick (offline, say): the tick goes on, and the hand-over stays owed.
+  w.claim = { won: false, why: "the claim could not be shared" };
+  await w.run();
+  await w.run();
+  assert.equal(w.events("orchestrator.tick_failed").length, 0);
+  assert.deepEqual([owesHandOver(w.job("1")), parkedOf(w.job("1"))], [true, undefined]);
+  assert.match(w.reasons("orchestrator.claim_lost")[0] ?? "", /^The claim on 1 was lost: the claim could not be shared\.$/);
 });
 
 // --- agents push back: questions with options from the implementer and the fixer, and proposed rewrites of the item ---
@@ -5026,6 +5063,36 @@ test("a person's Merge queue made while a review's start is prepared wins: no re
     await w.run();
     assert.deepEqual(queue.enqueued, ["1 scopesoup/1"], when);
   }
+});
+
+test("a person's Merge queue on one Item made while another Item's start is prepared is not undone by that Item's start", async () => {
+  const queue = fakeQueue();
+  const w = world(config({ level: 4, ...MERGES, settings: { maxParallelSessions: { value: 2, reason: "test" } } }), [item("1"), item("2")]);
+  w.queue = queue;
+  w.store.addUsageSample(usage(0.1, 0.1));
+  // Two reviews a person asked for wait to start, each on a change the reviewer approved at this head before.
+  const approved = { reviewedHead: HEAD, review: { verdict: "approve" as const, findings: [] } };
+  saveJobs(w.store, { [refKey(ref("1"))]: pickedReview("1", approved), [refKey(ref("2"))]: pickedReview("2", approved) });
+  // While the first start's workspace is prepared, the person picks Merge queue for the other Item; the first start saves the jobs,
+  // and so reads the pick in, before the other Item's start.
+  const take = w.runner.takeWorkspace;
+  let other: string | undefined;
+  w.runner.takeWorkspace = async (target, ...rest) => {
+    if (other === undefined) {
+      other = target.id === "1" ? "2" : "1";
+      const key = refKey(ref(other));
+      const jobs = loadJobs(w.store);
+      const now = new Date(w.clock.ms).toISOString();
+      assert.ok(applyMove(jobs, key, "merge-queue", { item: w.store.get<WorkItem>(ref(other))!, job: jobs[key], lane: "in-review", level: 4, mergeQueueOn: true, at: w.clock.ms }, "Ada", now).ok);
+      saveJobs(w.store, jobs);
+    }
+    return take(target, ...rest);
+  };
+  await w.run();
+  w.runner.takeWorkspace = take;
+  // The pick stands: the other Item's review does not run, and its hand-over is owed.
+  assert.deepEqual(w.runner.requests.map((request) => request.subject.id), [other === "1" ? "2" : "1"]);
+  assert.deepEqual([sessionIdOf(w.job(other!)), owesHandOver(w.job(other!))], [undefined, true]);
 });
 
 test("a triage a person picked runs at level 0, and its settling clears the ask", async () => {

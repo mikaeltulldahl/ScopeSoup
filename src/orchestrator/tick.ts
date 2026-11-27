@@ -353,7 +353,8 @@ async function dropAsked(ctx: Context, jobs: Jobs, key: string, job: Job, item: 
  *
  * A claim that is lost (the renewal is not won, or another machine's live claim holds the Item while work runs here: two machines
  * both took it) stops this machine's work on the Item: its session is stopped and the job parked as escalated, for a person to look
- * at, so two machines never build and merge the same Item. A change already queued or handed over is only reported.
+ * at, so two machines never build and merge the same Item. A parked job, and a reviewed change that owes its hand-over (no session runs
+ * on it), are only reported.
  */
 async function renewClaims(ctx: Context, itemByKey: Map<string, WorkItem>): Promise<void> {
   const { actions, runner } = ctx.deps;
@@ -361,7 +362,7 @@ async function renewClaims(ctx: Context, itemByKey: Map<string, WorkItem>): Prom
   const period = CLAIM_EXPIRY_MINUTES * 60_000;
   const lost = async (job: Job, item: WorkItem, key: string, why: string): Promise<void> => {
     const reason = `The claim on ${item.ref.id} was lost: ${why}.`;
-    if (parkedOf(job)) {
+    if (parkedOf(job) || job.at.kind === "hand-over") {
       ctx.say("orchestrator.claim_lost", reason, key);
       return;
     }
@@ -1244,7 +1245,7 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
           continue;
         }
         // A person picked a state for the Item while its start was prepared (decision 104): their pick stands, and nothing starts.
-        if (entry.job && changedMeanwhile(store, jobs, key) === "picked") {
+        if (entry.job && changedMeanwhile(store, jobs, key, entry.job) === "picked") {
           reasons.push(`${entry.item.ref.id} waits: a person changed it while its ${step} step was prepared`);
           continue;
         }
@@ -1269,7 +1270,7 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
     // Someone changed the job while the session started (the runner stored it after an await). A person's pick wins: the session is
     // ended, not taken. Another change (an answer, a hold) is kept, and so is the session.
     let target = job;
-    const meanwhile = entry.job ? changedMeanwhile(store, jobs, key) : "none";
+    const meanwhile = entry.job ? changedMeanwhile(store, jobs, key, entry.job) : "none";
     if (meanwhile === "picked") {
       const ended = runner.stopFor?.(job.item, "Stopped: a person picked a state for the Item while this session started.", true) ?? 0;
       ctx.commit("orchestrator.stopped", `A person picked a state for ${entry.item.ref.id} while its ${step} session ${session.ref.id} started: ${ended > 0 ? "the session is ended and " : ""}its result is not taken.`, key, { role: step, session: session.ref.id });

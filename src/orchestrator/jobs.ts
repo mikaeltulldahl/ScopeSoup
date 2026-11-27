@@ -791,11 +791,14 @@ export function changedInStore(store: Store, jobs: Jobs, key: string): boolean {
  * asks for an interrupt or a drop, or changes the step, the kind of case or what the job is parked on), or another change (an answer, a
  * hold).
  */
-export function changedMeanwhile(store: Store, jobs: Jobs, key: string): "none" | "picked" | "changed" {
-  if (!changedInStore(store, jobs, key)) return "none";
+export function changedMeanwhile(store: Store, jobs: Jobs, key: string, starting?: Job): "none" | "picked" | "changed" {
+  // A save since the tick took the job it is `starting` (another Item's start) may have read someone else's change into the map and
+  // its baseline: the map then holds another job than that one, and the change is told against the job the tick took.
+  const folded = starting !== undefined && jobs[key] !== starting;
+  if (!folded && !changedInStore(store, jobs, key)) return "none";
   const stored = readStored(store)[key];
   const text = baselines.get(jobs)?.get(key);
-  const was = text === undefined ? undefined : (JSON.parse(text) as Job);
+  const was = folded ? starting : text === undefined ? undefined : (JSON.parse(text) as Job);
   if (!stored || !was || stored.interrupt !== undefined || stored.dropAskedBy !== undefined || stored.at.kind !== was.at.kind || stepAt(stored) !== stepAt(was)) return "picked";
   return JSON.stringify(parkedOf(stored)) === JSON.stringify(parkedOf(was)) ? "changed" : "picked";
 }
