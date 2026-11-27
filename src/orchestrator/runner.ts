@@ -16,7 +16,7 @@ import { ROLES } from "../store/control.ts";
 import type { Store } from "../store/store.ts";
 import { resetAfterRejection } from "./usageCheck.ts";
 import { identityEnv, sessionIdentity } from "./identity.ts";
-import { BRANCH_PREFIX, PathRefused } from "./paths.ts";
+import { BRANCH_PREFIX, PathRefused, workBranch } from "./paths.ts";
 import type { AgentRunner, SessionRequest, SessionResultRecord } from "./ports.ts";
 import { realGit, realProcesses } from "./process.ts";
 import type { Git, ProcessControl } from "./process.ts";
@@ -28,6 +28,7 @@ import { baseRef, changedPaths, changeStat, commitsAhead, commitsTouching, delet
 import type { RunCheck } from "./checkRunner.ts";
 import { createSetupRunner, ensureSetup, setupPromptLine } from "./setup.ts";
 import { prepareSlot, releaseSlot } from "./slots.ts";
+import { gitRefs, sweepLeftovers } from "./strayRefs.ts";
 import { cloneRepoForBranch, deleteBranchInPool, loadHoldings, NoFreeClone, poolRepoPath, prepareClone, releaseClone, takeClone } from "./workspaces.ts";
 import type { PoolDeps } from "./workspaces.ts";
 import { NO_DECISIONS } from "./jobs.ts";
@@ -571,6 +572,14 @@ export function createRunner(deps: RunnerDeps): Runner {
       const config = deps.config();
       if (config.workspaces.kind === "pool") await releaseClone(poolDeps(config), workspace, reason);
       else await releaseSlot({ store, config, git, at: iso(now()) }, workspace, wipPatchPath(config.streamsDir, workspace), reason);
+    },
+
+    async sweepLeftovers(work) {
+      const config = deps.config();
+      // A pool's clones are listed by a person; only Scope Soup's own clone of reused worktrees is swept.
+      if (config.workspaces.kind === "pool") return;
+      const sessions = [...live.values()].map((entry) => ({ item: refKey(entry.session.subject), branch: workBranch(entry.session.subject) }));
+      await sweepLeftovers({ store, git: gitRefs(git, config.repoPath, config.remote, config.mainBranch), at: iso(now()), live: [...work, ...sessions] });
     },
 
     async deleteBranch(branch) {

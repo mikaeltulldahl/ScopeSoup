@@ -9,6 +9,7 @@ import type { Job } from "../orchestrator/jobs.ts";
 import type { SessionRequest } from "../orchestrator/ports.ts";
 import { FakeGit } from "./git.ts";
 import type { GitObs, ItemObs, Observation, StartObs } from "./observe.ts";
+import { uniqueLeftovers } from "./observe.ts";
 import type { RunOptions } from "./play.ts";
 import { play } from "./play.ts";
 import type { Rule } from "./rules.ts";
@@ -21,7 +22,7 @@ const key = (id: string): string => `metaBranch:work:${id}`;
 
 function gitObs(g: FakeGit = new FakeGit()): GitObs {
   return {
-    main: g.main, branches: new Map(g.branches), tags: new Map(g.tags), stash: [...g.stash], worktrees: [...g.worktrees.values()], owners: new Map(g.owners),
+    main: g.main, branches: new Map(g.branches), tags: new Map(g.tags), stash: [...g.stash], unique: uniqueLeftovers(g), worktrees: [...g.worktrees.values()], owners: new Map(g.owners),
     deleted: [...g.deleted], mainMoves: [...g.mainMoves], contains: (a, d) => g.contains(a, d), commit: (sha) => g.commits.get(sha),
   };
 }
@@ -201,6 +202,12 @@ describe("each rule fires on a bad state built by hand", { concurrency: 1 }, () 
   });
   it("E1", "an Item appears with no person's request", () => {
     assert.match(fires("E1", obs({ remote: { refusedRewrites: 0, down: false, items: 3 } }), obs({ remote: { refusedRewrites: 0, down: false, items: 4 } })) ?? "", /appeared/);
+    // A leftover of an agent's with nothing unique may go; a person's tag, or a leftover with unique work, may not.
+    const g = new FakeGit();
+    g.deleted.push({ ref: "refs/tags/wip-A-1", madeBy: { item: key("A-1"), scopesoup: true }, unmerged: false });
+    assert.equal(fires("E1", obs({ git: gitObs(g) })), null);
+    g.deleted.push({ ref: "refs/tags/v1.0", madeBy: { scopesoup: false }, unmerged: false });
+    assert.match(fires("E1", obs({ git: gitObs(g) })) ?? "", /v1.0 was deleted/);
   });
   it("E2", "a log line on the host was to be changed", () => {
     assert.match(fires("E2", obs({ remote: { refusedRewrites: 1, down: false, items: 0 } })) ?? "", /log line/);
@@ -267,6 +274,16 @@ describe("each rule fires on a bad state built by hand", { concurrency: 1 }, () 
     g.ensureWorktree("w-A-1", "scopesoup/A-1", key("A-1"));
     const o = obs({ action: tick, git: gitObs(g), items: [item("A-1", NOTHING, { item: workItem("A-1", { state: "done" }) })] });
     assert.match(fires("I2", o, o, o, o) ?? "", /worktree w-A-1 is still there/);
+    // A tag holding work found nowhere else may stay, once it was reported with its sha; not before.
+    const h = new FakeGit();
+    const sha = h.commit([h.main], ["src/a.ts"], "work on A-1", "agent");
+    h.tags.set("wip-A-1", sha);
+    h.owners.set("refs/tags/wip-A-1", { item: key("A-1"), scopesoup: true });
+    const closed = item("A-1", NOTHING, { item: workItem("A-1", { state: "done" }) });
+    const left = obs({ action: tick, git: gitObs(h), items: [closed] });
+    assert.match(fires("I2", left, left, left, left) ?? "", /refs\/tags\/wip-A-1/);
+    const kept = obs({ action: tick, git: gitObs(h), items: [closed], events: [{ ...event(key("A-1"), "orchestrator", "orchestrator.leftover_kept"), data: { ref: "refs/tags/wip-A-1", sha } }] });
+    assert.equal(fires("I2", kept, left, left, left), null);
   });
   it("I3", "Scope Soup's branches grow with history", () => {
     const g = new FakeGit();

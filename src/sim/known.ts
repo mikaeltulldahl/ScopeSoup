@@ -26,6 +26,5 @@ export const KNOWN: Record<string, Known> = {
   G1: { seed: 1, long: true, what: "after a restart an Item that had a running implementor shows an old rewrite to accept" },
   H1: { seed: 8, long: true, what: "after a lost store an Item rebuilt as queued waits in a merge queue that no longer has it, for ever" },
   H5: { seed: 22, long: true, what: "an Item waiting only for a slot is not started while one is free (the claim of A6)" },
-  I2: { seed: 8, long: true, what: "an agent's leftover stash entry, tag or extra branch stays in Scope Soup's clone after its Item is closed (the worktree is released since #229; #236)" },
   I1: { seed: 34, long: true, what: "after the store is lost while the host is down, an Item's branch belongs to no Item the store knows (may be the simulator's setup)" },
 };

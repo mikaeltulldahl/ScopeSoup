@@ -400,12 +400,12 @@ export const RULES: Rule[] = [
   // --- E. The core rules ---
   {
     id: "E1",
-    why: "Nothing irreversible without a person: Items are only added by a person's request, and only branches under scopesoup/ are deleted.",
+    why: "Nothing irreversible without a person: Items are only added by a person's request, and only branches under scopesoup/ are deleted, besides an agent's leftovers whose commits are all on main or its Item's pushed branch (#236).",
     check(o, prev) {
       const made = o.requests.filter((r) => r.path === "/api/items" && r.status === 200).length;
       if (prev && o.remote.items > prev.remote.items + made) return `${o.remote.items - prev.remote.items - made} Item(s) appeared with no person's request`;
       if (prev && o.remote.items < prev.remote.items) return `an Item disappeared from the host`;
-      const bad = o.git.deleted.find((d) => !d.ref.startsWith("refs/heads/scopesoup/"));
+      const bad = o.git.deleted.find((d) => !d.ref.startsWith("refs/heads/scopesoup/") && !(d.madeBy?.scopesoup && d.madeBy.item && !d.unmerged));
       return bad ? `${bad.ref} was deleted` : null;
     },
   },
@@ -627,17 +627,24 @@ export const RULES: Rule[] = [
   },
   {
     id: "I2",
-    why: "Done means gone: within 2 ticks after its Item ends, what Scope Soup and its agents left for it is removed (worktree, tags, stash, extra branches).",
+    why: "Done means gone: within 2 ticks after its Item ends, what Scope Soup and its agents left for it is removed (worktree, tags, stash, extra branches), or, when it holds work found nowhere else, kept and reported on the Item with its sha (#236).",
     check(o, _prev, memo) {
+      // Reported as kept: `ref@sha`, from the events since the start.
+      const reported = (memo.leftoversKept ??= {}) as Record<string, true>;
+      for (const e of o.events) {
+        const data = (e.data ?? {}) as Record<string, unknown>;
+        if (e.kind === "orchestrator.leftover_kept") reported[`${String(data.ref)}@${String(data.sha)}`] = true;
+      }
+      const excused = (key: string, ref: string, sha: string | undefined): boolean => o.git.unique.has(key) && !!reported[`${ref}@${sha}`];
       return first(o.items, (i) => {
         const left: string[] = [];
         for (const t of o.git.worktrees) if (t.item === i.key) left.push(`worktree ${t.workspace}`);
         for (const [ref, madeBy] of o.git.owners) {
           if (madeBy.item !== i.key || !madeBy.scopesoup) continue;
-          if (ref.startsWith("refs/tags/") && o.git.tags.has(ref.slice(10))) left.push(ref);
-          if (ref.startsWith("refs/heads/") && ref !== `refs/heads/scopesoup/${i.id}` && o.git.branches.has(ref.slice(11))) left.push(ref);
+          if (ref.startsWith("refs/tags/") && o.git.tags.has(ref.slice(10)) && !excused(ref, ref, o.git.tags.get(ref.slice(10)))) left.push(ref);
+          if (ref.startsWith("refs/heads/") && ref !== `refs/heads/scopesoup/${i.id}` && o.git.branches.has(ref.slice(11)) && !excused(ref, ref, o.git.branches.get(ref.slice(11)))) left.push(ref);
         }
-        if (o.git.stash.some((s) => s.item === i.key && s.scopesoup)) left.push("a stash entry");
+        if (o.git.stash.some((s) => s.item === i.key && s.scopesoup && !excused(`stash:${s.sha}`, "refs/stash", s.sha))) left.push("a stash entry");
         const n = ticksSince(memo, `I2|${i.key}`, isClosed(i) && left.length > 0, o);
         return n > 2 ? `${i.id} is ${i.item.state} but ${left.join(", ")} is still there after ${n} ticks` : null;
       });
