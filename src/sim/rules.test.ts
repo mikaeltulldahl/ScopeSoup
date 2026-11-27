@@ -184,7 +184,8 @@ describe("each rule fires on a bad state built by hand", { concurrency: 1 }, () 
     const waiting = (over: Partial<WorkItem> = {}) => item("A-1", NOTHING, { item: workItem("A-1", over), paths: ["src/a.ts"], job: job("A-1", { step: "implement" }) });
     const first = obs({ git: gitObs(g), items: [waiting()], started: [started("A-1", "triage")] });
     const settled = ledger({ ended: [{ step: 1, item: key("A-1"), role: "triage", session: "s-A-1", status: "succeeded", settled: true }] });
-    const again = (over: Partial<Observation> = {}) => obs({ action: tick, ledger: settled, items: [waiting()], started: [started("A-1", "triage", { vars: { itemTitle: "Item A-1", itemBody: "Do it.", recheck: "It is 40 days old." } })], ...over });
+    const chose = { ...event(key("A-1"), "orchestrator", "orchestrator.triage_again"), data: {} };
+    const again = (over: Partial<Observation> = {}) => obs({ action: tick, ledger: settled, events: [chose], items: [waiting()], started: [started("A-1", "triage", { vars: { itemTitle: "Item A-1", itemBody: "Do it.", recheck: "It is 40 days old." } })], ...over });
     assert.match(fires("B9", first, obs({ action: tick, ledger: settled, git: gitObs(g), items: [waiting()] }), again({ git: gitObs(g), at: "2027-01-01T10:00:00.000Z" })) ?? "", /nothing it read changed/);
     // Its text edited, a commit on main on the paths it named: new input.
     assert.equal(fires("B9", first, again({ git: gitObs(g), items: [waiting({ title: "Item A-1, edited" })] })), null);
@@ -195,6 +196,8 @@ describe("each rule fires on a bad state built by hand", { concurrency: 1 }, () 
     assert.equal(fires("B9", f, again({ git: gitObs(moved) })), null);
     // A triage that did not settle is not the Item's triage: its retry is not checked against it.
     assert.equal(fires("B9", first, again({ ledger: ledger(), git: gitObs(g) })), null);
+    // Taken again after a person's answer (no triage_again event): theirs, not Scope Soup's choice.
+    assert.equal(fires("B9", first, obs({ action: tick, ledger: settled, git: gitObs(g), items: [waiting()] }), again({ git: gitObs(g), events: [] })), null);
   });
   it("B10", "Scope Soup takes more triages again on its own than its share allows (#217)", () => {
     const again = { ...event(key("A-1"), "orchestrator", "orchestrator.triage_again"), data: { background: true } };
@@ -433,14 +436,14 @@ describe("each rule fires on a bad state built by hand", { concurrency: 1 }, () 
     // Read back after the store was lost: seen before, so not new (#229).
     assert.equal(fires("J3", inTodo, obs({ lanes: LANES }), inTodo), null);
   });
-  it("J4", "a triage taken again on an Item in Backlog with no person asking (#217)", () => {
+  it("J4", "Scope Soup chooses to triage again an Item in Backlog (#217)", () => {
     const before = obs({ lanes: LANES, items: [item("A-1", NOTHING, { card: card("A-1", { lane: "backlog" }), job: job("A-1", { step: "implement" }) })] });
-    const again = started("A-1", "triage", { vars: { itemTitle: "Item A-1", itemBody: "Do it.", recheck: "Its text was edited." } });
-    assert.match(fires("J4", before, obs({ lanes: LANES, started: [again] })) ?? "", /in Backlog and its triage was taken again/);
-    // A person's Triage there is theirs.
-    const asked = [{ step: 1, path: "/api/item/move", body: { to: "triage" }, status: 200, response: {}, item: "A-1" }];
-    assert.equal(fires("J4", before, obs({ lanes: LANES, requests: asked, started: [again] })), null);
-    assert.equal(fires("J4", before, obs({ lanes: LANES, started: [started("A-1", "triage")] })), null);
+    const chose = { ...event(key("A-1"), "orchestrator", "orchestrator.triage_again"), data: { background: true } };
+    assert.match(fires("J4", before, obs({ lanes: LANES, events: [chose] })) ?? "", /in Backlog and Scope Soup chose to triage it again/);
+    // In To do it may; a person's Triage or answer in Backlog writes no such event.
+    const inTodo = obs({ lanes: LANES, items: [item("A-1", NOTHING, { card: card("A-1", { lane: "todo" as never }), job: job("A-1", { step: "implement" }) })] });
+    assert.equal(fires("J4", inTodo, obs({ lanes: LANES, events: [chose] })), null);
+    assert.equal(fires("J4", before, obs({ lanes: LANES, started: [started("A-1", "triage", { vars: { itemTitle: "Item A-1", itemBody: "Do it.", recheck: "A person answered." } })] })), null);
   });
 });
 
