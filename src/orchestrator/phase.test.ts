@@ -1,13 +1,14 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import type { Job } from "./jobs.ts";
+import type { Job, JobParked, Where } from "./jobs.ts";
 import { phaseOf, pickOf } from "./phase.ts";
+import { jobOf, where } from "./jobs.ts";
 
-const base: Job = { item: { host: "meta", kind: "work", id: "A-1" }, workspace: "w", branch: "scopesoup/A-1", step: "triage", failures: 0, fixRounds: 0, startedAt: "2026-01-01T00:00:00Z" };
-const job = (more: Partial<Job>): Job => ({ ...base, ...more });
+const base: Job = jobOf({ item: { host: "meta", kind: "work", id: "A-1" }, workspace: "w", branch: "scopesoup/A-1", step: "triage", failures: 0, fixRounds: 0, startedAt: "2026-01-01T00:00:00Z" });
+const job = (more: Partial<Job & Where>): Job => jobOf({ ...base, ...where(base), ...more });
 const why = (j: Job): string | undefined => (phaseOf(j) as { why?: string }).why;
 const ask = (j: Job): unknown => (phaseOf(j) as { ask?: unknown }).ask;
-const parked = (as: NonNullable<Job["parked"]>["as"], more: Partial<NonNullable<Job["parked"]>> = {}): Job["parked"] => ({ as, reason: "r", at: "2026-01-01T00:00:00Z", ...more });
+const parked = (as: JobParked["as"], more: Partial<JobParked> = {}): JobParked => ({ as, reason: "r", at: "2026-01-01T00:00:00Z", ...more });
 
 describe("phaseOf: the job's flags read as one phase, in the order the tick acts on them", { concurrency: 4 }, () => {
   it("a step waiting or running", () => {

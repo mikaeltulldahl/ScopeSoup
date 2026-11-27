@@ -11,7 +11,7 @@ import { knownAnswers } from "../store/answers.ts";
 import type { Store } from "../store/store.ts";
 import type { Context } from "./context.ts";
 import type { AboutOther, Decision, Job } from "./jobs.ts";
-import { changedRewrite, sameText } from "./jobs.ts";
+import { changedRewrite, sameText, where } from "./jobs.ts";
 import type { ProposedRewriteView } from "../core/snapshot.ts";
 import { plural } from "../model/plural.ts";
 import { changeHandedOn, sessionOf, stepOf } from "../core/phase.ts";
@@ -129,7 +129,7 @@ export function askedBefore(ctx: Context, other: WorkItem, question: Decision): 
   const same = (each: Decision) => sameDecision(asked, { question: each.question, options: optionTexts(each.options) });
   if ((readWaitingAbouts(ctx.deps.store)[key] ?? []).some((entry) => entry.questions.some(same))) return "it already waits to be asked there";
   const job = ctx.jobs[key];
-  if (job?.parked?.as === "needs-decision" && job.rewrite?.questions.some(same)) return "it is open there";
+  if (where(job)?.parked?.as === "needs-decision" && job!.rewrite?.questions.some(same)) return "it is open there";
   const answers = knownAnswers(ctx.deps.store);
   const hash = itemTextHash(other);
   const found = reusableAnswer(answers, other, question)

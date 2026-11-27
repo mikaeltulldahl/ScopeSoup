@@ -7,7 +7,7 @@ import type { ItemPage } from "../core/views.ts";
 import { createMetaBranchHost } from "../hosts/metaBranch/index.ts";
 import { createTestRepo } from "../hosts/metaBranch/testRepo.ts";
 import type { ProposedPart, Ref, WorkItem } from "../model/types.ts";
-import { saveJobs } from "../orchestrator/jobs.ts";
+import { saveJobs, jobOf } from "../orchestrator/jobs.ts";
 import { openStore } from "../store/store.ts";
 import { createSync } from "../sync/index.ts";
 import { createServer } from "./server.ts";
@@ -39,7 +39,7 @@ test("on a meta branch host, accepting makes each part where it goes, closes the
     const proposal = { id: "abc12345", reason, original: "keeps" as const, parts, carried: CARRIED };
     await host.write!.appendLog!(item, { kind: "question", by: { who: "scopesoup", agent: true }, fields: { question: reason, proposal, parked: "needs-decision" } });
     await sync.refreshNow();
-    saveJobs(store, { [`metaBranch:work:${item.id}`]: { item, workspace: "w", branch: `scopesoup/${item.id}`, step: "triage", failures: 0, fixRounds: 0, startedAt: clock(), proposal, parked: { as: "needs-decision", reason, at: clock() } } });
+    saveJobs(store, { [`metaBranch:work:${item.id}`]: jobOf({ item, workspace: "w", branch: `scopesoup/${item.id}`, step: "triage", failures: 0, fixRounds: 0, startedAt: clock(), proposal, parked: { as: "needs-decision", reason, at: clock() } }) });
     const shown = (await (await fetch(`${url}/api/item?ref=metaBranch:work:${item.id}`)).json()) as ItemPage;
     assert.deepEqual(shown.proposal?.parts, parts);
     assert.match(shown.decision.words, /proposed restructuring/);

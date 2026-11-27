@@ -10,6 +10,7 @@ import { random } from "./random.ts";
 import { wText } from "./waits.ts";
 import type { Action, WorldOptions } from "./world.ts";
 import { SimWorld } from "./world.ts";
+import { where } from "../orchestrator/jobs.ts";
 
 export type Profile = "calm" | "normal" | "rough";
 
@@ -76,7 +77,7 @@ export function draw(world: SimWorld, rnd: Rng, options: RunOptions): Action {
   const weights: Record<string, number> = { ...WEIGHTS[options.profile], ...(options.long ? { lose: 0.3 } : {}) };
   const kind = rnd.weighted(weights);
   const live = [...world.runner.live.values()].map((l) => l.session.subject.id);
-  const asking = open.filter((i) => jobs[`metaBranch:work:${i.ref.id}`]?.parked || (i.openQuestions ?? []).length > 0).map((i) => i.ref.id);
+  const asking = open.filter((i) => where(jobs[`metaBranch:work:${i.ref.id}`])?.parked || (i.openQuestions ?? []).length > 0).map((i) => i.ref.id);
   const person = (): Action => {
     const roll = rnd.int(16);
     const id = rnd.pick(open.length > 0 ? open.map((i) => i.ref.id) : ids) ?? "A-1";
@@ -118,7 +119,7 @@ export function draw(world: SimWorld, rnd: Rng, options: RunOptions): Action {
         return which < 4 ? { kind: "usage", reserve: true } : which < 7 ? { kind: "usage", reserve: false, pace: true } : { kind: "usage", reserve: false };
       }
       if (roll === 4 && world.queue.waiting.size > 0) return { kind: "queue", item: rnd.pick([...world.queue.waiting.keys()])!.split(":").pop()!, merge: rnd.chance(0.7) };
-      const handed = Object.values(jobs).filter((j) => j.parked?.as === "handed-over" || j.parked?.as === "escalated").map((j) => j.item.id);
+      const handed = Object.values(jobs).filter((j) => where(j).parked?.as === "handed-over" || where(j).parked?.as === "escalated").map((j) => j.item.id);
       if (roll === 5 && handed.length > 0) return { kind: "person-merge", item: rnd.pick(handed)! };
       // A person works in the clone while an Item runs: their tag, branch and stash entry are never an agent's (I6).
       if (roll === 6 && live.length > 0) return { kind: "person-refs", v: v() };
@@ -149,8 +150,8 @@ export function fairRound(world: SimWorld, round: number): Action[] {
     // Backlog and To do (#221): under Fair a person pulls every Item into To do.
     if (round === 0) out.push({ kind: "lane", item: id, to: "todo" });
     if (world.liveFor(id)) out.push({ kind: "end", item: id, v: round * 31 + Number(id.slice(2)) });
-    if (job?.parked?.as === "handed-over") out.push({ kind: "person-merge", item: id });
-    else if (job?.parked || (item.openQuestions ?? []).length > 0) out.push({ kind: "answer", item: id, v: round });
+    if (where(job)?.parked?.as === "handed-over") out.push({ kind: "person-merge", item: id });
+    else if (where(job)?.parked || (item.openQuestions ?? []).length > 0) out.push({ kind: "answer", item: id, v: round });
     if (world.queue.waiting.has(`metaBranch:work:${id}`)) out.push({ kind: "queue", item: id, merge: true });
   }
   out.push({ kind: "sync" }, { kind: "tick" }, { kind: "clock", ms: round % 3 === 2 ? 31 * 60_000 : 1000 }, { kind: "tick" });

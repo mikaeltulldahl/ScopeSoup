@@ -17,7 +17,7 @@ import type { Context } from "./context.ts";
 import { createLog } from "./context.ts";
 import { createHostActions } from "./hostActions.ts";
 import type { Jobs } from "./jobs.ts";
-import { loadJobs, saveJobs } from "./jobs.ts";
+import { loadJobs, saveJobs, where, stepAt } from "./jobs.ts";
 import { recoverFromLogs } from "./recover.ts";
 
 const at = "2026-11-22T09:00:00Z";
@@ -144,7 +144,7 @@ describe("recovery from GitHub", () => {
     await actions.appendLog(ref("4"), "session", { role: "implement", outcome: "succeeded", summary: "Built it.", next: "review" });
     const { jobs, events } = await deletedStore();
     const job = jobs[key("4")]!;
-    assert.equal(job.step, "review");
+    assert.equal(stepAt(job), "review");
     assert.equal(job.head, "c".repeat(40));
     assert.equal(job.branch, "scopesoup/4");
     assert.equal(job.triage?.size, "small");
@@ -177,13 +177,13 @@ describe("recovery from GitHub", () => {
     const job = loadJobs(store)[key("5")]!;
     const comments = fake.comments.get("5")!;
     const rewriteId = String(comments.filter((comment) => readMarker(comment.body)?.kind === "rewrite").at(-1)!.id);
-    assert.equal(job.step, "triage");
+    assert.equal(stepAt(job), "triage");
     assert.equal(job.rewriteRounds, 2);
     assert.deepEqual(job.rewrite, { original: "Show the tides.", text: REWRITE, questions: [QUESTION], round: 2 });
-    assert.equal(job.parked?.as, "needs-decision");
-    assert.equal(job.parked?.rewrite?.id, rewriteId);
-    assert.equal(job.parked?.rewrite?.questions.length, 1);
-    assert.doesNotMatch(job.parked?.reason ?? "", /no longer known/);
+    assert.equal(where(job).parked?.as, "needs-decision");
+    assert.equal(where(job).parked?.rewrite?.id, rewriteId);
+    assert.equal(where(job).parked?.rewrite?.questions.length, 1);
+    assert.doesNotMatch(where(job).parked?.reason ?? "", /no longer known/);
     // The board reads it from the job.
     const parked = loadSnapshot(store).parked?.find((each) => each.subject.id === "5");
     assert.deepEqual([parked?.rewrite?.text, parked?.rewrite?.round, parked?.rewrite?.questions.map((each) => each.question)], [REWRITE, 2, [QUESTION.question]]);
@@ -199,7 +199,7 @@ describe("recovery from GitHub", () => {
     base = (await server.start()).url;
     try {
       fake.clear();
-      const response = await fetch(`${base}/api/rewrite`, { method: "POST", headers: { "Content-Type": "application/json", "X-ScopeSoup-Person": "Ada" }, body: JSON.stringify({ ref: key("5"), parkedAt: job.parked!.at, answers: ["Metric"], action: "accept" }) });
+      const response = await fetch(`${base}/api/rewrite`, { method: "POST", headers: { "Content-Type": "application/json", "X-ScopeSoup-Person": "Ada" }, body: JSON.stringify({ ref: key("5"), parkedAt: where(job).parked!.at, answers: ["Metric"], action: "accept" }) });
       assert.equal(response.status, 200, await response.clone().text());
       assert.deepEqual(await response.json(), { recorded: true, settled: "accepted", written: true });
       assert.equal(fake.issues.get("5")!.body, REWRITE);
@@ -224,6 +224,6 @@ describe("recovery from GitHub", () => {
     const { jobs } = await deletedStore();
     const job = jobs[key("6")]!;
     assert.deepEqual(job.rewrite, { original: "Show the tides, edited by a person.", text: "Show the tides, kindly.", questions: [], round: 1 });
-    assert.match(job.parked?.reason ?? "", /The description the rewrite read is no longer known: the current one is shown as the original\.$/);
+    assert.match(where(job).parked?.reason ?? "", /The description the rewrite read is no longer known: the current one is shown as the original\.$/);
   });
 });

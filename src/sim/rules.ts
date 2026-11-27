@@ -8,6 +8,7 @@
 import type { ItemObs, Observation } from "./observe.ts";
 import type { W } from "./waits.ts";
 import { isBusy, newWork, personHolds, stageLane, wText } from "./waits.ts";
+import { where } from "../orchestrator/jobs.ts";
 
 export interface Rule {
   id: string;
@@ -144,14 +145,14 @@ export const RULES: Rule[] = [
         if (!i.host || isClosed(i)) return null;
         if (rebuild[i.key] && !i.job) return null;
         // A person's hold comes first in W, but the questions the job is parked on still wait for an answer under it.
-        if (i.w.kind === "person" && i.w.why === "holds" && i.job?.parked) return null;
+        if (i.w.kind === "person" && i.w.why === "holds" && where(i.job)?.parked) return null;
         // Another machine's Scope Soup asked it: that machine's job waits for it, not this one's (the multiplayer profile).
         const elsewhere = (q: { by: { agent?: boolean; machine?: string } }): boolean => !!q.by.agent && !!o.machine && !!q.by.machine && q.by.machine !== o.machine;
         const open = (i.host.openQuestions ?? []).filter((q) => !q.proposal && !elsewhere(q)).length;
         const personAsk = i.w.kind === "person" && i.w.why !== "holds";
         if (personAsk && !asks(i.w) && open > 1) return `${i.id} has ${open} open question lines on the host, but W is ${wText(i.w)}, which asks one thing`;
         if (open > 0 && !personAsk && i.w.kind !== "session") return `${i.id} has ${open} open question line(s) on the host, but W is ${wText(i.w)}`;
-        if (i.w.kind === "person" && i.w.why === "answer" && i.w.n !== undefined && i.w.n > 0 && open === 0 && !i.job?.parked?.retry) {
+        if (i.w.kind === "person" && i.w.why === "answer" && i.w.n !== undefined && i.w.n > 0 && open === 0 && !where(i.job)?.parked?.retry) {
           // Answered on another machine's board (#248): this machine reads it at whatever step syncs (a tick's own sync too), and the
           // next tick that starts with it read settles the job.
           const before = prevOf(prev, i.key)?.item;
@@ -205,7 +206,7 @@ export const RULES: Rule[] = [
     why: "What is said to have happened did happen: queued means the queue has it, handed over means the branch exists, Done means merged or closed by a person.",
     check(o) {
       return first(o.items, (i) => {
-        if (i.w.kind === "queue" && !o.queued.includes(i.key) && !i.job?.merged) return `${i.id} is parked as queued, but the queue does not have it`;
+        if (i.w.kind === "queue" && !o.queued.includes(i.key) && !where(i.job)?.merged) return `${i.id} is parked as queued, but the queue does not have it`;
         if (i.w.kind === "person" && i.w.why === "merge" && i.job && !o.git.branches.has(i.job.branch)) return `${i.id} is handed over, but ${i.job.branch} does not exist`;
         if (i.item.state === "done" && !o.ledger.closesAsked.has(i.key)) {
           if (!o.git.mainMoves.some((m) => m.item === i.key)) return `${i.id} is Done, but its change is not on main and no person closed it`;
@@ -405,16 +406,21 @@ export const RULES: Rule[] = [
   },
   {
     id: "B8",
-    why: "An answer resumes where it was asked, with the work kept: an implementor's question answered goes back to the implementor, not to triage.",
+    why: "An answer or a pick resumes where it was given, with the work kept: an implementor's question answered goes back to the implementor, not to triage; a person's Merge queue hands the change over, with no review or triage first.",
     check(o, prev, memo) {
       const expect = (memo.expect ??= {}) as Record<string, string>;
-      for (const r of o.requests) {
-        if (r.status !== 200 || !r.item || !r.path.startsWith("/api/answer")) continue;
-        const before = prev?.items.find((i) => i.id === r.item);
-        if (before?.job?.parked?.byStep && before.job.step === "implement") expect[before.key] = "implement";
-      }
-      // A person's move, start over or edit since then sends the Item elsewhere, rightly.
+      // A person's move, start over or edit sends the Item elsewhere, rightly: what an earlier answer or pick expected is over.
       for (const r of o.requests) if (r.status === 200 && r.item && /move|start-over|edit|pick/.test(r.path)) delete expect[`metaBranch:work:${r.item}`];
+      for (const r of o.requests) {
+        if (r.status !== 200 || !r.item) continue;
+        const before = prev?.items.find((i) => i.id === r.item);
+        const was = where(before?.job);
+        if (r.path.startsWith("/api/answer") && before && was?.parked?.byStep && was.step === "implement") expect[before.key] = "implement";
+        // Merge queue (decision 104): the reviewed change goes to the queue; the next session, if any before that, is not a review.
+        if (r.path === "/api/item/move" && r.body.to === "merge-queue" && before) expect[before.key] = "hand-over";
+      }
+      // The hand-over happened (queued, merged, or it failed and waits for a person): the pick is carried out.
+      for (const i of o.items) if (expect[i.key] === "hand-over" && i.job && ["queued", "merged", "parked"].includes(i.job.at.kind)) delete expect[i.key];
       // So does a pick asked on another machine's board and carried out here (decision 104), read at a fetch.
       for (const e of o.events) if (e.kind === "person.moved" && e.subject) delete expect[e.subject];
       // So do questions other Items' agents asked about it, written before the implementor resumed: once answered, it is triaged again
@@ -424,6 +430,7 @@ export const RULES: Rule[] = [
         const want = expect[s.item];
         if (!want) continue;
         delete expect[s.item];
+        if (want === "hand-over") return `${s.item.split(":").pop()} was picked for the merge queue, but a ${s.role} session started before its hand-over`;
         if (s.role !== want) return `${s.item.split(":").pop()} was answered at its implement step, but the next session is ${s.role}`;
       }
       for (const i of o.items) if (isClosed(i) || (i.job === undefined && i.w.kind !== "session")) delete expect[i.key];
@@ -456,7 +463,7 @@ export const RULES: Rule[] = [
         const merged = !!head && o.git.contains(head, o.git.main) === true && o.git.commit(head)?.by === "agent";
         const n = ticksSince(memo, `C2|${i.key}`, merged && !isClosed(i), o);
         if (n > 2) return `${i.id}'s change is on main, but it is still ${i.item.state} after ${n} ticks`;
-        if (i.job?.merged && o.started.some((s) => s.item === i.key)) return `a session started on ${i.id}, whose change merged`;
+        if (where(i.job)?.merged && o.started.some((s) => s.item === i.key)) return `a session started on ${i.id}, whose change merged`;
         return null;
       });
     },
@@ -490,7 +497,7 @@ export const RULES: Rule[] = [
     check(o) {
       return first(o.items, (i) => {
         if (i.live.length > 1) return `${i.id} has ${i.live.length} live sessions`;
-        if (i.live.length === 1 && i.job && i.job.sessionId && i.job.sessionId !== i.live[0]!.id) return `${i.id}'s job names session ${i.job.sessionId}, but ${i.live[0]!.id} runs`;
+        if (i.live.length === 1 && i.job && where(i.job).sessionId && where(i.job).sessionId !== i.live[0]!.id) return `${i.id}'s job names session ${where(i.job).sessionId}, but ${i.live[0]!.id} runs`;
         return null;
       });
     },
@@ -571,7 +578,8 @@ export const RULES: Rule[] = [
       return first(o.items, (i) => {
         if (!i.job) return null;
         if (i.job.failures > 6) return `${i.id} failed ${i.job.failures} times without being put down for a person`;
-        if (i.job.notBefore && Date.parse(i.job.notBefore) - Date.parse(o.at) > 6 * 3600_000) return `${i.id} waits until ${i.job.notBefore}, further than any cap`;
+        const notBefore = where(i.job)?.notBefore;
+        if (notBefore && Date.parse(notBefore) - Date.parse(o.at) > 6 * 3600_000) return `${i.id} waits until ${notBefore}, further than any cap`;
         return null;
       });
     },
@@ -648,7 +656,7 @@ export const RULES: Rule[] = [
         // (or a person's answer to it there, which names the question it answers).
         const untold = /merged .* although its instructions said to commit and stop/;
         const logged = (i?.item.log ?? []).some((line) => (line.kind === "question" && line.fields.parked === "escalated" && untold.test(String(line.fields.question ?? ""))) || (line.kind === "answer" && untold.test(String(line.fields.toQuestion ?? ""))));
-        if (i?.job?.parked?.as === "escalated" || logged) escalated[m.sha] = true;
+        if (where(i?.job)?.parked?.as === "escalated" || logged) escalated[m.sha] = true;
         const handled = !i || escalated[m.sha] === true || isClosed(i);
         const n = ticksSince(memo, `E4|${m.sha}`, !handled, o);
         return n > 2 ? `${i!.id}'s session merged without being told to and it was not escalated` : null;
@@ -688,7 +696,7 @@ export const RULES: Rule[] = [
       }
       if (!isTick(o) && o.requests.length === 0) return null;
       const last = ((memo.last ??= {}) as Record<string, string>);
-      const state = (i: ItemObs): string => `${wText(i.w)}|${i.job?.step ?? "none"}`;
+      const state = (i: ItemObs): string => `${wText(i.w)}|${where(i.job)?.step ?? "none"}`;
       let found: string | null = null;
       for (const i of o.items) {
         const was = last[i.key];
@@ -761,7 +769,7 @@ export const RULES: Rule[] = [
         if (on) return `after a restart the ${on} switch is started`;
         memo.before = Object.fromEntries(prev.items.map((i) => [i.key, i.w]));
         // A wait that ends by itself at a tick (questions that could not be posted are posted again, #230) is not the restart's.
-        memo.reposts = prev.items.filter((i) => i.job?.parked?.retry === "post").map((i) => i.key);
+        memo.reposts = prev.items.filter((i) => where(i.job)?.parked?.retry === "post").map((i) => i.key);
         // A job a person dropped (back to To do, or Backlog) while its session ran is dropped by the first tick, restart or not (#243).
         memo.dropped = prev.items.filter((i) => i.job?.dropAskedBy !== undefined).map((i) => i.key);
         return null;
@@ -846,13 +854,13 @@ export const RULES: Rule[] = [
     why: "Timed waits end: no job waits for written text past 30 minutes and a tick, and no claim of Scope Soup's outlives 120 minutes without a session or a change in this machine's merge queue (#194, #197, #229).",
     check(o, _prev, memo) {
       return first(o.items, (i) => {
-        const writing = i.job?.writing;
+        const writing = where(i.job)?.writing;
         if (writing && Date.parse(o.at) - Date.parse(writing.at) > 31 * 60_000 && isTick(o) && /written|its text|description/i.test(i.card?.reason ?? "")) return `${i.id} still waits for its text, written at ${writing.at}`;
         // A change waiting in this machine's merge queue is work under way here: its claim keeps other machines off it. So is any job
         // here, waiting to start its next step or parked for a person: its claim lasts as long as the job (#243). A merged one holds
         // nothing.
         const job = i.job;
-        const underWay = !!job && job.merged === undefined;
+        const underWay = !!job && where(job).merged === undefined;
         const claimed = i.item.holder?.actor.id === OWN && i.live.length === 0 && i.w.kind !== "queue" && !underWay && (!i.item.holder.until || i.item.holder.until > o.at);
         const table = (memo.claims ??= {}) as Record<string, string>;
         if (!claimed) delete table[i.key];

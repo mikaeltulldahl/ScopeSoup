@@ -5,8 +5,8 @@ import assert from "node:assert/strict";
 import { after, before, describe, test } from "node:test";
 import { T0, work } from "../core/testing.ts";
 import type { ItemPage } from "../core/views.ts";
-import type { Job } from "../orchestrator/jobs.ts";
-import { loadJobs, saveJobs } from "../orchestrator/jobs.ts";
+import type { Job, Where } from "../orchestrator/jobs.ts";
+import { loadJobs, saveJobs, where, jobOf } from "../orchestrator/jobs.ts";
 import { refKey } from "../model/types.ts";
 import type { Store } from "../store/store.ts";
 import { openStore } from "../store/store.ts";
@@ -19,7 +19,7 @@ import { memoryRequests } from "../hosts/metaBranch/requests.ts";
 const item = work(7, { title: "Tidy the dock" });
 const key = refKey(item.ref);
 const triage = { ready: true, size: "small" as const, paths: ["src/a.ts"], hidesDecision: false };
-const job = (fields: Partial<Job> = {}): Job => ({ item: item.ref, workspace: "w7", branch: "scopesoup/7", step: "implement", failures: 0, fixRounds: 0, startedAt: T0, triage, ...fields });
+const job = (fields: Partial<Job & Where> = {}): Job => (jobOf({ item: item.ref, workspace: "w7", branch: "scopesoup/7", step: "implement", failures: 0, fixRounds: 0, startedAt: T0, triage, ...fields }));
 const input = (fields: Partial<MoveInput> = {}): MoveInput => ({ item, job: job(), lane: "todo", level: 4, mergeQueueOn: true, at: Date.parse(T0), ...fields });
 
 describe("the rules", () => {
@@ -82,7 +82,7 @@ describe("the rules", () => {
     assert.equal(moveWhys(input({ job: { ...reviewed, sentBack: "abc" } }))["merge-queue"]!.why, "the merge queue sent it back; it needs a fix");
     assert.equal(moveWhys(input({ job: reviewed, lane: "queued" }))["merge-queue"]!.why, "in the merge queue already");
     // Approved on revision A, then a fix round made B: B is not reviewed (an approval with \`should\` findings, or a new In review).
-    assert.equal(moveWhys(input({ job: { ...reviewed, head: "b2", parked: undefined } }))["merge-queue"]!.why, "not reviewed yet");
+    assert.equal(moveWhys(input({ job: jobOf({ ...reviewed, head: "b2", parked: undefined }) }))["merge-queue"]!.why, "not reviewed yet");
     assert.equal(moveWhys(input({ job: { ...reviewed, reviewedHead: undefined } }))["merge-queue"]!.why, "not reviewed yet");
   });
 
@@ -101,15 +101,15 @@ describe("the rules", () => {
     const jobs = { [key]: job({ head: "abc", agentSession: "a1", triaged: { at: T0, textHash: "h", title: "t", body: "", verification: "", blockers: [] } }) };
     const triaged = applyMove(jobs, key, "triage", input({ job: jobs[key] }), "Ada", "2026-11-25T10:00:00Z");
     assert.equal(triaged.ok, true);
-    assert.deepEqual([jobs[key]!.step, jobs[key]!.head, jobs[key]!.agentSession, jobs[key]!.recheck?.reasons, jobs[key]!.recheck?.previous], ["triage", undefined, undefined, ["Ada asked for it on the board"], triage]);
+    assert.deepEqual([where(jobs[key])!.step, jobs[key]!.head, jobs[key]!.agentSession, where(jobs[key])!.recheck?.reasons, where(jobs[key])!.recheck?.previous], ["triage", undefined, undefined, ["Ada asked for it on the board"], triage]);
 
     const review = { [key]: job({ head: "abc", parked: { as: "handed-over", reason: "x", at: T0 } }) };
     assert.equal(applyMove(review, key, "in-review", input({ job: review[key], level: 3 }), "Ada", T0).ok, true);
-    assert.deepEqual([review[key]!.step, review[key]!.parked], ["review", undefined]);
+    assert.deepEqual([where(review[key])!.step, where(review[key])!.parked], ["review", undefined]);
 
     const queue = { [key]: job({ head: "abc", reviewedHead: "abc", step: "review", review: { verdict: "approve", findings: [] }, parked: { as: "handed-over", reason: "x", at: T0 } }) };
     assert.equal(applyMove(queue, key, "merge-queue", input({ job: queue[key] }), "Ada", T0).ok, true);
-    assert.deepEqual([queue[key]!.owes, queue[key]!.owesAskedBy, queue[key]!.parked], ["hand-over", "Ada", undefined]);
+    assert.deepEqual([where(queue[key])!.owes, queue[key]!.owesAskedBy, where(queue[key])!.parked], ["hand-over", "Ada", undefined]);
 
     // Back to the backlog only marks the job: the tick drops it and gives back the claim and workspace.
     const drop = { [key]: job() };
@@ -122,15 +122,15 @@ describe("the rules", () => {
     const drop = { [key]: job({ sessionId: "s" }) };
     const dropped = applyMove(drop, key, "todo", input({ job: drop[key] }), "Ada", T0);
     assert.ok(dropped.ok && /The implementor's session is ended now/.test(dropped.reason));
-    assert.deepEqual([drop[key]!.dropAskedBy, drop[key]!.interrupt, drop[key]!.sessionId], ["Ada", { by: "Ada", at: T0, to: "todo" }, "s"]);
+    assert.deepEqual([drop[key]!.dropAskedBy, drop[key]!.interrupt, where(drop[key])!.sessionId], ["Ada", { by: "Ada", at: T0, to: "todo" }, "s"]);
 
     const triaged = { [key]: job({ sessionId: "s", head: "abc" }) };
     assert.ok(applyMove(triaged, key, "triage", input({ job: triaged[key] }), "Ada", T0).ok);
-    assert.deepEqual([triaged[key]!.step, triaged[key]!.sessionId, triaged[key]!.interrupt?.to], ["triage", "s", "triage"]);
+    assert.deepEqual([where(triaged[key])!.step, where(triaged[key])!.sessionId, triaged[key]!.interrupt?.to], ["triage", "s", "triage"]);
 
     const review = { [key]: job({ head: "abc", sessionId: "s", resumeWith: "fix it" }) };
     assert.ok(applyMove(review, key, "in-review", input({ job: review[key], level: 1 }), "Ada", T0).ok);
-    assert.deepEqual([review[key]!.step, review[key]!.reviewAskedBy, review[key]!.interrupt?.to, review[key]!.resumeWith], ["review", "Ada", "in-review", undefined]);
+    assert.deepEqual([where(review[key])!.step, review[key]!.reviewAskedBy, review[key]!.interrupt?.to, review[key]!.resumeWith], ["review", "Ada", "in-review", undefined]);
 
     // A session the store has as live (starting, before the tick saved its id) counts too.
     const starting = { [key]: job({ head: "abc" }) };
@@ -142,6 +142,8 @@ describe("the rules", () => {
     assert.ok(queued.ok && /The reviewer's session is ended now/.test(queued.reason));
     // One ask at a time: the review asked for before is not asked for any more.
     assert.deepEqual([queue[key]!.queueAskedBy, queue[key]!.reviewAskedBy, queue[key]!.interrupt?.to], ["Ada", undefined, "merge-queue"]);
+    // The hand-over is owed while the review the pick ends still runs: once the tick has ended it, the change is handed over.
+    assert.deepEqual([where(queue[key])?.owes, where(queue[key])?.sessionId], ["hand-over", "s"]);
     const back = { [key]: job({ head: "abc", queueAskedBy: "Bo" }) };
     assert.ok(applyMove(back, key, "in-review", input({ job: back[key] }), "Ada", T0).ok);
     assert.deepEqual([back[key]!.reviewAskedBy, back[key]!.queueAskedBy], ["Ada", undefined]);
@@ -149,11 +151,11 @@ describe("the rules", () => {
     // Level 0: Triage on an Item with no job makes one, asked for by the person.
     const none: Record<string, Job> = {};
     assert.ok(applyMove(none, key, "triage", input({ job: undefined, level: 0 }), "Ada", T0).ok);
-    assert.deepEqual([none[key]?.step, none[key]?.triageAskedBy], ["triage", "Ada"]);
+    assert.deepEqual([where(none[key])?.step, none[key]?.triageAskedBy], ["triage", "Ada"]);
   });
 
   test("Implement anyway: only over triage's own not-ready verdict, at any level, as the person's ask for the implement step (decision 105)", () => {
-    const verdict = (fields: Partial<Job> = {}) => job({ step: "triage", parked: { as: "not-ready", reason: "Triage: too large for one change", at: T0, verdict: true }, ...fields });
+    const verdict = (fields: Partial<Job & Where> = {}) => job({ step: "triage", parked: { as: "not-ready", reason: "Triage: too large for one change", at: T0, verdict: true }, ...fields });
     // Not offered without triage's verdict: a person's own stop, another parked state, or no parked state.
     assert.equal(moveWhys(input({ job: job({ step: "triage", parked: { as: "not-ready", reason: "A person answered: stop.", at: T0 } }) })).implement, undefined);
     assert.equal(moveWhys(input({ job: job({ parked: { as: "needs-decision", reason: "which?", at: T0 } }) })).implement, undefined);
@@ -167,7 +169,7 @@ describe("the rules", () => {
     const jobs = { [key]: verdict({ reviewAskedBy: "Cy", notBefore: T0, reviewSendBacks: 3 }) };
     const done = applyMove(jobs, key, "implement", input({ job: jobs[key], level: 1 }), "Ada", T0);
     assert.ok(done.ok && /Ada overruled triage's verdict on 7 \(Implement anyway\)/.test(done.reason));
-    assert.deepEqual([jobs[key]!.step, jobs[key]!.parked, jobs[key]!.implementAskedBy, jobs[key]!.reviewAskedBy, jobs[key]!.notBefore, jobs[key]!.triage], ["implement", undefined, "Ada", undefined, undefined, triage]);
+    assert.deepEqual([where(jobs[key])!.step, where(jobs[key])!.parked, jobs[key]!.implementAskedBy, jobs[key]!.reviewAskedBy, where(jobs[key])!.notBefore, jobs[key]!.triage], ["implement", undefined, "Ada", undefined, undefined, triage]);
     assert.equal(jobs[key]!.reviewSendBacks, undefined, "a fresh start: no step-up carried over");
     // Once it is under way, there is nothing to overrule.
     assert.deepEqual(applyMove(jobs, key, "implement", input({ job: jobs[key] }), "Ada", T0), { ok: false, why: "only triage's not-ready verdict can be overruled" });
@@ -224,14 +226,14 @@ describe("POST /api/item/move", () => {
     assert.match(((await stale.json()) as { error: { message: string } }).error.message, /changed meanwhile/);
     const done = await post({ ref: key, to: "in-review", seen: page.item.updatedAt });
     assert.equal(done.status, 200);
-    assert.equal(loadJobs(store)[key]?.step, "review");
+    assert.equal(where(loadJobs(store)[key])?.step, "review");
     const event = store.eventsOfKinds(["person.moved"], 10)[0];
     assert.deepEqual([event?.actor, event?.subject, (event?.data as { to?: string }).to], ["Ada", key, "in-review"]);
 
     // Triage again by a person: the old triage goes, the job starts at triage.
     const again = await post({ ref: key, to: "triage" });
     assert.equal(again.status, 200);
-    assert.deepEqual([loadJobs(store)[key]?.step, loadJobs(store)[key]?.recheck?.reasons], ["triage", ["Ada asked for it on the board"]]);
+    assert.deepEqual([where(loadJobs(store)[key])?.step, where(loadJobs(store)[key])?.recheck?.reasons], ["triage", ["Ada asked for it on the board"]]);
   });
 
   test("POST /api/item/pick runs a pick's steps in order in one request, checks what the page saw once, and says which went through", async () => {
@@ -246,14 +248,14 @@ describe("POST /api/item/move", () => {
     saveJobs(store, { [key]: job({ head: "abc" }) });
     const one = await pick({ ref: key, seen, steps: [{ kind: "move", to: "in-review" }] });
     assert.deepEqual([one.status, await one.json()], [200, { ref: key, done: ["moved"] }]);
-    assert.equal(loadJobs(store)[key]?.step, "review");
+    assert.equal(where(loadJobs(store)[key])?.step, "review");
 
     // The second step is refused (level 3 has no merge queue): the first stays done, and the answer names it.
     saveJobs(store, { [key]: job({ head: "abc" }) });
     const two = await pick({ ref: key, seen, steps: [{ kind: "move", to: "in-review" }, { kind: "move", to: "merge-queue" }] });
     assert.equal(two.status, 409);
     assert.equal(((await two.json()) as { error: { message: string } }).error.message, "Moved; then refused: 7: the merge queue runs from level 4.");
-    assert.equal(loadJobs(store)[key]?.step, "review");
+    assert.equal(where(loadJobs(store)[key])?.step, "review");
 
     // Implement anyway goes through the same pick: the seen check, the person's event, and History's words.
     saveJobs(store, { [key]: job({ step: "triage", parked: { as: "not-ready", reason: "Triage: not ready.", at: T0, verdict: true } }) });
@@ -262,7 +264,7 @@ describe("POST /api/item/move", () => {
     assert.equal((await pick({ ref: key, seen: "2020-01-01T00:00:00Z", steps: [{ kind: "move", to: "implement" }] })).status, 409);
     const anyway = await pick({ ref: key, seen: page.item.updatedAt, steps: [{ kind: "move", to: "implement" }] });
     assert.equal(anyway.status, 200);
-    assert.deepEqual([loadJobs(store)[key]?.step, loadJobs(store)[key]?.implementAskedBy], ["implement", "Ada"]);
+    assert.deepEqual([where(loadJobs(store)[key])?.step, loadJobs(store)[key]?.implementAskedBy], ["implement", "Ada"]);
     const event = store.eventsOfKinds(["person.moved"], 10)[0];
     assert.deepEqual([event?.actor, (event?.data as { to?: string }).to], ["Ada", "implement"]);
     const activity = (await (await fetch(`${base}/api/activity`)).json()) as { rows: { text: string; who?: string }[] };
@@ -370,7 +372,7 @@ describe("a pick for an Item whose work runs on another machine (decision 104)",
     assert.equal(await serverB.carryOutRequests(), 1);
     const refused = (await pageA()).remote?.request;
     assert.deepEqual([refused?.state, refused?.why], ["refused", "7: the merge queue runs from level 4."]);
-    assert.equal(loadJobs(storeB)[key]?.owes, undefined);
+    assert.equal(where(loadJobs(storeB)[key])?.owes, undefined);
 
     // A request written 70 minutes ago by its own clock (laptop-b was off): it lapsed.
     const write = (id: string, at: number, by = { who: "mira", agent: false }) => memoryRequests(lines, "laptop-a", () => new Date(at).toISOString()).write({ kind: "pick", by, fields: { id, item: key, for: "laptop-b", seen: held.updatedAt, steps: [{ kind: "move", to: "todo" }] } });

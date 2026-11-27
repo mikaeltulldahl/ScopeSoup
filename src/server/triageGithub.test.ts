@@ -11,8 +11,8 @@ import { readMarker } from "../hosts/github/conventions.ts";
 import { fakeIssues, ISSUES_API } from "../hosts/github/fakeIssues.ts";
 import type { Ref, WorkItem } from "../model/types.ts";
 import { createHostActions } from "../orchestrator/hostActions.ts";
-import type { Job } from "../orchestrator/jobs.ts";
-import { loadJobs, saveJobs } from "../orchestrator/jobs.ts";
+import type { Job, Where } from "../orchestrator/jobs.ts";
+import { loadJobs, saveJobs, where, jobOf } from "../orchestrator/jobs.ts";
 import { TooLarge } from "../ports/host.ts";
 import { knownAnswers } from "../store/answers.ts";
 import type { Store } from "../store/store.ts";
@@ -73,18 +73,18 @@ after(async () => {
   store.close();
 });
 
-const jobOf = (id: string, over: Partial<Job>): Job => ({ item: ref(id), workspace: `/srv/clone-${id}`, branch: `scopesoup/${id}`, step: "triage", failures: 0, fixRounds: 0, startedAt: at, ...over });
+const jobFor = (id: string, over: Partial<Job & Where>): Job => (jobOf({ item: ref(id), workspace: `/srv/clone-${id}`, branch: `scopesoup/${id}`, step: "triage", failures: 0, fixRounds: 0, startedAt: at, ...over }));
 
 /** Item `id` parked on round 1 of its triage, posted as the cycle does: the rewrite comment, then its question. */
 async function rewriteParked(id: string): Promise<{ rewrite: string; question: string }> {
   store.put((await host.work.getWork(ref(id)))!, "sync", at);
   const rewrite = await actions.postRewrite!(ref(id), { round: 1, text: REWRITE });
   const asked = await actions.askQuestions!(ref(id), [{ ...QUESTION, parked: "needs-decision", step: "triage", rewrite: rewrite!.id }]);
-  const job = jobOf(id, {
+  const job = jobFor(id, ({
     triage: { ready: true, size: "small", paths: [], hidesDecision: true, decisions: [QUESTION], rewrite: REWRITE },
     rewrite: { original: "Show the tides.", text: REWRITE, questions: [QUESTION], round: 1 }, rewriteRounds: 1,
     parked: { as: "needs-decision", reason: "Triage, round 1.", at, rewrite: { id: rewrite!.id, questions: asked!.ids } },
-  });
+  }));
   saveJobs(store, { ...loadJobs(store), [key(id)]: job });
   return { rewrite: rewrite!.id, question: asked!.ids[0]! };
 }
@@ -134,7 +134,7 @@ describe("triage rewrites and restructurings as comments", () => {
     assert.equal(await errorCode(refused), "BODY_CHANGED");
     assert.deepEqual(writes(), []);
     assert.equal(issue.body, "Show the tides, in feet please.");
-    assert.equal(loadJobs(store)[key("2")]?.parked?.as, "needs-decision");
+    assert.equal(where(loadJobs(store)[key("2")])?.parked?.as, "needs-decision");
     // The board shows the new body next to the rewrite.
     assert.equal(store.get<WorkItem>(ref("2"))?.body, "Show the tides, in feet please.");
 
@@ -169,7 +169,7 @@ describe("triage rewrites and restructurings as comments", () => {
     store.put((await host.work.getWork(ref("4")))!, "sync", at);
     const asked = await actions.askQuestions!(ref("4"), [{ question: `Proposed restructuring: ${REASON}`, options: [], parked: "needs-decision", step: "triage", proposal: { id: "abc12345", reason: REASON, original: "umbrella" as const, parts: PARTS } }]);
     assert.deepEqual(readMarker(fake.comments.get("4")!.at(-1)!.body)!.data.proposal, { id: "abc12345", reason: REASON, original: "umbrella", parts: PARTS });
-    saveJobs(store, { ...loadJobs(store), [key("4")]: jobOf("4", { proposal: { id: "abc12345", reason: REASON, original: "umbrella" as const, parts: PARTS }, parked: { as: "needs-decision", reason: REASON, at, questions: asked!.ids, askedAt: asked!.at } }) });
+    saveJobs(store, { ...loadJobs(store), [key("4")]: jobFor("4", ({ proposal: { id: "abc12345", reason: REASON, original: "umbrella" as const, parts: PARTS }, parked: { as: "needs-decision", reason: REASON, at, questions: asked!.ids, askedAt: asked!.at } })) });
 
     // Part 1 is created and linked; part 2 is created, but GitHub refuses its link.
     let links = 0;
@@ -222,7 +222,7 @@ describe("triage rewrites and restructurings as comments", () => {
     store.put((await host.work.getWork(ref("5")))!, "sync", at);
     const parts = PARTS.slice(0, 2).map((part) => ({ ...part, title: `${part.title} (5)` }));
     const asked = await actions.askQuestions!(ref("5"), [{ question: `Proposed restructuring: ${REASON}`, options: [], parked: "needs-decision", step: "triage", proposal: { id: "abc12345", reason: REASON, original: "umbrella" as const, parts } }]);
-    saveJobs(store, { ...loadJobs(store), [key("5")]: jobOf("5", { proposal: { id: "abc12345", reason: REASON, original: "umbrella" as const, parts }, parked: { as: "needs-decision", reason: REASON, at, questions: asked!.ids, askedAt: asked!.at } }) });
+    saveJobs(store, { ...loadJobs(store), [key("5")]: jobFor("5", ({ proposal: { id: "abc12345", reason: REASON, original: "umbrella" as const, parts }, parked: { as: "needs-decision", reason: REASON, at, questions: asked!.ids, askedAt: asked!.at } })) });
     const response = await post("/api/proposal", { ref: key("5"), action: "reject" });
     assert.equal(response.status, 200, await response.clone().text());
     assert.deepEqual(await response.json(), { recorded: true, released: true });
@@ -272,11 +272,11 @@ describe("label changes in a triage rewrite on GitHub", () => {
   async function proposing(id: string): Promise<string> {
     db.put((await ghHost.work.getWork(ref(id)))!, "sync", at);
     const rewrite = await acts.postRewrite!(ref(id), { round: 1, text: REWRITE, labels: CHANGE });
-    saveJobs(db, { ...loadJobs(db), [key(id)]: jobOf(id, {
+    saveJobs(db, { ...loadJobs(db), [key(id)]: jobFor(id, ({
       triage: { ready: true, size: "small", paths: [], hidesDecision: false, rewrite: REWRITE },
       rewrite: { original: "Show the tides.", text: REWRITE, questions: [], round: 1, labels: CHANGE }, rewriteRounds: 1,
       parked: { as: "needs-decision", reason: "Triage, round 1.", at, rewrite: { id: rewrite!.id, questions: [] } },
-    }) });
+    })) });
     return rewrite!.id;
   }
 
@@ -380,11 +380,11 @@ describe("scopesoup:needs-decision while a triage rewrite waits for an answer", 
     db.put((await ghHost.work.getWork(ref(id)))!, "sync", at);
     const rewrite = await acts.postRewrite!(ref(id), { round: 1, text: REWRITE });
     const asked = questions.length > 0 ? await acts.askQuestions!(ref(id), questions.map((each) => ({ ...each, parked: "needs-decision", step: "triage", rewrite: rewrite!.id }))) : null;
-    saveJobs(db, { ...loadJobs(db), [key(id)]: jobOf(id, {
+    saveJobs(db, { ...loadJobs(db), [key(id)]: jobFor(id, ({
       triage: { ready: true, size: "small", paths: [], hidesDecision: questions.length > 0, decisions: questions, rewrite: REWRITE },
       rewrite: { original: "Show the tides.", text: REWRITE, questions, round: 1 }, rewriteRounds: 1,
       parked: { as: "needs-decision", reason: "Triage, round 1.", at, rewrite: { id: rewrite!.id, questions: asked?.ids ?? [] } },
-    }) });
+    })) });
     return asked?.ids ?? [];
   }
 

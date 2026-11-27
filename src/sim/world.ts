@@ -10,7 +10,7 @@ import { validateConfig } from "../config/validate.ts";
 import type { DecisionOption, Ref, SessionStatus, WorkItem } from "../model/types.ts";
 import { optionText, refKey } from "../model/types.ts";
 import { createHostActions } from "../orchestrator/hostActions.ts";
-import { loadJobs } from "../orchestrator/jobs.ts";
+import { loadJobs, where, stepAt } from "../orchestrator/jobs.ts";
 import type { QueueDriver, Notice, QueueSink } from "../orchestrator/queueDriver.ts";
 import type { TickReport } from "../orchestrator/tick.ts";
 import { tick } from "../orchestrator/tick.ts";
@@ -502,7 +502,7 @@ export class SimWorld {
         // With `ageing`, often on a path a triaged To do Item named that waits for its implement step, and sometimes a day passes with it: aged
         // triages with real input since, what Scope Soup triages again within its share (#217).
         const items = new Map(this.items().map((item) => [refKey(item.ref), item]));
-        const waiting = Object.values(this.jobs()).filter((job) => job.step === "implement" && !job.implement && !job.head && !job.sessionId && !job.parked && items.get(refKey(job.item))?.backlog !== true && (job.triage?.paths ?? []).length > 0);
+        const waiting = Object.values(this.jobs()).filter((job) => stepAt(job) === "implement" && !job.implement && !job.head && !where(job).sessionId && !where(job).parked && items.get(refKey(job.item))?.backlog !== true && (job.triage?.paths ?? []).length > 0);
         const named = [...new Set(waiting.flatMap((job) => job.triage!.paths))];
         const onNamed = this.ageing && named.length > 0 && r.chance(0.8);
         this.git.outsideCommit([onNamed ? r.pick(named)! : r.pick(PATHS)!]);

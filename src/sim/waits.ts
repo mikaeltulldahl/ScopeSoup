@@ -4,6 +4,7 @@
 import type { Job } from "../orchestrator/jobs.ts";
 import type { WorkItem } from "../model/types.ts";
 import { itemTextHash } from "../core/answerReuse.ts";
+import { where, stepAt } from "../orchestrator/jobs.ts";
 
 export type Role = "triage" | "implement" | "review";
 export type PersonWait = "answer" | "rewrite" | "restructuring" | "not-ready" | "escalated" | "merge" | "holds";
@@ -57,23 +58,24 @@ export function personHolds(item: WorkItem, claimant: string): boolean {
 
 export function waitsFor(input: WaitInput): W {
   const { item, job } = input;
-  if (closed(item) || job?.merged) return { kind: "nothing" };
+  const at = where(job);
+  if (closed(item) || at?.merged) return { kind: "nothing" };
   // Decision 3: a person's hold; a running session; parked for a person; blocker; text; same files; switch or level; usage; timer;
   // claim; slot.
   if (personHolds(item, input.claimant)) return { kind: "person", why: "holds" };
-  const role = (job?.step ?? "triage") as Role;
+  const role = (at?.step ?? "triage") as Role;
   if (input.live.length > 0) return { kind: "session", role: input.live[input.live.length - 1]! };
   // A session that ended and that the tick has not read yet is still the step's session.
   if (input.settling) return { kind: "session", role, settling: true };
-  if (job?.parked) {
-    const parked = job.parked;
+  const parked = at?.parked;
+  if (job && at && parked) {
     if (parked.as === "queued") return { kind: "queue" };
     if (parked.as === "handed-over") return { kind: "person", why: "merge" };
     if (parked.as === "not-ready") return { kind: "person", why: "not-ready" };
     if (parked.as === "escalated") return { kind: "person", why: "escalated" };
     if (job.proposal) return { kind: "person", why: "restructuring" };
     if (job.rewrite && !job.rewrite.settled) return { kind: "person", why: "rewrite" };
-    const asked = job.triage?.decisions?.length && job.step === "triage" ? job.triage.decisions.length : job.decision ? 1 : 1;
+    const asked = job.triage?.decisions?.length && at.step === "triage" ? job.triage.decisions.length : job.decision ? 1 : 1;
     const answered = job.answered?.length ?? 0;
     return { kind: "person", why: "answer", n: Math.max(0, asked - answered) };
   }
@@ -85,12 +87,13 @@ export function waitsFor(input: WaitInput): W {
   const pickedTriage = role === "triage" && job?.triageAskedBy !== undefined;
   if (blockers.length > 0 && !pickedTriage) return { kind: "blocker", on: [...new Set(blockers)] };
   // A job a person put back (To do, Backlog) is dropped by the next tick: nothing of it waits.
-  if (!job || job.dropAskedBy) return { kind: "not-started" };
+  if (!job || !at || job.dropAskedBy) return { kind: "not-started" };
   const start = (cause: StartCause): W => ({ kind: "start", role, cause });
   // In Backlog after a person's one-off triage, the implement step waits for a person to move it to To do (decision 121); work with a
   // revision or something to resume is never held there.
-  if (item.backlog && role === "implement" && !job.implementAskedBy && !job.head && !job.resumeWith && !job.resume) return start("backlog");
-  if (job.writing && job.writing.from === itemTextHash(item) && Date.parse(input.now) - Date.parse(job.writing.at) < 30 * 60_000) return start("text");
+  if (item.backlog && role === "implement" && !job.implementAskedBy && !job.head && !job.resumeWith && !at.resume) return start("backlog");
+  const writing = at.writing;
+  if (writing && writing.from === itemTextHash(item) && Date.parse(input.now) - Date.parse(writing.at) < 30 * 60_000) return start("text");
   const begun = !!(job.head || job.implement);
   if (role === "implement" && !begun) {
     const paths = job.triage?.paths ?? [];
@@ -104,7 +107,7 @@ export function waitsFor(input: WaitInput): W {
   if (STEP_LEVEL[role] > input.level && !picked) return start("level");
   if (input.usageReserve) return start("usage");
   if (input.paceHolds) return start("pace");
-  if (job.notBefore && job.notBefore > input.now) return start("timer");
+  if (at.notBefore && at.notBefore > input.now) return start("timer");
   const holder = item.holder;
   if (holder && holder.actor.bot === true && holder.actor.id !== input.claimant && (!holder.until || holder.until > input.now)) return start("claim");
   // New work waits while too much waits for a person; a person's pick does not (decision 133).
@@ -117,9 +120,10 @@ export function waitsFor(input: WaitInput): W {
  * and it is not on main.
  */
 export function isBusy(job: Job, onMain: boolean): boolean {
-  if (job.merged || onMain) return false;
-  if (job.parked) return job.parked.as === "queued" || job.parked.as === "handed-over" || !!job.head || !!job.queued || (job.parked.byStep === true && job.step === "implement");
-  return job.step === "review" || (job.step === "implement" && (!!job.sessionId || !!job.head || !!job.implement || !!job.agentSession || !!job.resumeWith || !!job.resume || job.failures > 0));
+  const at = where(job);
+  if (at.merged || onMain) return false;
+  if (at.parked) return at.parked.as === "queued" || at.parked.as === "handed-over" || !!job.head || !!job.queued || (at.parked.byStep === true && at.step === "implement");
+  return at.step === "review" || (at.step === "implement" && (!!at.sessionId || !!job.head || !!job.implement || !!job.agentSession || !!job.resumeWith || !!at.resume || job.failures > 0));
 }
 
 export function wText(w: W): string {
@@ -139,12 +143,12 @@ export function wText(w: W): string {
 
 /** The lane a person's wait is in under decision 2 (a): the stage the work is at; with no change yet, To do (or Backlog, #221). */
 export function stageLane(item: WorkItem, job: Job | undefined): string {
-  if (job && (job.step === "review" || job.reviewedHead)) return "in-review";
-  if (job && (job.head || (job.step === "implement" && job.implement))) return "in-progress";
+  if (job && (stepAt(job) === "review" || job.reviewedHead)) return "in-review";
+  if (job && (job.head || (stepAt(job) === "implement" && job.implement))) return "in-progress";
   return item.backlog ? "backlog" : "todo";
 }
 
 /** The implement step is new work: it has not begun (no change, no session of it, nothing to resume, no attempt yet). */
 export function newWork(job: Job): boolean {
-  return job.step === "implement" && !job.head && !job.implement && !job.agentSession && job.resumeWith === undefined && !job.resume && job.failures === 0 && !job.merge;
+  return stepAt(job) === "implement" && !job.head && !job.implement && !job.agentSession && job.resumeWith === undefined && !where(job).resume && job.failures === 0 && !where(job).merge;
 }

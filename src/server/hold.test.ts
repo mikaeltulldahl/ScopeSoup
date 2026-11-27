@@ -12,7 +12,7 @@ import type { TestRepo } from "../hosts/metaBranch/testRepo.ts";
 import { createTestRepo } from "../hosts/metaBranch/testRepo.ts";
 import { remoteBranches } from "../items/remoteBranch.ts";
 import type { Change, Ref } from "../model/types.ts";
-import { saveJobs } from "../orchestrator/jobs.ts";
+import { saveJobs, jobOf } from "../orchestrator/jobs.ts";
 import { workspaceKey } from "../orchestrator/paths.ts";
 import { realGit } from "../orchestrator/process.ts";
 import type { Store } from "../store/store.ts";
@@ -93,7 +93,7 @@ describe("the hold buttons over HTTP", { concurrency: 1 }, () => {
     assert.deepEqual(await hold("A-1", "Bo"), { claim: {  why: 'A-1 "Paint the fence" is held by Ada on laptop-a. Ask them, or release it first (anyone may).' }, release: {} });
     // Refused: another person's hold, and a session of Scope Soup's running on the item.
     assert.deepEqual(refusal(await call(base, "/api/item/claim", "Bo", { id: "A-1" })).slice(0, 2), [409, "REFUSED"]);
-    saveJobs(store, { "metaBranch:work:A-2": { item: item("A-2"), workspace: workspaceKey(item("A-2")), branch: "scopesoup/A-2", step: "implement", failures: 0, fixRounds: 0, startedAt: clock(), sessionId: "s-1" } });
+    saveJobs(store, { "metaBranch:work:A-2": jobOf({ item: item("A-2"), workspace: workspaceKey(item("A-2")), branch: "scopesoup/A-2", step: "implement", failures: 0, fixRounds: 0, startedAt: clock(), sessionId: "s-1" }) });
     const running = refusal(await call(base, "/api/item/claim", "Bo", { id: "A-2" }));
     assert.deepEqual(running.slice(0, 2), [409, "REFUSED"]);
     assert.match(running[2], /A-2 has its implement session running now/);

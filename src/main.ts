@@ -111,6 +111,7 @@ import { createUpgrader } from "./upgrade/upgrader.ts";
 import type { Upgrader } from "./upgrade/upgrader.ts";
 import { RESTART_EXIT_CODE, isCheckout, versionOf } from "./upgrade/version.ts";
 import type { QueueDriver } from "./orchestrator/queueDriver.ts";
+import { dropUnreadable } from "./orchestrator/jobs.ts";
 
 const env = process.env;
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -139,6 +140,8 @@ async function main(): Promise<void> {
     throw new Error(`${storePath} is version ${store.format.version} and this Scope Soup knows versions 0 to ${STORE_VERSION}: ${NEWER_STORE}. Nothing was changed.`);
   }
   store.appendEvent({ kind: "scopesoup.started", actor: "scopesoup", data: { pid: process.pid, version } }, iso());
+  // Jobs an older Scope Soup stored go now, each with its event, before the board can make a job at the same Item (decision 137).
+  store.tx(() => dropUnreadable(store, iso()));
   console.log(`Scope Soup ${version}${checkout ? " (development checkout)" : home ? ` from ${home}` : ""}.`);
   if (store.format.migratedFrom !== null) {
     const { migratedFrom: from, version: to, copy } = store.format;

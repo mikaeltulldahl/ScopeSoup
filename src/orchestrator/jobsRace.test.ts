@@ -3,17 +3,17 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { openStore } from "../store/store.ts";
-import { answerQuestion, loadJobs, jobQuestions, releaseJob, saveJobs } from "./jobs.ts";
-import type { Job, Jobs } from "./jobs.ts";
+import { answerQuestion, loadJobs, jobQuestions, releaseJob, saveJobs, setWhere, where, jobOf } from "./jobs.ts";
+import type { Job, Jobs, JobParked, Where } from "./jobs.ts";
 
-function job(id: string, extra: Partial<Job> = {}): Job {
-  return {
+function job(id: string, extra: Partial<Job & Where> = {}): Job {
+  return jobOf({
     item: { host: "h", kind: "work", id }, workspace: "w", branch: `scopesoup/${id}`, step: "implement", failures: 0, fixRounds: 0,
     startedAt: "2026-11-20T10:00:00Z", ...extra,
-  } as unknown as Job;
+  } as Job & Where);
 }
 
-const parked = { as: "decision", reason: "asks", at: "2026-11-20T10:00:00Z" } as unknown as NonNullable<Job["parked"]>;
+const parked: JobParked = { as: "needs-decision", reason: "asks", at: "2026-11-20T10:00:00Z" };
 const K1 = "h:work:1";
 const K2 = "h:work:2";
 
@@ -37,7 +37,7 @@ test("a release given while a tick holds its jobs is not undone by the tick's sa
 test("a proposal accepted while a tick holds its jobs is not undone by the tick's save", () => {
   const store = openStore(":memory:");
   const proposal = { id: "abc12345", reason: "too large", original: "umbrella" as const, parts: [{ title: "Part one", description: "", verification: "", goes: "child" as const }] };
-  const asNeedsDecision = { ...parked, as: "needs-decision" } as unknown as NonNullable<Job["parked"]>;
+  const asNeedsDecision = { ...parked, as: "needs-decision" } as unknown as JobParked;
   store.tx(() => saveJobs(store, { [K1]: job("1", { parked: asNeedsDecision, proposal }), [K2]: job("2") }));
   const tick = loadJobs(store);
   tick[K2]!.fixRounds = 2;
@@ -73,13 +73,13 @@ test("a hand-over release (the job stays, owes set) survives the tick's save", (
   const store = openStore(":memory:");
   store.tx(() => saveJobs(store, { [K1]: job("1", { parked: { ...parked, retry: "hand-over" } }), [K2]: job("2") }));
   const tick = loadJobs(store);
-  tick[K2]!.step = "review";
+  setWhere(tick[K2]!, { step: "review" });
   assert.equal(releaseJob(store, { host: "h", kind: "work", id: "1" }, "Ada", "2026-11-20T10:05:00Z", "again"), true);
   store.tx(() => saveJobs(store, tick));
   const after = loadJobs(store);
-  assert.equal(after[K1]!.parked, undefined);
-  assert.equal(after[K1]!.owes, "hand-over");
-  assert.equal(after[K2]!.step, "review");
+  assert.equal(where(after[K1])!.parked, undefined);
+  assert.equal(where(after[K1])!.owes, "hand-over");
+  assert.equal(where(after[K2])!.step, "review");
 });
 
 /** A job parked on triage's `count` decisions. */
@@ -89,7 +89,7 @@ function asking(id: string, count: number): Job {
     step: "triage",
     parked: { as: "needs-decision", reason: "asks", at: "2026-11-20T10:00:00Z" },
     triage: { ready: true, size: "small", paths: [], hidesDecision: true, decision: decisions[0], decisions, risk: "low", riskReason: "" },
-  } as Partial<Job>);
+  } as Partial<Job & Where>);
 }
 
 test("several open questions: each answer is kept, and only the last one releases the job", () => {
@@ -104,7 +104,7 @@ test("several open questions: each answer is kept, and only the last one release
   // A question has one answer: a second one is refused, and the first is kept.
   assert.deepEqual(answerQuestion(store, item, 1, "a", "Ada", "2026-11-20T10:02:00Z"), { refused: "answered" });
   assert.deepEqual(loadJobs(store)[K1]!.answered?.map((each) => [each.index, each.answer]), [[1, "b"]]);
-  assert.ok(loadJobs(store)[K1]!.parked);
+  assert.ok(where(loadJobs(store)[K1])!.parked);
   assert.deepEqual(answerQuestion(store, item, 0, "a", "Ada", "2026-11-20T10:03:00Z", "2026-11-20T10:00:00Z"), { released: true, open: 0 });
   assert.equal(loadJobs(store)[K1], undefined, "an Item parked at triage starts over at triage");
   const released = store.eventsAfter(0, 50).filter((event) => event.kind === "orchestrator.job_released");

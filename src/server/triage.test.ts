@@ -11,7 +11,7 @@ import type { WorkItem } from "../model/types.ts";
 import type { Store } from "../store/store.ts";
 import { openStore } from "../store/store.ts";
 import type { Jobs } from "../orchestrator/jobs.ts";
-import { saveJobs } from "../orchestrator/jobs.ts";
+import { saveJobs, jobOf } from "../orchestrator/jobs.ts";
 import type { ScopeSoupServer } from "./server.ts";
 import { createServer } from "./server.ts";
 
@@ -91,7 +91,7 @@ test("an Item parked on its triage's questions stays in Your turn", async () => 
   level = 1;
   const decision = { question: "Which way?", options: [{ label: "A", description: "one way" }, { label: "B", description: "the other" }], recommendation: "A" };
   const jobs: Jobs = {
-    "fake:work:1": { item: item("1").ref, workspace: "w1", branch: "scopesoup/1", step: "triage", failures: 0, fixRounds: 0, startedAt: at, triage: { ready: false, size: "small", paths: [], hidesDecision: true, decision, decisions: [decision] }, parked: { as: "needs-decision", reason: "a question", at } },
+    "fake:work:1": jobOf({ item: item("1").ref, workspace: "w1", branch: "scopesoup/1", step: "triage", failures: 0, fixRounds: 0, startedAt: at, triage: { ready: false, size: "small", paths: [], hidesDecision: true, decision, decisions: [decision] }, parked: { as: "needs-decision", reason: "a question", at } }),
   };
   saveJobs(store, jobs);
   const board = await fullBoard();

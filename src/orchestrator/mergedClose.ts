@@ -6,6 +6,7 @@
 import { refKey } from "../model/types.ts";
 import type { Context } from "./context.ts";
 import type { Job } from "./jobs.ts";
+import { setWhere, where } from "./jobs.ts";
 
 /** Releases Scope Soup's claim, then closes the merged item on its host, once, with a comment naming the commit and the batch. */
 export async function closeMerged(ctx: Context, job: Job, sha: string, batch?: number): Promise<void> {
@@ -16,8 +17,8 @@ export async function closeMerged(ctx: Context, job: Job, sha: string, batch?: n
   let result: Awaited<ReturnType<NonNullable<typeof actions.closeMerged>>> | undefined;
   let failed = false;
   // Owed until the host took it, so a failure (written with the job by `act`) leaves it for the tick to try again.
-  const owed = job.closeOwed !== undefined;
-  job.closeOwed = { sha, ...(batch !== undefined ? { batch } : {}) };
+  const owed = where(job).closeOwed !== undefined;
+  setWhere(job, { closeOwed: { sha, ...(batch !== undefined ? { batch } : {}) } });
   await ctx.act("close the merged item on its host", key, async () => {
     try {
       result = await actions.closeMerged!(job.item, { sha, target: ctx.config.mainBranch, ...(batch !== undefined ? { batch } : {}) });
@@ -31,7 +32,7 @@ export async function closeMerged(ctx: Context, job: Job, sha: string, batch?: n
     ctx.say("orchestrator.close_failed", `${job.item.id} merged on ${ctx.config.mainBranch} as ${sha.slice(0, 7)}, but closing it on the host failed: Scope Soup tries again at each tick, or close it on the host by hand.`, key, { sha });
     return;
   }
-  delete job.closeOwed;
+  setWhere(job, { closeOwed: undefined });
   if (owed && result !== "closed") ctx.commit("orchestrator.close_retried", `${job.item.id}: the close of its merged change was tried again and the host took it.`, key, { sha });
   if (result === "closed") ctx.commit("orchestrator.item_closed", `${job.item.id} was closed on its host: it merged on ${ctx.config.mainBranch} as ${sha.slice(0, 7)}.`, key, { sha });
   // Not closed: the job stays, parked as merged, so the item is not started again.

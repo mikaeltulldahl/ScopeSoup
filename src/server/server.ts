@@ -35,7 +35,7 @@ import { explainOrder, voteForPlace, voteLimits } from "../orchestrator/score.ts
 import { setVote, voteInStore } from "../store/votes.ts";
 import { isSha } from "../orchestrator/history.ts";
 import { readMergeQueueNote } from "../orchestrator/mergeQueueLease.ts";
-import { parkSet, adoptWritten, answerQuestion, awaitWritten, answerRefusal, rewriteRefusal, keepsRecommendations, loadJobs, questionsSettled, releaseJob, parkedRewrite, resumesStep, saveJobs, settleRewrite } from "../orchestrator/jobs.ts";
+import { parkSet, adoptWritten, answerQuestion, awaitWritten, answerRefusal, rewriteRefusal, keepsRecommendations, loadJobs, questionsSettled, releaseJob, parkedRewrite, resumesStep, saveJobs, settleRewrite, where, stepAt } from "../orchestrator/jobs.ts";
 import { readProposedRewrites, writeProposedRewrites } from "../orchestrator/aboutOthers.ts";
 import { applyMove, isMove, MOVES, moveWhys, ROLE_WORDS, runningRole } from "./moves.ts";
 import { voteToPlace } from "./place.ts";
@@ -44,7 +44,7 @@ import type { PickRequest, RequestStep } from "../hosts/metaBranch/requests.ts";
 import { aheadWhy, requestable, requestState } from "../hosts/metaBranch/requests.ts";
 import { randomUUID } from "node:crypto";
 import type { Move, MoveInput } from "./moves.ts";
-import type { AnswerRefusal, RewriteRefusal, Rewrite } from "../orchestrator/jobs.ts";
+import type { AnswerRefusal, RewriteRefusal, Rewrite, Job } from "../orchestrator/jobs.ts";
 import { workBranch } from "../orchestrator/paths.ts";
 import type { Media } from "../orchestrator/media.ts";
 import type { Chat } from "../orchestrator/chat.ts";
@@ -286,6 +286,12 @@ export interface RestructureHost {
 }
 
 /** What the Settings page says after a shared setting was saved. */
+/** Whether the job is parked on the parked state of that time (the one a page read). */
+function sameParked(job: Job | undefined, parkedAt: string): boolean {
+  const parked = where(job)?.parked;
+  return !!parked && Date.parse(parked.at) === Date.parse(parkedAt);
+}
+
 export function sharedSavedText(saved: SharedSaved, by: string): string {
   const at = `Saved for every machine${saved.commit ? ` as ${saved.commit.slice(0, 7)}` : ""} by ${by}, and in effect now; the other machines take it at their next fetch.`;
   if (saved.sharing.state === "pending") return `${at} It is not on the remote yet, and goes with the next push: ${saved.sharing.problem ?? "the remote kept moving"}`;
@@ -629,13 +635,13 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
     let wrote = false;
     if (write?.appendLog && subject.host === items!.host) {
       const job = loadJobs(store)[ref];
-      if (!resolved.some((each) => each.target) && parkedAt !== undefined && !(job?.parked && Date.parse(job.parked.at) === Date.parse(parkedAt))) return refuse("parked-changed", -1);
+      if (!resolved.some((each) => each.target) && parkedAt !== undefined && !sameParked(job, parkedAt)) return refuse("parked-changed", -1);
       for (const each of resolved) {
         const refused = each.target ? answerRefusal(job, each.index, parkedAt) : undefined;
         if (refused) return refuse(refused, each.index);
       }
       // A question the store has not read back is named by the park that asked it (`toSet`) and its text.
-      const set = job?.parked ? parkSet(job) : undefined;
+      const set = job && where(job).parked ? parkSet(job) : undefined;
       // The question as the store records it, when the line does not name it otherwise, so every machine reads the same answer back.
       const lines = resolved.map((each) => {
         const named = each.asked?.question ?? (set ? each.target?.question : undefined);
@@ -668,7 +674,7 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
     try {
       outcome = store.tx((): Outcome => {
         const job = loadJobs(store)[ref];
-        if (!resolved.some((each) => each.target) && parkedAt !== undefined && !(job?.parked && Date.parse(job.parked.at) === Date.parse(parkedAt))) return { refused: "parked-changed", index: -1 };
+        if (!resolved.some((each) => each.target) && parkedAt !== undefined && !sameParked(job, parkedAt)) return { refused: "parked-changed", index: -1 };
         let released = false;
         let left: number | undefined;
         for (const each of taken) {
@@ -721,9 +727,9 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
   async function answerOnHost(response: ServerResponse, item: WorkItem, parked: Parked | undefined, entries: AnswerEntry[], parkedAt: string | undefined): Promise<void> {
     const ref = refKey(item.ref);
     const job = loadJobs(store)[ref];
-    const waits = job?.parked?.questions ?? [];
+    const waits = where(job)?.parked?.questions ?? [];
     const open = item.openQuestions ?? [];
-    if (parkedAt !== undefined && !(job?.parked && Date.parse(job.parked.at) === Date.parse(parkedAt))) return sendError(response, 409, "PARKED_CHANGED", `${ref} parked on other questions now: reload the item.`);
+    if (parkedAt !== undefined && !sameParked(job, parkedAt)) return sendError(response, 409, "PARKED_CHANGED", `${ref} parked on other questions now: reload the item.`);
     const posts: { to: string | null; answer: AnswerWrite; text: string }[] = [];
     for (const { text, to, index } of entries) {
       let target: string | undefined;
@@ -767,7 +773,7 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
     });
     let released = false;
     const left = waits.filter((id) => (after.openQuestions ?? []).some((each) => each.id === id)).length;
-    if (job?.parked) {
+    if (job && where(job).parked) {
       const settled = questionsSettled(job, after);
       if (settled && !settled.withdrawn) released = releaseJob(store, item.ref, by().who, at, settled.reason);
       else if (waits.length === 0 && parkedForAnswer(phaseOf(job))) {
@@ -922,7 +928,7 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
     const open = onLog ? work.openQuestions ?? [] : [];
     // A question the job parked on and the store has not read back yet: an answer without `to` takes the newest open one.
     const parkedJob = loadJobs(store)[refKey(work.ref)];
-    const parked = parkedJob?.parked;
+    const parked = where(parkedJob)?.parked;
     const unread = onLog && open.length === 0 && !!parkedJob && parkedForAnswer(phaseOf(parkedJob));
     const asked: (Pick<OpenQuestion, "at" | "by" | "question" | "set"> | null)[] = unread ? [null] : open;
     const set = parked ? parkSet(loadJobs(store)[refKey(work.ref)]!) : "";
@@ -1231,7 +1237,7 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
       return sendError(response, status, code, message);
     }
     const rewrite = parkedRewrite(job)!;
-    const parkedReason = job!.parked!.reason;
+    const parkedReason = where(job)!.parked!.reason;
     const keeps = keepsRecommendations(rewrite, answers);
     const newText = keeps && action === "accept" ? rewrite.text : keeps && action === "edit" ? (text as string).trim() : undefined;
     // The label changes go with the description: Accept takes the proposal, Edit a person's (or the proposal), Reject none.
@@ -1242,7 +1248,7 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
       ? { add: [...new Set([...(proposedLabels?.add ?? []), aiLabel])], remove: (proposedLabels?.remove ?? []).filter((name) => name.toLowerCase() !== aiLabel.toLowerCase()) }
       : proposedLabels;
     // A rewrite posted on GitHub is answered there.
-    const posted = options.questions && subject.host === options.questions.host ? job!.parked!.rewrite : undefined;
+    const posted = options.questions && subject.host === options.questions.host ? where(job)!.parked!.rewrite : undefined;
     if (posted) return rewriteOnHost(response, item, rewrite, posted, answers, action, newText, parkedAt, labelChange);
     const write = items?.write;
     const writable = !!write?.editWork && subject.host === items!.host;
@@ -1650,7 +1656,7 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
     if (planned.original === "replaced") {
       // Closing an Item that is being worked on would leave that work without its Item.
       const job = loadJobs(store)[ref];
-      const busy = busyWords(index, ref) ?? (job && !job.parked ? "a job of Scope Soup's runs on it" : undefined);
+      const busy = busyWords(index, ref) ?? (job && !where(job).parked ? "a job of Scope Soup's runs on it" : undefined);
       if (busy) return sendError(response, 409, "ITEM_BUSY", `${ref} is not closed as replaced while ${busy}: wait for it, or edit the restructuring so the Item keeps a part or becomes an umbrella.`);
     }
     const edits = planned.original !== "umbrella" || planned.parts.some((part) => part.goes === "into");
@@ -1948,7 +1954,7 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
   /** Why a person cannot claim the item: a session of Scope Soup's runs on it (only the server knows). */
   function sessionRunning(ref: Ref): string | undefined {
     const job = loadJobs(store)[refKey(ref)];
-    return job?.sessionId ? `${ref.id} has its ${job.step} session running now. Scope Soup stops nothing that runs: pause Scope Soup on the board, or wait for the session to end.` : undefined;
+    return job && where(job).sessionId ? `${ref.id} has its ${stepAt(job)} session running now. Scope Soup stops nothing that runs: pause Scope Soup on the board, or wait for the session to end.` : undefined;
   }
 
   /**

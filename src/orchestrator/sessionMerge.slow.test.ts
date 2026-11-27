@@ -16,7 +16,7 @@ import { agentsState, setRolesForTest } from "../store/control.ts";
 import { openStore } from "../store/store.ts";
 import type { Store } from "../store/store.ts";
 import type { Job } from "./jobs.ts";
-import { releaseJob } from "./jobs.ts";
+import { releaseJob, where } from "./jobs.ts";
 import type { Actions } from "./ports.ts";
 import { dryActions } from "./ports.ts";
 import { createRunner } from "./runner.ts";
@@ -103,7 +103,7 @@ function world(level: 2 | 3, env: Record<string, string>): World {
     },
     async run(rounds = 10, until) {
       const roles: { role: SessionRole; mainAfter: string }[] = [];
-      for (let round = 0; round < rounds && !job()?.parked && !until?.(job()); round++) {
+      for (let round = 0; round < rounds && !where(job())?.parked && !until?.(job()); round++) {
         const report = await tick({ store, runner, config: fixedConfig(config), actions, now });
         for (const started of report.started) {
           assert.equal((await runner.finished(started.sessionId)).status, "succeeded");
@@ -125,7 +125,7 @@ describe("merging by the session", { concurrency: 7 }, () => {
     const main = git(w.remote, "rev-parse", "main");
     assert.notEqual(main, before);
     const job = w.job();
-    assert.equal(job?.parked?.as, "queued", job?.parked?.reason);
+    assert.equal(where(job)?.parked?.as, "queued", where(job)?.parked?.reason);
     assert.equal(job?.base, before);
     const merged = w.lines.find((line) => line.kind === "merged");
     assert.deepEqual(merged?.fields, { sha: main, target: "main" });
@@ -141,8 +141,8 @@ describe("merging by the session", { concurrency: 7 }, () => {
     const main = git(w.remote, "rev-parse", "main");
     assert.equal(git(w.remote, "rev-parse", "main^"), before, "one squash commit on main");
     const job = w.job();
-    assert.equal(job?.parked?.as, "queued", job?.parked?.reason);
-    assert.equal(job?.merged, main);
+    assert.equal(where(job)?.parked?.as, "queued", where(job)?.parked?.reason);
+    assert.equal(where(job)?.merged, main);
     assert.deepEqual(w.lines.find((line) => line.kind === "merged")?.fields, { sha: main, target: "main" });
     assert.match(w.events("orchestrator.merged")[0] ?? "", /contains \w{7}, a squash of its head \w{7} \(the same files, new since \w{7}\)/);
   });
@@ -150,8 +150,8 @@ describe("merging by the session", { concurrency: 7 }, () => {
   test("a named commit on main that does not carry the branch's files is no squash: the Item parked for a person", async () => {
     const w = world(2, { FAKE_CLAUDE_PUSH: "squash-empty" });
     await w.run();
-    assert.equal(w.job()?.parked?.as, "escalated");
-    assert.match(w.job()?.parked?.reason ?? "", /does not contain scopesoup\/1/);
+    assert.equal(where(w.job())?.parked?.as, "escalated");
+    assert.match(where(w.job())?.parked?.reason ?? "", /does not contain scopesoup\/1/);
     assert.equal(w.lines.some((line) => line.kind === "merged"), false);
   });
 
@@ -165,8 +165,8 @@ describe("merging by the session", { concurrency: 7 }, () => {
     assert.match(said[0]!, new RegExp(`it was at ${before.slice(0, 7)} and is now at ${git(w.remote, "rev-parse", "main").slice(0, 7)}.*Agents are paused`));
     assert.equal(w.store.eventsAfter(0, 10_000).filter((event) => event.kind === "control.implement_paused").length, 1);
     // The session forced main and did not merge the branch: no `merged`, and a person gets the reason.
-    assert.equal(w.job()?.parked?.as, "escalated");
-    assert.match(w.job()?.parked?.reason ?? "", /does not contain scopesoup\/1/);
+    assert.equal(where(w.job())?.parked?.as, "escalated");
+    assert.match(where(w.job())?.parked?.reason ?? "", /does not contain scopesoup\/1/);
     assert.equal(w.lines.some((line) => line.kind === "merged"), false);
   });
 
@@ -178,7 +178,7 @@ describe("merging by the session", { concurrency: 7 }, () => {
     // Main did not move until the implement session after the approval.
     assert.deepEqual(roles.slice(0, 3).map((each) => each.mainAfter), [before, before, before]);
     assert.notEqual(roles[3]!.mainAfter, before);
-    assert.equal(w.job()?.parked?.as, "queued", w.job()?.parked?.reason);
+    assert.equal(where(w.job())?.parked?.as, "queued", where(w.job())?.parked?.reason);
     assert.deepEqual(w.lines.find((line) => line.kind === "merged")?.fields, { sha: roles[3]!.mainAfter, target: "main" });
     const started = w.events("orchestrator.started");
     assert.match(started[3] ?? "", /resuming the implementor's session/);
@@ -188,8 +188,8 @@ describe("merging by the session", { concurrency: 7 }, () => {
     const url = "https://example.invalid/synthetic/pull/7";
     const w = world(2, { FAKE_CLAUDE_OUTPUT: JSON.stringify({ ...ANSWER, mergedAs: url }) });
     await w.run();
-    assert.equal(w.job()?.parked?.as, "handed-over");
-    assert.match(w.job()?.parked?.reason ?? "", new RegExp(`opened a pull request instead of merging: ${url.replaceAll(".", "\\.")}`));
+    assert.equal(where(w.job())?.parked?.as, "handed-over");
+    assert.match(where(w.job())?.parked?.reason ?? "", new RegExp(`opened a pull request instead of merging: ${url.replaceAll(".", "\\.")}`));
     assert.equal(w.lines.some((line) => line.kind === "merged"), false);
   });
 
@@ -197,9 +197,9 @@ describe("merging by the session", { concurrency: 7 }, () => {
     const w = world(2, {});
     await w.run();
     const job = w.job();
-    assert.equal(job?.parked?.as, "escalated");
-    assert.equal(job?.parked?.retry, "hand-over");
-    assert.match(job?.parked?.reason ?? "", /does not contain scopesoup\/1 \(at \w{7}\), and its answer names no pull request/);
+    assert.equal(where(job)?.parked?.as, "escalated");
+    assert.equal(where(job)?.parked?.retry, "hand-over");
+    assert.match(where(job)?.parked?.reason ?? "", /does not contain scopesoup\/1 \(at \w{7}\), and its answer names no pull request/);
     assert.equal(w.lines.some((line) => line.kind === "merged"), false);
   });
 
@@ -209,12 +209,12 @@ describe("merging by the session", { concurrency: 7 }, () => {
     const w = world(2, { FAKE_CLAUDE_PUSH: "when-resumed" });
     const before = git(w.remote, "rev-parse", "main");
     assert.deepEqual((await w.run()).map((each) => each.role), ["triage", "implement"]);
-    assert.equal(w.job()?.parked?.retry, "hand-over");
+    assert.equal(where(w.job())?.parked?.retry, "hand-over");
     assert.equal(git(w.remote, "rev-parse", "main"), before);
     w.answer();
     const roles = await w.run();
     assert.deepEqual(roles.map((each) => each.role), ["implement"], "no reviewer at level 2");
-    assert.equal(w.job()?.parked?.as, "queued", w.job()?.parked?.reason);
+    assert.equal(where(w.job())?.parked?.as, "queued", where(w.job())?.parked?.reason);
     assert.notEqual(roles[0]!.mainAfter, before);
     assert.deepEqual(w.lines.find((line) => line.kind === "merged")?.fields, { sha: roles[0]!.mainAfter, target: "main" });
     assert.match(w.events("orchestrator.step").at(-1) ?? "", /Pat answered\. At level 2 the implementor merges it/);
@@ -225,25 +225,25 @@ describe("merging by the session", { concurrency: 7 }, () => {
   test("level 3: the same answer for a change built at level 2 sends it to review first, then the implementor merges", async () => {
     const w = world(2, { FAKE_CLAUDE_PUSH: "when-resumed" });
     await w.run();
-    assert.equal(w.job()?.parked?.retry, "hand-over");
+    assert.equal(where(w.job())?.parked?.retry, "hand-over");
     (w.config as { level: number }).level = 3;
     w.answer();
     const roles = await w.run();
     assert.deepEqual(roles.map((each) => each.role), ["review", "implement"]);
-    assert.equal(w.job()?.parked?.as, "queued", w.job()?.parked?.reason);
+    assert.equal(where(w.job())?.parked?.as, "queued", where(w.job())?.parked?.reason);
     assert.match(w.events("orchestrator.step").find((reason) => /Pat answered/.test(reason)) ?? "", /Next: review/);
   });
 
   test("a job at the review step when the level is lowered to 2 goes back to its implementor's own session, which merges", async () => {
     const w = world(3, { FAKE_CLAUDE_PUSH: "when-resumed" });
     const before = git(w.remote, "rev-parse", "main");
-    const first = await w.run(10, (job) => job?.step === "review" && !job.sessionId);
+    const first = await w.run(10, (job) => where(job)?.step === "review" && !where(job)?.sessionId);
     assert.deepEqual(first.map((each) => each.role), ["triage", "implement"]);
     (w.config as { level: number }).level = 2;
     const roles = await w.run();
     assert.deepEqual(roles.map((each) => each.role), ["implement"]);
     assert.match(w.events("orchestrator.step").find((reason) => /waited at the review step/.test(reason)) ?? "", /project is at level 2, where nobody reviews.*Next: the implementor's own session merges it/);
-    assert.equal(w.job()?.parked?.as, "queued", w.job()?.parked?.reason);
+    assert.equal(where(w.job())?.parked?.as, "queued", where(w.job())?.parked?.reason);
     assert.notEqual(git(w.remote, "rev-parse", "main"), before);
   });
 });

@@ -19,8 +19,8 @@ import { execFileSyncRetrying } from "../hosts/spawnRetry.ts";
 import { sessionView } from "../core/board.ts";
 import { createChat, knownSessions, readTurns, replyFromStream } from "./chat.ts";
 import type { Chat } from "./chat.ts";
-import { loadJobs, saveJobs } from "./jobs.ts";
-import type { Job } from "./jobs.ts";
+import { loadJobs, saveJobs, jobOf } from "./jobs.ts";
+import type { Job, Where } from "./jobs.ts";
 import { workBranch, workspaceKey, workspacePath } from "./paths.ts";
 import { heldSlot, slotName } from "./slots.ts";
 import { createRunner } from "./runner.ts";
@@ -61,7 +61,7 @@ function step(store: Store, id: string, role: Session["role"], agentSessionId: s
   return session;
 }
 
-function world(jobOver: Partial<Job> | null = {}): World {
+function world(jobOver: Partial<Job & Where> | null = {}): World {
   const dir = mkdtempSync(join(tmpdir(), "scopesoup-chat-"));
   dirs.push(dir);
   const repo = join(dir, "repo");
@@ -94,11 +94,11 @@ function world(jobOver: Partial<Job> | null = {}): World {
     env: { ...process.env, ANTHROPIC_API_KEY: "must-not-reach-the-child", FAKE_CLAUDE_MODE: "chat", FAKE_CLAUDE_HOLD: hold },
   });
   stops.push(() => runner.stopAll("test over"));
-  const job: Job = {
+  const job: Job = jobOf({
     item: ITEM, workspace: workspaceKey(ITEM), branch: workBranch(ITEM), step: "implement", failures: 0, fixRounds: 1, agentSession: "agent-impl",
     resumeWith: "The reviewer asked for these changes: none.", parked: { as: "escalated", reason: "The implementer asked something.", at: "2026-11-18T09:30:00.000Z", byStep: true },
     startedAt: "2026-11-18T08:00:00.000Z", ...jobOver,
-  };
+  });
   if (jobOver !== null) store.tx(() => saveJobs(store, { [KEY]: job }));
   const chat = createChat({ store, runner, config: () => config, now });
   return { dir, config, store, runner, chat, clock, hold, job };
@@ -334,10 +334,10 @@ function poolWorld(holdings: Record<string, { item: string; clone: "a" | "b"; br
   const where = cwd === null ? undefined : cwd === "gone" ? join(dir, "pool", "gone", "modules", "project") : join(clone(cwd), "modules", "project");
   step(store, "s2", "implement", "agent-impl", "2026-11-18T08:30:00.000Z", where ? { cwd: where } : {});
   store.setValue(HOLDINGS_KEY, JSON.stringify(Object.fromEntries(Object.entries(holdings).map(([key, holding]) => [key, { ...holding, clone: clone(holding.clone) }]))));
-  const job: Job = {
+  const job: Job = jobOf({
     item: ITEM, workspace: workspaceKey(ITEM), branch: workBranch(ITEM), step: "implement", failures: 0, fixRounds: 1, agentSession: "agent-impl",
     parked: { as: "escalated", reason: "Asked.", at: "2026-11-18T09:30:00.000Z", byStep: true }, startedAt: "2026-11-18T08:00:00.000Z",
-  };
+  });
   store.tx(() => saveJobs(store, { [KEY]: job }));
   const out: PoolWorld = { store, config, chat: undefined as unknown as Chat, clone, started: [], released: [], takes: "a" };
   const writeHoldings = (change: (all: ReturnType<typeof readHoldings>["holdings"]) => void) => {

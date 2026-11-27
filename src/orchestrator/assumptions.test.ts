@@ -26,7 +26,7 @@ import { createHostActions } from "./hostActions.ts";
 import { keepOverturn, overturnsFor } from "./overturns.ts";
 import type { Actions } from "./ports.ts";
 import type { Store } from "../store/store.ts";
-import { saveJobs } from "./jobs.ts";
+import { saveJobs, jobOf } from "./jobs.ts";
 
 const DECISIONS = [
   { question: "Which name for the tide module?", chosen: "tides", others: ["tide-table", "sea"], why: "Matches the folder." },
@@ -273,7 +273,7 @@ test("on GitHub an Overturn while the change has not merged goes into the runnin
   const item: Ref = { host: "github", kind: "work", id: "1" };
   await actions.appendLog(item, "assumption", { decisions: DECISIONS });
   // The implementor's work is under way: its job is at review.
-  saveJobs(store, { [refKey(item)]: { item, workspace: "w", branch: "scopesoup/1", step: "review", failures: 0, fixRounds: 0, agentSession: "agent-1", startedAt: "2026-11-22T10:00:00.000Z" } });
+  saveJobs(store, { [refKey(item)]: jobOf({ item, workspace: "w", branch: "scopesoup/1", step: "review", failures: 0, fixRounds: 0, agentSession: "agent-1", startedAt: "2026-11-22T10:00:00.000Z" }) });
   const [first, second] = store.get<WorkItem>(item)!.assumptions!;
 
   // The verdict fails once: nothing is kept for the work; the second Send writes the verdict, and the answer is kept once.
@@ -319,7 +319,7 @@ test("on GitHub two accepts and an overturn sent together are one edit of the de
   const actions = createHostActions({ host, git: async () => ({ code: 0, stdout: "", stderr: "" }), config: () => config, store });
   const item: Ref = { host: "github", kind: "work", id: "1" };
   await actions.appendLog(item, "assumption", { decisions: THREE });
-  saveJobs(store, { [refKey(item)]: { item, workspace: "w", branch: "scopesoup/1", step: "review", failures: 0, fixRounds: 0, agentSession: "agent-1", startedAt: "2026-11-22T10:00:00.000Z" } });
+  saveJobs(store, { [refKey(item)]: jobOf({ item, workspace: "w", branch: "scopesoup/1", step: "review", failures: 0, fixRounds: 0, agentSession: "agent-1", startedAt: "2026-11-22T10:00:00.000Z" }) });
   const [a, b, c] = store.get<WorkItem>(item)!.assumptions!;
   const edits = () => fake.calls.filter((call) => call.startsWith("PATCH ") && call.includes("/issues/comments/")).length;
   const posts = () => fake.calls.filter((call) => call.startsWith("POST ")).length;
@@ -358,7 +358,7 @@ test("on the meta branch two accepts and an overturn sent together are one commi
     await actions.appendLog(item, "assumption", { decisions: THREE });
     const decisions = (await host.work.getWork(item))!.assumptions!;
     assert.equal(decisions.length, 3);
-    saveJobs(store, { [refKey(item)]: { item, workspace: "w", branch: "scopesoup/A-1", step: "review", failures: 0, fixRounds: 0, agentSession: "agent-1", startedAt: "2026-11-22T10:00:00.000Z" } });
+    saveJobs(store, { [refKey(item)]: jobOf({ item, workspace: "w", branch: "scopesoup/A-1", step: "review", failures: 0, fixRounds: 0, agentSession: "agent-1", startedAt: "2026-11-22T10:00:00.000Z" }) });
     const commits = () => Number(repo.git(["rev-list", "--count", "refs/scopesoup/meta"]));
     const before = commits();
     const outcomes = await actions.settleAssumptions!(item, [{ id: decisions[0]!.id, action: "accept" }, { id: decisions[1]!.id, action: "accept" }, { id: decisions[2]!.id, action: "overturn", answer: "5 cm" }], "robin");
