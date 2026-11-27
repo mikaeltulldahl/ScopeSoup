@@ -43,7 +43,7 @@ export interface Context {
   commit(kind: string, reason: string, subject?: string, data?: Record<string, unknown>): void;
   /**
    * Records a standing condition ("nothing to do because ...", "would start ..."). Written once,
-   * and again only when the reason changes or after something else happened in between.
+   * and again only when the reason changes (a commit does not make it new).
    */
   say(kind: string, reason: string, subject?: string, data?: Record<string, unknown>): void;
   /** Lets a standing condition be reported again the next time it holds. */
@@ -65,7 +65,6 @@ export function createLog(store: Store, at: string, jobs: () => Jobs | null): Pi
       store.tx(() => {
         const current = jobs();
         if (current) saveJobs(store, current);
-        if (store.getValue(SAID_KEY) !== "{}") store.setValue(SAID_KEY, "{}");
         store.appendEvent({ kind, subject, actor: ACTOR, data: { reason, ...data } }, at);
       });
     },

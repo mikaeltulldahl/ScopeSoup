@@ -260,6 +260,14 @@ describe("each rule fires on a bad state built by hand", { concurrency: 1 }, () 
     assert.equal(fires("E5", first, closed, obs({ git: gitObs(g), items: [item("A-1", SLOT)] })), null);
   });
   it("F1", "W changed with no event about the Item", () => {
+    // A blocker a person's request closed frees the Item at once; the tick that reads it must say so.
+    const blocked = obs({ action: tick, items: [item("A-1", { kind: "blocker", on: [key("A-9")] })] });
+    const closed = obs({ action: { kind: "close", item: "A-9", state: "done" }, requests: [{ step: 1, path: "/api/item/edit", body: {}, status: 200, response: {}, item: "A-9" }], items: [item("A-1", { kind: "not-started" })] });
+    assert.equal(fires("F1", blocked, closed), null);
+    assert.match(fires("F1", blocked, closed, obs({ action: tick, items: [item("A-1", { kind: "not-started" })] })) ?? "", /no event about it/);
+    assert.equal(fires("F1", blocked, closed, obs({ action: tick, events: [event(key("A-1"))], items: [item("A-1", { kind: "not-started" })] })), null);
+    // A lost store takes the jobs with it, and no event can say that.
+    assert.equal(fires("F1", obs({ action: tick, items: [item("A-1", SLOT)] }), obs({ action: { kind: "lose-store" } }), obs({ action: { kind: "release", item: "A-1" }, requests: [{ step: 1, path: "/api/item/release", body: {}, status: 200, response: {}, item: "A-1" }], items: [item("A-1", { kind: "not-started" })] })), null);
     assert.match(fires("F1", obs({ action: tick, items: [item("A-1", SLOT)] }), obs({ action: tick, items: [item("A-1", { kind: "person", why: "escalated" })] })) ?? "", /no event about it/);
     assert.equal(fires("F1", obs({ action: tick, items: [item("A-1", SLOT)] }), obs({ action: tick, events: [event(key("A-1"))], items: [item("A-1", { kind: "person", why: "escalated" })] })), null);
   });
@@ -268,7 +276,11 @@ describe("each rule fires on a bad state built by hand", { concurrency: 1 }, () 
     assert.match(fires("F2", o) ?? "", /no event naming the person/);
   });
   it("F3", "a tick right after a tick writes an event", () => {
-    assert.match(fires("F3", obs({ action: tick }), obs({ action: tick, events: [event(undefined, "orchestrator", "orchestrator.idle")] })) ?? "", /orchestrator.idle/);
+    assert.match(fires("F3", obs({ action: tick }), obs({ action: tick, events: [event(undefined, "orchestrator", "orchestrator.step")] })) ?? "", /orchestrator.step/);
+    // A standing line with new words is news (the tick before started sessions); the same words again are not.
+    const said = (reason: string): ScopeSoupEvent => ({ ...event(undefined, "orchestrator", "orchestrator.idle"), data: { reason } });
+    assert.equal(fires("F3", obs({ action: tick }), obs({ action: tick, events: [said("2 sessions are running")] })), null);
+    assert.match(fires("F3", obs({ action: tick, events: [said("2 sessions are running")] }), obs({ action: tick }), obs({ action: tick, events: [said("2 sessions are running")] })) ?? "", /orchestrator.idle/);
   });
   it("G1", "a switch is still started after a restart", () => {
     assert.match(fires("G1", obs(), obs({ action: { kind: "restart" } })) ?? "", /switch is started/);
@@ -390,11 +402,8 @@ async function failsOn(id: string, options: Shrunk, actions: Action[]): Promise<
   assert.ok(result.failures.some((f) => f.rule === id), `${id} held on the pasted steps`);
 }
 
-describe("runs the simulator shrank, failing on today's code (known.ts)", { concurrency: 1 }, () => {
-  test("F3: the second of two ticks says its idle line again", async () => {
-    await failsOn("F3", { items: 6, level: 4, slots: 2, steps: 80, profile: "normal" }, [{ kind: "tick" }, { kind: "tick" }]);
-  });
-});
+// (None fail on today's code: known.ts holds the others' seeds, and `failsOn` is kept for the next one.)
+void failsOn;
 
 /** A run the simulator shrank once, replayed: since its fix the rule holds on it. */
 async function holdsOn(id: string, options: Shrunk, actions: Action[]): Promise<void> {
@@ -403,6 +412,12 @@ async function holdsOn(id: string, options: Shrunk, actions: Action[]): Promise<
 }
 
 describe("runs the simulator shrank, held since their fix", { concurrency: 1 }, () => {
+  // Fixed (#255): a commit no longer forgets what was said, so a tick after a tick that started sessions says its idle line once, new,
+  // and the next one says nothing (F3 now tells news from the same words again).
+  test("F3: ticks in a row say a standing line once", async () => {
+    await holdsOn("F3", { items: 6, level: 4, slots: 2, steps: 80, profile: "normal" }, [{ kind: "tick" }, { kind: "tick" }, { kind: "tick" }]);
+  });
+
   // Fixed (#230): the answer, in the same second as the question and from a name that sorts first, folded before it.
   test("A3: an answer to a not-ready triage closes its question on the host (#230)", async () => {
     await holdsOn("A3", { items: 6, level: 4, slots: 2, steps: 80, profile: "normal" }, [
