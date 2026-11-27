@@ -807,6 +807,8 @@ export const RULES: Rule[] = [
         memo.reposts = prev.items.filter((i) => where(i.job)?.parked?.retry === "post").map((i) => i.key);
         // A job a person dropped (back to To do, or Backlog) while its session ran is dropped by the first tick, restart or not (#243).
         memo.dropped = prev.items.filter((i) => i.job?.dropAskedBy !== undefined).map((i) => i.key);
+        // A step a person picked over the running session (Triage, Review: `interrupt`) is the step that comes next, restart or not (#268).
+        memo.picked = Object.fromEntries(prev.items.filter((i) => i.job?.interrupt !== undefined).map((i) => [i.key, where(i.job)!.step]));
         return null;
       }
       const before = memo.before as Record<string, W> | undefined;
@@ -834,6 +836,8 @@ export const RULES: Rule[] = [
         // the implementor merges instead (a review at level 2, a queued change below level 4), as it would have without the restart (#264).
         const lowered = (w.kind === "session" && w.role === "review" && o.level < 3) || (w.kind === "queue" && o.level < 4);
         if (lowered && i.w.kind === "start" && i.w.role === "implement") return null;
+        const picked = ((memo.picked as Record<string, string> | undefined) ?? {})[i.key];
+        if (w.kind === "session" && picked && (i.w.kind === "start" || i.w.kind === "session") && i.w.role === picked) return null;
         if (w.kind === "session") return i.w.kind === "start" && i.w.role === w.role ? null : `${i.id} had a ${w.role} session before the restart and is ${wText(i.w)} after the first tick`;
         if (["person", "queue", "blocker", "nothing"].includes(w.kind) && wText(w) !== wText(i.w)) return `${i.id} was ${wText(w)} before the restart and is ${wText(i.w)} after the first tick`;
         return null;

@@ -367,6 +367,13 @@ describe("each rule fires on a bad state built by hand", { concurrency: 1 }, () 
     const merges = obs({ level: 2, action: tick, switches: paused, items: [item("A-1", { kind: "start", role: "implement", cause: "switch" })] });
     assert.equal(fires("G1", queued, obs({ action: { kind: "restart" }, switches: paused, items: queued.items }), merges), null);
     assert.match(fires("G1", queued, obs({ action: { kind: "restart" }, switches: paused, items: queued.items }), { ...merges, level: 4 }) ?? "", /was queue before the restart/);
+    // A person picked Triage over the running implement session: after the restart the triage comes next, not the implement step (#268).
+    const interrupted = job("A-1", { step: "triage", sessionId: "s1", interrupt: { by: "Ada", at: AT, to: "triage" } });
+    const implementing = obs({ items: [item("A-1", { kind: "session", role: "implement" }, { job: interrupted })] });
+    const triageNext = obs({ action: tick, switches: paused, items: [item("A-1", { kind: "start", role: "triage", cause: "switch" })] });
+    const restarted = obs({ action: { kind: "restart" }, switches: paused, items: implementing.items });
+    assert.equal(fires("G1", implementing, restarted, triageNext), null);
+    assert.match(fires("G1", implementing, restarted, { ...triageNext, items: [item("A-1", { kind: "start", role: "review", cause: "switch" })] }) ?? "", /had a implement session before the restart/);
   });
   it("G2", "the tick threw", () => {
     assert.match(fires("G2", obs({ tickError: "boom" })) ?? "", /threw: boom/);
