@@ -49,18 +49,18 @@ You choose how much to hand over, one level at a time:
 | 3 | Review | Also reviews them. |
 | 4 | Autopilot | Also merges, through the batching queue. |
 
-The level limits only what Scope Soup does on its own; you can move an Item yourself at any level. Agents start only what a person moved from Backlog to To do: new Items, agents' drafts and follow-ups land in Backlog ([`docs/RUNNING.md`](docs/RUNNING.md), "Backlog and To do"). At levels 2 and 3 the implementing agent merges the way your `CLAUDE.md` says, or opens a pull request. Scope Soup starts nothing of its own until you press Resume on the lanes of the overview (triage on Backlog, implementors on In progress, review on In review, the merge queue on Merge queue).
+The level limits only what Scope Soup does on its own; you can move an Item yourself at any level. Agents start only what a person moved from Backlog to To do ([`docs/RUNNING.md`](docs/RUNNING.md), "Backlog and To do"). At levels 2 and 3 the implementing agent merges the way your `CLAUDE.md` says, or opens a pull request. Scope Soup starts nothing until you press Resume on the overview's lanes.
 
 ![The queue: one batch being bisected (made-up data)](docs/images/queue.png)
 
-Items live in your repository (a text file and an append-only log per Item, on a branch) or are your existing GitHub Issues or Jira issues, read live. Settings' "Connect to GitHub Issues" and "Connect to Jira" switch later and move the Items you tick; "Move back to the meta branch" returns them. An optional label (`labels.aiGenerated`) marks Items an AI made or rewrote.
+Items live in your repository (a text file and an append-only log per Item, on a branch) or are your existing GitHub Issues or Jira issues, read live. Settings can switch between them later and move the Items you tick.
 
 ## What works today
 
 Early, and changing fast. Runs for real are in [`docs/TRIALS.md`](docs/TRIALS.md).
 
-- **Built and run for real**, on a stand-in project: the triage, implement and review loop with questions answered on the Item page; merging after a check, including a failed check; the batching queue with flake rerun and bisect; Items in your repository; the Usage page and the History timeline; images agents attach to an Item; the Item's diff in your own diff tool; `scopesoup item` for people and Claude Code sessions; Windows sessions that start and stop cleanly.
-- **Built and tested, not yet run on a real project:** most of the board, GitHub Copilot CLI as an agent provider, GitHub Issues as the backlog, waiting for CI on GitHub, several people on one project, usage forecasting against your Claude subscription, the onboarding plugin, offboarding, releases and updates; triage's restructurings and agents' Item drafts; singleplayer; connecting to GitHub Issues or Jira later and moving back to the meta branch; Jira, Cloud and Data Center, reads and writes (untried on a real site): the board and every level, with the changes on the project's git remote; moving an Item from its page at any level, with Undo, also on another machine; Abandon and Reopen; Settings that save at once; Implement anyway; a model per Item size; "Open the board" in onboarded repositories.
+- **Built and run for real**, on a stand-in project: the triage, implement and review loop with questions answered on the Item page; merging after a check, including a failed one; the batching queue with flake rerun and bisect; Items in your repository; the Usage page and History; images agents attach; the Item's diff in your own diff tool; `scopesoup item`; Windows sessions that start and stop cleanly.
+- **Built and tested, not yet run on a real project:** most of the board, GitHub Copilot CLI as an agent provider, GitHub Issues and Jira as the backlog, waiting for CI on GitHub, several people on one project, usage forecasting, the onboarding plugin, offboarding, releases and updates, restructurings and Item drafts, moving an Item from its page, Settings that save at once.
 - **Planned:** see the issues.
 
 <img src="docs/images/phone.png" alt="The board on a phone" width="300">
@@ -90,7 +90,7 @@ To put a project under Scope Soup, use the Claude Code plugin in a session in th
 /scopesoup:scopesoup-onboard
 ```
 
-It asks three things, shows one summary and acts on one yes (and can add a Start menu shortcut, "Scope Soup – <project>", that starts Scope Soup and opens the board; by hand: `scopesoup shortcut`, `scopesoup open`). The project starts at level 0, where Scope Soup starts nothing of its own. You raise the level on the board's Settings page. To join a project that already runs Scope Soup, run the same skill in your own clone. See [`docs/ONBOARDING.md`](docs/ONBOARDING.md) and [`docs/RUNNING.md`](docs/RUNNING.md). Leaving is as easy: `/scopesoup:scopesoup-offboard` lists what it created and removes what you do not keep.
+It asks three things, shows one summary and acts on one yes. The project starts at level 0, where Scope Soup starts nothing of its own; you raise the level on the board's Settings page. To join a project that already runs Scope Soup, run the same skill in your own clone ([`docs/ONBOARDING.md`](docs/ONBOARDING.md), [`docs/RUNNING.md`](docs/RUNNING.md)). `scopesoup open` opens the board. To leave, `/scopesoup:scopesoup-offboard` lists what it created and removes what you do not keep.
 
 ## Where the data lives
 
@@ -98,8 +98,6 @@ It asks three things, shows one summary and acts on one yes (and can add a Start
 - **Scope Soup never works in your clone.** It keeps its own clones and makes a work clone per Item. Claude Code sessions touch only their Item's work clone.
 - **A local SQLite file** caches what it read and holds its event log. Deleting it loses nothing about an Item.
 - No login. The board listens on this machine only.
-
-Details: [`docs/DESIGN.md`](docs/DESIGN.md).
 
 ## Safety rules
 
@@ -117,7 +115,7 @@ Everything else is the level or a setting ([`docs/RULES.md`](docs/RULES.md)).
 
 - [`docs/DECISIONS.md`](docs/DECISIONS.md): what is decided, and the direction.
 - [`docs/RULES.md`](docs/RULES.md), [`docs/PEOPLE.md`](docs/PEOPLE.md): the rules, levels and people.
-- [`docs/DESIGN.md`](docs/DESIGN.md), [`docs/RUNNING.md`](docs/RUNNING.md), [`docs/ONBOARDING.md`](docs/ONBOARDING.md), [`docs/github-mapping.md`](docs/github-mapping.md), [`docs/BATCH_SIZE.md`](docs/BATCH_SIZE.md).
+- [`docs/RUNNING.md`](docs/RUNNING.md) (install, configure, run), [`docs/DESIGN.md`](docs/DESIGN.md) (how it works inside), [`docs/ONBOARDING.md`](docs/ONBOARDING.md), [`docs/github-mapping.md`](docs/github-mapping.md), [`docs/BATCH_SIZE.md`](docs/BATCH_SIZE.md).
 - [`docs/research/`](docs/research/): the tools we looked at first.
 
 Working on Scope Soup itself: `pnpm check` and [`CLAUDE.md`](CLAUDE.md).
