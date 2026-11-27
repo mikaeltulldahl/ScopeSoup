@@ -6,8 +6,6 @@
 import type { Known } from "./known.ts";
 
 export const KNOWN_MULTI: Record<string, Known> = {
-  M1: { seed: 1, what: "two machines act on different answers for an Item: an answer given on one board stays in that machine's store (person.answers); the other reads it from the log only after a lost store" },
-  M6: { seed: 1, what: "a session on one machine is not told an answer a person gave on another machine's board (the answers are per store)" },
   // Seen in the long run only (seed in the long run).
   A4: { seed: 4, long: true, what: "an Item its own triage blocked is triaged again while still blocked, after another machine changed it (unsure: may be a re-triage on new input, rightly)" },
   J1: { seed: 6, long: true, what: "an Item a person moved to Backlog on another machine is triaged from Backlog by the machine whose job it had: that job is not dropped when the lane arrives by fetch" },

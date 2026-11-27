@@ -17,7 +17,7 @@ import type { LogRecord, Ref, Session, SessionStatus, WorkItem } from "../model/
 import { refKey } from "../model/types.ts";
 import { createServer } from "../server/server.ts";
 import { loadSnapshot } from "../server/snapshot.ts";
-import { addAnswer, loadAnswers } from "../store/answers.ts";
+import { addAnswer, knownAnswers } from "../store/answers.ts";
 import { openStore } from "../store/store.ts";
 import type { Store } from "../store/store.ts";
 import { createSync } from "../sync/index.ts";
@@ -201,7 +201,7 @@ test("a pending question and its later answer both survive the deleted local sto
   // Deleted again: the answer is back, and the item starts over with it in the prompt.
   const third = start(host);
   await third.run();
-  const answers = loadAnswers(third.store);
+  const answers = knownAnswers(third.store);
   assert.deepEqual(answers.map((answer) => [answer.answer, answer.question]), [["letters", "Letters or digits in ids?"]]);
   assert.equal(third.requests.length, 1);
   assert.equal(third.requests[0]?.role, "triage");
@@ -222,14 +222,39 @@ test("an answer given after the store was lost and before the read-back does not
   await second.sync();
   addAnswer(second.store, { subject: item, answer: "Keep it short.", by: "Ada", at: "2026-11-18T11:00:00.000Z" });
   await second.run();
-  assert.deepEqual(loadAnswers(second.store).map((answer) => answer.answer), ["letters", "Keep it short."]);
+  assert.deepEqual(knownAnswers(second.store).map((answer) => answer.answer), ["letters", "Keep it short."]);
 
   // The same answer in the store and the log, timed by the server and by the host: one answer, not two.
   const third = start(host);
   await third.sync();
   addAnswer(third.store, { subject: item, answer: "letters", question: "Letters or digits in ids?", by: "Ada", at: "2026-11-18T08:59:59.123Z" });
   await third.run();
-  assert.deepEqual(loadAnswers(third.store).map((answer) => answer.answer), ["letters"]);
+  assert.deepEqual(knownAnswers(third.store).map((answer) => answer.answer), ["letters"]);
+});
+
+test("an answer a person gave on one machine's board is an answer on every machine once it synced (#242)", async () => {
+  const { host, item } = await project();
+  const first = start(host);
+  await first.run();
+  await first.end("succeeded", { ...TRIAGE_OK, hidesDecision: true, decision: { question: "Letters or digits in ids?", options: ["letters", "digits"], recommendation: "letters" } });
+
+  // Another machine on the same meta branch, with its own store: the person answers on its board.
+  const second = start(host);
+  await second.run();
+  const server = createServer({ store: second.store, port: 0, items: { host: "metaBranch", write: host.write! }, syncNow: () => second.sync() });
+  const base = (await server.start()).url;
+  try {
+    const response = await fetch(`${base}/api/answer`, { method: "POST", headers: { "Content-Type": "application/json", "X-ScopeSoup-Person": "Ada" }, body: JSON.stringify({ ref: refKey(item), answer: "digits" }) });
+    assert.equal(response.status, 200, await response.text());
+  } finally {
+    await server.stop();
+  }
+
+  // The first machine kept its store: its next sync reads the answer from the log, as the one machine that took it has it.
+  await first.sync();
+  const answers = (laptop: Laptop) => knownAnswers(laptop.store).map((answer) => [answer.answer, answer.question]);
+  assert.deepEqual(answers(first), [["digits", "Letters or digits in ids?"]]);
+  assert.deepEqual(answers(second), answers(first));
 });
 
 test("three open triage questions all wait again after a deleted store; the first answer does not release the item, the third does", async () => {
