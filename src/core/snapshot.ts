@@ -3,6 +3,7 @@
 import type { AgentsState, MergeQueueState } from "../model/types.ts";
 import type { Batch, Change, ItemLinkAnswer, RecordedAnswer, Ref, Parked, Run, Runner, Session, UsageSample, WorkItem } from "../model/types.ts";
 import { refKey } from "../model/types.ts";
+import type { Phase, Step } from "./phase.ts";
 
 /** A runner plus when it entered its current online/busy state, when the sync knows. */
 export interface RunnerState extends Runner {
@@ -98,12 +99,10 @@ export interface JobStage {
    * is reviewed or under review; `queue`: the merge queue has it.
    */
   stage: "start" | "implement" | "review" | "queue";
-  /** The step that runs next. */
-  step: "triage" | "implement" | "review";
-  /** Until when it waits for the description Scope Soup wrote at a person's Accept to be read back from the host. */
-  text?: string;
-  /** Its next try waits until `until`: a retry after `failures` failed attempts, the short pause between steps, or a usage limit's reset. */
-  timer?: { until: string; failures?: number };
+  /** The step that runs next, or that parked. */
+  step: Step;
+  /** Where the job is: the lane, the card's wait and its timed waits are read from it. */
+  phase: Phase;
 }
 
 /** A rewrite another Item's triage proposed for this one's description, with no question. Agent text: data. */

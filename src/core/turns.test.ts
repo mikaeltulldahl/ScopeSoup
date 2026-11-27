@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Change } from "../model/types.ts";
 import type { Snapshot } from "./snapshot.ts";
+import type { Run } from "./phase.ts";
+import { itemTextHash } from "./answerReuse.ts";
 import { situate } from "./lanes.ts";
 import { buildIndex } from "./snapshot.ts";
 import { at, batch, change, member, passed, ref, run, session, snapshot, T0, verdict, work } from "./testing.ts";
@@ -181,7 +183,7 @@ test("a change not merged below level 3 waits for its implementor, and no reason
   assert.equal(turnOf({ ...approved, ...paused, paused: true, level: 3 }, 2).reason, "approved; at level 3 Scope Soup merges nothing itself: its implementor or a person merges it");
   assert.doesNotMatch(turnOf({ ...approved, ...paused, paused: true, level: 3 }, 2).reason, /queue/);
   // At level 4 it is in the queue once its job is (#230).
-  const queued = { ...approved, jobs: [{ subject: ref("work", 2), stage: "queue" as const, step: "review" as const }], parked: [{ subject: ref("work", 2), as: "queued" as const, reason: "Reviewed.", at: T0 }] };
+  const queued = { ...approved, jobs: [{ subject: ref("work", 2), stage: "queue" as const, step: "review" as const, phase: { at: "queued" as const } }], parked: [{ subject: ref("work", 2), as: "queued" as const, reason: "Reviewed.", at: T0 }] };
   assert.equal(turnOf({ ...queued, ...paused, paused: true, level: 4 }, 2).reason, "approved, but the queue is paused");
 });
 
@@ -393,18 +395,20 @@ test("with a job, the lane and the reason follow what the Item waits for (decisi
   const laneOf = (s: Snapshot, id: number) => situate(s.works.find((each) => each.ref.id === String(id))!, buildIndex(s)).lane;
   const subject = ref("work", 1);
   // A review runs before the store has read the change: In review.
-  const reviewing = snapshot({ works: [work(1)], sessions: [session(1, subject, { role: "review" })], jobs: [{ subject, stage: "implement", step: "review" }] });
+  const reviewing = snapshot({ works: [work(1)], sessions: [session(1, subject, { role: "review" })], jobs: [{ subject, stage: "implement", step: "review", phase: { at: "review", run: { is: "waiting" } } }] });
   assert.equal(laneOf(reviewing, 1), "in-review");
   // A question at implement, with a commit and no change read yet: In progress, never Queued.
-  const asked = snapshot({ works: [work(1)], parked: [{ subject, as: "needs-decision", reason: "Which?", at: T0 }], jobs: [{ subject, stage: "implement", step: "implement" }] });
+  const asked = snapshot({ works: [work(1)], parked: [{ subject, as: "needs-decision", reason: "Which?", at: T0 }], jobs: [{ subject, stage: "implement", step: "implement", phase: { at: "asked", from: "implement", ask: { is: "question" }, posting: false } }] });
   assert.equal(laneOf(asked, 1), "in-progress");
   // Before any change: To do.
-  assert.equal(laneOf({ ...asked, jobs: [{ subject, stage: "start", step: "triage" }] }, 1), "todo");
+  assert.equal(laneOf({ ...asked, jobs: [{ subject, stage: "start", step: "triage", phase: { at: "asked", from: "triage", ask: { is: "question" }, posting: false } }] }, 1), "todo");
   // The two timed waits say so, the written text first.
-  const timed = (job: Partial<NonNullable<Snapshot["jobs"]>[number]>) => turnOf(snapshot({ works: [work(1)], jobs: [{ subject, stage: "start", step: "implement", ...job }] }), 1).reason;
-  assert.equal(timed({ timer: { until: at(3), failures: 2 } }), "the implement step failed 2 times; it tries again in 3 min");
-  assert.equal(timed({ timer: { until: at(1) } }), "its implement step starts in 1 min");
-  assert.match(timed({ text: at(20), timer: { until: at(1) } }), /read back from demo \(at most 20 min more\)/);
-  // Past their moment they say nothing.
-  assert.equal(timed({ timer: { until: at(-1) } }), "ready; waiting for a free agent slot");
+  const timed = (run: Omit<Extract<Run, { is: "waiting" }>, "is">) => turnOf(snapshot({ works: [work(1)], jobs: [{ subject, stage: "start", step: "implement", phase: { at: "implement", run: { is: "waiting", ...run }, why: "first" } }] }), 1).reason;
+  const timer = (time: string, failures = 0) => ({ timer: { time, failures, limit: false } });
+  assert.equal(timed(timer(at(3), 2)), "the implement step failed 2 times; it tries again in 3 min");
+  assert.equal(timed(timer(at(1))), "its implement step starts in 1 min");
+  assert.match(timed({ text: { from: itemTextHash(work(1)), at: at(-10) }, ...timer(at(1)) }), /read back from demo \(at most 20 min more\)/);
+  // Past their moment they say nothing; nor does a text read back already.
+  assert.equal(timed(timer(at(-1))), "ready; waiting for a free agent slot");
+  assert.equal(timed({ text: { from: "another text", at: at(-10) } }), "ready; waiting for a free agent slot");
 });

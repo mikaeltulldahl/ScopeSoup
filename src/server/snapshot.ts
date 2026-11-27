@@ -4,8 +4,8 @@ import type { JobStage, Snapshot, RunnerState, SyncState } from "../core/snapsho
 import type { Batch, Change, CreatedPart, ProposedPart, Ref, Parked, ParkedQuestion, Run, Session, WorkItem } from "../model/types.ts";
 import { refKey } from "../model/types.ts";
 import type { Job } from "../orchestrator/jobs.ts";
-import { loadJobs, jobQuestions, resumesStep, WRITING_WAIT_MS } from "../orchestrator/jobs.ts";
-import { itemTextHash } from "../core/answerReuse.ts";
+import { loadJobs, jobQuestions, resumesStep } from "../orchestrator/jobs.ts";
+import { phaseOf } from "../orchestrator/phase.ts";
 import { busyItems, sameFilesWait } from "../orchestrator/candidates.ts";
 import { markedParts, partLinked } from "../orchestrator/restructure.ts";
 import { readQueueHealth } from "../orchestrator/queueHealth.ts";
@@ -71,7 +71,7 @@ export function loadSnapshot(store: Store): Snapshot {
     }),
     // Absent with no job at all (a board with no orchestrator): the lanes are read from the host alone.
     ...(() => {
-      const jobs = Object.values(loadJobs(store)).map((job) => jobStage(job, store.get<WorkItem>(job.item)));
+      const jobs = Object.values(loadJobs(store)).map(jobStage);
       return jobs.length > 0 ? { jobs } : {};
     })(),
     // The triage's typed links, for the Item page.
@@ -96,11 +96,10 @@ export function loadSnapshot(store: Store): Snapshot {
 }
 
 /** Where a job is, for the board (decision 2: a person's wait shows in the lane of the stage its work is at). */
-export function jobStage(job: Job, item: WorkItem | null): JobStage {
-  const stage: JobStage["stage"] = job.parked?.as === "queued" ? "queue" : job.step === "review" || job.reviewedHead ? "review" : job.head || (job.step === "implement" && job.implement) ? "implement" : "start";
-  const text = job.writing && item && itemTextHash(item) === job.writing.from ? new Date(Date.parse(job.writing.at) + WRITING_WAIT_MS).toISOString() : undefined;
-  const timer = job.notBefore ? { until: job.notBefore, ...(job.failures > 0 ? { failures: job.failures } : {}) } : undefined;
-  return { subject: job.item, stage, step: job.step, ...(text ? { text } : {}), ...(timer ? { timer } : {}) };
+export function jobStage(job: Job): JobStage {
+  const phase = phaseOf(job);
+  const stage: JobStage["stage"] = phase.at === "queued" ? "queue" : job.step === "review" || job.reviewedHead ? "review" : job.head || (job.step === "implement" && job.implement) ? "implement" : "start";
+  return { subject: job.item, stage, step: job.step, phase };
 }
 
 /** The parts of an item's restructuring that exist on its host, found by their part lines; a child is `linked` when it is a sub-issue of the item. */

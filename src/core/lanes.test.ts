@@ -167,6 +167,10 @@ test("an approved change whose Item is parked for a person's question after revi
         { subject: ref("work", 1), as: "needs-decision", reason: "the fix round asked", at: at(-5), decision: { question: "Which way?", options: [], recommendation: "" } },
         { subject: ref("work", 2), as: "queued", reason: "in the queue", at: at(-5) },
       ],
+      jobs: [
+        { subject: ref("work", 1), stage: "review", step: "implement", phase: { at: "asked", from: "implement", ask: { is: "question" }, posting: false } },
+        { subject: ref("work", 2), stage: "queue", step: "review", phase: { at: "queued" } },
+      ],
     }),
   );
   assert.deepEqual(index.snapshot.works.map((item) => laneOf(item, index)), ["in-review", "queued"]);
