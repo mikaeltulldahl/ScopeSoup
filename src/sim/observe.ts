@@ -99,7 +99,8 @@ const closedState = (item: WorkItem): boolean => item.state === "done" || item.s
 export async function observe(world: SimWorld, seed: number, action: Action, previous: Observation | undefined, startedBefore: number): Promise<Observation> {
   const store = world.store;
   const at = world.now();
-  const snapshot = loadSnapshot(store);
+  // As the server's board: the project's level with the snapshot.
+  const snapshot = { ...loadSnapshot(store), level: world.configNow.level };
   const board = buildBoard(snapshot, new Date(world.ms));
   const cards = new Map<string, CardView>();
   for (const lane of board.lanes) for (const card of lane.cards) cards.set(card.key, card);

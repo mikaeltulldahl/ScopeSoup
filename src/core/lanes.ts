@@ -184,7 +184,7 @@ export function situate(item: WorkItem, index: Index): Situation {
   if (session?.role === "review" && isLive(session)) return { ...situation, lane: "in-review" };
   // Parked for a person (a question from a fix round after review, say): it waits in review for them, not in the queue. Where Scope Soup
   // runs, an Item with no job is not in its merge queue (its work was dropped, or not taken up yet), whatever the change's verdicts.
-  const queueHasIt = situation.approved && !parkedForPerson(item.ref, index) && !(index.snapshot.jobs && !job);
+  const queueHasIt = situation.approved && !parkedForPerson(item.ref, index) && !(index.snapshot.level !== undefined && !job);
   return { ...situation, lane: queueHasIt ? "queued" : "in-review" };
 }
 

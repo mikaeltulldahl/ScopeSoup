@@ -245,6 +245,9 @@ function reviewTurn(situation: Situation, change: Change, ctx: TurnContext): Dra
   if (change.branch !== undefined && !change.branch.startsWith(ITEM_BRANCH_PREFIX) && !(change.labels ?? []).includes(HANDBACK_LABEL)) {
     return { actor: "nobody", tone: "waiting", since: change.updatedAt, reason: `open pull request by ${change.author?.name ?? "someone"}; Scope Soup does not review it` };
   }
+  // Approved below level 4, where there is no merge queue: its implementor or a person merges it.
+  const level = ctx.index.snapshot.level;
+  if (situation.approved && level !== undefined && level < 4) return queueTurn(situation, change, ctx);
   const verdicts = currentVerdicts(change);
   const failed = verdicts.filter((verdict) => verdict.value === "fail");
   if (failed.some((verdict) => verdict.dimension === "ci")) return nextStepTurn(situation, ctx, { actor: "agent", tone: "blocked", since: change.updatedAt, reason: "the checks failed on the current revision; waiting for an implementor session" });
@@ -254,7 +257,6 @@ function reviewTurn(situation: Situation, change: Change, ctx: TurnContext): Dra
   if (change.verdicts.some((verdict) => verdict.stale && verdict.dimension === "review")) {
     return nextStepTurn(situation, ctx, { actor: "agent", tone: "waiting", since: change.updatedAt, reason: "it has a new revision since the last review; waiting for a reviewer session" });
   }
-  const level = ctx.index.snapshot.level;
   // Below level 3 nobody reviews, and the review switch is not shown: the change waits for its implementor to merge it.
   if (level !== undefined && level < 3) return belowReviewTurn(change, level, ctx);
   if (ctx.index.snapshot.review !== "started") return { actor: "agent", tone: "blocked", since: change.updatedAt, reason: "waiting for a reviewer session, and review is paused (Resume on In review)" };

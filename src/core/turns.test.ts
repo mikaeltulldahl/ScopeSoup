@@ -180,7 +180,9 @@ test("a change not merged below level 3 waits for its implementor, and no reason
   const approved = snapshot({ works: [work(2)], changes: [change(20, [2], { verdicts: [verdict("review", "pass")] })] });
   assert.equal(turnOf({ ...approved, ...paused, paused: true, level: 3 }, 2).reason, "approved; at level 3 Scope Soup merges nothing itself: its implementor or a person merges it");
   assert.doesNotMatch(turnOf({ ...approved, ...paused, paused: true, level: 3 }, 2).reason, /queue/);
-  assert.equal(turnOf({ ...approved, ...paused, paused: true, level: 4 }, 2).reason, "approved, but the queue is paused");
+  // At level 4 it is in the queue once its job is (#230).
+  const queued = { ...approved, jobs: [{ subject: ref("work", 2), stage: "queue" as const, step: "review" as const }], parked: [{ subject: ref("work", 2), as: "queued" as const, reason: "Reviewed.", at: T0 }] };
+  assert.equal(turnOf({ ...queued, ...paused, paused: true, level: 4 }, 2).reason, "approved, but the queue is paused");
 });
 
 test("a pull request Scope Soup will not review says who it waits for", () => {

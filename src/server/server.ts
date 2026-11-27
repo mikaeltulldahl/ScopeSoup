@@ -563,8 +563,12 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
     if (write?.appendLog && subject.host === items!.host) {
       const job = loadJobs(store)[ref];
       if (!resolved.some((each) => each.target) && parkedAt !== undefined && !(job?.parked && Date.parse(job.parked.at) === Date.parse(parkedAt))) return sendError(response, 409, "PARKED_CHANGED", `${ref} parked on other questions now: reload the item.`);
-      const already = resolved.find((each) => each.target?.answer !== undefined);
-      if (already) return sendError(response, 409, "ALREADY_ANSWERED", `Question ${already.index + 1} on ${ref} has an answer already.`);
+      for (const each of resolved) {
+        const refused = each.target ? answerRefusal(job, each.index, parkedAt) : undefined;
+        if (refused === "answered") return sendError(response, 409, "ALREADY_ANSWERED", `Question ${each.index + 1} on ${ref} has an answer already.`);
+        if (refused === "parked-changed") return sendError(response, 409, "PARKED_CHANGED", `${ref} parked on other questions now: reload the item.`);
+        if (refused) return sendError(response, 409, "NO_OPEN_QUESTIONS", `${ref} does not wait on that question (any more): reload the item.`);
+      }
       const lines = resolved.map((each) => ({ kind: "answer", by: by(), fields: { answer: each.text, ...(each.asked ? { to: each.asked.at, toBy: each.asked.by, toQuestion: each.asked.question } : {}) } }));
       try {
         if (lines.length > 1 && write.appendLogs) logged = await write.appendLogs(subject, lines);
