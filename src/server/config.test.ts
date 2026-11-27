@@ -71,7 +71,7 @@ test("GET /api/config returns both files as one and the configuration; board-onl
   assert.deepEqual([view.present, view.config.project, view.config.level], [true, "demo", 0]);
   assert.deepEqual(view.raw, { version: 3, machineName: "laptop-a", repoPath: "repo", project: "demo", checkCommand: ["node", "--test"] });
   assert.ok(view.safeFields.includes("level"));
-  assert.deepEqual(view.sharedFields, ["level", "project", "roles", "checkCommand", "setupCommand", "setupWatch", "sharedResources", "media", "review", "labels", "host", "settings.triageMaxAgeDays"]);
+  assert.deepEqual(view.sharedFields, ["level", "project", "roles", "checkCommand", "setupCommand", "setupWatch", "sharedResources", "media", "review", "labels", "host", "settings.triageMaxAgeDays", "settings.waitingCapTriage", "settings.waitingCapWork"]);
   assert.deepEqual(await (await fetch(`${bareBase}/api/config`)).json(), { present: false });
   assert.equal((await fetch(`${bareBase}/api/config`, { method: "POST", body: "{}" })).status, 404);
 });
