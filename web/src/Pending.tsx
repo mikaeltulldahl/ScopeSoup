@@ -3,7 +3,8 @@
 // request per pick, which carries the board's person as every request does).
 
 import { useEffect, useState } from "preact/hooks";
-import { postStep, reloadViews } from "./api.ts";
+import { postPlace, postStep, reloadViews } from "./api.ts";
+import type { Shown } from "./drag.ts";
 import type { Pending, StateKey, Step } from "./stateMenu.ts";
 import { addPending, cancelPending, duePending } from "./stateMenu.ts";
 import { words } from "./theme.ts";
@@ -17,11 +18,17 @@ export interface Change extends Pending {
   steps: Step[];
   /** For `block`: the Item's blockers after the pick, as ids. */
   blockedBy?: string[];
+  /** A move on the board (#222): where the board shows the card while it waits. With no steps it is a move within its lane. */
+  shown?: Shown;
+  /** Also place it in its lane's order, right above `shown.before` (null: last), after the steps (`/api/item/place`). */
+  place?: boolean;
 }
 
 let pending: Change[] = [];
 let nextId = 1;
 let failure: string | null = null;
+/** What the server said of a move that went through differently than dropped (a place kept within its group). */
+let notice: string | null = null;
 const watchers = new Set<() => void>();
 const tell = () => watchers.forEach((watcher) => watcher());
 
@@ -30,7 +37,14 @@ const body = (change: Change): Record<string, unknown> => ({ ref: change.itemKey
 
 async function send(change: Change): Promise<void> {
   try {
-    await postStep("/api/item/pick", body(change));
+    if (change.steps.length > 0) await postStep("/api/item/pick", body(change));
+    if (change.place && change.shown) {
+      const said = await postPlace(change.itemKey, change.shown.before ?? null, change.shown.lane);
+      if (said) {
+        notice = said;
+        tell();
+      }
+    }
   } catch (problem) {
     failure = `${change.text}: ${problem instanceof Error ? problem.message : String(problem)}`;
     tell();
@@ -56,6 +70,7 @@ function schedule(): void {
 /** Puts a pick in the wait. */
 export function queueChange(change: Omit<Change, "id" | "at">): void {
   failure = null;
+  notice = null;
   pending = addPending(pending, { ...change, id: nextId++ }, Date.now());
   tell();
   schedule();
@@ -72,7 +87,10 @@ function flush(): void {
   const now = pending;
   pending = [];
   window.clearTimeout(timer);
-  for (const change of now) void postStep("/api/item/pick", body(change), true).catch(() => undefined);
+  for (const change of now) {
+    if (change.steps.length > 0) void postStep("/api/item/pick", body(change), true).catch(() => undefined);
+    else if (change.place && change.shown) void postStep("/api/item/place", { ref: change.itemKey, before: change.shown.before ?? null, lane: change.shown.lane }, true).catch(() => undefined);
+  }
 }
 
 if (typeof window !== "undefined") window.addEventListener("pagehide", flush);
@@ -88,6 +106,23 @@ export function usePendingState(itemKey: string): StateKey | undefined {
   return pending.filter((change) => change.itemKey === itemKey).at(-1)?.state;
 }
 
+/** The moves waiting that the board shows already, oldest first; re-renders when the wait changes. */
+export function usePendingMoves(): Shown[] {
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const watcher = () => setTick((count) => count + 1);
+    watchers.add(watcher);
+    return () => void watchers.delete(watcher);
+  }, []);
+  return pending.flatMap((change) => (change.shown ? [change.shown] : []));
+}
+
+/** A note in the toasts, for a move refused before it waits (the lane does not take the card). */
+export function showNotice(text: string): void {
+  notice = text;
+  tell();
+}
+
 /** The toasts at the foot of the page: each pick that waits with its Undo, and a pick the server refused. */
 export function Toasts() {
   const [, setTick] = useState(0);
@@ -96,7 +131,7 @@ export function Toasts() {
     watchers.add(watcher);
     return () => void watchers.delete(watcher);
   }, []);
-  if (pending.length === 0 && !failure) return null;
+  if (pending.length === 0 && !failure && !notice) return null;
   const theme = words();
   return (
     <div class="toasts" role="status" aria-live="polite">
@@ -106,6 +141,12 @@ export function Toasts() {
           <button type="button" onClick={() => undo(change.id)}>{theme.undo}</button>
         </div>
       ))}
+      {notice && (
+        <div class="toast" role="status">
+          <span>{notice}</span>
+          <button type="button" onClick={() => { notice = null; tell(); }} aria-label="Dismiss">×</button>
+        </div>
+      )}
       {failure && (
         <div class="toast toast-bad" role="alert">
           <span>{failure}</span>
