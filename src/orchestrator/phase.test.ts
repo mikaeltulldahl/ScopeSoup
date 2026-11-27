@@ -1,10 +1,8 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import type { Job } from "./jobs.ts";
+import type { Job, JobParked, Where } from "./jobs.ts";
 import { phaseOf, pickOf } from "./phase.ts";
-import { jobOf } from "./jobs.ts";
-import type { JobParked, Where } from "./jobs.ts";
-import { where } from "./jobs.ts";
+import { jobOf, where } from "./jobs.ts";
 
 const base: Job = jobOf({ item: { host: "meta", kind: "work", id: "A-1" }, workspace: "w", branch: "scopesoup/A-1", step: "triage", failures: 0, fixRounds: 0, startedAt: "2026-01-01T00:00:00Z" });
 const job = (more: Partial<Job & Where>): Job => jobOf({ ...base, ...where(base), ...more });

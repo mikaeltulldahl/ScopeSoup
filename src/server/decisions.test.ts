@@ -15,12 +15,9 @@ import { openStore } from "../store/store.ts";
 import { createSync } from "../sync/index.ts";
 import { loadAnswers } from "../store/answers.ts";
 import type { Job } from "../orchestrator/jobs.ts";
-import { loadJobs, saveJobs } from "../orchestrator/jobs.ts";
+import { loadJobs, saveJobs, where, jobOf, stepAt } from "../orchestrator/jobs.ts";
 import type { ScopeSoupServer } from "./server.ts";
 import { createServer } from "./server.ts";
-import { where } from "../orchestrator/jobs.ts";
-import { jobOf } from "../orchestrator/jobs.ts";
-import { stepAt } from "../orchestrator/jobs.ts";
 
 const META = "refs/scopesoup/meta";
 const person = { name: "Test Person", email: "test.person@example.invalid" };

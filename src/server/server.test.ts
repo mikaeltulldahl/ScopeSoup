@@ -12,7 +12,7 @@ import { openStore } from "../store/store.ts";
 import type { ScopeSoupServer } from "./server.ts";
 import { createServer, isLoopback } from "./server.ts";
 import { refKey } from "../model/types.ts";
-import { loadJobs, saveJobs } from "../orchestrator/jobs.ts";
+import { loadJobs, saveJobs, where, jobOf } from "../orchestrator/jobs.ts";
 import { loadSnapshot } from "./snapshot.ts";
 import { buildUsageView } from "./usage.ts";
 import { decide } from "../orchestrator/usageCheck.ts";
@@ -20,8 +20,6 @@ import { loadAnswers } from "../store/answers.ts";
 import { itemTextHash } from "../core/answerReuse.ts";
 import { QUEUE_KEY, recordQueueNote, resumeRequested } from "../orchestrator/queueHealth.ts";
 import { defaultConfig, initialState, step as queueStep } from "../queue/index.ts";
-import { where } from "../orchestrator/jobs.ts";
-import { jobOf } from "../orchestrator/jobs.ts";
 
 let store: Store;
 let server: ScopeSoupServer;

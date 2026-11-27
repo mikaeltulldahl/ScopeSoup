@@ -3,11 +3,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { openStore } from "../store/store.ts";
-import { answerQuestion, loadJobs, jobQuestions, releaseJob, saveJobs } from "./jobs.ts";
-import type { Job, Jobs } from "./jobs.ts";
-import { setWhere, where } from "./jobs.ts";
-import { jobOf } from "./jobs.ts";
-import type { JobParked, Where } from "./jobs.ts";
+import { answerQuestion, loadJobs, jobQuestions, releaseJob, saveJobs, setWhere, where, jobOf } from "./jobs.ts";
+import type { Job, Jobs, JobParked, Where } from "./jobs.ts";
 
 function job(id: string, extra: Partial<Job & Where> = {}): Job {
   return jobOf({

@@ -15,8 +15,7 @@ import type { Job, Jobs } from "../orchestrator/jobs.ts";
 import { workBranch, workspaceKey } from "../orchestrator/paths.ts";
 import { sessionOf, stepOf, waitsForAnswer as answerAwaited } from "../core/phase.ts";
 import { phaseOf } from "../orchestrator/phase.ts";
-import { jobOf, setWhere, where } from "../orchestrator/jobs.ts";
-import { stepAt } from "../orchestrator/jobs.ts";
+import { jobOf, setWhere, where, stepAt } from "../orchestrator/jobs.ts";
 
 export const MOVES = ["triage", "todo", "in-review", "merge-queue", "implement"] as const;
 export type Move = (typeof MOVES)[number];

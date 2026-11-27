@@ -28,6 +28,7 @@ import type { PoolDeps } from "./workspaces.ts";
 import { isolateGitConfig } from "./fixtures/git-env.ts";
 import { followRestore } from "./fixtures/restore.ts";
 import { execFileSyncRetrying } from "../hosts/spawnRetry.ts";
+import { loadJobs as readJobs, where } from "./jobs.ts";
 
 /** A store with agents and the merge queue started, as after a person pressed both Start buttons. */
 const openStore = (path: string): ReturnType<typeof openStoreAs> => {
@@ -224,7 +225,7 @@ test("two items get different clones, a third waits for one, and each item keeps
   // Implemented (no reviewer). The fake committed but did not merge and names no pull request, so the items are parked for a
   // person; their clones are free, and item 3 takes one.
   const third = await run();
-  assert.equal(loadJobs(store, "1"), "escalated");
+  assert.equal(parkedAs(store, "1"), "escalated");
   assert.equal(holder("1")?.held, false);
   assert.equal(holder("2")?.held, false);
   assert.deepEqual(third.started.map((entry) => entry.item), [refKey(ref("3"))]);
@@ -238,9 +239,9 @@ test("two items get different clones, a third waits for one, and each item keeps
   assert.equal(kinds.filter((kind) => kind === "orchestrator.workspace_freed").length, 2);
 });
 
-function loadJobs(store: Store, id: string): string | undefined {
-  const jobs = JSON.parse(store.getValue("orchestrator.jobs") ?? "{}") as Record<string, { parked?: { as: string } }>;
-  return jobs[refKey(ref(id))]?.parked?.as;
+/** What the stored job of item `id` is parked as, if it is parked. */
+function parkedAs(store: Store, id: string): string | undefined {
+  return where(readJobs(store)[refKey(ref(id))])?.parked?.as;
 }
 
 test("at level 3, implement is followed by review and nothing else: no checklist session", async () => {
@@ -256,7 +257,7 @@ test("at level 3, implement is followed by review and nothing else: no checklist
   const runner = makeRunner(store, config, clock, { FAKE_CLAUDE_OUTPUT: JSON.stringify({ ...ANSWER, verdict: "approve", findings: [] }) });
   const run = () => tick({ store, runner, config: fixedConfig(config), actions: dryActions, now });
   const roles: string[] = [];
-  for (let round = 0; round < 8 && loadJobs(store, "1") === undefined; round++) {
+  for (let round = 0; round < 8 && parkedAs(store, "1") === undefined; round++) {
     const report = await run();
     for (const started of report.started) {
       roles.push(started.role);
@@ -266,7 +267,7 @@ test("at level 3, implement is followed by review and nothing else: no checklist
   }
   // The approval resumes the implementor to merge; the fake does not, so the item parked for a person.
   assert.deepEqual(roles, ["triage", "implement", "review", "implement"]);
-  assert.equal(loadJobs(store, "1"), "escalated");
+  assert.equal(parkedAs(store, "1"), "escalated");
 });
 
 test("a clone with uncommitted changes in the project's repository is refused and left as it was", async () => {

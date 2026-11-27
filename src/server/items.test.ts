@@ -13,8 +13,7 @@ import { openStore } from "../store/store.ts";
 import { createSync } from "../sync/index.ts";
 import type { ScopeSoupServer } from "./server.ts";
 import { createServer } from "./server.ts";
-import { loadJobs, saveJobs } from "../orchestrator/jobs.ts";
-import { jobOf } from "../orchestrator/jobs.ts";
+import { loadJobs, saveJobs, jobOf } from "../orchestrator/jobs.ts";
 
 let repo: TestRepo;
 let host: MetaBranchHost;

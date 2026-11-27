@@ -24,9 +24,8 @@ import { refKey } from "../model/types.ts";
 import type { Context } from "./context.ts";
 import { SCOPESOUP } from "./hostActions.ts";
 import type { Decision, Finding, Job, JobStep, ParkedAs } from "./jobs.ts";
-import { formatFindings } from "./jobs.ts";
+import { formatFindings, jobOf, setWhere, where } from "./jobs.ts";
 import { workBranch, workspaceKey } from "./paths.ts";
-import { jobOf, setWhere, where } from "./jobs.ts";
 
 const SEEN_KEY = "orchestrator.logs_read";
 

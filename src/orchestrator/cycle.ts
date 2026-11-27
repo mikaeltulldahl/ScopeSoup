@@ -14,8 +14,8 @@ import { answersText, knownAnswers } from "../store/answers.ts";
 import { persistenceLimits } from "../config/persistence.ts";
 import type { Context } from "./context.ts";
 import { ACTOR, errorText } from "./context.ts";
-import type { AskedText, Decision, ItemLinkAnswer, Job, JobParked, JobStep, ParkedAs, WherePatch, ReviewAnswer, TakenDecision, TriageAnswer } from "./jobs.ts";
-import { ASK_PERSON, answerIn, askedInLog, jobQuestions, nextPark, parkSet, asImplement, asReview, asTriage, formatFindings, hasMarkup, recoverFields, keepsRecommendations, picks, questionsSettled, releaseIn, parkedRewrite, changedRewrite, sameText } from "./jobs.ts";
+import type { AskedText, Decision, ItemLinkAnswer, Job, JobParked, JobStep, ParkedAs, WherePatch, ReviewAnswer, TakenDecision, TriageAnswer, Finding } from "./jobs.ts";
+import { ASK_PERSON, answerIn, askedInLog, jobQuestions, nextPark, parkSet, asImplement, asReview, asTriage, formatFindings, hasMarkup, recoverFields, keepsRecommendations, picks, questionsSettled, releaseIn, parkedRewrite, changedRewrite, sameText, jobOf, setWhere, where, stepAt } from "./jobs.ts";
 import { providerFor } from "./providers/index.ts";
 import type { Actions, ClaimResult, SessionResultRecord } from "./ports.ts";
 import { CLAIM_EXPIRY_MINUTES } from "./ports.ts";
@@ -31,7 +31,6 @@ import type { PendingOverturn } from "./overturns.ts";
 import { dropOverturns, overturnMessage, overturnsFor } from "./overturns.ts";
 import type { ChangedFile } from "../core/fence.ts";
 import { FENCE_OUTSIDE_FILES, fenceBreach, proposedSplit } from "../core/fence.ts";
-import type { Finding } from "./jobs.ts";
 import { restructuringId } from "./restructure.ts";
 import { findingKey, noProgress, shouldDraft } from "./progress.ts";
 import type { ProposedDraft } from "./drafts.ts";
@@ -43,8 +42,6 @@ import { workBranch, workspaceKey } from "./paths.ts";
 import { plural } from "../model/plural.ts";
 import { stepOf } from "../core/phase.ts";
 import { phaseOf } from "./phase.ts";
-import { jobOf, setWhere, where } from "./jobs.ts";
-import { stepAt } from "./jobs.ts";
 
 
 const CONTINUE_MS = 1000;

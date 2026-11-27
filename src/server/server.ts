@@ -35,7 +35,7 @@ import { explainOrder, voteForPlace, voteLimits } from "../orchestrator/score.ts
 import { setVote, voteInStore } from "../store/votes.ts";
 import { isSha } from "../orchestrator/history.ts";
 import { readMergeQueueNote } from "../orchestrator/mergeQueueLease.ts";
-import { parkSet, adoptWritten, answerQuestion, awaitWritten, answerRefusal, rewriteRefusal, keepsRecommendations, loadJobs, questionsSettled, releaseJob, parkedRewrite, resumesStep, saveJobs, settleRewrite } from "../orchestrator/jobs.ts";
+import { parkSet, adoptWritten, answerQuestion, awaitWritten, answerRefusal, rewriteRefusal, keepsRecommendations, loadJobs, questionsSettled, releaseJob, parkedRewrite, resumesStep, saveJobs, settleRewrite, where, stepAt } from "../orchestrator/jobs.ts";
 import { readProposedRewrites, writeProposedRewrites } from "../orchestrator/aboutOthers.ts";
 import { applyMove, isMove, MOVES, moveWhys, ROLE_WORDS, runningRole } from "./moves.ts";
 import { voteToPlace } from "./place.ts";
@@ -44,7 +44,7 @@ import type { PickRequest, RequestStep } from "../hosts/metaBranch/requests.ts";
 import { aheadWhy, requestable, requestState } from "../hosts/metaBranch/requests.ts";
 import { randomUUID } from "node:crypto";
 import type { Move, MoveInput } from "./moves.ts";
-import type { AnswerRefusal, RewriteRefusal, Rewrite } from "../orchestrator/jobs.ts";
+import type { AnswerRefusal, RewriteRefusal, Rewrite, Job } from "../orchestrator/jobs.ts";
 import { workBranch } from "../orchestrator/paths.ts";
 import type { Media } from "../orchestrator/media.ts";
 import type { Chat } from "../orchestrator/chat.ts";
@@ -86,9 +86,6 @@ import type { FolderOpener, ProjectInfo } from "./project.ts";
 import { plural } from "../model/plural.ts";
 import { parkedForAnswer } from "../core/phase.ts";
 import { phaseOf } from "../orchestrator/phase.ts";
-import type { Job } from "../orchestrator/jobs.ts";
-import { where } from "../orchestrator/jobs.ts";
-import { stepAt } from "../orchestrator/jobs.ts";
 
 export interface ServerOptions {
   store: Store;

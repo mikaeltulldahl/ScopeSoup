@@ -13,11 +13,9 @@ import { refKey } from "../model/types.ts";
 import { openStore } from "../store/store.ts";
 import { personOf } from "../core/turns.ts";
 import { findHandbacks } from "./handback.ts";
-import { loadJobs } from "./jobs.ts";
+import { loadJobs, where, stepAt } from "./jobs.ts";
 import type { Actions, AgentRunner } from "./ports.ts";
 import { tick } from "./tick.ts";
-import { where } from "./jobs.ts";
-import { stepAt } from "./jobs.ts";
 
 const SHA = "b".repeat(40);
 const NEWER = "c".repeat(40);

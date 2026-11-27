@@ -19,16 +19,14 @@ import { execFileSyncRetrying } from "../hosts/spawnRetry.ts";
 import { sessionView } from "../core/board.ts";
 import { createChat, knownSessions, readTurns, replyFromStream } from "./chat.ts";
 import type { Chat } from "./chat.ts";
-import { loadJobs, saveJobs } from "./jobs.ts";
-import type { Job } from "./jobs.ts";
+import { loadJobs, saveJobs, jobOf } from "./jobs.ts";
+import type { Job, Where } from "./jobs.ts";
 import { workBranch, workspaceKey, workspacePath } from "./paths.ts";
 import { heldSlot, slotName } from "./slots.ts";
 import { createRunner } from "./runner.ts";
 import type { Runner } from "./runner.ts";
 import type { SessionRequest } from "./ports.ts";
 import { HOLDINGS_KEY, readHoldings } from "./workspaces.ts";
-import { jobOf } from "./jobs.ts";
-import type { Where } from "./jobs.ts";
 
 const FAKE = join(import.meta.dirname, "providers", "claude", "fake-claude.ts");
 const T0 = Date.parse("2026-11-18T10:00:00Z");

@@ -11,9 +11,8 @@ import type { LogLineInput, NewWork, WorkPatch } from "../ports/host.ts";
 import type { Store } from "../store/store.ts";
 import { inertText } from "./hostText.ts";
 import type { Job, Proposal } from "./jobs.ts";
-import { loadJobs, releaseIn, saveJobs } from "./jobs.ts";
+import { loadJobs, releaseIn, saveJobs, setWhere, where } from "./jobs.ts";
 import { plural } from "../model/plural.ts";
-import { setWhere, where } from "./jobs.ts";
 
 /** The restructuring this job is parked on, if it parked on one. */
 export function restructuringOf(job: Job | undefined): Proposal | undefined {

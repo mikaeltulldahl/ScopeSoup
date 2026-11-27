@@ -12,7 +12,7 @@ import type { TestRepo } from "../hosts/metaBranch/testRepo.ts";
 import { createTestRepo } from "../hosts/metaBranch/testRepo.ts";
 import { remoteBranches } from "../items/remoteBranch.ts";
 import type { Change, Ref } from "../model/types.ts";
-import { saveJobs } from "../orchestrator/jobs.ts";
+import { saveJobs, jobOf } from "../orchestrator/jobs.ts";
 import { workspaceKey } from "../orchestrator/paths.ts";
 import { realGit } from "../orchestrator/process.ts";
 import type { Store } from "../store/store.ts";
@@ -21,7 +21,6 @@ import { createSync } from "../sync/index.ts";
 import { DEMO_PUSH_MS, demoBranches, demoItemsHost, demoTip, seedDemo } from "./demo.ts";
 import type { ScopeSoupServer } from "./server.ts";
 import { createServer } from "./server.ts";
-import { jobOf } from "../orchestrator/jobs.ts";
 
 /** The branch and the commands the holder of A-1 sees. */
 const A1: ItemBranch = {

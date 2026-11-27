@@ -11,10 +11,9 @@ import type { WorkItem } from "../model/types.ts";
 import type { Store } from "../store/store.ts";
 import { openStore } from "../store/store.ts";
 import type { Jobs } from "../orchestrator/jobs.ts";
-import { saveJobs } from "../orchestrator/jobs.ts";
+import { saveJobs, jobOf } from "../orchestrator/jobs.ts";
 import type { ScopeSoupServer } from "./server.ts";
 import { createServer } from "./server.ts";
-import { jobOf } from "../orchestrator/jobs.ts";
 
 let store: Store;
 let server: ScopeSoupServer;

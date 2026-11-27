@@ -11,12 +11,11 @@ import { knownAnswers } from "../store/answers.ts";
 import type { Store } from "../store/store.ts";
 import type { Context } from "./context.ts";
 import type { AboutOther, Decision, Job } from "./jobs.ts";
-import { changedRewrite, sameText } from "./jobs.ts";
+import { changedRewrite, sameText, where } from "./jobs.ts";
 import type { ProposedRewriteView } from "../core/snapshot.ts";
 import { plural } from "../model/plural.ts";
 import { changeHandedOn, sessionOf, stepOf } from "../core/phase.ts";
 import { phaseOf } from "./phase.ts";
-import { where } from "./jobs.ts";
 
 /** Questions (and a rewrite) waiting to be written on another Item. Agent text: data. */
 export interface WaitingAbout {

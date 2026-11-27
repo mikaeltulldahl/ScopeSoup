@@ -11,7 +11,7 @@ import { fakeIssues, ISSUES_API } from "../hosts/github/fakeIssues.ts";
 import { createMetaBranchHost } from "../hosts/metaBranch/index.ts";
 import type { MetaBranchHost } from "../hosts/metaBranch/index.ts";
 import type { Jobs } from "../orchestrator/jobs.ts";
-import { saveJobs } from "../orchestrator/jobs.ts";
+import { saveJobs, jobOf } from "../orchestrator/jobs.ts";
 import { realGit } from "../orchestrator/process.ts";
 import { createServer } from "../server/server.ts";
 import type { ScopeSoupServer } from "../server/server.ts";
@@ -20,7 +20,6 @@ import type { CliDeps } from "./cli.ts";
 import { runItemCli } from "./cli.ts";
 import { remoteBranches } from "./remoteBranch.ts";
 import { execFileSyncRetrying } from "../hosts/spawnRetry.ts";
-import { jobOf } from "../orchestrator/jobs.ts";
 
 const cleanups: (() => Promise<void> | void)[] = [];
 after(async () => {

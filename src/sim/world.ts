@@ -10,7 +10,7 @@ import { validateConfig } from "../config/validate.ts";
 import type { DecisionOption, Ref, SessionStatus, WorkItem } from "../model/types.ts";
 import { optionText, refKey } from "../model/types.ts";
 import { createHostActions } from "../orchestrator/hostActions.ts";
-import { loadJobs } from "../orchestrator/jobs.ts";
+import { loadJobs, where, stepAt } from "../orchestrator/jobs.ts";
 import type { QueueDriver, Notice, QueueSink } from "../orchestrator/queueDriver.ts";
 import type { TickReport } from "../orchestrator/tick.ts";
 import { tick } from "../orchestrator/tick.ts";
@@ -30,8 +30,6 @@ import type { Rng } from "./random.ts";
 import { random } from "./random.ts";
 import type { SimRunner } from "./runner.ts";
 import { simRunner } from "./runner.ts";
-import { where } from "../orchestrator/jobs.ts";
-import { stepAt } from "../orchestrator/jobs.ts";
 
 export const T0 = Date.parse("2026-11-18T10:00:00.000Z");
 export const PERSON = "Ada";

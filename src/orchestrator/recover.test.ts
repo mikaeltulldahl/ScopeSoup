@@ -22,12 +22,11 @@ import { openStore } from "../store/store.ts";
 import type { Store } from "../store/store.ts";
 import { createSync } from "../sync/index.ts";
 import { createHostActions } from "./hostActions.ts";
-import { loadJobs } from "./jobs.ts";
+import { loadJobs, where } from "./jobs.ts";
 import type { AgentRunner, SessionRequest } from "./ports.ts";
 import { jobFromLog } from "./recover.ts";
 import { sessionResultKey } from "./runner.ts";
 import { tick } from "./tick.ts";
-import { where } from "./jobs.ts";
 
 const repos: TestRepo[] = [];
 const hosts: MetaBranchHost[] = [];

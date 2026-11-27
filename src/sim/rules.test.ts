@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import type { CardView } from "../core/views.ts";
 import type { RecordedAnswer, ScopeSoupEvent, WorkItem } from "../model/types.ts";
-import type { Job } from "../orchestrator/jobs.ts";
+import type { Job, Where } from "../orchestrator/jobs.ts";
 import type { SessionRequest } from "../orchestrator/ports.ts";
 import { FakeGit } from "./git.ts";
 import type { GitObs, ItemObs, Observation, StartObs } from "./observe.ts";
@@ -17,7 +17,6 @@ import { RULE_IDS, RULES } from "./rules.ts";
 import type { W } from "./waits.ts";
 import type { Action, Ledger } from "./world.ts";
 import { jobOf } from "../orchestrator/jobs.ts";
-import type { Where } from "../orchestrator/jobs.ts";
 
 const AT = "2026-11-18T10:00:00.000Z";
 const key = (id: string): string => `metaBranch:work:${id}`;

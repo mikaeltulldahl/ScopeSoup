@@ -26,8 +26,7 @@ import { createHostActions } from "./hostActions.ts";
 import { keepOverturn, overturnsFor } from "./overturns.ts";
 import type { Actions } from "./ports.ts";
 import type { Store } from "../store/store.ts";
-import { saveJobs } from "./jobs.ts";
-import { jobOf } from "./jobs.ts";
+import { saveJobs, jobOf } from "./jobs.ts";
 
 const DECISIONS = [
   { question: "Which name for the tide module?", chosen: "tides", others: ["tide-table", "sea"], why: "Matches the folder." },

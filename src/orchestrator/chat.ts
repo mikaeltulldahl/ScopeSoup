@@ -14,7 +14,7 @@ import { roleStopped, SWITCH_WORDS } from "../store/control.ts";
 import type { Resources } from "./resources.ts";
 import type { Store } from "../store/store.ts";
 import { errorText } from "./context.ts";
-import { loadJobs, saveJobs } from "./jobs.ts";
+import { loadJobs, saveJobs, where, stepAt } from "./jobs.ts";
 import type { Job } from "./jobs.ts";
 import { workspacePath } from "./paths.ts";
 import { heldSlot, holderOf, lastSlotPath, slotPathFor } from "./slots.ts";
@@ -23,8 +23,6 @@ import { usageDecision } from "./tick.ts";
 import { providerNamed } from "./providers/index.ts";
 import { poolRepoPath, readHoldings, samePath } from "./workspaces.ts";
 import { phaseOf } from "./phase.ts";
-import { where } from "./jobs.ts";
-import { stepAt } from "./jobs.ts";
 
 /** One turn as stored. `agentSession` is the session it continued (or the one the reply came from, when the agent forked it). */
 export interface ChatTurn {

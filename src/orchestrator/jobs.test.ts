@@ -2,10 +2,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { LogRecord, OpenQuestion } from "../model/types.ts";
 import type { Job } from "./jobs.ts";
-import { asImplement, askedInLog, asReview, asTriage, changedRewrite, hasMarkup, recoverFields, sameText, withoutVerification } from "./jobs.ts";
-import { dropUnreadable, loadJobs, saveJobs, setWhere, where } from "./jobs.ts";
+import { asImplement, askedInLog, asReview, asTriage, changedRewrite, hasMarkup, recoverFields, sameText, withoutVerification, dropUnreadable, loadJobs, saveJobs, setWhere, where, jobOf } from "./jobs.ts";
 import { openStore } from "../store/store.ts";
-import { jobOf } from "./jobs.ts";
 
 test("a stored answer that carries the removed tests or untested fields is still read", () => {
   const implement = asImplement({ done: true, summary: "s", risk: "low", riskReason: "r", tests: "Added a test for parsing." });

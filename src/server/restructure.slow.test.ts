@@ -7,11 +7,10 @@ import type { ItemPage } from "../core/views.ts";
 import { createMetaBranchHost } from "../hosts/metaBranch/index.ts";
 import { createTestRepo } from "../hosts/metaBranch/testRepo.ts";
 import type { ProposedPart, Ref, WorkItem } from "../model/types.ts";
-import { saveJobs } from "../orchestrator/jobs.ts";
+import { saveJobs, jobOf } from "../orchestrator/jobs.ts";
 import { openStore } from "../store/store.ts";
 import { createSync } from "../sync/index.ts";
 import { createServer } from "./server.ts";
-import { jobOf } from "../orchestrator/jobs.ts";
 
 const PARTS: ProposedPart[] = [
   { title: "Read the old format", description: "Parse the old files.", verification: "A test reads a sample.", goes: "original" },

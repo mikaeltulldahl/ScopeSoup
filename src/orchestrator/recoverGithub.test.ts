@@ -17,10 +17,8 @@ import type { Context } from "./context.ts";
 import { createLog } from "./context.ts";
 import { createHostActions } from "./hostActions.ts";
 import type { Jobs } from "./jobs.ts";
-import { loadJobs, saveJobs } from "./jobs.ts";
+import { loadJobs, saveJobs, where, stepAt } from "./jobs.ts";
 import { recoverFromLogs } from "./recover.ts";
-import { where } from "./jobs.ts";
-import { stepAt } from "./jobs.ts";
 
 const at = "2026-11-22T09:00:00Z";
 const R = "/repos/harbour/tides/issues";

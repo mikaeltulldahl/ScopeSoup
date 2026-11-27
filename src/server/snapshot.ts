@@ -4,7 +4,7 @@ import type { JobStage, Snapshot, RunnerState, SyncState } from "../core/snapsho
 import type { Batch, Change, CreatedPart, ProposedPart, Ref, Parked, ParkedQuestion, Run, Session, WorkItem } from "../model/types.ts";
 import { refKey } from "../model/types.ts";
 import type { Job } from "../orchestrator/jobs.ts";
-import { loadJobs, jobQuestions, resumesStep } from "../orchestrator/jobs.ts";
+import { loadJobs, jobQuestions, resumesStep, where, stepAt } from "../orchestrator/jobs.ts";
 import { phaseOf } from "../orchestrator/phase.ts";
 import { busyItems, sameFilesWait } from "../orchestrator/candidates.ts";
 import { markedParts, partLinked } from "../orchestrator/restructure.ts";
@@ -16,8 +16,6 @@ import { loadVotes, withVotes } from "../store/votes.ts";
 import { readControl } from "../store/control.ts";
 import { KEYS } from "../store/keys.ts";
 import type { Store } from "../store/store.ts";
-import { where } from "../orchestrator/jobs.ts";
-import { stepAt } from "../orchestrator/jobs.ts";
 
 export { KEYS } from "../store/keys.ts";
 

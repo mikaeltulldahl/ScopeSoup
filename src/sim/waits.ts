@@ -4,8 +4,7 @@
 import type { Job } from "../orchestrator/jobs.ts";
 import type { WorkItem } from "../model/types.ts";
 import { itemTextHash } from "../core/answerReuse.ts";
-import { where } from "../orchestrator/jobs.ts";
-import { stepAt } from "../orchestrator/jobs.ts";
+import { where, stepAt } from "../orchestrator/jobs.ts";
 
 export type Role = "triage" | "implement" | "review";
 export type PersonWait = "answer" | "rewrite" | "restructuring" | "not-ready" | "escalated" | "merge" | "holds";

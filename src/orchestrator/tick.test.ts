@@ -21,7 +21,7 @@ import { readPacing } from "./pacing.ts";
 import type { MergeQueue } from "./mergeQueue.ts";
 import { createLoop } from "./loop.ts";
 import { workspaceKey } from "./paths.ts";
-import { answerQuestion, asImplement, asTriage, loadJobs, jobQuestions, releaseJob, resumesStep, saveJobs, settleRewrite, WRITING_WAIT_MS } from "./jobs.ts";
+import { answerQuestion, asImplement, asTriage, loadJobs, jobQuestions, releaseJob, resumesStep, saveJobs, settleRewrite, WRITING_WAIT_MS, setWhere, where, jobOf, stepAt } from "./jobs.ts";
 import { readProposedRewrites } from "./aboutOthers.ts";
 import { loadOwnBlockers, setOwnBlockers } from "../store/blockers.ts";
 import { buildItemPage } from "../core/item-page.ts";
@@ -45,10 +45,7 @@ import type { ControlAction } from "../store/control.ts";
 import { KEYS } from "../store/keys.ts";
 import { QUEUE_KEY, readQueueHealth, requestQueueResume } from "./queueHealth.ts";
 import { defaultConfig, initialState, step as queueStep } from "../queue/index.ts";
-import { setWhere, where } from "./jobs.ts";
-import { jobOf } from "./jobs.ts";
 import type { Job, JobFields, JobParked, Where } from "./jobs.ts";
-import { stepAt } from "./jobs.ts";
 
 const T0 = Date.parse("2026-11-18T10:00:00.000Z");
 /** The fake remote's main before and after a session merged, and the head of every item branch. */

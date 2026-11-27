@@ -33,7 +33,7 @@ import type { Store } from "../store/store.ts";
 import type { UsageCheckDecision } from "./usageCheck.ts";
 import type { Job, Jobs, Recheck } from "./jobs.ts";
 import type { RetriageBudget } from "../core/retriage.ts";
-import { adoptStored, changedMeanwhile, dropUnreadable, loadJobs, NO_DECISIONS, takenText, WRITING_WAIT_MS } from "./jobs.ts";
+import { adoptStored, changedMeanwhile, dropUnreadable, loadJobs, NO_DECISIONS, takenText, WRITING_WAIT_MS, jobOf, setWhere, where, stepAt } from "./jobs.ts";
 import { workBranch, workspaceKey } from "./paths.ts";
 import { adoptHandbacks } from "./handback.ts";
 import { recoverFromLogs } from "./recover.ts";
@@ -52,8 +52,6 @@ import { waitingCapWait } from "../core/waitingCaps.ts";
 import { plural } from "../model/plural.ts";
 import { firstImplement, waitingStep } from "../core/phase.ts";
 import { phaseOf } from "./phase.ts";
-import { jobOf, setWhere, where } from "./jobs.ts";
-import { stepAt } from "./jobs.ts";
 
 export type { TickDeps } from "./context.ts";
 

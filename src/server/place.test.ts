@@ -5,12 +5,11 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { work } from "../core/testing.ts";
 import { compareItems } from "../orchestrator/candidates.ts";
-import type { Jobs } from "../orchestrator/jobs.ts";
+import type { Jobs, JobFields, Where } from "../orchestrator/jobs.ts";
 import { refKey } from "../model/types.ts";
 import type { WorkItem } from "../model/types.ts";
 import { voteToPlace } from "./place.ts";
 import { jobOf } from "../orchestrator/jobs.ts";
-import type { JobFields, Where } from "../orchestrator/jobs.ts";
 
 const asJob = (fields: object) => jobOf(fields as JobFields & Partial<Where>);
 

@@ -16,14 +16,13 @@ import { agentsState, setRolesForTest } from "../store/control.ts";
 import { openStore } from "../store/store.ts";
 import type { Store } from "../store/store.ts";
 import type { Job } from "./jobs.ts";
-import { releaseJob } from "./jobs.ts";
+import { releaseJob, where } from "./jobs.ts";
 import type { Actions } from "./ports.ts";
 import { dryActions } from "./ports.ts";
 import { createRunner } from "./runner.ts";
 import { tick } from "./tick.ts";
 import { isolateGitConfig } from "./fixtures/git-env.ts";
 import { execFileSyncRetrying } from "../hosts/spawnRetry.ts";
-import { where } from "./jobs.ts";
 
 const FAKE = join(import.meta.dirname, "providers", "claude", "fake-claude.ts");
 const T0 = Date.parse("2026-11-21T10:00:00Z");

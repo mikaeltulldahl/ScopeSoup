@@ -8,11 +8,10 @@ import type { WorkItem } from "../model/types.ts";
 import { voteWords } from "../model/vote.ts";
 import { openStore } from "../store/store.ts";
 import { loadVotes, setVote, withVotes } from "../store/votes.ts";
-import type { Jobs } from "./jobs.ts";
+import type { Jobs, JobFields, Where } from "./jobs.ts";
 import { explainOrder, older, ordinal, voteForPlace, voteLimits, WEIGHTS } from "./score.ts";
 import { compareItems } from "./candidates.ts";
 import { jobOf } from "./jobs.ts";
-import type { JobFields, Where } from "./jobs.ts";
 
 const asJob = (fields: object) => jobOf(fields as JobFields & Partial<Where>);
 

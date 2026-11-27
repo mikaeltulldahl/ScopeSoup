@@ -11,13 +11,11 @@ import type { WorkItem } from "../model/types.ts";
 import type { Store } from "../store/store.ts";
 import { openStore } from "../store/store.ts";
 import { knownAnswers } from "../store/answers.ts";
-import type { Job } from "../orchestrator/jobs.ts";
-import { loadJobs, saveJobs } from "../orchestrator/jobs.ts";
+import type { Job, Where } from "../orchestrator/jobs.ts";
+import { loadJobs, saveJobs, jobOf } from "../orchestrator/jobs.ts";
 import { readProposedRewrites, writeProposedRewrites } from "../orchestrator/aboutOthers.ts";
 import type { ScopeSoupServer } from "./server.ts";
 import { createServer } from "./server.ts";
-import { jobOf } from "../orchestrator/jobs.ts";
-import type { Where } from "../orchestrator/jobs.ts";
 
 let store: Store;
 let server: ScopeSoupServer;
