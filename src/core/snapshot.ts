@@ -82,7 +82,7 @@ export interface Snapshot {
   answers?: RecordedAnswer[];
   /** Triaged Items whose first implement step waits for busy Items that change the same files, or are linked with `conflictsWith` (`mayConflict`; core/sameFiles.ts). Absent when none waits. */
   sameFiles?: { subject: Ref; waitsFor: Ref[]; mayConflict?: Ref[] }[];
-  /** Where each Item's job is (Scope Soup's store): the lane and the card's reason follow it. Absent when no orchestrator runs. */
+  /** Where each Item's job is (Scope Soup's store): the lane and the card's reason follow it. Absent when there is no job (no orchestrator runs). */
   jobs?: JobStage[];
   /** The merge queue's health. Absent when no queue has run. */
   queue?: QueueHealth;

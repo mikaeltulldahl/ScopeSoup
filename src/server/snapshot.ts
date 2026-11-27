@@ -69,7 +69,11 @@ export function loadSnapshot(store: Store): Snapshot {
       });
       return [{ subject: job.item, as: job.parked.as, reason: job.parked.reason, at: job.parked.at, ...(resumesStep(job) ? { canStartOver: true } : {}), ...(decision && !proposal ? { decision } : {}), ...(proposal ? { proposal } : {}), ...(questions.length > 0 ? { questions } : {}), ...(rewrite ? { rewrite: { original: rewrite.original, text: rewrite.text, round: rewrite.round, questions: rewrite.questions.map(({ question, options, recommendation, context, multiSelect, stopsOn, closesOther }) => ({ question, options, recommendation, ...(context ? { context } : {}), ...(multiSelect ? { multiSelect } : {}), ...(stopsOn ? { stopsOn } : {}), ...(closesOther ? { closesOther } : {}) })), ...(rewrite.labels ? { labels: rewrite.labels } : {}), ...(rewrite.droppedLabels ? { droppedLabels: rewrite.droppedLabels } : {}) } } : {}) }];
     }),
-    jobs: Object.values(loadJobs(store)).map((job) => jobStage(job, store.get<WorkItem>(job.item))),
+    // Absent with no job at all (a board with no orchestrator): the lanes are read from the host alone.
+    ...(() => {
+      const jobs = Object.values(loadJobs(store)).map((job) => jobStage(job, store.get<WorkItem>(job.item)));
+      return jobs.length > 0 ? { jobs } : {};
+    })(),
     // The triage's typed links, for the Item page.
     links: Object.values(loadJobs(store)).flatMap((job) => (job.triage?.links?.length ? [{ subject: job.item, links: job.triage.links }] : [])),
     merged: Object.values(loadJobs(store)).filter((job) => job.merged !== undefined).map((job) => job.item),

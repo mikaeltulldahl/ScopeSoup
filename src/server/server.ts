@@ -797,6 +797,13 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
     const lane = buildItemPage(snapshot, ref, now())?.lane ?? null;
     const at = now().toISOString();
     const who = by().who;
+    // The questions the move answers are written first: a move the log does not take is not made, so no question stays open there for a
+    // job that is gone (#230). What the move would refuse is refused before.
+    const offered = moveWhys({ ...moveInput(work, lane), job: loadJobs(store)[ref] })[to];
+    if (offered && !offered.why) {
+      const problem = await answerByMove(work, MOVE_ANSWERS[to]);
+      if (problem) return sendError(response, 502, "WRITE_REFUSED", `${work.ref.id} is not moved: its open question could not be answered in its log (${problem}). Try again.`);
+    }
     const done = store.tx(() => {
       const jobs = loadJobs(store);
       const result = applyMove(jobs, ref, to, { ...moveInput(work, lane), job: jobs[ref] }, who, at);
@@ -811,9 +818,8 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
       const moved = await inProcess(editItem, { ref, lane: "todo" });
       store.appendEvent({ kind: "person.moved", subject: ref, actor: who, data: { to: "todo", reason: moved.status < 400 ? `${work.ref.id} moved from Backlog to To do: ${who}'s Implement anyway puts work under way.` : `${work.ref.id} could not be moved from Backlog to To do for ${who}'s Implement anyway: ${moved.message ?? `the server answered ${moved.status}`}`, via: "board" } }, now().toISOString());
     }
-    const problem = await answerByMove(work, MOVE_ANSWERS[to]);
     options.onRefresh?.();
-    return sendJson(response, 200, { ref, message: done.reason, ...(problem ? { logged: false, problem } : {}) });
+    return sendJson(response, 200, { ref, message: done.reason });
   }
 
   /**
@@ -823,10 +829,15 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
    */
   async function answerByMove(work: WorkItem, said: string): Promise<string | undefined> {
     const write = items?.write;
-    const asked = write?.appendLog && work.ref.host === items!.host && !(options.questions && work.ref.host === options.questions.host) ? work.openQuestions ?? [] : [];
+    const onLog = !!write?.appendLog && work.ref.host === items!.host && !(options.questions && work.ref.host === options.questions.host);
+    const open = onLog ? work.openQuestions ?? [] : [];
+    // A question the job parked on and the store has not read back yet: an answer without `to` takes the newest open one.
+    const parked = loadJobs(store)[refKey(work.ref)]?.parked;
+    const unread = onLog && open.length === 0 && parked !== undefined && parked.as !== "queued" && parked.as !== "handed-over";
+    const asked: (Pick<OpenQuestion, "at" | "by" | "question"> | null)[] = unread ? [null] : open;
     for (const question of asked) {
       try {
-        await write!.appendLog!(work.ref, { kind: "answer", by: by(), fields: { answer: said, to: question.at, toBy: question.by, toQuestion: question.question } });
+        await write!.appendLog!(work.ref, { kind: "answer", by: by(), fields: { answer: said, ...(question ? { to: question.at, toBy: question.by, toQuestion: question.question } : {}) } });
       } catch (error) {
         return error instanceof Error ? error.message : String(error);
       }
@@ -1981,6 +1992,13 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
       const lane = buildItemPage(loadSnapshot(store), key, now())?.lane ?? null;
       const at = now().toISOString();
       const who = by().who;
+      // As a move: the open questions are answered first, and a log that does not take them leaves the Item where it is (#230).
+      const before = loadJobs(store)[key];
+      const offered = before && !before.dropAskedBy ? moveWhys({ ...moveInput(current, lane), job: before }).todo : undefined;
+      if (offered && !offered.why) {
+        const problem = await answerByMove(current, "Put back in Backlog");
+        if (problem) return sendError(response, 502, "WRITE_REFUSED", `${current.ref.id} is not moved to Backlog: its open question could not be answered in its log (${problem}). Try again.`);
+      }
       const dropped = store.tx(() => {
         const jobs = loadJobs(store);
         const job = jobs[key];
@@ -1992,8 +2010,6 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
         return result;
       });
       if (!dropped.ok) return sendError(response, 409, "REFUSED", `${current.ref.id} cannot go to Backlog: ${dropped.why}.`);
-      // A failed write leaves the question open; the lane edit still goes on.
-      if ("reason" in dropped) await answerByMove(current, "Put back in Backlog");
     }
     if (body.verification !== undefined) {
       if (typeof body.verification !== "string") return bad("verification", "text");

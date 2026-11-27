@@ -120,22 +120,22 @@ function roleLane(role: string, item: WorkItem): Lane {
 /**
  * With a job (Scope Soup's store), the lane follows what the Item waits for, in the order of decision 3: a session that runs is in its role's
  * lane; a wait for a person is in the lane of the stage its work is at (decision 2), never Queued or Checking; a blocker is Blocked; anything
- * else waits at its stage. Null where the job's stage says nothing the change does not (no change begun, but one there).
+ * else waits at its stage (a change from before, with the job back at its start, is not looked at). Null in the merge queue's hands.
  */
 function jobLane(job: JobStage, situation: Situation, index: Index): Lane | null {
-  const { item, session, change } = situation;
+  const { item, session } = situation;
   const atStage = (): Lane | null => {
     if (job.stage === "implement") return "in-progress";
     if (job.stage === "review") return "in-review";
     if (job.stage === "queue") return null;
-    return change ? null : item.backlog ? "backlog" : "todo";
+    return item.backlog ? "backlog" : "todo";
   };
   const held = item.holder !== undefined && !item.holder.actor.bot;
   if (held) return atStage();
   if (session && isLive(session)) return roleLane(session.role, item);
   const parked = index.parkedByWork.get(refKey(item.ref));
   if (parked?.as === "handed-over") return "in-review";
-  if (parked && parked.as !== "queued") return atStage() ?? (item.backlog ? "backlog" : "todo");
+  if (parked && parked.as !== "queued") return atStage() ?? "in-review";
   if (job.stage === "start" && item.backlog) return "backlog";
   if (!item.needsDecision && openBlockers(item, index).length > 0) return "blocked";
   return atStage();
@@ -182,8 +182,10 @@ export function situate(item: WorkItem, index: Index): Situation {
   }
   if (working || found || change.draft) return { ...situation, lane: "in-progress" };
   if (session?.role === "review" && isLive(session)) return { ...situation, lane: "in-review" };
-  // Parked for a person (a question from a fix round after review, say): it waits in review for them, not in the queue.
-  return { ...situation, lane: situation.approved && !parkedForPerson(item.ref, index) ? "queued" : "in-review" };
+  // Parked for a person (a question from a fix round after review, say): it waits in review for them, not in the queue. Where Scope Soup
+  // runs, an Item with no job is not in its merge queue (its work was dropped, or not taken up yet), whatever the change's verdicts.
+  const queueHasIt = situation.approved && !parkedForPerson(item.ref, index) && !(index.snapshot.jobs && !job);
+  return { ...situation, lane: queueHasIt ? "queued" : "in-review" };
 }
 
 export function laneOf(item: WorkItem, index: Index): Lane | null {
