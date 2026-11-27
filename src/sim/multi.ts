@@ -86,6 +86,13 @@ export class RemoteLink {
   }
 }
 
+/** A map whose entries stay: `delete` keeps them. */
+class KeptMap<K, V> extends Map<K, V> {
+  override delete(_key: K): boolean {
+    return false;
+  }
+}
+
 export const MACHINES = ["laptop-a", "laptop-b", "laptop-c"];
 
 export interface Machine {
@@ -103,6 +110,8 @@ export interface Machine {
   rules: Rule[];
   /** Sessions started so far on this machine (each runner's requests, across restarts). */
   started: { step: number; request: SessionRequest }[];
+  /** The step of this machine's last sync (a fetch or the world's sync step). */
+  syncedAt: number;
 }
 
 /** A step of a multiplayer run, as plain data. */
@@ -115,6 +124,8 @@ export type MultiAction =
 
 export interface MultiOptions extends RunOptions {
   machines: number;
+  /** Called after every step, for looking into a run while it plays (a script, not the test). */
+  inspect?: (world: MultiWorld, step: MultiAction) => void;
 }
 
 export interface MultiFailure {
@@ -137,10 +148,14 @@ export interface MultiResult {
 /**
  * The single-machine rules that hold for one machine of several. Left out: the ones that compare the shared host with this
  * machine's own ledger (B2, E1, E3: another machine's person writes there too; `multiRules.ts` has them across machines), and,
- * on the machines other than the first, the ones that name the first machine's claimant (B5, C3, H4, H5).
+ * on the machines other than the first, the ones that name the first machine's claimant (C3, H3).
  */
 const NOT_PER_MACHINE = new Set(["B2", "E1", "E3"]);
-const FIRST_MACHINE_ONLY = new Set(["B5", "C3", "H4", "H5"]);
+const FIRST_MACHINE_ONLY = new Set(["C3", "H3"]);
+/** Rules about letting go of a claim, which takes the remote: not checked while the machine is offline (longer than a single run's "host down"). */
+const OFFLINE_EXCUSED = new Set(["C3", "H3"]);
+/** Rules that a person's request excuses: one on another machine's board counts too. */
+const EXCUSED_BY_ANY_BOARD = new Set(["C1", "J2", "J3"]);
 
 export function rulesFor(index: number): Rule[] {
   return RULES.filter((rule) => !NOT_PER_MACHINE.has(rule.id) && (index === 0 || !FIRST_MACHINE_ONLY.has(rule.id)));
@@ -174,8 +189,12 @@ export class MultiWorld {
   /** Picks a board wrote as requests for another machine: the request id, the machine asked, the step. */
   picks: { id: string; for: string; from: string; step: number; item: string }[] = [];
   seen = new Map<string, number>();
-  /** Items a person asked to close, on any machine's board. */
-  closesAsked = new Map<string, number>();
+  /**
+   * Items a person asked to close, on any machine's board. A reopen does not take one off: another machine may not have fetched the
+   * reopen yet, and still rightly shows the Item closed.
+   */
+  closesAsked: Map<string, number> = new KeptMap();
+  private sharedJ3: Record<string, unknown> = {};
   private rnd: Rng;
   private options: MultiOptions;
   /** A race's push is being made: it does not race again. */
@@ -190,14 +209,15 @@ export class MultiWorld {
       const link = new RemoteLink(this.remote);
       const git = new FakeGit(this.origin);
       const machine: Machine = {
-        index, name, link, skew: index === 0 ? 0 : (skews.int(181) - 90) * 1000, requests: [], memo: new Map(), rules: rulesFor(index), started: [],
+        index, name, link, skew: index === 0 ? 0 : (skews.int(181) - 90) * 1000, requests: [], memo: new Map(), rules: rulesFor(index), started: [], syncedAt: 0,
         world: undefined as unknown as SimWorld,
       };
       machine.world = new SimWorld(options, { machine: name, idPrefix: name.slice(-1).toUpperCase(), remote: link as unknown as MetaRemote, git, requests: this.requestPort(machine) });
       machine.world.ms = this.ms + machine.skew;
       // A person's close is the project's, whichever board it was made on (C1, A5, I4 read it).
       machine.world.ledger.closesAsked = this.closesAsked;
-      machine.memo = new Map(machine.rules.map((rule) => [rule.id, {}]));
+      // J3's "new" is new to the run, not to this machine: an Item filed and moved to To do on one board is not new where it is fetched.
+      machine.memo = new Map(machine.rules.map((rule) => [rule.id, rule.id === "J3" ? this.sharedJ3 : {}]));
       link.racer = () => this.race(machine);
       this.machines.push(machine);
     }
@@ -326,6 +346,8 @@ export class MultiWorld {
         if (got.status === 202) {
           const requested = (got.json as { requested?: { id: string; for: string } }).requested;
           if (requested) this.picks.push({ id: requested.id, for: requested.for, from: m.name, step: this.step, item: m.world.key(step.item) });
+          // Abandoned, asked of the machine where the work runs: a person's close, carried out there.
+          if (JSON.stringify(steps).includes("abandoned")) this.closesAsked.set(m.world.key(step.item), this.step);
           this.count("pick-requested");
         }
         if (got.status === 200 && JSON.stringify(steps).includes("abandoned")) m.world.ledger.closesAsked.set(m.world.key(step.item), this.step);
@@ -401,18 +423,25 @@ export async function playMulti(seed: number, options: MultiOptions, multiRules:
     ].join("\n"));
   };
   const checkMachine = async (m: Machine, action: Action, before: number, runner: unknown, only?: string): Promise<void> => {
-    const seenOwn = await observe(m.world, seed, action, m.prev, runner === m.world.runner ? before : 0);
-    // A person's request on any board since this machine's last check counts as theirs (J2's move into To do, say): this machine
-    // sees its effect at its next fetch.
-    const since = m.prev?.step ?? 0;
-    const elsewhere = world.machines.filter((each) => each !== m).flatMap((each) => each.world.ledger.requests.filter((r) => r.step > since && r.step <= world.step));
-    const o: Observation = elsewhere.length > 0 ? { ...seenOwn, requests: [...seenOwn.requests, ...elsewhere] } : seenOwn;
+    const o = await observe(m.world, seed, action, m.prev, runner === m.world.runner ? before : 0);
+    // For the rules a person's request excuses (C1, J2, J3), a request on any board since this machine's sync before last counts:
+    // this machine sees its effect at its next sync.
+    const since = m.syncedAt;
+    if (action.kind === "sync" && m.link.down === 0) m.syncedAt = world.step;
+    // A reopen elsewhere counts as a move into To do: this machine may not have fetched the close, and sees the Item go from Backlog
+    // straight to To do.
+    const elsewhere = world.machines.filter((each) => each !== m).flatMap((each) => each.world.ledger.requests.filter((r) => r.step > since && r.step <= world.step))
+      .map((r) => (r.path === "/api/item/edit" && r.body.state === "todo" ? { ...r, body: { ...r.body, lane: "todo" } } : r));
+    const anyBoard: Observation = elsewhere.length > 0 ? { ...o, requests: [...o.requests, ...elsewhere] } : o;
     for (const s of o.started) m.started.push({ step: world.step, request: s.request });
     for (const rule of m.rules) {
       if (reports.has(rule.id) || (only && rule.id !== only)) continue;
+      // A claim is released on the remote: the ticks of a machine offline "for a while" do not count against it.
+      if (OFFLINE_EXCUSED.has(rule.id) && (m.link.down > 0 || m.world.wasDown)) continue;
       let message: string | null;
       try {
-        message = rule.check(only ? { ...o, final: true } : o, m.prev, m.memo.get(rule.id)!);
+        const seen = EXCUSED_BY_ANY_BOARD.has(rule.id) ? anyBoard : o;
+        message = rule.check(only ? { ...seen, final: true } : seen, m.prev, m.memo.get(rule.id)!);
       } catch (error) {
         message = `the check threw: ${error instanceof Error ? error.message : String(error)}`;
       }
@@ -447,9 +476,11 @@ export async function playMulti(seed: number, options: MultiOptions, multiRules:
     recent.push(`${world.step} ${multiActionText(world, step)}`);
     if (recent.length > 10) recent.shift();
     if (options.trace) console.log(`seed ${seed} step ${world.step}: ${multiActionText(world, step)}`);
-    const action: Action = step.kind === "act" ? step.a : step.kind === "fetch" ? { kind: "sync" } : { kind: "tick" };
-    // Each machine is checked after its own steps; its rules see a non-tick step for what was not one.
-    await checkMachine(m, step.kind === "act" || step.kind === "fetch" ? action : { kind: "sync" }, before, runner);
+    options.inspect?.(world, step);
+    // Each machine is checked after its own steps. Its rules read the steps of this profile as a fetch (a sync) or, for the
+    // others (offline, a race, a pick), as a step that is neither a tick nor a sync.
+    const action: Action = step.kind === "act" ? step.a : step.kind === "fetch" ? { kind: "sync" } : { kind: "host-down", steps: 0 };
+    await checkMachine(m, action, before, runner);
     checkAcross(false);
   };
 

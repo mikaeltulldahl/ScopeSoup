@@ -349,7 +349,8 @@ export class SimWorld {
         const r = random(action.v);
         const body = r.chance(0.2) ? `${item.body ?? ""}\n` : `Do thing ${action.item}, version ${action.v}.`;
         const got = await this.request("POST", "/api/item/edit", { ref: this.key(action.item), body }, action.item);
-        if (got.status === 200) {
+        // An edit the server found unchanged wrote nothing (with several machines, its store may be behind the remote's text).
+        if (got.status === 200 && !(got.json as { unchanged?: boolean } | null)?.unchanged) {
           this.ledger.texts.set(this.key(action.item), { title: item.title, body: body.trim() });
           this.count("edit");
         }
@@ -675,7 +676,10 @@ export class SimWorld {
       if (got.status === 200) {
         this.count(`rewrite-${action}`);
         const settled = (got.json as { settled?: string }).settled;
-        if (settled === "accepted") this.ledger.texts.set(key, { title: page.item.title, body: parked.rewrite.text.trim() });
+        // A rewrite that only changes whitespace from the text the page showed changes nothing (with several machines, the page may
+        // be behind the remote's text, and accepting it rightly leaves that text alone).
+        const same = parked.rewrite.text.replace(/\s+/g, " ").trim() === (page.item.body ?? "").replace(/\s+/g, " ").trim();
+        if (settled === "accepted" && !same) this.ledger.texts.set(key, { title: page.item.title, body: parked.rewrite.text.trim() });
         if (settled === "edited") this.ledger.texts.set(key, { title: page.item.title, body: text });
         answers.forEach((text) => this.ledger.answers.push({ step: this.step, item: key, text }));
       }
