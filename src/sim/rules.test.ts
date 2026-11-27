@@ -306,8 +306,14 @@ describe("each rule fires on a bad state built by hand", { concurrency: 1 }, () 
   });
   it("I6", "a person's branch is gone", () => {
     const g = new FakeGit();
+    const before = obs({ git: gitObs(g) });
     g.branches.delete("feature/by-hand");
-    assert.match(fires("I6", obs({ git: gitObs(g) })) ?? "", /feature\/by-hand/);
+    assert.match(fires("I6", before, obs({ git: gitObs(g) })) ?? "", /feature\/by-hand/);
+    // A person's tag, made while an Item runs, reported as an agent's leftover.
+    const h = new FakeGit();
+    h.personRefs(1);
+    const told = { ...event(key("A-1"), "orchestrator", "orchestrator.leftover_kept"), data: { ref: "refs/tags/release-1", sha: h.main } };
+    assert.match(fires("I6", obs({ git: gitObs(h), events: [told] })) ?? "", /release-1.*reported as an agent's/);
   });
   const LANES = ["blocked", "backlog", "todo", "in-progress", "in-review", "queued", "checking", "done"];
   it("J1", "an agent starts work on an Item in Backlog (#221)", () => {

@@ -3,7 +3,7 @@
 // rules can tell Scope Soup's own from a person's. `refGit` gives the leftover sweep (`src/orchestrator/strayRefs.ts`) the same view
 // of it that real git gives.
 
-import type { Baselines, RefGit } from "../orchestrator/strayRefs.ts";
+import type { RefGit } from "../orchestrator/strayRefs.ts";
 
 export interface Commit {
   sha: string;
@@ -54,8 +54,6 @@ export class FakeGit {
   stash: StashEntry[] = [];
   worktrees = new Map<string, Worktree>();
   owners = new Map<string, Owned>();
-  /** The leftover sweep's baselines, kept with the clone as real git keeps them in its folder. */
-  baselines: Baselines = {};
   /** Refs deleted, with who asked: the footprint rules read it. */
   deleted: { ref: string; madeBy?: Owned; unmerged: boolean }[] = [];
   /** How each commit got onto main: "session told", "session untold", "queue", "person". */
@@ -164,11 +162,12 @@ export class FakeGit {
   /** The view of the clone the leftover sweep reads and changes, as real git gives it. */
   refGit(): RefGit {
     return {
-      refs: async () => new Map([...[...this.branches].map(([name, sha]) => [`refs/heads/${name}`, sha] as const), ...[...this.tags].map(([name, sha]) => [`refs/tags/${name}`, sha] as const)]),
+      refs: async () => new Map([
+        ...[...this.branches].map(([name, sha]) => [`refs/heads/${name}`, { sha, annotated: false }] as const),
+        ...[...this.tags].map(([name, sha]) => [`refs/tags/${name}`, { sha, annotated: false }] as const),
+      ]),
       checkedOut: async () => new Set([...this.worktrees.values()].filter((t) => !t.detached).map((t) => `refs/heads/${t.branch}`)),
       stash: async () => this.stash.map((entry) => ({ sha: entry.sha, branch: entry.branch })),
-      // What a person made in the clone came from the remote, or is pushed there.
-      onRemote: async (ref) => this.owners.get(ref)?.scopesoup === false,
       refSafe: async (sha, branch) => this.safe(sha, branch),
       stashSafe: async (sha, branch) => {
         const entry = this.stash.find((each) => each.sha === sha);
@@ -182,18 +181,24 @@ export class FakeGit {
         this.deleted.push({ ref, ...(madeBy ? { madeBy } : {}), unmerged: !this.safe(sha, `scopesoup/${madeBy?.item?.split(":").pop() ?? ""}`) });
         map.delete(name);
       },
-      baselines: async () => structuredClone(this.baselines),
-      saveBaselines: async (baselines) => {
-        this.baselines = structuredClone(baselines);
-      },
       dropStash: async (sha) => {
         const index = this.stash.findIndex((each) => each.sha === sha);
-        if (index < 0) throw new Error(`no stash entry ${sha}`);
+        if (index < 0) return false;
         const entry = this.stash[index]!;
         this.deleted.push({ ref: "refs/stash", madeBy: { ...(entry.item ? { item: entry.item } : {}), scopesoup: entry.scopesoup }, unmerged: !this.stashSafe(entry, entry.branch) });
         this.stash.splice(index, 1);
+        return true;
       },
     };
+  }
+
+  /** A person works in the clone: a tag, a branch and a stash entry of theirs, none named after an Item (I6). */
+  personRefs(n: number): void {
+    this.tags.set(`release-${n}`, this.main);
+    this.owners.set(`refs/tags/release-${n}`, { scopesoup: false });
+    this.branches.set(`person/try-${n}`, this.main);
+    this.owners.set(`refs/heads/person/try-${n}`, { scopesoup: false });
+    this.stash.push({ workspace: "/srv/clone", item: "", scopesoup: false, sha: this.commit([this.main], [], "WIP on main", "person"), branch: "main" });
   }
 
   deleteBranch(branch: string): void {

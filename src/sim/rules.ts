@@ -686,11 +686,29 @@ export const RULES: Rule[] = [
   },
   {
     id: "I6",
-    why: "Nothing outside Scope Soup's own: branches, tags and stashes Scope Soup did not create are never touched.",
-    check(o) {
-      if (!o.git.branches.has("feature/by-hand")) return "the branch feature/by-hand, a person's, is gone";
-      if (!o.git.tags.has("v1.0")) return "the tag v1.0, a person's, is gone";
-      if (!o.git.stash.some((s) => !s.scopesoup)) return "a person's stash entry is gone";
+    why: "Nothing outside Scope Soup's own: branches, tags and stashes Scope Soup did not create, also those a person makes while an Item runs, are never touched, nor reported as an agent's (#236).",
+    check(o, _prev, memo) {
+      // Every ref and stash entry of a person's seen so far.
+      const seen = (memo.persons ??= {}) as Record<string, string>;
+      for (const [ref, madeBy] of o.git.owners) {
+        if (madeBy.scopesoup || ref.startsWith("worktree:")) continue;
+        const sha = ref.startsWith("refs/tags/") ? o.git.tags.get(ref.slice(10)) : o.git.branches.get(ref.slice(11));
+        if (sha !== undefined) seen[ref] ??= sha;
+      }
+      for (const s of o.git.stash) if (!s.scopesoup) seen[`stash:${s.sha}`] ??= s.sha;
+      for (const ref of Object.keys(seen)) {
+        const there = ref.startsWith("stash:") ? o.git.stash.some((s) => `stash:${s.sha}` === ref) : ref.startsWith("refs/tags/") ? o.git.tags.has(ref.slice(10)) : o.git.branches.has(ref.slice(11));
+        if (!there) return `${ref}, a person's, is gone`;
+      }
+      const named = o.events.find((e) => {
+        if (!e.kind.startsWith("orchestrator.leftover_")) return false;
+        const data = (e.data ?? {}) as Record<string, unknown>;
+        return data.ref === "refs/stash" ? !!seen[`stash:${String(data.sha)}`] : typeof data.ref === "string" && !!seen[data.ref];
+      });
+      if (named) {
+        const data = (named.data ?? {}) as Record<string, unknown>;
+        return `${String(data.ref)} (${String(data.sha).slice(0, 7)}), a person's, was reported as an agent's leftover (${named.kind})`;
+      }
       return null;
     },
   },

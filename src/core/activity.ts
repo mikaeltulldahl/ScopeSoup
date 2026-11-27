@@ -37,7 +37,7 @@ export const ACTIVITY_EVENTS: readonly string[] = [
   "scopesoup.upgraded", "scopesoup.went_back", "scopesoup.upgrade_failed",
   "orchestrator.rewrite_accepted", "orchestrator.rewrite_edited", "orchestrator.rewrite_rejected", "orchestrator.rewrite_answered",
   "orchestrator.questions_asked", "person.answered", "person.claimed", "person.handed_back", "person.released", "person.moved", "orchestrator.merged", "config.changed", "media.deleted", "media.expired",
-  "orchestrator.leftover_kept", "draft.created", "draft.updated",
+  "orchestrator.leftover_kept", "orchestrator.leftover_unjudged", "draft.created", "draft.updated",
 ];
 
 /** Most rows in one view. */
@@ -370,6 +370,9 @@ export function buildActivity(input: ActivityInput, now: string, limit = MAX_ACT
         break;
       case "orchestrator.leftover_kept":
         add({ ...base, kind: "item", items, text: `Kept ${str(data.ref).replace(/^refs\/(heads|tags)\//, "")} at ${short(data.sha)} in Scope Soup's clone: an agent left it, and it holds work found nowhere else`, ...(reason ? { detail: clip(reason) } : {}), tone: "bad" });
+        break;
+      case "orchestrator.leftover_unjudged":
+        add({ ...base, kind: "item", items, text: `Kept ${str(data.ref).replace(/^refs\/(heads|tags)\//, "")} at ${short(data.sha)} in Scope Soup's clone for now: an agent left it, and it could not be told whether it holds work found nowhere else`, ...(reason ? { detail: clip(reason) } : {}), tone: "bad" });
         break;
       case "config.changed": {
         // A save of the project's settings is in the settings' log; this machine's own settings are only here.

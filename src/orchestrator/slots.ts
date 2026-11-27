@@ -16,7 +16,6 @@ import { refKey } from "../model/types.ts";
 import type { Store } from "../store/store.ts";
 import { PathRefused, workspacePath } from "./paths.ts";
 import type { Git } from "./process.ts";
-import { gitRefs, noteBaseline } from "./strayRefs.ts";
 import { saveWip } from "./wip.ts";
 import { baseRef, removeWorktree } from "./worktree.ts";
 
@@ -159,8 +158,6 @@ async function takeSlot(deps: SlotDeps, spec: SlotSpec): Promise<string> {
       continue;
     }
     const key = refKey(spec.item);
-    // The refs in the clone now: what the Item's agent leaves beyond them is its own (`strayRefs.ts`). Unread, no baseline is noted.
-    await noteBaseline(gitRefs(git, config.repoPath, spec.remote, spec.mainBranch), key).catch(() => undefined);
     commit(store, at, (now) => {
       now[name] = { workspace: spec.workspace, item: key, branch: spec.branch, held: true, at };
     }, "orchestrator.worktree_taken", key,

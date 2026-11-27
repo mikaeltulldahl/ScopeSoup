@@ -54,6 +54,7 @@ export type Action =
   | { kind: "sync" }
   | { kind: "clock"; ms: number }
   | { kind: "main-commit"; v: number }
+  | { kind: "person-refs"; v: number }
   | { kind: "host-down"; steps: number }
   | { kind: "foreign-claim"; item: string }
   | { kind: "usage"; reserve: boolean }
@@ -418,6 +419,10 @@ export class SimWorld {
         this.count("main-commit");
         return;
       }
+      case "person-refs":
+        this.git.personRefs(action.v);
+        this.count("person-refs");
+        return;
       case "host-down":
         this.remote.down = action.steps;
         this.count("host-down");
@@ -595,8 +600,8 @@ export class SimWorld {
         this.git.stash.push(stashed);
       }
       if (kind === 1) {
-        this.git.tags.set(`wip-${id}`, this.git.branches.get(branch) ?? this.git.main);
-        this.git.owners.set(`refs/tags/wip-${id}`, { item: this.key(id), scopesoup: true });
+        this.git.tags.set(`scopesoup/${id}-wip`, this.git.branches.get(branch) ?? this.git.main);
+        this.git.owners.set(`refs/tags/scopesoup/${id}-wip`, { item: this.key(id), scopesoup: true });
       }
       if (kind === 2) {
         this.git.branches.set(`scopesoup/${id}-extra`, this.git.branches.get(branch) ?? this.git.main);
