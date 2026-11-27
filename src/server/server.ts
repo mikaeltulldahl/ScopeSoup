@@ -1119,7 +1119,19 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
     if (posted) return rewriteOnHost(response, item, rewrite, posted, answers, action, newText, parkedAt, labelChange);
     const write = items?.write;
     const writable = !!write?.editWork && subject.host === items!.host;
-    // The description is written first: when the host refuses, nothing is recorded and the rewrite still waits.
+    // The line park wrote for the rewrite is answered in the item's log (meta branch) first: a log that does not take it leaves the rewrite
+    // waiting, so no question stays open there for a job that goes on (#230).
+    const logs = !!write?.appendLog && subject.host === items!.host;
+    if (logs) {
+      const asked = (item.openQuestions ?? []).filter((question) => !question.proposal && question.question === parkedReason).pop();
+      const said = !keeps ? `Answered the triage's questions: ${answers.join(" | ")}` : `${action === "reject" ? "Rejected" : action === "edit" ? "Edited and accepted" : "Accepted"} the triage's rewrite${answers.length > 0 ? `, keeping the recommendations: ${answers.join(" | ")}` : ""}.`;
+      try {
+        await write!.appendLog!(subject, { kind: "answer", by: by(), fields: { answer: said, ...(asked ? { to: asked.at, toBy: asked.by, toQuestion: asked.question } : {}) } });
+      } catch (error) {
+        return sendError(response, 502, "WRITE_REFUSED", `The answer is not recorded: it could not be written to ${subject.id}'s log (${error instanceof Error ? error.message : String(error)}). Try again.`);
+      }
+    }
+    // The description is written next: when the host refuses, nothing is recorded and the rewrite still waits.
     // On the meta branch the labels are written in the same edit: the proposed changes that still make sense on the Item now.
     let written = false;
     // The description itself was written here (not only labels): the job then waits until the store reads it back.
@@ -1211,16 +1223,7 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
       ...(labelsDone ? { labels: labelsDone } : {}),
       ...(labelProblem !== undefined ? { labelProblem: `Could not change the labels: ${labelProblem}.` } : {}),
     };
-    // The line park wrote for the rewrite is answered in the item's log (meta branch), so it is no longer an open question there.
-    const asked = (item.openQuestions ?? []).filter((question) => !question.proposal && question.question === parkedReason).pop();
-    if (write?.appendLog && subject.host === items!.host) {
-      const said = "rerun" in outcome ? `Answered the triage's questions: ${answers.join(" | ")}` : `${outcome.settled === "rejected" ? "Rejected" : outcome.settled === "edited" ? "Edited and accepted" : "Accepted"} the triage's rewrite${answers.length > 0 ? `, keeping the recommendations: ${answers.join(" | ")}` : ""}.`;
-      try {
-        await write.appendLog(subject, { kind: "answer", by: by(), fields: { answer: said, ...(asked ? { to: asked.at, toBy: asked.by, toQuestion: asked.question } : {}) } });
-      } catch (error) {
-        options.onRefresh?.();
-        return sendJson(response, 200, { ...result, logged: false, problem: error instanceof Error ? error.message : String(error) });
-      }
+    if (logs) {
       await options.syncNow?.();
       return sendJson(response, 200, { ...result, logged: true });
     }

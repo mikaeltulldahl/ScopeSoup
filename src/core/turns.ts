@@ -247,7 +247,7 @@ function reviewTurn(situation: Situation, change: Change, ctx: TurnContext): Dra
   }
   // Approved below level 4, where there is no merge queue: its implementor or a person merges it.
   const level = ctx.index.snapshot.level;
-  if (situation.approved && level !== undefined && level < 4) return queueTurn(situation, change, ctx);
+  if (situation.approved && level !== undefined && level < 4) return nextStepTurn(situation, ctx, queueTurn(situation, change, ctx));
   const verdicts = currentVerdicts(change);
   const failed = verdicts.filter((verdict) => verdict.value === "fail");
   if (failed.some((verdict) => verdict.dimension === "ci")) return nextStepTurn(situation, ctx, { actor: "agent", tone: "blocked", since: change.updatedAt, reason: "the checks failed on the current revision; waiting for an implementor session" });
