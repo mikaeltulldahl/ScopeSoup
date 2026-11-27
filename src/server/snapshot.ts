@@ -76,7 +76,6 @@ export function loadSnapshot(store: Store): Snapshot {
     })(),
     // The triage's typed links, for the Item page.
     links: Object.values(loadJobs(store)).flatMap((job) => (job.triage?.links?.length ? [{ subject: job.item, links: job.triage.links }] : [])),
-    merged: Object.values(loadJobs(store)).filter((job) => job.merged !== undefined).map((job) => job.item),
     // The triaged Items that wait for a busy Item that changes the same files or may conflict with it.
     ...(() => {
       const jobs = loadJobs(store);

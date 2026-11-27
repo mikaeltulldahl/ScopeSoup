@@ -76,8 +76,6 @@ export interface Snapshot {
   idle?: string;
   /** Items the orchestrator has put down. Absent when no orchestrator runs. */
   parked?: Parked[];
-  /** Items whose change merged on the main branch (through the queue, or merged by the session), whatever the host still says. */
-  merged?: Ref[];
   /** The triage's typed links per Item (from Scope Soup's store). */
   links?: { subject: Ref; links: ItemLinkAnswer[] }[];
   answers?: RecordedAnswer[];
@@ -151,7 +149,7 @@ function push<T>(map: Map<string, T[]>, key: string, value: T): void {
  * one undoes the merge, so a reopened merged Item is work again.
  */
 function mergedKeys(snapshot: Snapshot): Set<string> {
-  const keys = new Set((snapshot.merged ?? []).map(refKey));
+  const keys = new Set((snapshot.jobs ?? []).filter((job) => job.phase.at === "merged").map((job) => refKey(job.subject)));
   for (const work of snapshot.works) {
     if (!work.merged) continue;
     if (work.merged.reopened) keys.delete(refKey(work.ref));
