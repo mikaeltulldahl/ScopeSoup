@@ -515,6 +515,31 @@ async function holdsOn(id: string, options: Shrunk, actions: Action[]): Promise<
 }
 
 describe("runs the simulator shrank, held since their fix", { concurrency: 1 }, () => {
+  // Fixed (#268): a person who merges the branch of finished work whose hand-over failed (escalated) makes the Item done.
+  test("C2: done but not merged, escalated, then merged by a person: done within the ticks", async () => {
+    await holdsOn("C2", {items: 9, level: 2, slots: 1, steps: 600, profile: "calm", ageing: true}, [
+      {kind: "tick"},
+      {kind: "end", item: "A-1", v: 996598},
+      {kind: "tick"},
+      {kind: "end", item: "A-2", v: 658503},
+      {kind: "tick"},
+      {kind: "end", item: "A-3", v: 885157},
+      {kind: "tick"},
+      {kind: "answer", item: "A-3", v: 347857},
+      {kind: "tick"},
+      {kind: "end", item: "A-3", v: 501425},
+      {kind: "tick"},
+      {kind: "clock", ms: 1000},
+      {kind: "tick"},
+      {kind: "end", item: "A-3", v: 178759},
+      {kind: "tick"},
+      {kind: "person-merge", item: "A-3"},
+      {kind: "tick"},
+      {kind: "tick"},
+      {kind: "tick"},
+    ]);
+  });
+
   // The checker's W fixed (#268): an implement step whose session a limit cut off has begun, so it waits for its timer, not the same files.
   test("A1: an implement session cut off by the limit resumes on its timer, held by no same-files wait", async () => {
     await holdsOn("A1", {items: 9, level: 2, slots: 1, steps: 600, profile: "calm", ageing: true}, [

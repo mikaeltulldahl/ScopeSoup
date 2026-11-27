@@ -747,10 +747,13 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
     // The questions it is parked on in the item's log were answered on another machine's board (#248).
     if (where(job).parked && where(job).parked === parkedBefore && !where(job).sessionId && item && !over && followLog(ctx, job, item)) continue;
     // A person merged the branch handed over to them, and nothing but Scope Soup closes an Item here: done once main holds the head.
-    // So too a hand-over a person's answer asked for again while it cannot run (the implement switch is off, or the level below 2).
-    const handing = phaseOf(job).at;
+    // So too a hand-over a person's answer asked for again while it cannot run (the implement switch is off, or the level below 2), and
+    // finished work whose hand-over failed and waits for a person (escalated): their merge is the answer (#268).
+    const phase = phaseOf(job);
+    const handing = phase.at;
     const handOverWaits = handing === "hand-over" && !(merging && config.level >= 2);
-    if (item && ctx.deps.actions.closesItself && (handing === "with-person" || handOverWaits) && item.state === "todo") {
+    const handOverStuck = phase.at === "stuck" && phase.from === "hand-over";
+    if (item && ctx.deps.actions.closesItself && (handing === "with-person" || handOverWaits || handOverStuck) && item.state === "todo") {
       try {
         const tip = (await runner.fetchMain(job.branch)).main;
         const head = await runner.head(job.branch);
