@@ -38,6 +38,7 @@ import { readMergeQueueNote } from "../orchestrator/mergeQueueLease.ts";
 import { adoptWritten, answerQuestion, awaitWritten, answerRefusal, rewriteRefusal, keepsRecommendations, loadJobs, questionsSettled, releaseJob, parkedRewrite, resumesStep, saveJobs, settleRewrite } from "../orchestrator/jobs.ts";
 import { readProposedRewrites, writeProposedRewrites } from "../orchestrator/aboutOthers.ts";
 import { applyMove, isMove, MOVES, moveWhys, ROLE_WORDS, runningRole } from "./moves.ts";
+import { voteToPlace } from "./place.ts";
 import { holdStands } from "../model/people.ts";
 import type { PickRequest, RequestStep } from "../hosts/metaBranch/requests.ts";
 import { aheadWhy, requestable, requestState } from "../hosts/metaBranch/requests.ts";
@@ -425,10 +426,15 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
     const todo = boardNow().lanes.find((lane) => lane.lane === "todo")?.cards.filter((card) => card.position !== undefined).sort((a, b) => a.position! - b.position!) ?? [];
     const move = voteForPlace(todo.flatMap((card) => byKey.get(card.key) ?? []), body.ref, body.direction, { all: snapshot.works, jobs: loadJobs(store), bugLabels: (options.planning?.() ?? { bugLabels: ["bug"] }).bugLabels });
     if (!move.ok) return sendError(response, 409, "VOTE_OFF", move.reason);
-    const next = move.vote;
+    return saveVote(response, current, move.vote);
+  }
+
+  /** Keeps an Item's new vote: on the meta branch host a header field written like any edit, on GitHub in Scope Soup's store. */
+  async function saveVote(response: ServerResponse, current: WorkItem, next: number, note?: string): Promise<void> {
+    const said = note ? { note } : {};
     if (voteInStore(current.ref)) {
       setVote(store, current.ref, next, picked() ?? "board", now().toISOString());
-      return sendJson(response, 200, { ref: refKey(current.ref), vote: next });
+      return sendJson(response, 200, { ref: refKey(current.ref), vote: next, ...said });
     }
     const write = items?.write;
     if (!write?.editWork || current.ref.host !== items!.host) return sendError(response, 403, "READ_ONLY", `The vote of ${current.ref.id} cannot be kept: its host is read-only here.`);
@@ -436,10 +442,39 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
       const done = await write.editWork(current.ref, { vote: next });
       const logged = write.appendLog ? await write.appendLog(done.work, { kind: "edited", by: by(), fields: { changed: ["vote"] } }) : done;
       await options.syncNow?.();
-      return sendJson(response, 200, { ref: refKey(logged.work), vote: next, shared: logged.shared, conflict: logged.conflict });
+      return sendJson(response, 200, { ref: refKey(logged.work), vote: next, shared: logged.shared, conflict: logged.conflict, ...said });
     } catch (error) {
       return sendError(response, 400, "WRITE_REFUSED", error instanceof Error ? error.message : String(error));
     }
+  }
+
+  /**
+   * A drop on the board at a place in To do or Backlog (#222): `{ ref, before }` puts the Item right above the Item `before` (a ref
+   * key), or last for null, by setting its vote (`voteToPlace`), computed from the order now. In To do the order is its numbered
+   * cards. The answer is the new vote, and a `note` when the Item stays at the edge of its group instead.
+   */
+  async function place(request: IncomingMessage, response: ServerResponse): Promise<void> {
+    let body: Record<string, unknown>;
+    try {
+      body = await readJson(request);
+    } catch (error) {
+      return sendError(response, 400, "BAD_BODY", error instanceof Error ? error.message : "The body is not JSON.");
+    }
+    if (typeof body.ref !== "string" || (body.before !== null && typeof body.before !== "string")) return sendError(response, 400, "BAD_FIELD", 'Give { "ref": "host:work:id", "before": "host:work:id" or null, "lane"?: "todo" or "backlog" }.');
+    const snapshot = loadSnapshot(store);
+    const current = snapshot.works.find((work) => refKey(work.ref) === body.ref);
+    if (!current || current.state === "done" || current.state === "abandoned") return sendError(response, 404, "ITEM_NOT_FOUND", `No open item ${body.ref}.`);
+    // The lane it is in; one just moved there may not show in it yet, so the drop names it too.
+    const lanes = boardNow().lanes.filter((each) => each.lane === "todo" || each.lane === "backlog");
+    const lane = lanes.find((each) => each.cards.some((card) => card.key === body.ref)) ?? lanes.find((each) => each.lane === body.lane);
+    if (!lane) return sendError(response, 409, "NO_ORDER", `${current.ref.id} is not in To do or Backlog: only they have an order to place it in.`);
+    // In To do an umbrella and an Item a person holds have no number: nothing plans them, so they have no place to set.
+    if (lane.lane === "todo" && lane.cards.some((card) => card.key === body.ref && card.position === undefined)) return sendError(response, 409, "NOT_PLANNED", `${current.ref.id} has no place in To do's order: an umbrella or an Item a person holds is not planned.`);
+    const byKey = new Map(snapshot.works.map((work) => [refKey(work.ref), work]));
+    const cards = lane.lane === "todo" ? lane.cards.filter((card) => card.position !== undefined || card.key === body.ref) : lane.cards;
+    const move = voteToPlace(cards.flatMap((card) => byKey.get(card.key) ?? []), current, body.before as string | null, { all: snapshot.works, jobs: loadJobs(store), bugLabels: (options.planning?.() ?? { bugLabels: ["bug"] }).bugLabels });
+    if (!move.ok) return sendError(response, 409, "PLACE_OFF", move.reason);
+    return saveVote(response, current, move.vote, move.note);
   }
 
   /** Where an item's decisions are accepted and overturned, if anywhere. */
@@ -2446,7 +2481,7 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
   };
 
   /** The POST endpoints that record who did it; the board names its picked person, or the request is refused. */
-  const NEEDS_PERSON = new Set(["/api/answer", "/api/answers", "/api/proposal", "/api/rewrite", "/api/proposed-rewrite", "/api/start-over", "/api/chat", "/api/decisions", "/api/item/edit", "/api/item/vote", "/api/item/resolve", "/api/item/media/delete", "/api/item-draft", "/api/item/move", "/api/item/pick"]);
+  const NEEDS_PERSON = new Set(["/api/answer", "/api/answers", "/api/proposal", "/api/rewrite", "/api/proposed-rewrite", "/api/start-over", "/api/chat", "/api/decisions", "/api/item/edit", "/api/item/vote", "/api/item/place", "/api/item/resolve", "/api/item/media/delete", "/api/item-draft", "/api/item/move", "/api/item/pick"]);
 
   /** The Item a request names by its key, as the store has it. */
   const workByKey = (key: string): WorkItem | undefined => loadSnapshot(store).works.find((work) => refKey(work.ref) === key);
@@ -2556,6 +2591,7 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
         if (path === "/api/decisions") return settleDecisions(request, response);
         if (path === "/api/item/edit") return editItem(request, response);
         if (path === "/api/item/vote") return vote(request, response);
+        if (path === "/api/item/place") return place(request, response);
         if (path === "/api/item/move") return moveItem(request, response);
         if (path === "/api/item/pick") return pickState(request, response);
         if (path === "/api/item/resolve") return resolve(request, response);

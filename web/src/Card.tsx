@@ -112,7 +112,8 @@ export function Card({ card, showLane = false }: { card: CardView; showLane?: bo
   const viewer = usePerson();
   const text = cardText(card, viewer);
   return (
-    <a class={`card tone-${card.tone}`} href={itemHref(card.key)}>
+    // In a lane (not Your turn) the card can be moved (#222): the board finds it by `data-card` and drags it with pointer events.
+    <a class={`card tone-${card.tone}`} href={itemHref(card.key)} {...(showLane ? {} : { "data-card": card.key, draggable: false, "aria-keyshortcuts": "Alt+ArrowUp Alt+ArrowDown Alt+ArrowLeft Alt+ArrowRight" })}>
       {card.tone === "done" && theme.doneBadge && <span class="grave-top" aria-hidden="true">{theme.doneBadge}</span>}
       <div class="card-head">
         <span class="ref num">{card.label}</span>
