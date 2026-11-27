@@ -522,6 +522,25 @@ async function holdsOn(id: string, options: Shrunk, actions: Action[]): Promise<
 }
 
 describe("runs the simulator shrank, held since their fix", { concurrency: 1 }, () => {
+  // Fixed (#268): two triages running at once each find the other a blocker; the second link would close a ring and is not kept.
+  test("H2: A-4's triage finds A-8 a blocker while A-8's triage runs, which then finds A-4 one: no ring", async () => {
+    await holdsOn("H2", {items: 11, level: 3, slots: 3, steps: 600, profile: "normal", ageing: true}, [
+      {kind: "tick"},
+      {kind: "move", item: "A-2", v: 910517},
+      {kind: "tick"},
+      {kind: "end", item: "A-2", v: 96918},
+      {kind: "tick"},
+      {kind: "claim", item: "A-7"},
+      {kind: "answer", item: "A-2", v: 807226},
+      {kind: "end", item: "A-3", v: 391925},
+      {kind: "end", item: "A-4", v: 854919},
+      {kind: "close", item: "A-5", state: "done"},
+      {kind: "tick"},
+      {kind: "end", item: "A-8", v: 248149},
+      {kind: "tick"},
+    ]);
+  });
+
   // The checker's W fixed (#268): a session that ended and is not settled yet keeps its own role, not the step a person's pick set.
   test("F1: Triage picked over a running implement session, which then ends: W stays the implement session until the tick", async () => {
     await holdsOn("F1", {items: 8, level: 2, slots: 2, steps: 600, profile: "normal", ageing: true}, [

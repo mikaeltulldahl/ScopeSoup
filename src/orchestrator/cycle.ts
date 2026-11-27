@@ -1443,7 +1443,14 @@ async function triage(ctx: Context, job: Job, answer: TriageAnswer, item: WorkIt
   for (const link of links) {
     if (link.type !== "blockedBy") continue;
     const other = linkedItem(ctx, job.item, link.item);
-    if (other && isOpenItem(other) && !blockers.some((each) => each.ref.id === other.ref.id)) blockers.push(other);
+    if (!other || !isOpenItem(other) || blockers.some((each) => each.ref.id === other.ref.id)) continue;
+    // No ring of waits (decision 106): the other Item waits on this one already (directly or through others, as a triage that ran
+    // meanwhile found), so this one goes first and the link is not kept (#268).
+    if (waitsOn(ctx, other, job.item, answers)) {
+      ctx.commit("orchestrator.blocker_dropped", `The triage found ${job.item.id} blocked by ${other.ref.id}, but ${other.ref.id} already waits on ${job.item.id} (directly or through other Items): the two would wait on each other for good, so ${job.item.id} is not held by it.`, key, { blocker: refKey(other.ref) });
+      continue;
+    }
+    blockers.push(other);
   }
   // A hold a person answered for a conflict stays a blocker while the other Item is open, whatever this triage's links say (and
   // unless it would close a cycle). So a later triage keeps it in Scope Soup's record, and a hold not written yet is written now.

@@ -3236,6 +3236,18 @@ test("a blockedBy link writes Scope Soup's own blocker; the job closes and the I
   assert.deepEqual(roles(w), ["triage", "triage"]);
 });
 
+test("a triage's blockedBy link to an Item that already waits on this one is not kept: no ring of waits (decision 106, #268)", async () => {
+  // Item 2 waits on item 1 already (a triage that ran meanwhile found it); item 2 is held by a person, so only item 1 gets a triage.
+  const w = world(config(), [item("1"), item("2", { title: "Harbour list", blockedBy: [ref("1")], holder: { actor: { id: "p", name: "Pat" } } })]);
+  w.store.addUsageSample(usage(0.1, 0.1));
+  await w.run();
+  w.runner.end("1", "succeeded", { ...TRIAGE, links: [{ type: "blockedBy", item: "#2", reason: "Needs the harbour list." }] });
+  await w.run();
+  assert.equal(loadOwnBlockers(w.store)[refKey(ref("1"))], undefined);
+  assert.match(w.reasons("orchestrator.blocker_dropped")[0] ?? "", /2 already waits on 1 .*1 is not held by it/);
+  assert.equal(w.reasons("orchestrator.blocked").length, 0);
+});
+
 // --- on GitHub the triage's blockers are issue dependencies, written through by the real adapter on a fake GitHub ---
 
 const ghItem = (id: string, over: Partial<WorkItem> = {}): WorkItem => item(id, { ref: { host: "github", kind: "work", id }, ...over });
