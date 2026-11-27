@@ -6,7 +6,7 @@ The backlog is Scope Soup's Items (on the project's meta branch, or as GitHub is
 
 ```
 scopesoup item list [--mine | --free]        # what there is, who holds what
-scopesoup item new --title "..." [--body-file notes.md] [--priority major] [--claim]
+scopesoup item new --title "..." [--body-file notes.md] [--priority major] [--todo] [--claim]
 scopesoup item claim <id>                      # you hold it; Scope Soup leaves it alone
 scopesoup item handback <id> [--note "..."]   # after: git push origin scopesoup/<id>
 scopesoup item release <id> [--note "..."]    # give it back without a branch

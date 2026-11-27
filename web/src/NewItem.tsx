@@ -2,6 +2,7 @@
 import { useState } from "preact/hooks";
 import { itemHref } from "./route.ts";
 import { postItem } from "./api.ts";
+import type { ItemFields } from "./api.ts";
 import { Dialog } from "./Dialog.tsx";
 import { ItemForm } from "./ItemForm.tsx";
 import { useTheme } from "./useTheme.ts";
@@ -15,6 +16,12 @@ export function NewItem() {
     setWriting(false);
     setDirty(false);
   };
+  // In Backlog, or straight to To do when the person means it now (decision 120).
+  const create = (fields: ItemFields, todo: boolean) =>
+    postItem(fields, todo).then(({ ref }) => {
+      close();
+      location.hash = itemHref(ref);
+    });
   return (
     <>
       <button type="button" class="primary new-item" onClick={() => setWriting(true)}>
@@ -27,12 +34,8 @@ export function NewItem() {
             start={{ title: "", body: "", verification: "", labels: "", blockedBy: "", priority: "" }}
             submitWords="Create"
             onDirty={setDirty}
-            onSubmit={(fields) =>
-              postItem(fields).then(({ ref }) => {
-                close();
-                location.hash = itemHref(ref);
-              })
-            }
+            onSubmit={(fields) => create(fields, false)}
+            also={{ words: "Create in To do", title: "Agents may start it at once; Create puts it in Backlog, where nothing starts", onSubmit: (fields) => create(fields, true) }}
             onCancel={close}
           />
         </Dialog>

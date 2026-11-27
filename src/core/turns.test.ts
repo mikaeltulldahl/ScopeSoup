@@ -36,7 +36,7 @@ test("a card says what it waits for, and when that is a decision for anyone", ()
   assert.equal(turnOf(base, 2).reason, "blocked by #1 (needs your decision)");
 });
 
-test("backlog reasons: blocked, sub-items, paused, usage limit, ready", () => {
+test("To do reasons: blocked, sub-items, paused, usage limit, ready", () => {
   const works = [work(1), work(2, { blockedBy: [ref("work", 1), ref("work", 9)] }), work(3, { openChildren: 2 }), work(4, { blockedBy: [ref("work", 5)] }), work(5, { state: "done" })];
   const base = snapshot({ works });
   assert.deepEqual([turnOf(base, 1).actor, turnOf(base, 1).reason], ["agent", "ready; waiting for a free agent slot"]);
@@ -57,7 +57,7 @@ test("an Item that waits for a paused triage says so, not that it waits for a sl
     const index = buildIndex(s);
     return assess(situate(item, index), turnContext(index, now, new Set(notTriaged))).turn;
   };
-  assert.equal(turnWith(paused, 1, ["demo:work:1"]).reason, "ready, but triage is paused (Resume on Backlog)");
+  assert.equal(turnWith(paused, 1, ["demo:work:1"]).reason, "ready, but triage is paused (Resume on To do)");
   // One that is already triaged waits for a slot, as does any Item while triage runs.
   assert.equal(turnWith(paused, 2, ["demo:work:1"]).reason, "ready; waiting for a free agent slot");
   assert.equal(turnWith(snap, 1, ["demo:work:1"]).reason, "ready; waiting for a free agent slot");

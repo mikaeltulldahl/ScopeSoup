@@ -74,6 +74,7 @@ Scope Soup creates a label the first time it needs it, with `POST /repos/{r}/lab
 |---|---|---|---|
 | `scopesoup:needs-decision` | `d93f0b` | A Scope Soup question or rewrite waits for an answer | First question or rewrite |
 | `scopesoup:claimed` | `0e8a16` | Held by a Scope Soup agent (see the claim comment) | First claim |
+| `scopesoup:todo` | `0052cc` | In To do: Scope Soup's agents may start it (without it, it waits in Backlog) | First move to To do (decision 120). An open issue without it is in Backlog; new issues get it only when a person picks To do |
 | `scopesoup:assumption` | `fef2c0` | A Scope Soup agent decided something itself: accept or overturn it on the board | First recorded decision |
 | `scopesoup:review` | `1d76db` | Hand-back: Scope Soup reviews this pull request | Exists today |
 | `priority:blocker` / `critical` / `major` / `minor` | `b60205` / `d93f0b` / `fbca04` / `c2e0c6` | Priority, read by Scope Soup | First write of that value |

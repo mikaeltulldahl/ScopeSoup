@@ -285,7 +285,7 @@ export interface Job {
   review?: ReviewAnswer;
   /** The branch head `review` was given on, so an approval counts only for that revision (a person's "Merge queue" on the board). */
   reviewedHead?: string;
-  /** A person put the Item back in the backlog on the board: the tick drops the job once no session runs, and gives back its claim and workspace. */
+  /** A person put the Item back in To do on the board: the tick drops the job once no session runs, and gives back its claim and workspace. */
   dropAskedBy?: string;
   /** A person picked Triage on the board: this triage runs whatever the level (decision 104). Cleared when it is settled. */
   triageAskedBy?: string;

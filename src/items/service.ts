@@ -159,6 +159,8 @@ export interface NewItem {
   body?: string;
   priority?: string;
   labels?: string[];
+  /** Straight to To do (decision 120); otherwise it lands in Backlog, unless the person claims it (then they chose it). */
+  todo?: boolean;
   /** The person holds the item from the start: one write, so Scope Soup cannot pick it up in between. */
   claim?: boolean;
   /** With `claim`: where the hold came from (`claude-code`). */
@@ -178,6 +180,7 @@ export async function createItem(backend: Backend, input: NewItem): Promise<{ re
     ...(input.body?.trim() ? { body: jira ? inertText(input.body) : input.body } : {}),
     ...(input.labels && input.labels.length > 0 ? { labels: input.labels } : {}),
     ...(priority && backend.kind !== "github" ? { priority } : {}),
+    lane: input.todo || input.claim ? "todo" : "backlog",
     // metaBranch: the item and its first lines (`created`, and the person's `claimed`) are one commit. GitHub: the assignee is part of the create call.
     ...(backend.kind === "metaBranch"
       ? {

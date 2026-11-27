@@ -14,7 +14,7 @@
 import type { Client } from "../hosts/github/client.ts";
 import { cleanBody, cleanLabel, githubOnly, importKey, IMPORTED_FROM, oneLine, type SourceIssue, tokenLogin } from "./githubImport.ts";
 import { moveIssues } from "./githubMove.ts";
-import { splitBody } from "../hosts/github/map.ts";
+import { splitBody, TODO_LABEL } from "../hosts/github/map.ts";
 import type { JiraThreadComment } from "../hosts/jira/adapter.ts";
 import type { BatchItem, BatchResult } from "../hosts/metaBranch/writer.ts";
 import type { LineWrite } from "../hosts/metaBranch/writer.ts";
@@ -49,6 +49,8 @@ export interface SourceItem {
   history: string[];
   /** GitHub's labels on the issue, for its step there. */
   hostLabels?: string[];
+  /** In Backlog where it was (decision 120): it stays there on the meta branch. */
+  backlog?: true;
 }
 
 const when = (at: string): string => (Number.isNaN(Date.parse(at)) ? oneLine(at) : new Date(at).toISOString().slice(0, 16).replace("T", " "));
@@ -77,6 +79,7 @@ export function fromGitHub(issues: readonly SourceIssue[], repo: string): Source
       url: issue.url,
       history: (issue.comments ?? []).map((comment) => `${when(comment.at)} @${oneLine(comment.login)}: ${oneLine(comment.body)}`),
       hostLabels: issue.labels,
+      ...(issue.open && !issue.labels.some((label) => label.toLowerCase() === TODO_LABEL) ? { backlog: true as const } : {}),
     };
   });
 }
@@ -102,6 +105,7 @@ export function fromJira(works: readonly WorkItem[], comments: ReadonlyMap<strin
       blockedBy: work.blockedBy.map((each) => each.id),
       url: `${site.replace(/\/+$/, "")}/browse/${work.ref.id}`,
       history: (comments.get(work.ref.id) ?? []).filter((comment) => Object.keys(comment.properties).length === 0 && comment.markdown.trim() !== "").map((comment) => `${when(comment.created)} ${oneLine(comment.author.name)}: ${oneLine(comment.markdown)}`),
+      ...(work.backlog ? { backlog: true as const } : {}),
     };
   });
 }
@@ -181,6 +185,7 @@ export function moveBatch(kind: SourceKind, items: readonly SourceItem[], earlie
         input: {
           title: item.title,
           state: "todo",
+          ...(item.backlog ? { lane: "backlog" as const } : {}),
           labels: item.labels,
           ...(parent ? { parent } : {}),
           blockedBy,

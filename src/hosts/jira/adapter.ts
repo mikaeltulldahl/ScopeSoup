@@ -8,7 +8,7 @@ import { WorkGone } from "../../ports/host.ts";
 import type { Deployment, FetchLike, JiraClient } from "./client.ts";
 import { createJiraClient, JiraError } from "./client.ts";
 import type { JiraScope } from "./map.ts";
-import { actorOf, DEFAULT_ABANDONED_RESOLUTIONS, DEFAULT_BLOCKS_LINK, DEFAULT_PRIORITIES, ISSUE_FIELDS, isoTime, issueToWork, itemsJql, jqlString, jqlTime, PROPERTY_PREFIX, projectOf, textOf, workRef } from "./map.ts";
+import { actorOf, DEFAULT_ABANDONED_RESOLUTIONS, DEFAULT_BACKLOG_STATUS, DEFAULT_BLOCKS_LINK, DEFAULT_PRIORITIES, ISSUE_FIELDS, isoTime, issueToWork, itemsJql, jqlString, jqlTime, PROPERTY_PREFIX, projectOf, textOf, workRef } from "./map.ts";
 import type { JiraComment, JiraIssue, JiraProperty, JiraUser } from "./rest.ts";
 import type { JiraRead } from "./conventions.ts";
 import { applyJiraThread, COMMENT_PROPERTY, HANDBACK_KIND, readJiraThread } from "./conventions.ts";
@@ -151,6 +151,7 @@ export function createJiraHost(config: JiraConfig): JiraHost {
     priorities: config.priorities ?? DEFAULT_PRIORITIES,
     abandonedResolutions: config.abandonedResolutions ?? DEFAULT_ABANDONED_RESOLUTIONS,
     blocksLink: config.blocksLink ?? DEFAULT_BLOCKS_LINK,
+    backlogStatus: config.transitions?.backlog ?? DEFAULT_BACKLOG_STATUS,
   };
   const api = client.api;
   let me: { actor: Actor; timeZone: string } | null = null;

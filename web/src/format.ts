@@ -60,7 +60,7 @@ export function flakyRows(flaky: readonly { test: string; count: number; at: str
 /** Item states as the board words them (the theme's words). The stored value stays `todo` etc.; only the label differs. */
 export function stateLabel(state: string): string {
   const theme = words();
-  const labels: Record<string, string> = { todo: theme.lanes.backlog, doing: theme.lanes["in-progress"], waiting: "Waiting", done: theme.lanes.done, abandoned: theme.abandoned, open: "Open" };
+  const labels: Record<string, string> = { todo: theme.lanes.todo, doing: theme.lanes["in-progress"], waiting: "Waiting", done: theme.lanes.done, abandoned: theme.abandoned, open: "Open" };
   return labels[state] ?? state;
 }
 

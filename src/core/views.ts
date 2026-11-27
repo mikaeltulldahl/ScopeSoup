@@ -132,11 +132,11 @@ export interface CardView extends ItemLink {
   unblocks: number;
   priority?: Priority;
   needsDecision: boolean;
-  /** Backlog only: 1 is the item the orchestrator starts next. */
+  /** To do only: 1 is the item the orchestrator starts next. */
   position?: number;
-  /** Backlog only: the place and the reasons for it in words ("2nd: major bug, ...; behind #41 because ..."). */
+  /** To do only: the place and the reasons for it in words ("2nd: major bug, ...; behind #41 because ..."). */
   why?: string;
-  /** Backlog only: why Vote up or Vote down is off (the Item is at the edge of its group), in a few words. */
+  /** To do only: why Vote up or Vote down is off (the Item is at the edge of its group), in a few words. */
   voteOff?: { up?: string; down?: string };
   change?: ChangeLink;
   session?: SessionView;
@@ -151,7 +151,7 @@ export interface LaneView {
   total: number;
   cards: CardView[];
   /**
-   * Backlog only, from level 1: how many of its cards (the last ones) are Items not triaged yet (no triage). The board
+   * To do only, from level 1: how many of its cards (the last ones) are Items not triaged yet (no triage). The board
    * draws a divider above them. Left out at level 0.
    */
   notTriaged?: number;
@@ -253,7 +253,7 @@ export interface StatusLine {
   paused: boolean;
   /** The three agent roles together: "started" while any is. */
   agents: AgentsState;
-  /** Resume / Pause on the Backlog lane (from level 1). */
+  /** Resume / Pause on the To do lane (from level 1). */
   triage: AgentsState;
   /** Resume / Pause on the In progress lane (from level 2). */
   implement: AgentsState;
@@ -493,7 +493,7 @@ export interface ItemPage {
   waits?: string;
   /** Who holds the Item, by name, as on the card. */
   heldBy?: string;
-  /** A backlog Item's place and why, as on its card. */
+  /** A To do Item's place and why, as on its card. */
   why?: string;
   /** Vote up and Vote down are offered: the Item is open and its host can keep a vote. */
   canVote?: boolean;
@@ -562,9 +562,9 @@ export interface ItemPage {
   states?: string[];
   /**
    * Set by the server where Scope Soup runs: the State menu's moves that act on this machine's job (`src/server/moves.ts`), each with
-   * `why` it cannot be made now. Backlog is absent when there is no work under way to drop.
+   * `why` it cannot be made now. To do (the work dropped) is absent when there is no work under way to drop.
    */
-  moves?: Partial<Record<"triage" | "backlog" | "in-review" | "merge-queue" | "implement", HoldAction>>;
+  moves?: Partial<Record<"triage" | "todo" | "in-review" | "merge-queue" | "implement", HoldAction>>;
   /**
    * Set by the server (decision 104): the machine whose agent runs the Item's work when it is another (a pick goes there as a
    * request), and the newest pick requested for the Item, with where it stands.

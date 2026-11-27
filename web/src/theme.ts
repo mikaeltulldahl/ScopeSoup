@@ -66,14 +66,14 @@ export interface ThemeWords {
   undo: string;
 }
 
-export const LANE_KEYS = ["blocked", "backlog", "in-progress", "in-review", "queued", "checking", "done"] as const;
+export const LANE_KEYS = ["backlog", "blocked", "todo", "in-progress", "in-review", "queued", "checking", "done"] as const;
 export type LaneKey = (typeof LANE_KEYS)[number];
 
-const NO_ICONS: Readonly<Record<LaneKey, string>> = { blocked: "", backlog: "", "in-progress": "", "in-review": "", queued: "", checking: "", done: "" };
-const STANDARD_LANES: Readonly<Record<LaneKey, string>> = { blocked: "Blocked", backlog: "Backlog", "in-progress": "In progress", "in-review": "In review", queued: "Queued", checking: "Checking", done: "Done" };
+const NO_ICONS: Readonly<Record<LaneKey, string>> = { backlog: "", blocked: "", todo: "", "in-progress": "", "in-review": "", queued: "", checking: "", done: "" };
+const STANDARD_LANES: Readonly<Record<LaneKey, string>> = { backlog: "Backlog", blocked: "Blocked", todo: "To do", "in-progress": "In progress", "in-review": "In review", queued: "Queued", checking: "Checking", done: "Done" };
 
 /** The words every theme but a themed one shares. */
-const STANDARD_WORDS = { turnYours: "your turn", turnOf: "{name}'s turn", emptyLane: "Nothing here.", doneBadge: "", sessionBadge: "", staleBadge: "", logoHover: "", itemOne: "item", itemMany: "items", summaryTitle: "Overnight summary", lanes: STANDARD_LANES, abandoned: "Abandoned", mergeLane: "Merge queue", mergeLaneIcon: "", laneIcons: NO_ICONS, abandonedIcon: "", abandonButton: "Abandon", abandonAbout: "Stops the work and takes it off the board.", reopenButton: "Reopen", reopenAbout: "Back to the backlog.", triageState: "Triage", roles: { triage: "triage", implement: "implementor", review: "reviewer", queue: "merge queue" }, moveToast: "{id} → {state}", abandonToast: "{id} → {state}", undo: "Undo" } as const;
+const STANDARD_WORDS = { turnYours: "your turn", turnOf: "{name}'s turn", emptyLane: "Nothing here.", doneBadge: "", sessionBadge: "", staleBadge: "", logoHover: "", itemOne: "item", itemMany: "items", summaryTitle: "Overnight summary", lanes: STANDARD_LANES, abandoned: "Abandoned", mergeLane: "Merge queue", mergeLaneIcon: "", laneIcons: NO_ICONS, abandonedIcon: "", abandonButton: "Abandon", abandonAbout: "Stops the work and takes it off the board.", reopenButton: "Reopen", reopenAbout: "Back to the Backlog.", triageState: "Triage", roles: { triage: "triage", implement: "implementor", review: "reviewer", queue: "merge queue" }, moveToast: "{id} → {state}", abandonToast: "{id} → {state}", undo: "Undo" } as const;
 
 /** The custom properties that make up a look; each theme gives all of them, for light and for dark. */
 export const COLOUR_VARS = [
@@ -200,8 +200,9 @@ export const THEMES: Readonly<Record<ThemeId, Theme>> = {
       itemMany: "cases",
       summaryTitle: "Coroner's report",
       lanes: {
+        backlog: "Tip-offs",
         blocked: "Stakeout",
-        backlog: "At large",
+        todo: "At large",
         "in-progress": "On the case",
         "in-review": "Cross-examination",
         queued: "Awaiting DNA",
@@ -211,12 +212,12 @@ export const THEMES: Readonly<Record<ThemeId, Theme>> = {
       abandoned: "Cold case",
       mergeLane: "Crime lab",
       mergeLaneIcon: "🧪",
-      laneIcons: { blocked: "🔭", backlog: "🕵", "in-progress": "🔍", "in-review": "⚖", queued: "🧬", checking: "🩺", done: "🪦" },
+      laneIcons: { backlog: "📞", blocked: "🔭", todo: "🕵", "in-progress": "🔍", "in-review": "⚖", queued: "🧬", checking: "🩺", done: "🪦" },
       abandonedIcon: "❄",
       abandonButton: "Murder",
       abandonAbout: "The night crew drops the case for good.",
       reopenButton: "Resurrect",
-      reopenAbout: "Back to the cases at large.",
+      reopenAbout: "Back to the tip-offs.",
       triageState: "Line-up",
       roles: { triage: "profiler", implement: "detective", review: "prosecutor", queue: "crime lab" },
       moveToast: "{id} → {state}",

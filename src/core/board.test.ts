@@ -81,8 +81,9 @@ test("the board puts every item in its lane, hides abandoned ones, and gives eve
   const board = buildBoard(sample(), now);
   const lanes = Object.fromEntries(board.lanes.map((lane) => [lane.lane, lane.cards.map((card) => card.label)]));
   assert.deepEqual(lanes, {
+    backlog: [],
     blocked: ["#2"],
-    backlog: ["#3", "#1"],
+    todo: ["#3", "#1"],
     "in-progress": ["#4"],
     "in-review": ["#5"],
     queued: ["#6"],
@@ -155,7 +156,7 @@ test("the status line carries the orchestrator's idle reason, and none when it i
 
 test("the compact status mirrors the board", () => {
   const status = toStatusView(buildBoard(sample(), now));
-  assert.deepEqual(status.lanes, { blocked: 1, backlog: 2, "in-progress": 1, "in-review": 1, queued: 1, checking: 5, done: 1 });
+  assert.deepEqual(status.lanes, { backlog: 0, blocked: 1, todo: 2, "in-progress": 1, "in-review": 1, queued: 1, checking: 5, done: 1 });
   assert.deepEqual(status.yourTurn.map((each) => each.ref), ["demo:work:3"]);
   assert.deepEqual(status.batches[1], { name: "batch 6", status: "testing", words: "checking: 4 min of ~8 min", members: ["#7", "#8"], progress: "4 min of ~8 min" });
   assert.equal(status.runners[0]?.words, "online, busy 4 min");
@@ -234,7 +235,7 @@ test("the queue's pause, flakes and problems reach the queue view and the status
 test("an umbrella item with open children takes no number in the plan", () => {
   const snap = snapshot({ works: [work(1, { title: "Umbrella", openChildren: 2 }), work(2, { title: "First" }), work(3, { title: "Second" })] });
   const order = snap.works.map((item) => `${item.ref.host}:${item.ref.kind}:${item.ref.id}`);
-  const cards = buildBoard(snap, now, order).lanes.find((lane) => lane.lane === "backlog")?.cards ?? [];
+  const cards = buildBoard(snap, now, order).lanes.find((lane) => lane.lane === "todo")?.cards ?? [];
   assert.equal(cards.find((card) => card.title === "Umbrella")?.position, undefined);
   assert.deepEqual(cards.filter((card) => card.title !== "Umbrella").map((card) => card.position), [1, 2]);
 });
@@ -242,9 +243,17 @@ test("an umbrella item with open children takes no number in the plan", () => {
 test("every todo card takes a number in the plan, whatever its labels: there is no invite label", () => {
   const snap = snapshot({ works: [work(1, { title: "Plain" }), work(2, { title: "Labelled", labels: ["scopesoup"] })] });
   const order = snap.works.map((item) => `${item.ref.host}:${item.ref.kind}:${item.ref.id}`);
-  const cards = buildBoard(snap, now, order).lanes.find((lane) => lane.lane === "backlog")?.cards ?? [];
+  const cards = buildBoard(snap, now, order).lanes.find((lane) => lane.lane === "todo")?.cards ?? [];
   assert.deepEqual(cards.map((card) => card.position), [1, 2]);
   assert.ok(cards.every((card) => card.reason.startsWith("ready")));
+});
+
+test("Backlog is in the planned order too, unnumbered: nothing starts there (decision 120); To do numbers only its own", () => {
+  const snap = snapshot({ works: [work(1, { backlog: true }), work(2), work(3, { backlog: true })] });
+  const board = buildBoard(snap, now, ["demo:work:2", "demo:work:3", "demo:work:1"]);
+  assert.deepEqual(board.lanes.find((lane) => lane.lane === "backlog")!.cards.map((card) => [card.label, card.position]), [["#3", undefined], ["#1", undefined]]);
+  assert.deepEqual(board.lanes.find((lane) => lane.lane === "todo")!.cards.map((card) => [card.label, card.position]), [["#2", 1]]);
+  assert.deepEqual(board.yourTurn, []);
 });
 
 test("a person's turn on the board: theirs is yours, another person's names them and is not coloured as yours", () => {
@@ -256,9 +265,9 @@ test("a person's turn on the board: theirs is yours, another person's names them
   assert.deepEqual([one.actor, one.person, one.tone], ["person", { name: "alice", mine: true }, "yours"]);
   assert.deepEqual([two.actor, two.person, two.tone], ["person", { name: "bob", mine: false }, "waiting"]);
   assert.deepEqual(board.yourTurn.map((card) => card.label), ["#1"]);
-  // Scope Soup never starts an item a person holds, so the backlog gives it no number.
+  // Scope Soup never starts an item a person holds, so To do gives it no number.
   const planned = buildBoard(snapshot({ works: [work(1, { holder: { actor: { id: "alice@a", name: "alice on a" } } }), work(2)] }), now, ["demo:work:2", "demo:work:1"]);
-  assert.deepEqual(planned.lanes.find((lane) => lane.lane === "backlog")!.cards.map((card) => [card.label, card.position]), [["#2", 1], ["#1", undefined]]);
+  assert.deepEqual(planned.lanes.find((lane) => lane.lane === "todo")!.cards.map((card) => [card.label, card.position]), [["#2", 1], ["#1", undefined]]);
 });
 
 test("the item page names whose turn it is", () => {
@@ -270,7 +279,7 @@ test("the item page names whose turn it is", () => {
 test("the item page and the item list say a waiting Item waits for a paused triage", () => {
   const snap = { ...snapshot({ works: [work(1), work(2)] }), triage: "paused" as const };
   const notTriaged = new Set(["demo:work:1"]);
-  const words = "ready, but triage is paused (Resume on Backlog)";
+  const words = "ready, but triage is paused (Resume on To do)";
   assert.equal(buildItemPage(snap, "demo:work:1", now, undefined, undefined, notTriaged)!.reason, words);
   assert.equal(buildItemPage(snap, "demo:work:1", now)!.reason, "ready; waiting for a free agent slot");
   const list = buildItemList(snap, {}, now, undefined, notTriaged);

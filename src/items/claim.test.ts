@@ -52,10 +52,14 @@ test("metaBranch: new --claim is one commit that holds the item from its first s
   const readiness = readyItems([item], [], {}, "2026-11-20T09:05:00Z");
   assert.deepEqual(readiness.ready, []);
   assert.match(readiness.held[0]!.reason, /held by Ada on laptop-a/);
-  // Without --claim the item is free and the same single commit holds `created`.
+  // Without --claim the item is nobody's and the same single commit holds `created`; it waits in Backlog (decision 120), and
+  // with --todo it is ready.
   await createItem(backend, { title: "Chart the harbour" });
   assert.equal(repo.git(["rev-list", "--count", META_REF]), "2");
-  const free = readyItems([(await host.work.getWork({ host: "metaBranch", kind: "work", id: "A-2" }))!], [], {}, "2026-11-20T09:05:00Z");
+  const backlog = readyItems([(await host.work.getWork({ host: "metaBranch", kind: "work", id: "A-2" }))!], [], {}, "2026-11-20T09:05:00Z");
+  assert.deepEqual([backlog.ready.length, backlog.held[0]?.reason], [0, "is in Backlog: it waits for a person to move it to To do"]);
+  await createItem(backend, { title: "Sound the bay", todo: true });
+  const free = readyItems([(await host.work.getWork({ host: "metaBranch", kind: "work", id: "A-3" }))!], [], {}, "2026-11-20T09:05:00Z");
   assert.equal(free.ready.length, 1);
 });
 
@@ -85,8 +89,9 @@ test("github: new --claim creates the issue with the assignee set in the create 
   const backend: Backend = { kind: "github", host: "github", who: (await host.info.whoami()).id, work: host.work, write: host.write!, now: () => new Date("2026-11-20T10:00:00Z"), mainBranch: "main" };
   const made = await createItem(backend, { title: "Tune the buoy lights", claim: true });
   assert.match(made.message, /Filed 5: .*ada holds it/);
-  const creates = calls.filter((call) => call.method === "POST");
+  // A person who takes it has chosen it: in To do (decision 120), so the label goes on in the same call.
+  const creates = calls.filter((call) => call.method === "POST" && call.path.endsWith("/issues"));
   assert.equal(creates.length, 1);
-  assert.deepEqual(creates[0]!.body, { title: "Tune the buoy lights", assignees: ["ada"] });
+  assert.deepEqual(creates[0]!.body, { title: "Tune the buoy lights", labels: ["scopesoup:todo"], assignees: ["ada"] });
 });
 });

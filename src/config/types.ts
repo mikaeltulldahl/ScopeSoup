@@ -195,8 +195,11 @@ export interface JiraHostConfig {
   issueType?: string;
   /** The issue type of a split's child. Default "Sub-task". */
   childIssueType?: string;
-  /** The transition (or the status it goes to) per target; defaults "To Do", "In Progress", "Done", "Won't Do". */
-  transitions?: Partial<Record<"todo" | "doing" | "done" | "abandoned", string>>;
+  /**
+   * The transition (or the status it goes to) per target; defaults "Backlog", "To Do", "In Progress", "Done", "Won't Do". `backlog`
+   * is also the status read as Backlog (decision 120): an issue in it waits for a person to move it to To do.
+   */
+  transitions?: Partial<Record<"backlog" | "todo" | "doing" | "done" | "abandoned", string>>;
   /** The resolution a transition's screen gets when it asks for one; defaults "Done", "Won't Do", "Duplicate". */
   resolutions?: Partial<Record<"done" | "abandoned" | "duplicate", string>>;
   /** The link type from a related part of a restructuring to its Item. Default "Relates". */

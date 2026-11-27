@@ -59,7 +59,7 @@ export interface Snapshot {
   paused: boolean;
   /** The three agent roles together: "started" while any is (store/control.ts). */
   agents: AgentsState;
-  /** Each role's switch, on its lane: triage (Backlog), implementors (In progress), review (In review). */
+  /** Each role's switch, on its lane: triage (To do), implementors (In progress), review (In review). */
   triage: AgentsState;
   implement: AgentsState;
   review: AgentsState;

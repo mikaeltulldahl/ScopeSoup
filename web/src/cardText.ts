@@ -9,6 +9,7 @@ export type CardText = { kind: "none" } | { kind: "text"; text: string } | { kin
  * - A person's turn (theirs or anyone's): what waits, as in Your turn ("2 questions", "a rewrite to accept").
  * - Held by a person: "held by @name", the name as a mention, marked when it is the person viewing (`viewer`).
  * - Queued, waiting its turn: nothing (the lane says it). A blocked queued card ("cannot merge") keeps its reason.
+ * - In Backlog, waiting for a person to move it to To do: nothing (the lane says it).
  * - Done: nothing, unless the item is not closed on the host yet.
  */
 type Texted = Pick<CardView, "tone" | "actor" | "reason" | "waits" | "heldBy" | "person"> & { lane: CardView["lane"] | null };
@@ -19,6 +20,7 @@ export function cardText(card: Texted, viewer: string): CardText {
   if (card.heldBy && text === `held by ${card.heldBy}`) return { kind: "held", name: card.heldBy, mine: heldByViewer(card, viewer) };
   if (personal && card.waits) return { kind: "text", text };
   if (card.lane === "queued" && card.tone !== "blocked") return { kind: "none" };
+  if (card.lane === "backlog" && card.reason.startsWith("in Backlog")) return { kind: "none" };
   if (card.lane === "done" && card.reason === "done") return { kind: "none" };
   return { kind: "text", text };
 }
@@ -43,7 +45,7 @@ export function statusText(page: Texted, viewer: string, waits: readonly { name:
   return text.kind === "none" ? { kind: "text", text: page.reason } : text;
 }
 
-/** A backlog place as the score explains it ("2nd: major bug; behind #12 because …") split into the place and the why. */
+/** A place in To do as the score explains it ("2nd: major bug; behind #12 because …") split into the place and the why. */
 export function placeText(why: string): { place: string; why: string } {
   const match = /^(\d+(?:st|nd|rd|th))(?::\s*)?(.*)$/s.exec(why);
   return match ? { place: match[1]!, why: match[2]! } : { place: "", why };

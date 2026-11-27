@@ -8,7 +8,7 @@ import { at, batch, change, member, ref, session, snapshot, verdict, work } from
 
 const person = { id: "pat", name: "Pat" };
 
-test("an item with no change: backlog, or in progress when held or worked on", () => {
+test("an item with no change: To do, or in progress when held or worked on", () => {
   const index = buildIndex(
     snapshot({
       works: [work(1), work(2, { state: "doing" }), work(3), work(4), work(5, { state: "waiting" })],
@@ -16,7 +16,7 @@ test("an item with no change: backlog, or in progress when held or worked on", (
     }),
   );
   const lanes = index.snapshot.works.map((item) => laneOf(item, index));
-  assert.deepEqual(lanes, ["backlog", "in-progress", "in-progress", "backlog", "backlog"]);
+  assert.deepEqual(lanes, ["todo", "in-progress", "in-progress", "todo", "todo"]);
 });
 
 test("blocked lane: a todo item with an open blocker, including one waiting on a person; a done blocker frees it", () => {
@@ -36,8 +36,28 @@ test("blocked lane: a todo item with an open blocker, including one waiting on a
   );
   assert.deepEqual(
     index.snapshot.works.map((item) => laneOf(item, index)),
-    ["backlog", "blocked", "backlog", "blocked", "done", "backlog", "backlog", "in-progress"],
+    ["todo", "blocked", "todo", "blocked", "done", "todo", "todo", "in-progress"],
   );
+});
+
+test("Backlog (decision 120): an open todo Item a person has not moved to To do, blocked or not; a triage on it keeps it there", () => {
+  const index = buildIndex(
+    snapshot({
+      works: [
+        work(1, { backlog: true }),
+        work(2, { backlog: true, blockedBy: [ref("work", 3)] }),
+        work(3),
+        work(4, { backlog: true }),
+        work(5, { backlog: true, state: "doing" }),
+      ],
+      sessions: [session("s4", ref("work", 4), { role: "triage" })],
+    }),
+  );
+  assert.deepEqual(index.snapshot.works.map((item) => laneOf(item, index)), ["backlog", "backlog", "todo", "backlog", "in-progress"]);
+  const assessed = assessAll(index, new Date(at(0)));
+  assert.equal(assessed[0]!.turn.reason, "in Backlog: waits for a person to move it to To do");
+  assert.equal(assessed[0]!.turn.actor, "nobody");
+  assert.equal(assessed[3]!.turn.actor, "agent");
 });
 
 test("done and abandoned", () => {
@@ -47,7 +67,7 @@ test("done and abandoned", () => {
 
 test("an item whose change merged is Done while the host still has it open, even with an open change", () => {
   const index = buildIndex(snapshot({ works: [work(1), work(2)], changes: [change(30, [1], { state: "open" })], merged: [ref("work", 1)] }));
-  assert.deepEqual(index.snapshot.works.map((item) => laneOf(item, index)), ["done", "backlog"]);
+  assert.deepEqual(index.snapshot.works.map((item) => laneOf(item, index)), ["done", "todo"]);
 });
 
 test("a draft change is in progress; an open one is in review; an approved one is queued", () => {

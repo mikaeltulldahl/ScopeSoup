@@ -46,12 +46,23 @@ test("planOrder starts with exactly what the orchestrator would pick", () => {
   assert.deepEqual(planned.slice(0, picks.length), picks);
 });
 
-test("the backlog column follows the planned order and numbers its cards", () => {
+test("readyItems holds a Backlog Item (decision 120) and planOrder keeps it in order among the held", () => {
+  const items = [work(1, { backlog: true, priority: "minor" }), work(2), work(3, { backlog: true, priority: "critical" })];
+  const { ready, held } = readyItems(items, [], {}, T0);
+  assert.deepEqual(ready.map((item) => item.ref.id), ["2"]);
+  assert.deepEqual(held.map((entry) => [entry.item.ref.id, entry.reason]), [
+    ["1", "is in Backlog: it waits for a person to move it to To do"],
+    ["3", "is in Backlog: it waits for a person to move it to To do"],
+  ]);
+  assert.deepEqual(planOrder(items, [], {}, T0, ["bug"]).map((item) => item.ref.id), ["2", "3", "1"]);
+});
+
+test("the To do column follows the planned order and numbers its cards", () => {
   const snap = snapshot({ works });
   const keys = planOrder(snap.works, snap.changes, {}, T0, ["bug"]).map((item) => refKey(item.ref));
   const board = buildBoard(snap, now, keys);
-  const backlog = board.lanes.find((lane) => lane.lane === "backlog")!;
-  // 3 and 5 are blocked by 9, so they are in the Blocked lane, not in the numbered backlog.
+  const backlog = board.lanes.find((lane) => lane.lane === "todo")!;
+  // 3 and 5 are blocked by 9, so they are in the Blocked lane, not in the numbered To do.
   const blocked = board.lanes.find((lane) => lane.lane === "blocked")!;
   assert.deepEqual(blocked.cards.map((card) => card.label).sort(), ["#3", "#5"]);
   assert.deepEqual(backlog.cards.map((card) => card.key), keys.filter((key) => !blocked.cards.some((card) => card.key === key)));

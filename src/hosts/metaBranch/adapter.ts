@@ -83,6 +83,8 @@ function patched(current: ItemFields, patch: WorkPatch, idOf: (ref: Ref) => stri
   if (patch.title !== undefined) next.title = patch.title;
   if (patch.body !== undefined) next.body = patch.body;
   if (patch.state !== undefined) next.state = patch.state;
+  if (patch.lane === "backlog") next.lane = "backlog";
+  else if (patch.lane === "todo") delete next.lane;
   if (patch.labels !== undefined) next.labels = [...patch.labels];
   if (patch.blockedBy !== undefined) next.blockedBy = patch.blockedBy.map(idOf);
   if (patch.parent === null) delete next.parent;
@@ -96,6 +98,8 @@ function patched(current: ItemFields, patch: WorkPatch, idOf: (ref: Ref) => stri
   if (patch.duplicateOf !== undefined) next.duplicateOf = idOf(patch.duplicateOf);
   // Only an abandoned item is a duplicate: a reopen drops it.
   if (next.state !== "abandoned") delete next.duplicateOf;
+  // Backlog is only before work starts (decision 120): an Item taken, done or abandoned leaves it, and comes back in To do.
+  if (next.state !== "todo") delete next.lane;
   return next;
 }
 
@@ -251,6 +255,8 @@ export function createMetaBranchHost(config: MetaBranchConfig): MetaBranchHost {
               title: input.title,
               ...(input.body === undefined ? {} : { body: input.body }),
               ...(input.state === undefined ? {} : { state: input.state }),
+              // New Items land in Backlog (decision 120); the lane means something only before work starts.
+              ...(input.lane !== "todo" && (input.state ?? "todo") === "todo" ? { lane: "backlog" as const } : {}),
               ...(input.labels === undefined ? {} : { labels: input.labels }),
               ...(input.parent === undefined ? {} : { parent: idOf(input.parent) }),
               ...(input.blockedBy === undefined ? {} : { blockedBy: input.blockedBy.map(idOf) }),

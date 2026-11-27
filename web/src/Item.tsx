@@ -1272,13 +1272,13 @@ function Status({ page, waits, now }: { page: ItemPage; waits: { name: string; s
   return status.kind === "text" ? <p class="reason reason-big">{status.text}</p> : null;
 }
 
-/** The backlog place in one line, with the score's why and Vote up / Vote down as ▲ ▼. */
+/** The place in To do in one line, with the score's why and Vote up / Vote down as ▲ ▼. */
 function Place({ page }: { page: ItemPage }) {
   const { place, why } = placeText(page.why!);
   return (
     <div class="place">
       <p>
-        <b>Place in backlog:</b> {place ? <span class="num">{place}</span> : null}
+        <b>Place in To do:</b> {place ? <span class="num">{place}</span> : null}
         {place && why ? " — " : ""}
         {why}
       </p>

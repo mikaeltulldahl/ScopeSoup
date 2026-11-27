@@ -360,7 +360,7 @@ export function buildActivity(input: ActivityInput, now: string, limit = MAX_ACT
         break;
       }
       case "person.moved": {
-        const words: Record<string, string> = { triage: "Sent the Item to triage again on the board", backlog: "Put the Item back in the backlog on the board", "in-review": "Started the Item's review on the board", "merge-queue": "Queued the Item for merging on the board", implement: "Overruled triage: Implement anyway, on the board" };
+        const words: Record<string, string> = { triage: "Sent the Item to triage again on the board", todo: "Put the Item back in To do on the board", "in-review": "Started the Item's review on the board", "merge-queue": "Queued the Item for merging on the board", implement: "Overruled triage: Implement anyway, on the board" };
         add({ ...base, kind: "item", items, who: event.actor, agent: false, text: words[str(data.to)] ?? "Set the Item's state on the board" });
         break;
       }

@@ -26,6 +26,12 @@ export interface Actor {
 /** Normalised position of an item in its life. The board's lanes are derived from this plus changes and batches. */
 export type WorkState = "todo" | "doing" | "waiting" | "done" | "abandoned";
 
+/**
+ * Where an open Item waits before work starts (decision 120): `backlog` (a person has not chosen it yet; nothing picks it up) or
+ * `todo` (agents may start it). New Items land in Backlog; a person moves them to To do.
+ */
+export type ItemLane = "backlog" | "todo";
+
 /** How urgent an item is. An item may have none. */
 export type Priority = "blocker" | "critical" | "major" | "minor";
 
@@ -51,6 +57,11 @@ export interface WorkItem {
   vote?: number;
   /** True when the item waits for a decision by a person. */
   needsDecision?: boolean;
+  /**
+   * In Backlog (decision 120): a person has not moved it to To do, so no agent triages or starts it on its own. Only on an Item in
+   * state `todo`; absent means To do.
+   */
+  backlog?: true;
   updatedAt: string;
   /** What has happened to the item, oldest first, on a host that keeps a log per item (meta branch). */
   history?: HistoryLine[];

@@ -2,7 +2,7 @@
 // (one for work items, one for changes, one for CI), and a host that lacks a capability
 // does not implement that port.
 
-import type { Actor, AssumptionSettled, Batch, LabelChange, RepoLabel, Change, ConflictVersions, DecisionOption, OriginalFate, Priority, ProposedPart, Ref, Run, Runner, Turn, VerdictValue, WorkItem, WorkState } from "../model/types.ts";
+import type { Actor, AssumptionSettled, Batch, LabelChange, RepoLabel, Change, ConflictVersions, DecisionOption, ItemLane, OriginalFate, Priority, ProposedPart, Ref, Run, Runner, Turn, VerdictValue, WorkItem, WorkState } from "../model/types.ts";
 
 export type Capability = "work" | "changes" | "ci" | "runners" | "batches" | "turn" | "write";
 
@@ -144,6 +144,8 @@ export interface NewWork {
   body?: string;
   /** Default `todo`. */
   state?: WorkState;
+  /** Backlog or To do (decision 120). Default Backlog: only a person's pick puts a new Item straight in To do. */
+  lane?: ItemLane;
   labels?: string[];
   parent?: Ref;
   blockedBy?: Ref[];
@@ -162,6 +164,8 @@ export interface WorkPatch {
   title?: string;
   body?: string;
   state?: WorkState;
+  /** Moves an open Item between Backlog and To do (decision 120). */
+  lane?: ItemLane;
   labels?: string[];
   parent?: Ref | null;
   blockedBy?: Ref[];

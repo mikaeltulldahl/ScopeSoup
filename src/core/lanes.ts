@@ -4,12 +4,14 @@ import type { Batch, BatchMember, Change, Ref, Session, Verdict, WorkItem } from
 import { refKey } from "../model/types.ts";
 import type { Index } from "./snapshot.ts";
 
-export const LANES = ["blocked", "backlog", "in-progress", "in-review", "queued", "checking", "done"] as const;
+// Backlog: what a person has not chosen yet, which no agent starts; To do: what agents may start (decision 120).
+export const LANES = ["backlog", "blocked", "todo", "in-progress", "in-review", "queued", "checking", "done"] as const;
 export type Lane = (typeof LANES)[number];
 
 export const LANE_TITLES: Record<Lane, string> = {
-  blocked: "Blocked",
   backlog: "Backlog",
+  blocked: "Blocked",
+  todo: "To do",
   "in-progress": "In progress",
   "in-review": "In review",
   queued: "Queued",
@@ -121,9 +123,11 @@ export function situate(item: WorkItem, index: Index): Situation {
   if (!change && handedOver && !working) return { ...base, lane: "in-review" };
   if (!change) {
     if (working || item.state === "doing") return { ...base, lane: "in-progress" };
-    // An item that itself waits for an answer stays in Your turn, in the backlog lane as before.
+    // Backlog until a person moves it to To do, whatever else holds it back.
+    if (item.state === "todo" && item.backlog) return { ...base, lane: "backlog" };
+    // An item that itself waits for an answer stays in Your turn, in the To do lane as before.
     if (item.state === "todo" && !item.needsDecision && openBlockers(item, index).length > 0) return { ...base, lane: "blocked" };
-    return { ...base, lane: "backlog" };
+    return { ...base, lane: "todo" };
   }
   if (change.state === "merged") return { ...base, lane: "done" };
 

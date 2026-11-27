@@ -2,7 +2,7 @@
 
 import { useState } from "preact/hooks";
 import type { CardView, SessionView } from "./api.ts";
-import { postVote, useNow, usePerson } from "./api.ts";
+import { postStep, postVote, useNow, usePerson } from "./api.ts";
 import { cardText, sessionShown } from "./cardText.ts";
 import { ago, dateOf, laneLabel } from "./format.ts";
 import { fill, words } from "./theme.ts";
@@ -66,6 +66,34 @@ export function VoteButtons({ itemKey, off, small = false }: { itemKey: string; 
   );
 }
 
+/**
+ * Triage on a Backlog card (decision 120): one triage, for its questions and a size, while the Item stays in Backlog. The server
+ * says why not when it cannot run (the Item is held, a triage runs already).
+ */
+export function TriageButton({ itemKey }: { itemKey: string }) {
+  const [busy, setBusy] = useState(false);
+  const [problem, setProblem] = useState("");
+  const [asked, setAsked] = useState(false);
+  const press = (event: Event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setBusy(true);
+    setProblem("");
+    postStep("/api/item/move", { ref: itemKey, to: "triage" })
+      .then(() => setAsked(true))
+      .catch((error: unknown) => setProblem(error instanceof Error ? error.message : String(error)))
+      .finally(() => setBusy(false));
+  };
+  return (
+    <span class="card-triage">
+      <button type="button" class="vote-button" disabled={busy || asked} title="Run one triage on it; it stays in Backlog" onClick={press}>
+        {asked ? "Triage asked" : words().triageState}
+      </button>
+      {problem && <span class="vote-problem" role="alert" title={problem}>!</span>}
+    </span>
+  );
+}
+
 /** A person's name as a mention: marked when it is the person viewing the board. */
 export function Mention({ name, mine }: { name: string; mine: boolean }) {
   return <span class={mine ? "mention mention-mine" : "mention"}>@{name}</span>;
@@ -90,6 +118,7 @@ export function Card({ card, showLane = false }: { card: CardView; showLane?: bo
         <span class="ref num">{card.label}</span>
         <span class="card-title">{card.title}</span>
         {card.why && !showLane && <VoteButtons itemKey={card.key} off={card.voteOff} small />}
+        {card.lane === "backlog" && !card.session && !showLane && card.actor === "nobody" && <TriageButton itemKey={card.key} />}
       </div>
       {text.kind === "text" && <p class={card.tone === "done" ? "reason epitaph" : "reason"}>{text.text}</p>}
       {text.kind === "held" && (

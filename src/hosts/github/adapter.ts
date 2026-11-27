@@ -12,7 +12,7 @@ import { GitHubError, createClient, transient } from "./client.ts";
 import type { LogKeep, LogLine, Thread } from "./conventions.ts";
 import { answersBody, assumptionBody, batchBody, claimBody, clipLogFields, rewriteBody, mergedBody, liveClaims, logBody, nextQuestionNumber, questionBody, questionNumber, readMarker, readThread, readVerdicts, waitsForAnswer, withConventions, withdrawnBody } from "./conventions.ts";
 import type { Scope } from "./map.ts";
-import { actorOf, ASSUMPTION_LABEL, changeRef, CHECK_GREEN, CLAIMED_LABEL, hasLabel, issueRefFromUrl, issueToWork, labelNames, NEEDS_DECISION_LABEL, pullToChange, runToRun, runnerToRunner, spliceBody, workRef } from "./map.ts";
+import { actorOf, ASSUMPTION_LABEL, changeRef, CHECK_GREEN, CLAIMED_LABEL, hasLabel, issueRefFromUrl, issueToWork, labelNames, NEEDS_DECISION_LABEL, pullToChange, runToRun, runnerToRunner, spliceBody, TODO_LABEL, workRef } from "./map.ts";
 import type { RestCheckRun, RestCombinedStatus, RestComment, RestIssue, RestJob, RestLabel, RestPull, RestReview, RestRunner, RestUser, RestWorkflow, RestWorkflowRun } from "./rest.ts";
 import type { SetTimer } from "./watch.ts";
 import { pollingWatch } from "./watch.ts";
@@ -83,6 +83,7 @@ const LABEL_LOOKS: Record<string, { color: string; description: string }> = {
   [NEEDS_DECISION_LABEL]: { color: "d93f0b", description: "A Scope Soup question or rewrite waits for an answer" },
   [CLAIMED_LABEL]: { color: "0e8a16", description: "Held by a Scope Soup agent (see the claim comment)" },
   [ASSUMPTION_LABEL]: { color: "fef2c0", description: "A Scope Soup agent decided something itself: accept or overturn it on the board" },
+  [TODO_LABEL]: { color: "0052cc", description: "In To do: Scope Soup's agents may start it (without it, it waits in Backlog)" },
   "priority:blocker": { color: "b60205", description: "Priority, read by Scope Soup" },
   "priority:critical": { color: "d93f0b", description: "Priority, read by Scope Soup" },
   "priority:major": { color: "fbca04", description: "Priority, read by Scope Soup" },
@@ -787,10 +788,13 @@ export function createGitHubHost(config: GitHubConfig): GitHubHost {
     /** A new issue. The priority has no place on GitHub and is not kept; the caller says so. */
     async createWork(input) {
       for (const name of input.labels ?? []) await ensureLabel(name, true);
+      // New Items land in Backlog (decision 120): only a person's pick of To do gives the issue the label.
+      if (input.lane === "todo") await ensureLabel(TODO_LABEL);
+      const labels = [...(input.labels ?? []), ...(input.lane === "todo" ? [TODO_LABEL] : [])];
       const issue = await client.send<RestIssue>("POST", r("/issues"), {
         title: input.title,
         ...(input.body ? { body: input.body } : {}),
-        ...(input.labels && input.labels.length > 0 ? { labels: input.labels } : {}),
+        ...(labels.length > 0 ? { labels } : {}),
         ...(input.assignees && input.assignees.length > 0 ? { assignees: input.assignees } : {}),
       });
       if (!issue) throw new Error("GitHub created the issue but did not describe it.");
@@ -844,6 +848,11 @@ export function createGitHubHost(config: GitHubConfig): GitHubHost {
           const claimed = hasLabel(labels, CLAIMED_LABEL);
           if (patch.state === "todo" && claimed) remove.push(claimed);
         }
+      }
+      if (patch.lane !== undefined) {
+        const todo = hasLabel(labels, TODO_LABEL);
+        if (patch.lane === "todo" && !todo) add.push(TODO_LABEL);
+        if (patch.lane === "backlog" && todo) remove.push(todo);
       }
       if (patch.priority !== undefined) {
         const wanted = patch.priority ? `priority:${patch.priority}` : null;

@@ -78,7 +78,7 @@ function LaneFrame({ id, title, count, closed, toggle, control, children }: { id
 }
 
 function Lane({ lane, closed, toggle, control }: { lane: LaneView; closed: boolean; toggle: () => void; control: LaneControl }) {
-  // From level 1 the backlog's last cards are the Items not triaged yet, below a divider.
+  // From level 1 To do's last cards are the Items not triaged yet, below a divider.
   const below = lane.notTriaged ?? 0;
   const divideAt = lane.notTriaged === undefined ? -1 : lane.cards.length - below;
   return (
@@ -113,7 +113,7 @@ function MergeQueueLane({ board, closed, toggle, control }: { board: BoardView; 
 }
 
 /**
- * A divider in a lane: the backlog's above the Items not triaged yet (in the order their triages run), the merge queue's above
+ * A divider in a lane: To do's above the Items not triaged yet (in the order their triages run), the merge queue's above
  * the changes waiting for a batch.
  */
 function Divider({ words: text, count, title }: { words: string; count: number; title: string }) {
@@ -128,7 +128,7 @@ function Divider({ words: text, count, title }: { words: string; count: number; 
 function NoTriage({ count }: { count: number }) {
   return (
     <p class="panel no-triage">
-      {count} {count === 1 ? `${itemNoun(false, true)} has` : `${itemNoun(true, true)} have`} no triage: set level 1 and press Resume on the Backlog.
+      {count} {count === 1 ? `${itemNoun(false, true)} has` : `${itemNoun(true, true)} have`} no triage: set level 1 and press Resume on To do.
     </p>
   );
 }

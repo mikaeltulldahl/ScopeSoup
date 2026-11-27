@@ -4,7 +4,7 @@
 // and each part's text ends with a marker line naming its part and the Item, so a retry (even on a store rebuilt from nothing)
 // makes only the rest.
 
-import type { CreatedPart, OriginalFate, ProposedPart, Ref, WorkItem } from "../model/types.ts";
+import type { CreatedPart, ItemLane, OriginalFate, ProposedPart, Ref, WorkItem } from "../model/types.ts";
 import { createHash } from "node:crypto";
 import { refKey } from "../model/types.ts";
 import type { LogLineInput, NewWork, WorkPatch } from "../ports/host.ts";
@@ -206,7 +206,7 @@ function carriedSection(parent: Ref, carried: string | undefined): string {
  * decisions recorded on the Item are carried into its text. A host without a verification field (GitHub) gets it as a section of
  * the text. The text, made inert, ends with the part's marker line.
  */
-export function partWork(part: ProposedPart, index: number, options: { parent: Ref; id: string; carried?: string; verificationInBody?: boolean; issueNumbers?: boolean; label?: string; by: LogLineInput["by"] }): NewWork {
+export function partWork(part: ProposedPart, index: number, options: { parent: Ref; id: string; carried?: string; verificationInBody?: boolean; issueNumbers?: boolean; label?: string; by: LogLineInput["by"]; lane?: ItemLane }): NewWork {
   const verification = inertPart(part.verification.trim());
   const inBody = options.verificationInBody && verification ? `\n\n## Verification\n\n${verification}` : "";
   const marker = partMarker(options.parent, options.id, index, options.issueNumbers === true && part.goes !== "unlinked");
@@ -216,6 +216,8 @@ export function partWork(part: ProposedPart, index: number, options: { parent: R
     body,
     ...(part.goes === "child" ? { parent: options.parent } : {}),
     labels: options.label ? [options.label] : [],
+    // A part goes where its Item is (decision 120): a person accepted the split of work they had chosen, or not yet.
+    ...(options.lane ? { lane: options.lane } : {}),
     ...(!options.verificationInBody && verification ? { verification } : {}),
     log: [{ kind: "created", by: options.by, fields: { via: `restructuring of ${options.parent.id}` } }],
   };

@@ -51,8 +51,11 @@ test("issues become work items; pull requests in the issues list are left out", 
     children: 3,
     updatedAt: "2026-11-10T08:00:00Z",
     body: "Body of item 11.",
+    // No `scopesoup:todo` label: in Backlog (decision 120).
+    backlog: true,
   });
   assert.equal(second?.state, "doing");
+  assert.equal(second?.backlog, undefined);
   assert.deepEqual(second?.holder, { actor: { id: "robin", name: "robin" } });
   assert.deepEqual(second?.parent, { host: "github", kind: "work", id: "11" });
   assert.deepEqual(second?.blockedBy, [{ host: "github", kind: "work", id: "14", url: "https://github.test/acme/widgets/issues/14" }]);

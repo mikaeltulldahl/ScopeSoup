@@ -126,7 +126,7 @@ export async function moveItems(options: MoveOptions): Promise<MoveReport> {
     } else {
       try {
         const { body, verification } = text(item);
-        const done = await write.createWork({ title: item.title.trim(), body: `${body}\n\n${movedMarker(item.ref.id)}`.trim(), ...(verification ? { verification } : {}) });
+        const done = await write.createWork({ title: item.title.trim(), body: `${body}\n\n${movedMarker(item.ref.id)}`.trim(), ...(verification ? { verification } : {}), lane: item.backlog ? "backlog" : "todo" });
         made.set(item.ref.id, done.work);
         row.did.push("created");
       } catch (error) {

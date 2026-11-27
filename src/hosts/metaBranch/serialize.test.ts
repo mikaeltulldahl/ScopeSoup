@@ -37,6 +37,7 @@ function input(next: () => number): ItemInput {
   if (next() < 0.3) value.blockedBy = [pick(next, ["A-2", "a..b", "C_3"])];
   if (next() < 0.5) value.verification = text(next, 4);
   if (next() < 0.3) value.state = pick(next, ["todo", "doing", "done"] as const);
+  if (next() < 0.2) value.lane = "backlog";
   if (next() < 0.3) value.extra = [[pick(next, ["team", "sprint", "title", "x y", "estimate"]), text(next, 3)]];
   return value;
 }
@@ -87,6 +88,16 @@ test("item.md: fields not in canonical form are refused, not changed on the way"
   assert.throws(() => serializeItem("../A-1", base), /not an item id/);
   // Another header key is kept, in its place, as written.
   assert.equal(serializeItem("A-1", { ...base, extra: [["sprint", "7"], ["empty", ""]] }), "---\nid: A-1\ntitle: Fine\nstate: todo\nsprint: 7\nempty:\n---\n");
+});
+
+test("item.md: `lane: backlog` puts an Item in Backlog (decision 120); `todo` or no line is To do; another value is malformed", () => {
+  const text = serializeItem("A-1", canonicalItem({ title: "Tide graph", lane: "backlog" }));
+  assert.equal(text, "---\nid: A-1\ntitle: Tide graph\nstate: todo\nlane: backlog\n---\n");
+  assert.deepEqual(parseItem(text, "A-1"), { ok: true, fields: { title: "Tide graph", state: "todo", lane: "backlog", labels: [], blockedBy: [], body: "", extra: [] } });
+  const todo = parseItem("---\ntitle: Tide graph\nstate: todo\nlane: todo\n---\n", "A-1");
+  assert.ok(todo.ok && todo.fields.lane === undefined);
+  assert.deepEqual(parseItem("---\ntitle: Tide graph\nstate: todo\nlane: later\n---\n", "A-1"), { ok: false, problems: ['the lane "later" is not backlog or todo'] });
+  assert.throws(() => serializeItem("A-1", { title: "Tide graph", state: "todo", lane: "later" as never, labels: [], blockedBy: [], body: "", extra: [] }), RefusedWrite);
 });
 
 test("log lines: what agents write reads back as the same object, or is refused", () => {

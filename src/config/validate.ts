@@ -496,7 +496,7 @@ function resourcesOf(value: unknown, shared: boolean, err: (message: string) => 
 
 const GITHUB_KEYS = ["kind", "repo", "write"];
 const JIRA_KEYS = ["kind", "site", "project", "deployment", "filter", "components", "write", "email", "priorities", "abandonedResolutions", "blocksLink", "issueType", "childIssueType", "transitions", "resolutions", "relatesLink", "duplicateLink", "commentLimit", "answerers"];
-const TRANSITION_TARGETS = ["todo", "doing", "done", "abandoned"] as const;
+const TRANSITION_TARGETS = ["backlog", "todo", "doing", "done", "abandoned"] as const;
 const RESOLUTION_TARGETS = ["done", "abandoned", "duplicate"] as const;
 const PRIORITY_NAMES = ["blocker", "critical", "major", "minor"] as const;
 /** `mergeQueue`, the object form: what checks the merge queue's batches, and how long a check on GitHub may stay pending. */
