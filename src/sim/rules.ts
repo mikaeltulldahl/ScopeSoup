@@ -146,13 +146,21 @@ export const RULES: Rule[] = [
   // --- B. What a person put in ---
   {
     id: "B1",
-    why: "No answer lost: an accepted answer is in the store's answers and in the prompt of every later session on the Item.",
+    why: "No answer lost or doubled: an accepted answer is in the store's answers, as many times as the person gave it, and in the prompt of every later session on the Item.",
     check(o, _prev, memo) {
       const known = new Set(o.answers.map((a) => `${a.subject.host}:${a.subject.kind}:${a.subject.id}|${a.answer}`));
       // After the store is lost, the answers given before reach the sessions through the Item's log (G3); the prompts are checked below.
       if (o.action.kind === "lose-store") memo.lostAt = o.step;
       const lost = o.ledger.answers.find((a) => a.step > ((memo.lostAt as number | undefined) ?? -1) && !known.has(`${a.item}|${a.text}`));
       if (lost) return `the answer "${lost.text}" on ${lost.item.split(":").pop()} (step ${lost.step}) is not in the store's answers`;
+      const given = new Map<string, number>();
+      for (const a of o.ledger.answers) given.set(`${a.item}|${a.text}`, (given.get(`${a.item}|${a.text}`) ?? 0) + 1);
+      const had = new Map<string, number>();
+      for (const a of o.answers) {
+        const k = `${a.subject.host}:${a.subject.kind}:${a.subject.id}|${a.answer}`;
+        had.set(k, (had.get(k) ?? 0) + 1);
+        if (given.has(k) && had.get(k)! > given.get(k)!) return `the answer "${a.answer}" on ${a.subject.id} is in the store's answers ${had.get(k)} times, but was given ${given.get(k)}`;
+      }
       return first(o.started, (s) => {
         const prompt = JSON.stringify(s.request.vars) + (s.request.message ?? "");
         const missing = o.ledger.answers.find((a) => a.item === s.item && a.step < o.step && !prompt.includes(a.text));

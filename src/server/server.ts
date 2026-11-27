@@ -599,7 +599,17 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
     const at = now().toISOString();
     type Outcome = { released: boolean; open?: number } | { refused: AnswerRefusal; index: number };
     // `dry`: decided and rolled back, so a refusal is known before anything is written on the host.
-    const record = (dry: boolean): Outcome => {
+    type Resolved = (typeof resolved)[number];
+    const addOne = (each: Resolved): void => {
+      const asking = each.target?.options ?? each.asked?.options ?? parked?.decision?.options;
+      addAnswer(store, { subject, answer: each.text, by: by().who, at, textHash: itemTextHash(item), ...(each.question ? { question: each.question } : {}), ...(asking && asking.length > 0 ? { options: optionTexts(asking) } : {}) });
+    };
+    // Each answer is in the store already (a retry after an answer that was recorded).
+    const already = (list: readonly Resolved[]): boolean => {
+      const known = loadAnswers(store).filter((answer) => refKey(answer.subject) === ref);
+      return list.every((each) => known.some((answer) => answer.answer === each.text && (answer.question ?? "") === (each.question ?? "")));
+    };
+    const record = (dry: boolean, list: readonly Resolved[] = resolved): Outcome => {
       let outcome: Outcome;
       try {
         outcome = store.tx((): Outcome => {
@@ -607,9 +617,8 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
           if (!resolved.some((each) => each.target) && parkedAt !== undefined && !(job?.parked && Date.parse(job.parked.at) === Date.parse(parkedAt))) return { refused: "parked-changed", index: -1 };
           let released = false;
           let left: number | undefined;
-          for (const each of resolved) {
-            const asking = each.target?.options ?? each.asked?.options ?? parked?.decision?.options;
-            addAnswer(store, { subject, answer: each.text, by: by().who, at, textHash: itemTextHash(item), ...(each.question ? { question: each.question } : {}), ...(asking && asking.length > 0 ? { options: optionTexts(asking) } : {}) });
+          for (const each of list) {
+            addOne(each);
             if (several.length > 0) {
               if (!each.target) {
                 left ??= several.filter((one) => one.answer === undefined).length;
@@ -651,25 +660,54 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
     const write = items?.write;
     const logs = !!write?.appendLog && subject.host === items!.host;
     let logged: WriteOutcome | undefined;
+    let taken: readonly Resolved[] = resolved;
+    let problem: string | undefined;
     if (logs) {
       const tried = record(true);
-      if ("refused" in tried) return refuse(tried);
-      const lines = resolved.map((each) => ({ kind: "answer", by: by(), fields: { answer: each.text, ...(each.asked ? { to: each.asked.at, toBy: each.asked.by } : {}) } }));
-      try {
-        if (lines.length > 1 && write!.appendLogs) logged = await write!.appendLogs(subject, lines);
-        else for (const line of lines) logged = await write!.appendLog!(subject, line);
-      } catch (error) {
-        options.onRefresh?.();
-        return sendError(response, 503, "LOG_WRITE_FAILED", `The answer could not be written to ${ref}'s log, so it is not recorded: ${error instanceof Error ? error.message : String(error)} Try again.`);
+      if ("refused" in tried) {
+        // Sent again after it was recorded (the first reply was lost): the same answers to the same questions are not refused.
+        if (already(resolved)) {
+          options.onRefresh?.();
+          return sendJson(response, 200, { recorded: true, released: false, already: true });
+        }
+        return refuse(tried);
       }
+      const lines = resolved.map((each) => ({ kind: "answer", by: by(), fields: { answer: each.text, ...(each.asked ? { to: each.asked.at, toBy: each.asked.by } : {}) } }));
+      let written = 0;
+      try {
+        if (lines.length > 1 && write!.appendLogs) {
+          logged = await write!.appendLogs(subject, lines);
+          written = lines.length;
+        } else {
+          for (const line of lines) {
+            logged = await write!.appendLog!(subject, line);
+            written++;
+          }
+        }
+      } catch (error) {
+        const said = error instanceof Error ? error.message : String(error);
+        if (written === 0) {
+          options.onRefresh?.();
+          return sendError(response, 503, "LOG_WRITE_FAILED", `The answer could not be written to ${ref}'s log, so it is not recorded: ${said} Try again.`);
+        }
+        // The answers the log took are recorded; the rest are not, and the reply says so.
+        problem = `Only ${written} of ${lines.length} answers could be written to the log (${said}); the others are not recorded. Send them again.`;
+      }
+      taken = resolved.slice(0, written);
     }
-    const outcome = record(false);
-    if ("refused" in outcome) return refuse(outcome);
+    const outcome = record(false, taken);
+    if ("refused" in outcome) {
+      if (!logs) return refuse(outcome);
+      // The log has them already (the Item changed while they were written): they are recorded as answers, and the job is left as it is.
+      store.tx(() => taken.forEach(addOne));
+      await options.syncNow?.();
+      return sendJson(response, 200, { recorded: true, released: false, logged: true, stale: outcome.refused, ...(problem ? { problem } : {}) });
+    }
     const released = outcome.released;
     const left = outcome.open !== undefined ? { open: outcome.open } : {};
     if (logs) {
       await options.syncNow?.();
-      return sendJson(response, 200, { recorded: true, released, ...left, logged: true, shared: logged?.shared });
+      return sendJson(response, 200, { recorded: true, released, ...left, logged: true, shared: logged?.shared, ...(problem ? { problem } : {}) });
     }
     options.onRefresh?.();
     return sendJson(response, 200, { recorded: true, released, ...left });

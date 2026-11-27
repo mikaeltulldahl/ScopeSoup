@@ -336,3 +336,46 @@ test("an answer the item's log does not take is not recorded: the store is never
   assert.deepEqual(loadAnswers(store).filter((answer) => answer.subject.id === id), []);
   assert.equal((await page(ref)).questions.length, 1);
 });
+
+test("an answer sent again after it was recorded is not refused, and one the Item moved away from during the log write is still recorded (#238)", async () => {
+  const made = await post("/api/items", { title: "Pick a roof" });
+  const ref = made.body.ref as string;
+  const subject = { host: "metaBranch", kind: "work" as const, id: ref.split(":").pop()! };
+  const at = clock();
+  const parkedJob = (when: string): Job => ({
+    item: subject, workspace: "w", branch: `scopesoup/${subject.id}`, step: "implement", failures: 0, fixRounds: 0, startedAt: at,
+    parked: { as: "escalated", reason: "Nothing to change.", at: when },
+  });
+  store.tx(() => saveJobs(store, { ...loadJobs(store), [ref]: parkedJob(at) }));
+  const first = await post("/api/answer", { ref, answer: "Go on with tiles.", parkedAt: at });
+  assert.equal(first.status, 200, JSON.stringify(first.body));
+  // The reply was lost and the page sends it again: recorded already, so it is not refused.
+  const again = await post("/api/answer", { ref, answer: "Go on with tiles.", parkedAt: at });
+  assert.equal(again.status, 200, JSON.stringify(again.body));
+  assert.equal(again.body.already, true);
+  assert.equal(loadAnswers(store).filter((answer) => answer.subject.id === subject.id && answer.answer === "Go on with tiles.").length, 1);
+
+  // The Item parks again while the log write is under way: the log has the answer, so the store records it too.
+  const later = clock();
+  store.tx(() => saveJobs(store, { ...loadJobs(store), [ref]: parkedJob(later) }));
+  const moving = {
+    ...host.write!,
+    appendLog: async (...args: Parameters<NonNullable<NonNullable<typeof host.write>["appendLog"]>>) => {
+      store.tx(() => saveJobs(store, { ...loadJobs(store), [ref]: parkedJob(clock()) }));
+      return host.write!.appendLog!(...args);
+    },
+  };
+  const racing = createServer({ store, port: 0, items: { host: "metaBranch", write: moving }, syncNow: refresh });
+  const url = (await racing.start()).url;
+  try {
+    const response = await fetch(`${url}/api/answer`, { method: "POST", headers: { "Content-Type": "application/json", "X-ScopeSoup-Person": "Ada" }, body: JSON.stringify({ ref, answer: "Slate after all.", parkedAt: later }) });
+    const body = (await response.json()) as Record<string, unknown>;
+    assert.equal(response.status, 200, JSON.stringify(body));
+    assert.equal(body.stale, "parked-changed");
+    assert.equal(body.released, false);
+  } finally {
+    await racing.stop();
+  }
+  assert.ok(loadAnswers(store).some((answer) => answer.subject.id === subject.id && answer.answer === "Slate after all."));
+  assert.ok(loadJobs(store)[ref]?.parked, "the job is left as it is");
+});

@@ -242,8 +242,10 @@ export function recoverFromLogs(ctx: Context, items: readonly WorkItem[]): void 
   const fresh = items.filter((item) => !known.has(refKey(item.ref)) && !heldElsewhere(item));
   if (fresh.length === 0) return;
   // The answers the store has: an answer a person gave after the store was lost and before this read-back is one of them, and the
-  // log's answers are added to it, not replaced by it or skipped for it.
-  const had = new Set(loadAnswers(store).map((answer) => `${refKey(answer.subject)}|${Date.parse(answer.at)}|${answer.answer}`));
+  // log's answers are added to it, not replaced by it or skipped for it. The same answer to the same question is one answer: the
+  // store's time is the server's, the log line's the host's, so the time does not tell them apart.
+  const sameAs = (answer: RecordedAnswer): string => `${refKey(answer.subject)}|${answer.question ?? ""}|${answer.answer}`;
+  const had = new Set(loadAnswers(store).map(sameAs));
   for (const item of fresh) {
     const key = refKey(item.ref);
     if (ctx.jobs[key]) continue;
@@ -251,7 +253,7 @@ export function recoverFromLogs(ctx: Context, items: readonly WorkItem[]): void 
     const onHost = !item.log && (!!item.hostRecord || (item.openQuestions ?? []).some((question) => question.id !== undefined));
     if (!item.log && !onHost) continue;
     if (!onHost) {
-      const answers = answersFromLog(item).filter((answer) => !had.has(`${key}|${Date.parse(answer.at)}|${answer.answer}`));
+      const answers = answersFromLog(item).filter((answer) => !had.has(sameAs(answer)));
       if (answers.length > 0) restoreAnswers(store, answers, ctx.at);
     }
     const job = onHost ? jobFromHost(item) : jobFromLog(item);

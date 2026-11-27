@@ -223,6 +223,13 @@ test("an answer given after the store was lost and before the read-back does not
   addAnswer(second.store, { subject: item, answer: "Keep it short.", by: "Ada", at: "2026-11-18T11:00:00.000Z" });
   await second.run();
   assert.deepEqual(loadAnswers(second.store).map((answer) => answer.answer), ["letters", "Keep it short."]);
+
+  // The same answer in the store and the log, timed by the server and by the host: one answer, not two.
+  const third = start(host);
+  await third.sync();
+  addAnswer(third.store, { subject: item, answer: "letters", question: "Letters or digits in ids?", by: "Ada", at: "2026-11-18T08:59:59.123Z" });
+  await third.run();
+  assert.deepEqual(loadAnswers(third.store).map((answer) => answer.answer), ["letters"]);
 });
 
 test("three open triage questions all wait again after a deleted store; the first answer does not release the item, the third does", async () => {
