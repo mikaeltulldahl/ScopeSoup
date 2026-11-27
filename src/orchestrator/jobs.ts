@@ -2,7 +2,7 @@
 // resumed with the findings -> review)* -> hand over. Kept in the store so a restart resumes instead of forgetting.
 
 import type { FenceSeen } from "../core/fence.ts";
-import type { DecisionOption, ItemLinkAnswer, LabelChange, LinkType, OriginalFate, ProposedPart, Ref, Restructuring, WorkItem } from "../model/types.ts";
+import type { DecisionOption, ItemLinkAnswer, LabelChange, LinkType, LogRecord, OriginalFate, ProposedPart, Ref, Restructuring, WorkItem } from "../model/types.ts";
 import { asOptions, asRestructuring, refKey } from "../model/types.ts";
 import { asLabelChange } from "../model/labels.ts";
 import type { Store } from "../store/store.ts";
@@ -609,20 +609,77 @@ export function answerQuestion(store: Store, item: Ref, index: number, answer: s
   return store.tx(() => {
     const jobs = loadJobs(store);
     const key = refKey(item);
-    const job = jobs[key];
-    const refused = answerRefusal(job, index, parkedAt);
-    if (refused || !job) return { refused: refused ?? "no-questions" };
-    const questions = jobQuestions(job);
-    const answered = [...(job.answered ?? []).filter((each) => each.index < questions.length), { index, answer, at }].sort((a, b) => a.index - b.index);
-    const open = questions.length - answered.length;
-    if (open > 0) {
-      job.answered = answered;
-      saveJobs(store, jobs);
-      store.appendEvent({ kind: "orchestrator.question_answered", subject: key, actor, data: { reason: `A person answered question ${index + 1} of ${questions.length}; ${open} still open.`, index, open } }, at);
-      return { released: false, open };
-    }
-    const reason = `A person answered all ${questions.length} questions: ${answered.map((each) => `${each.index + 1}. ${questions[each.index]!.question} Answered: ${each.answer}`).join(" ")}`;
-    return { released: releaseJob(store, item, actor, at, reason), open: 0 };
+    const done = answerIn(jobs, key, index, answer, actor, at, parkedAt);
+    if ("refused" in done) return done;
+    saveJobs(store, jobs);
+    if (done.was) store.appendEvent({ kind: "orchestrator.job_released", subject: key, actor, data: { reason: done.reason, was: done.was } }, at);
+    else store.appendEvent({ kind: "orchestrator.question_answered", subject: key, actor, data: { reason: done.reason, index, open: done.open } }, at);
+    return { released: !!done.was, open: done.open };
+  });
+}
+
+/**
+ * `answerQuestion` on a map of jobs the caller saves (the tick's), with the event's reason for the caller to write: the parked state
+ * it released (`was`) with the answer to the last open question, else how many are still open.
+ */
+export function answerIn(jobs: Jobs, key: string, index: number, answer: string, actor: string, at: string, parkedAt?: string): { open: number; reason: string; was?: NonNullable<Job["parked"]> } | { refused: AnswerRefusal } {
+  const job = jobs[key];
+  const refused = answerRefusal(job, index, parkedAt);
+  if (refused || !job) return { refused: refused ?? "no-questions" };
+  const questions = jobQuestions(job);
+  const answered = [...(job.answered ?? []).filter((each) => each.index < questions.length), { index, answer, at }].sort((a, b) => a.index - b.index);
+  const open = questions.length - answered.length;
+  if (open > 0) {
+    job.answered = answered;
+    return { open, reason: `A person answered question ${index + 1} of ${questions.length}; ${open} still open.` };
+  }
+  const reason = `A person answered all ${questions.length} questions: ${answered.map((each) => `${each.index + 1}. ${questions[each.index]!.question} Answered: ${each.answer}`).join(" ")}`;
+  const was = releaseIn(jobs, key, actor);
+  return was ? { open: 0, reason, was } : { refused: "no-questions" };
+}
+
+/** A question a parked job asked in its Item's log: its text, whether the log holds it open, and the answer line that names it. */
+export interface LogQuestion {
+  question: string;
+  open: boolean;
+  answer?: { text: string; by: string };
+}
+
+const sameWriter = (a: { who: string; machine?: string }, b: { who: string; machine?: string }): boolean => a.who === b.who && (a.machine ?? "") === (b.machine ?? "");
+
+/**
+ * The questions a parked job asked in its Item's log (meta branch), in the order asked, as the log reads now: which are still open,
+ * and the answer each answered one got, on any machine's board (#248). The park's lines are those of its set (`parkSet`), or, for a
+ * job rebuilt from the log, the set of the line it parked on. Null for a park with no line in the log (a GitHub Item, a post that is
+ * tried again), a proposed restructuring, and a parked state no answer picks up (queued, handed over).
+ */
+export function askedInLog(job: Job, item: Pick<WorkItem, "log" | "openQuestions">): LogQuestion[] | null {
+  const parked = job.parked;
+  const log = item.log;
+  if (!parked || !log || parked.questions || parked.retry === "post" || job.proposal) return null;
+  if (parked.as !== "needs-decision" && parked.as !== "not-ready" && parked.as !== "escalated") return null;
+  // Only lines that ask what this park asks: an earlier park of a job made again may have had the same set (#248).
+  const texts = new Set([parked.reason, job.decision?.question, job.triage?.decision?.question, ...jobQuestions(job).map((each) => each.question)].filter((text): text is string => !!text?.trim()));
+  const lines = log.filter((line) => line.kind === "question" && line.by.agent && typeof line.fields.question === "string" && texts.has(line.fields.question));
+  const ofSet = (set: unknown, by?: { who: string; machine?: string }): LogRecord[] => lines.filter((line) => line.fields.set === set && (!by || sameWriter(line.by, by)));
+  const own = ofSet(parkSet(job));
+  const first = own.length > 0 ? undefined : lines.find((line) => Date.parse(line.at) === Date.parse(parked.at));
+  const asked = own.length > 0 ? own : !first ? [] : typeof first.fields.set === "string" ? ofSet(first.fields.set, first.by) : [first];
+  if (asked.length === 0) return null;
+  const open = item.openQuestions ?? [];
+  const names = (answer: LogRecord, line: LogRecord): boolean => {
+    const { to, toBy, toQuestion, toSet } = answer.fields;
+    if (typeof toQuestion === "string" && toQuestion !== line.fields.question) return false;
+    if (typeof to === "string") return Date.parse(to) === Date.parse(line.at) && (typeof toBy !== "object" || toBy === null || sameWriter(toBy as { who: string; machine?: string }, line.by));
+    return typeof toSet === "string" && toSet === line.fields.set;
+  };
+  // A question of a set written twice (a write tried again after it was taken) is one question.
+  const once = asked.filter((line, index) => asked.findIndex((each) => each.fields.question === line.fields.question) === index);
+  return once.map((line) => {
+    const question = line.fields.question as string;
+    const isOpen = open.some((each) => !each.proposal && each.question === question && sameWriter(each.by, line.by) && asked.some((one) => one.fields.question === question && Date.parse(one.at) === Date.parse(each.at)));
+    const answer = isOpen ? undefined : log.find((each) => each.kind === "answer" && !each.by.agent && typeof each.fields.answer === "string" && each.fields.answer.trim() !== "" && asked.some((one) => one.fields.question === question && names(each, one)));
+    return { question, open: isOpen, ...(answer ? { answer: { text: answer.fields.answer as string, by: answer.by.who } } : {}) };
   });
 }
 

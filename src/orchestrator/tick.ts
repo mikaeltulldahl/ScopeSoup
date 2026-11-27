@@ -25,7 +25,7 @@ import type { Context, TickDeps } from "./context.ts";
 import type { ClaimResult } from "./ports.ts";
 import { CLAIM_EXPIRY_MINUTES } from "./ports.ts";
 import { createLog, errorText } from "./context.ts";
-import { afterRewrite, backToImplement, emptyBranch, followRewrite, followQuestions, keptBranch, overturnsBack, park, queueOffBelowLevel4, retryHandOver, retryPost, reviewOffAtLevel2, settle, withdrawSettledDuplicates, writeAboutOthers } from "./cycle.ts";
+import { afterRewrite, backToImplement, emptyBranch, followLog, followRewrite, followQuestions, keptBranch, overturnsBack, park, queueOffBelowLevel4, retryHandOver, retryPost, reviewOffAtLevel2, settle, withdrawSettledDuplicates, writeAboutOthers } from "./cycle.ts";
 import { loadOwnBlockers, withOwnBlockers } from "../store/blockers.ts";
 import { decide } from "./usageCheck.ts";
 import { allowanceDecision } from "./allowance.ts";
@@ -560,6 +560,8 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
   const merging = config.level >= 4 ? mergeQueueOn(store) : switchState(store, "implement") === "started";
   for (const [key, job] of Object.entries(jobs)) {
     const item = itemByKey.get(key) ?? null;
+    // The parked state as this tick found it: one the tick parks below is not in the item it read.
+    const parkedBefore = job.parked;
     // A post that failed in an earlier tick; one that fails in this tick is tried again by the next.
     const repost = job.parked?.retry === "post";
     // A merged Item reopened on GitHub is work again: its merged job is over too.
@@ -647,6 +649,8 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
     if (job.parked?.questions && item && (await followQuestions(ctx, job, item))) continue;
     // The rewrite's question comments were answered by replies, or deleted.
     if (job.parked?.rewrite && item && (await followRewrite(ctx, job, item))) continue;
+    // The questions it is parked on in the item's log were answered on another machine's board (#248).
+    if (job.parked && job.parked === parkedBefore && !job.sessionId && item && !over && followLog(ctx, job, item)) continue;
     // A person merged the branch handed over to them, and nothing but Scope Soup closes an Item here: done once main holds the head.
     if (item && ctx.deps.actions.closesItself && job.parked?.as === "handed-over" && job.merged === undefined && item.state === "todo") {
       try {

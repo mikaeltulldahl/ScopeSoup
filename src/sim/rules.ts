@@ -51,6 +51,21 @@ function ticksSince(memo: Record<string, unknown>, key: string, holds: boolean, 
   return table[key]!;
 }
 
+/**
+ * Whether a person on another machine's board answered the newest set of questions this machine's Scope Soup asked in the Item's log,
+ * as this copy of the Item reads (an answer names its question by `to`, the line's time, or `toSet`, its set). False on a single machine.
+ */
+function answeredElsewhere(item: ItemObs["item"], machine: string | undefined): boolean {
+  if (!machine) return false;
+  const log = item.log ?? [];
+  const asked = log.filter((line) => line.kind === "question" && line.by.agent && line.by.machine === machine);
+  const set = asked[asked.length - 1]?.fields.set;
+  if (set === undefined) return false;
+  const ofSet = asked.filter((line) => line.fields.set === set);
+  return log.some((line) => line.kind === "answer" && !line.by.agent && !!line.by.machine && line.by.machine !== machine
+    && (line.fields.toSet === set || (typeof line.fields.to === "string" && ofSet.some((q) => Date.parse(q.at) === Date.parse(line.fields.to as string)))));
+}
+
 // A triage runs in To do, or in Backlog when a person asked for one there (#221).
 const roleLane = (role: string, item: ItemObs["item"]): string => (role === "triage" ? (item.backlog ? "backlog" : "todo") : role === "implement" ? "in-progress" : "in-review");
 
@@ -99,7 +114,7 @@ export const RULES: Rule[] = [
   },
   {
     id: "A3",
-    why: "One count of what is asked: the job's open asks and the host's open question lines agree; none open unless a person is asked (#194, #209).",
+    why: "One count of what is asked: the job's open asks and the host's open question lines agree; none open unless a person is asked (#194, #209). Answers a sync read (another machine's board) are settled by the next tick (#248).",
     check(o, prev, memo) {
       const rebuild = toRebuild(o, prev, memo);
       return first(o.items, (i) => {
@@ -113,7 +128,13 @@ export const RULES: Rule[] = [
         const personAsk = i.w.kind === "person" && i.w.why !== "holds";
         if (personAsk && !asks(i.w) && open > 1) return `${i.id} has ${open} open question lines on the host, but W is ${wText(i.w)}, which asks one thing`;
         if (open > 0 && !personAsk && i.w.kind !== "session") return `${i.id} has ${open} open question line(s) on the host, but W is ${wText(i.w)}`;
-        if (i.w.kind === "person" && i.w.why === "answer" && i.w.n !== undefined && i.w.n > 0 && open === 0 && !i.job?.parked?.retry) return `${i.id} is parked on ${i.w.n} question(s), none of them open on the host`;
+        if (i.w.kind === "person" && i.w.why === "answer" && i.w.n !== undefined && i.w.n > 0 && open === 0 && !i.job?.parked?.retry) {
+          // Answered on another machine's board (#248): this machine reads it at whatever step syncs, and its next tick settles the job.
+          if (answeredElsewhere(i.host, o.machine) && (!isTick(o) || !answeredElsewhere(i.item, o.machine))) return null;
+          // Closed on another machine, which ends its questions: this machine's job closes once it reads the close.
+          if (o.machine && (i.host.state === "done" || i.host.state === "abandoned")) return null;
+          return `${i.id} is parked on ${i.w.n} question(s), none of them open on the host`;
+        }
         return null;
       });
     },
@@ -572,7 +593,7 @@ export const RULES: Rule[] = [
   // --- G. Restart and recovery ---
   {
     id: "G1",
-    why: "Restart: every switch is paused, and after the first tick each Item's W is what it was, except that a session became a wait to start the same step (not counted as a failure), or questions that waited for the session to end were written, or the restarts in a row reached the attempts' limit and a person is asked, or questions waiting to be posted again were posted.",
+    why: "Restart: every switch is paused, and after the first tick each Item's W is what it was, except that a session became a wait to start the same step (not counted as a failure), or questions that waited for the session to end were written, or the restarts in a row reached the attempts' limit and a person is asked, or questions waiting to be posted again were posted, or a person on another machine's board answered it (#248).",
     check(o, prev, memo) {
       if (o.action.kind === "restart" && prev) {
         const on = (["triage", "implement", "review"] as const).find((r) => o.switches[r] === "started");
@@ -603,6 +624,8 @@ export const RULES: Rule[] = [
         // Or the restarts in a row reached the attempts' limit, and a person is asked (a crash at every start must end).
         const asked = o.events.some((e) => (e.kind === "orchestrator.about_other_written" || e.kind === "orchestrator.restart_limit") && e.subject === i.key);
         if (asked) return null;
+        // A person on another machine's board answered what it waited for (#248): the first tick settles it from the log.
+        if (w.kind === "person" && answeredElsewhere(i.item, o.machine)) return null;
         if (w.kind === "session") return i.w.kind === "start" && i.w.role === w.role ? null : `${i.id} had a ${w.role} session before the restart and is ${wText(i.w)} after the first tick`;
         if (["person", "queue", "blocker", "nothing"].includes(w.kind) && wText(w) !== wText(i.w)) return `${i.id} was ${wText(w)} before the restart and is ${wText(i.w)} after the first tick`;
         return null;
