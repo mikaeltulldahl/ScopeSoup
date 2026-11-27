@@ -14,5 +14,4 @@ export const KNOWN_MULTI: Record<string, Known> = {
   M2: { seed: 4, long: true, what: "an answer accepted while the machine cannot reach the meta remote is kept in its store only (logged: false) and never written to the log later" },
   M3: { seed: 5, long: true, what: "a re-triage runs without a claim (the implement claim released first), so another machine claims the Item and triages it at the same time" },
   A1: { seed: 1, what: "two machines hold a job for one Item: a card on one machine shows the other machine's open question while its own job waits for a timer (the two-jobs problem of M3; #243)" },
-  M4: { seed: 31, long: true, what: "a pick carried out whose answer line could not be pushed (the remote kept moving) is never answered on the meta remote, so other boards show it waiting" },
 };
