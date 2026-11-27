@@ -16,7 +16,7 @@ import { errorText } from "./context.ts";
 import { afterBuild } from "./cycle.ts";
 import type { Job } from "./jobs.ts";
 import { workBranch, workspaceKey, BRANCH_PREFIX } from "./paths.ts";
-import { jobOf, where } from "./jobs.ts";
+import { jobOf, sessionIdOf } from "./jobs.ts";
 
 const SEEN_KEY = "orchestrator.handbacks";
 
@@ -100,7 +100,7 @@ export async function adoptHandbacks(ctx: Context, items: readonly WorkItem[], c
     const holder = item.holder;
     const held = holdStands(holder, Date.parse(ctx.at));
     if (held && holder?.actor.id !== actions.claimant) continue;
-    if (where(ctx.jobs[key])?.sessionId) continue;
+    if (sessionIdOf(ctx.jobs[key])) continue;
     // Jira: a job of the Item already stands, so this hand-back is not taken on over it (nor replayed).
     if (handed.comment && ctx.jobs[key]) continue;
     if (!handed.branch.startsWith(BRANCH_PREFIX) || handed.branch === BRANCH_PREFIX) {

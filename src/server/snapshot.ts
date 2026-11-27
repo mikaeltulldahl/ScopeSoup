@@ -4,7 +4,7 @@ import type { JobStage, Snapshot, RunnerState, SyncState } from "../core/snapsho
 import type { Batch, Change, CreatedPart, ProposedPart, Ref, Parked, ParkedQuestion, Run, Session, WorkItem } from "../model/types.ts";
 import { refKey } from "../model/types.ts";
 import type { Job } from "../orchestrator/jobs.ts";
-import { loadJobs, jobQuestions, resumesStep, where, stepAt } from "../orchestrator/jobs.ts";
+import { loadJobs, jobQuestions, resumesStep, parkedOf, stepAt } from "../orchestrator/jobs.ts";
 import { phaseOf, pickOf } from "../orchestrator/phase.ts";
 import { busyItems, sameFilesWait } from "../orchestrator/candidates.ts";
 import { markedParts, partLinked } from "../orchestrator/restructure.ts";
@@ -51,7 +51,7 @@ export function loadSnapshot(store: Store): Snapshot {
       return { paused: control.agents !== "started", agents: control.agents, triage: control.triage, implement: control.implement, review: control.review, mergeQueue: control.mergeQueue };
     })(),
     parked: Object.values(loadJobs(store)).flatMap((job): Parked[] => {
-      const parked = where(job).parked;
+      const parked = parkedOf(job);
       if (!parked) return [];
       const asked = parked.as === "needs-decision";
       // A rewrite's questions are shown with the rewrite, not as the parked state's one decision.

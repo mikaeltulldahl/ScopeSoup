@@ -10,7 +10,7 @@ import { random } from "./random.ts";
 import { wText } from "./waits.ts";
 import type { Action, WorldOptions } from "./world.ts";
 import { SimWorld } from "./world.ts";
-import { where } from "../orchestrator/jobs.ts";
+import { owesHandOver, parkedOf } from "../orchestrator/jobs.ts";
 import { readProposedRewrites } from "../orchestrator/aboutOthers.ts";
 import { mergeQueueOn, switchState } from "../store/control.ts";
 
@@ -87,8 +87,8 @@ export function draw(world: SimWorld, rnd: Rng, options: RunOptions): Action {
   const live = [...world.runner.live.values()].map((l) => l.session.subject.id);
   // What a person may do while an Item's work is busy (#268): its session runs, it is parked, or it owes a hand-over.
   const busy = open.filter((i) => {
-    const at = where(jobs[`metaBranch:work:${i.ref.id}`]);
-    return live.includes(i.ref.id) || at?.parked !== undefined || at?.owes !== undefined;
+    const job = jobs[`metaBranch:work:${i.ref.id}`];
+    return live.includes(i.ref.id) || parkedOf(job) !== undefined || owesHandOver(job);
   }).map((i) => i.ref.id);
   const proposed = world.shared ? [] : Object.keys(readProposedRewrites(world.store)).map((key) => key.split(":").pop()!).filter((id) => open.some((i) => i.ref.id === id));
   const both = busy.filter((id) => proposed.includes(id));
@@ -96,7 +96,7 @@ export function draw(world: SimWorld, rnd: Rng, options: RunOptions): Action {
   // again, or for the merge queue, also while that review runs again (a Merge queue pick over a review on an approved head, #211 step 3).
   const approved = open.filter((i) => {
     const job = jobs[`metaBranch:work:${i.ref.id}`];
-    return job?.review?.verdict === "approve" && job.head !== undefined && job.reviewedHead === job.head && where(job).parked?.as !== "queued" && where(job).merged === undefined && job.queueAskedBy === undefined;
+    return job?.review?.verdict === "approve" && job.head !== undefined && job.reviewedHead === job.head && parkedOf(job)?.as !== "queued" && job.at.kind !== "merged" && job.queueAskedBy === undefined;
   }).map((i) => i.ref.id);
   const reviewing = approved.filter((id) => [...world.runner.live.values()].some((l) => l.session.subject.id === id && l.session.role === "review"));
   // The person watches the board: while such a moment lasts (a proposed rewrite on a busy Item, an approved change), they act sooner.
@@ -104,10 +104,10 @@ export function draw(world: SimWorld, rnd: Rng, options: RunOptions): Action {
   const weights: Record<string, number> = { ...WEIGHTS[options.profile], ...(options.long ? { lose: 0.3 } : {}), ...(world.shared || !options.long ? {} : { busy: reviewing.length > 0 ? 4 * HOT : hot ? HOT : BUSY[options.profile] }) };
   // A person's Merge queue pick over a session that still runs: the tick that ends that session for it mostly comes before the session
   // ends by itself, so the hand-over owed beside the running session is what the tick reads (#211 step 3, #268).
-  const owedOverSession = !world.shared && options.long === true && open.some((i) => where(jobs[`metaBranch:work:${i.ref.id}`])?.owes !== undefined && live.includes(i.ref.id));
+  const owedOverSession = !world.shared && options.long === true && open.some((i) => owesHandOver(jobs[`metaBranch:work:${i.ref.id}`]) && live.includes(i.ref.id));
   if (owedOverSession && rnd.chance(0.8)) return { kind: "tick" };
   const kind = rnd.weighted(weights);
-  const asking = open.filter((i) => where(jobs[`metaBranch:work:${i.ref.id}`])?.parked || (i.openQuestions ?? []).length > 0).map((i) => i.ref.id);
+  const asking = open.filter((i) => parkedOf(jobs[`metaBranch:work:${i.ref.id}`]) || (i.openQuestions ?? []).length > 0).map((i) => i.ref.id);
   const person = (): Action => {
     const roll = rnd.int(16);
     const id = rnd.pick(open.length > 0 ? open.map((i) => i.ref.id) : ids) ?? "A-1";
@@ -149,7 +149,7 @@ export function draw(world: SimWorld, rnd: Rng, options: RunOptions): Action {
         return which < 4 ? { kind: "usage", reserve: true } : which < 7 ? { kind: "usage", reserve: false, pace: true } : { kind: "usage", reserve: false };
       }
       if (roll === 4 && world.queue.waiting.size > 0) return { kind: "queue", item: rnd.pick([...world.queue.waiting.keys()])!.split(":").pop()!, merge: rnd.chance(0.7) };
-      const handed = Object.values(jobs).filter((j) => where(j).parked?.as === "handed-over" || where(j).parked?.as === "escalated").map((j) => j.item.id);
+      const handed = Object.values(jobs).filter((j) => parkedOf(j)?.as === "handed-over" || parkedOf(j)?.as === "escalated").map((j) => j.item.id);
       if (roll === 5 && handed.length > 0) return { kind: "person-merge", item: rnd.pick(handed)! };
       // A person works in the clone while an Item runs: their tag, branch and stash entry are never an agent's (I6).
       if (roll === 6 && live.length > 0) return { kind: "person-refs", v: v() };
@@ -192,8 +192,8 @@ export function fairRound(world: SimWorld, round: number): Action[] {
     // Backlog and To do (#221): under Fair a person pulls every Item into To do.
     if (round === 0) out.push({ kind: "lane", item: id, to: "todo" });
     if (world.liveFor(id)) out.push({ kind: "end", item: id, v: round * 31 + Number(id.slice(2)) });
-    if (where(job)?.parked?.as === "handed-over") out.push({ kind: "person-merge", item: id });
-    else if (where(job)?.parked || (item.openQuestions ?? []).length > 0) out.push({ kind: "answer", item: id, v: round });
+    if (parkedOf(job)?.as === "handed-over") out.push({ kind: "person-merge", item: id });
+    else if (parkedOf(job) || (item.openQuestions ?? []).length > 0) out.push({ kind: "answer", item: id, v: round });
     if (world.queue.waiting.has(`metaBranch:work:${id}`)) out.push({ kind: "queue", item: id, merge: true });
   }
   out.push({ kind: "sync" }, { kind: "tick" }, { kind: "clock", ms: round % 3 === 2 ? 31 * 60_000 : 1000 }, { kind: "tick" });

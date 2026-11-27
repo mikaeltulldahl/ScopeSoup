@@ -33,7 +33,7 @@ import type { Store } from "../store/store.ts";
 import type { UsageCheckDecision } from "./usageCheck.ts";
 import type { Job, Jobs, Recheck } from "./jobs.ts";
 import type { RetriageBudget } from "../core/retriage.ts";
-import { adoptStored, changedMeanwhile, dropUnreadable, loadJobs, NO_DECISIONS, takenText, WRITING_WAIT_MS, jobOf, setWhere, where, stepAt } from "./jobs.ts";
+import { adoptStored, changedMeanwhile, dropUnreadable, loadJobs, NO_DECISIONS, takenText, WRITING_WAIT_MS, jobOf, stepAt, sessionIdOf, parkedOf, resumeOf, mergeApproved, shouldRoundOf, writingOf, timerOf, recheckOf, endSession, markMerged, awaitText, startSession } from "./jobs.ts";
 import { workBranch, workspaceKey } from "./paths.ts";
 import { adoptHandbacks } from "./handback.ts";
 import { recoverFromLogs } from "./recover.ts";
@@ -161,7 +161,7 @@ function interrupted(ctx: Context, key: string, job: Job, item: WorkItem | null)
   const { store, runner } = ctx.deps;
   const asked = job.interrupt!;
   const isLive = (each: Session): boolean => !OVER.includes(each.status) && !each.finishedAt;
-  const own = sessionNamed(store, where(job).sessionId);
+  const own = sessionNamed(store, sessionIdOf(job));
   // A step session the runner stored before the tick saved its id counts too; a chat turn does not.
   const session = own && isLive(own) ? own : store.list<Session>("session").find((each) => refKey(each.subject) === key && !each.chat && isLive(each));
   if (session) {
@@ -172,15 +172,15 @@ function interrupted(ctx: Context, key: string, job: Job, item: WorkItem | null)
     const after = store.get<Session>(session.ref);
     if (!after || !isLive(after)) {
       delete job.interrupt;
-      setWhere(job, { sessionId: undefined, resume: undefined });
+      endSession(job);
       return false;
     }
     if (Date.parse(ctx.at) - Date.parse(asked.at) <= INTERRUPT_WAIT_MS) return true;
     ctx.commit("orchestrator.interrupt_failed", `The ${session.role} session ${session.ref.id} on ${item?.ref.id ?? key} is still there ${Math.round(INTERRUPT_WAIT_MS / 60_000)} minutes after ${asked.by}'s pick ended it; the job goes on as the pick left it, and nothing starts on the Item while that session runs.`, key, { by: asked.by, session: session.ref.id });
   }
-  const dropped = !session && own && where(job).sessionId ? own : undefined;
+  const dropped = !session && own && sessionIdOf(job) ? own : undefined;
   delete job.interrupt;
-  setWhere(job, { sessionId: undefined, resume: undefined });
+  endSession(job);
   // The session was over before the pick reached it: its result, not yet read, is not taken, and that is a change of the job. Committed
   // after the change, so the job is saved with its event even when nothing else in this tick commits (#268).
   if (dropped) ctx.commit("orchestrator.result_dropped", `${asked.by} picked ${PICK_WORDS[asked.to] ?? asked.to} for ${item?.ref.id ?? key} on the board: the result of its ${dropped.role} session ${dropped.ref.id}, which had ended, is not taken.`, key, { by: asked.by, step: stepAt(job) });
@@ -196,7 +196,7 @@ function interrupted(ctx: Context, key: string, job: Job, item: WorkItem | null)
 function stopForClosed(ctx: Context, key: string, job: Job, item: WorkItem | null, takeEnded: boolean): boolean {
   const { store, runner } = ctx.deps;
   const isLive = (each: Session): boolean => !OVER.includes(each.status) && !each.finishedAt;
-  const own = sessionNamed(store, where(job).sessionId);
+  const own = sessionNamed(store, sessionIdOf(job));
   const session = own && isLive(own) ? own : store.list<Session>("session").find((each) => refKey(each.subject) === key && !each.chat && isLive(each));
   if (session) {
     const reason = `${item ? `${item.ref.id} is ${item.state}` : `${key} is no longer in the store`}: the ${session.role} session ${session.ref.id} is ended now and its result is not taken.`;
@@ -204,10 +204,10 @@ function stopForClosed(ctx: Context, key: string, job: Job, item: WorkItem | nul
     if (stopped > 0) ctx.commit("orchestrator.stopped", reason, key, { role: session.role, session: session.ref.id });
     const after = store.get<Session>(session.ref);
     if (after && isLive(after)) return true;
-  } else if (own && where(job).sessionId && takeEnded) return false;
-  const dropped = !session && own && where(job).sessionId ? own : undefined;
+  } else if (own && sessionIdOf(job) && takeEnded) return false;
+  const dropped = !session && own && sessionIdOf(job) ? own : undefined;
   delete job.interrupt;
-  setWhere(job, { sessionId: undefined, resume: undefined });
+  endSession(job);
   // Committed after the change, so the job is saved with its event (#268).
   if (dropped) ctx.commit("orchestrator.result_dropped", `${item ? `${item.ref.id} is ${item.state}` : `${key} is no longer in the store`}: the result of its ${dropped.role} session ${dropped.ref.id} is not taken.`, key, { step: stepAt(job) });
   return false;
@@ -361,7 +361,7 @@ async function renewClaims(ctx: Context, itemByKey: Map<string, WorkItem>): Prom
   const period = CLAIM_EXPIRY_MINUTES * 60_000;
   const lost = async (job: Job, item: WorkItem, key: string, why: string): Promise<void> => {
     const reason = `The claim on ${item.ref.id} was lost: ${why}.`;
-    if (where(job).parked) {
+    if (parkedOf(job)) {
       ctx.say("orchestrator.claim_lost", reason, key);
       return;
     }
@@ -373,11 +373,11 @@ async function renewClaims(ctx: Context, itemByKey: Map<string, WorkItem>): Prom
     const item = itemByKey.get(key);
     if (!item || item.state === "done" || item.state === "abandoned") continue;
     // Merged: nothing is held for it any more (`releaseClaimsHeldForNothing`).
-    if (where(job).merged !== undefined) continue;
+    if (job.at.kind === "merged") continue;
     const holder = item.holder;
     // A job waiting to start its next step (a slot, a timer, a paused switch) keeps its claim too (#243): let go between steps, another
     // machine could take the Item and work on it beside this one.
-    if (holder && holder.actor.id !== actions.claimant && holder.actor.id.startsWith(`${actions.claimant.split("@")[0]}@`) && !where(job).parked && where(job).sessionId && (!holder.until || Date.parse(holder.until) > Date.parse(ctx.at))) {
+    if (holder && holder.actor.id !== actions.claimant && holder.actor.id.startsWith(`${actions.claimant.split("@")[0]}@`) && !parkedOf(job) && sessionIdOf(job) && (!holder.until || Date.parse(holder.until) > Date.parse(ctx.at))) {
       await lost(job, item, key, `${holder.actor.name} holds it`);
       continue;
     }
@@ -438,11 +438,11 @@ async function overturnsMerged(ctx: Context, itemByKey: Map<string, WorkItem>): 
  * (and any answers a person gave since); without a known session a fresh one gets the message after its prompt.
  */
 export function implementorMessage(job: Job, decided: string): { resume?: string; message?: string } {
-  if (stepAt(job) !== "implement" || job.resumeWith === undefined) return where(job).resume ? { resume: where(job).resume } : {};
-  const resume = where(job).resume ?? job.agentSession;
+  if (stepAt(job) !== "implement" || job.resumeWith === undefined) return resumeOf(job) ? { resume: resumeOf(job) } : {};
+  const resume = resumeOf(job) ?? job.agentSession;
   if (resume) return { resume, message: `${job.resumeWith} Answer as before.${decided ? `\n\n${DECIDED}\n${decided}` : ""}` };
   // Level 3, approved, and the session that wrote the change is lost: a fresh implementor is told to merge the approved branch.
-  if (where(job).merge) return { message: `The work on this Item is done on ${job.branch}, and a reviewer approved it. Merge it now as CLAUDE.md says, and answer as above.` };
+  if (mergeApproved(job)) return { message: `The work on this Item is done on ${job.branch}, and a reviewer approved it. Merge it now as CLAUDE.md says, and answer as above.` };
   return { message: `Earlier work on this Item is on the branch already.\n${job.resumeWith}` };
 }
 
@@ -468,7 +468,7 @@ export function implementModel(config: ProjectConfig, job: Job): ImplementModel 
   const sendBacks = job.reviewSendBacks ?? 0;
   // Only the fix rounds that answer a review's "changes" (and their retries): not the merge turn after an approval, nor a round
   // for an approval's `should` findings.
-  const fixing = job.review?.verdict === "changes" && where(job).merge !== true && where(job).shouldRound !== true;
+  const fixing = job.review?.verdict === "changes" && !mergeApproved(job) && !shouldRoundOf(job);
   if (sendBacks < STEP_UP_AFTER || !fixing) return { model };
   const known = providerFor(config, "implement").models ?? [];
   const at = known.indexOf(model);
@@ -482,7 +482,7 @@ export function implementModel(config: ProjectConfig, job: Job): ImplementModel 
  * stops.
  */
 export function mayMerge(config: ProjectConfig, job: Job): boolean {
-  return config.level === 2 || (config.level === 3 && where(job).merge === true);
+  return config.level === 2 || (config.level === 3 && mergeApproved(job));
 }
 
 export function finishText(config: ProjectConfig, job: Job): string {
@@ -646,11 +646,11 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
   for (const [key, job] of Object.entries(jobs)) {
     const item = itemByKey.get(key) ?? null;
     // The parked state as this tick found it: one the tick parks below is not in the item it read.
-    const parkedBefore = where(job).parked;
+    const parkedBefore = parkedOf(job);
     // A post that failed in an earlier tick; one that fails in this tick is tried again by the next.
-    const repost = where(job).parked?.retry === "post";
+    const repost = parkedOf(job)?.retry === "post";
     // A merged Item reopened on GitHub is work again: its merged job is over too.
-    const over = !item || item.state === "done" || item.state === "abandoned" || (where(job).merged !== undefined && item.merged?.reopened !== undefined);
+    const over = !item || item.state === "done" || item.state === "abandoned" || (job.at.kind === "merged" && item.merged?.reopened !== undefined);
     // Closing an Item ends everything it owns (decision 5): its step session is stopped at once and its result not taken; the job
     // closes below, once that session is gone. Done at the implement step is the usual end (the session merged, and the host closed
     // the Item): when that session is over already, what it said (drafts, questions about other Items) is still taken.
@@ -664,14 +664,14 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
       continue;
     }
     // A person's chat turn runs on the item: Scope Soup starts nothing on it (no hand-over, no close) until it is over.
-    if (!where(job).sessionId && runner.busy?.(job.item)) {
+    if (!sessionIdOf(job) && runner.busy?.(job.item)) {
       running++;
       continue;
     }
     // A person put the Item back in To do on the board (src/server/moves.ts): once its session is over (its result is not
     // taken), the job goes with this machine's claim and workspace. The branch stays; the Item starts again at triage.
     if (job.dropAskedBy && !over) {
-      const session = sessionNamed(store, where(job).sessionId);
+      const session = sessionNamed(store, sessionIdOf(job));
       if (session && !OVER.includes(session.status) && !session.finishedAt) {
         running++;
         continue;
@@ -682,7 +682,7 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
     // Another machine's person moved the Item to Backlog, read at a fetch or a claim (#243): the job is given up as a move to Backlog
     // here drops it (decision 121), once its session is over (its result is not taken). A person's Triage pick there stays.
     if (item && !over && readInBacklog(job, item)) {
-      const session = sessionNamed(store, where(job).sessionId);
+      const session = sessionNamed(store, sessionIdOf(job));
       if (session && !OVER.includes(session.status) && !session.finishedAt) {
         running++;
         continue;
@@ -698,8 +698,8 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
       await ctx.act("remove the worktree", key, () => runner.releaseWorkspace(job.workspace));
       continue;
     }
-    if (where(job).sessionId) {
-      const ownSession = where(job).sessionId!;
+    const ownSession = sessionIdOf(job);
+    if (ownSession) {
       const session = store.get<Session>({ host: "scopesoup", kind: "session", id: ownSession });
       if (session && !OVER.includes(session.status) && !session.finishedAt) {
         running++;
@@ -741,11 +741,11 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
     // A duplicate question parked here about a pair a person settled on the other Item is withdrawn (decision 119).
     if (item && item.state !== "done" && item.state !== "abandoned" && (await withdrawSettledDuplicates(ctx, job))) continue;
     // The question comments it is parked on were answered or deleted on GitHub.
-    if (where(job).parked?.questions && item && (await followQuestions(ctx, job, item))) continue;
+    if (parkedOf(job)?.questions && item && (await followQuestions(ctx, job, item))) continue;
     // The rewrite's question comments were answered by replies, or deleted.
-    if (where(job).parked?.rewrite && item && (await followRewrite(ctx, job, item))) continue;
+    if (parkedOf(job)?.rewrite && item && (await followRewrite(ctx, job, item))) continue;
     // The questions it is parked on in the item's log were answered on another machine's board (#248).
-    if (where(job).parked && where(job).parked === parkedBefore && !where(job).sessionId && item && !over && followLog(ctx, job, item)) continue;
+    if (parkedOf(job) && parkedOf(job) === parkedBefore && !sessionIdOf(job) && item && !over && followLog(ctx, job, item)) continue;
     // A person merged the branch handed over to them, and nothing but Scope Soup closes an Item here: done once main holds the head.
     // So too a hand-over a person's answer asked for again while it cannot run (the implement switch is off, or the level below 2), and
     // finished work whose hand-over failed and waits for a person (escalated): their merge is the answer (#268).
@@ -762,7 +762,7 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
         // counts (#268).
         const ownWork = !handOverStuck || (job.base !== undefined ? head !== job.base && (await runner.contains(job.branch, head, job.base)) !== true : head === job.reviewedHead);
         if (ownWork && (await runner.contains(job.branch, head, tip)) === true) {
-          setWhere(job, { merged: head });
+          markMerged(job, head);
           ctx.commit("orchestrator.merged", `${job.branch} is on ${config.mainBranch} of ${config.remote} as ${head.slice(0, 7)}: a person merged it.`, key, { sha: head, main: tip, by: "person" });
           await ctx.act("write the merge to the item's log", key, () => ctx.deps.actions.appendLog(job.item, "merged", { sha: head, target: config.mainBranch }));
           await closeMerged(ctx, job, head);
@@ -772,13 +772,13 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
       }
     }
     // A merged change whose Item could not be closed on the host (it did not answer): the close is tried again.
-    if (item && where(job).closeOwed && where(job).merged !== undefined && !over && !where(job).sessionId) {
-      const owed = where(job).closeOwed!;
+    const owed = job.at.kind === "merged" ? job.at.closeOwed : undefined;
+    if (item && owed && !over) {
       await closeMerged(ctx, job, owed.sha, owed.batch);
       continue;
     }
     // Questions or a rewrite that could not be posted for a reason that can change are posted again, without waiting for a person.
-    if (repost && !where(job).sessionId && !over && where(job).parked?.retry === "post") {
+    if (repost && !sessionIdOf(job) && !over && parkedOf(job)?.retry === "post") {
       await retryPost(ctx, job);
       continue;
     }
@@ -786,7 +786,7 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
     // An item that is finished or gone needs no job: what the job held goes with it (this machine's claim, the worktree). The
     // branch goes too, unless it may hold work nobody closed: the Item left the store (no person closed it), or a triage again on built
     // work (a recheck) was under way, whose commits are not Scope Soup's to throw away.
-    if (!where(job).sessionId && over) {
+    if (!sessionIdOf(job) && over) {
       delete jobs[key];
       const kept = !item || stepAt(job) === "triage" ? await keptBranch(ctx, job) : null;
       const why = `${item ? `The item is ${item.state}; its job is closed.` : "The item is no longer in the store; its job is closed."}${kept ? ` Its branch ${job.branch} is kept: ${kept}.` : ""}`;
@@ -825,7 +825,7 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
   for (const [key, job] of Object.entries(jobs)) {
     const before = itemByKey.get(key);
     const read = store.get<WorkItem>(job.item);
-    if (!before || before.backlog || !read?.backlog || where(job).sessionId || read.state === "done" || read.state === "abandoned") continue;
+    if (!before || before.backlog || !read?.backlog || sessionIdOf(job) || read.state === "done" || read.state === "abandoned") continue;
     if (readInBacklog(job, read)) await dropAsked(ctx, jobs, key, job, read);
   }
 
@@ -934,7 +934,7 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
     }
     // Backlog is no work (decision 121): a person's moves take an Item with work under way to To do. Left is a person's one-off
     // triage there, whose implement step waits for To do; a job that has a session, a revision or something to resume never waits.
-    if (item.backlog && stepAt(job) === "implement" && job.implementAskedBy === undefined && job.head === undefined && !job.resumeWith && !where(job).resume) {
+    if (item.backlog && stepAt(job) === "implement" && job.implementAskedBy === undefined && job.head === undefined && !job.resumeWith && !resumeOf(job)) {
       reasons.push(`${item.ref.id} ${BACKLOG_REASON} before its ${stepAt(job)} step`);
       continue;
     }
@@ -955,7 +955,7 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
       continue;
     }
     // The description a person accepted is written on the host, and the store reads it after the next sync: no step starts on the old text.
-    const writing = where(job).writing;
+    const writing = writingOf(job);
     if (writing) {
       const unread = itemTextHash(item) === writing.from;
       const late = Date.parse(at) - Date.parse(writing.at) >= WRITING_WAIT_MS;
@@ -964,11 +964,11 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
         continue;
       }
       const writtenAt = writing.at;
-      setWhere(job, { writing: undefined });
+      awaitText(job, undefined);
       if (unread) ctx.commit("orchestrator.text_unread", `The description written on ${item.ref.host} at ${writtenAt} is still not read back after ${WRITING_WAIT_MS / 60_000} minutes: ${item.ref.id} goes on with the text the store has.`, key);
       else ctx.commit("orchestrator.text_read", `The description written on ${item.ref.host} is read back: ${item.ref.id}'s next step may start.`, key);
     }
-    const notBefore = where(job).notBefore;
+    const notBefore = timerOf(job);
     if (notBefore && Date.parse(notBefore) > Date.parse(at)) {
       reasons.push(`${item.ref.id} waits until ${notBefore} before its ${stepAt(job)} step`);
       // A step that follows within a moment keeps its slot, so work under way is finished before new work starts.
@@ -1016,7 +1016,7 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
   // Triage again within its share (#217): one To do Item whose triage is out of date, the stalest, while the share has room and no
   // other one chosen so is under way; after the steps of work under way, ahead of new work (the share bounds it). Backlog never; at
   // level 1 no implement step waits, so nothing is chosen.
-  if (level >= 2 && control.triage === "started" && !Object.values(jobs).some((job) => where(job).recheck?.background && stepAt(job) === "triage")) {
+  if (level >= 2 && control.triage === "started" && !Object.values(jobs).some((job) => recheckOf(job)?.background)) {
     retriageShare = pace.retriage();
     const looked = retriageLooked.get(store);
     if (retriageShare.allow && (looked === undefined || Date.parse(at) - looked >= RETRIAGE_LOOK_MS || Date.parse(at) < looked)) {
@@ -1039,12 +1039,12 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
   for (const entry of queue) {
     const key = refKey(entry.item.ref);
     // Started earlier in this tick (an Item chosen to triage again comes up twice in the line).
-    if (entry.job && (where(entry.job).sessionId || where(jobs[key])?.sessionId)) continue;
+    if (entry.job && (sessionIdOf(entry.job) || sessionIdOf(jobs[key]))) continue;
     // An item that states its own size (a `size:small` or `size:medium` label), with nothing waiting on an answer, skips the first
     // look from level 2; every other new item starts with triage. At level 1 nothing goes past triage, so there every new
     // item gets its triage. With risk classes gone the size label alone decides.
     const skipped = entry.job || level < 2 ? null : clearWithoutTriage(entry.item);
-    let step: SessionRole = entry.retriage ? "triage" : where(entry.job ?? undefined)?.step ?? (skipped ? "implement" : "triage");
+    let step: SessionRole = entry.retriage ? "triage" : (entry.job ? stepAt(entry.job) : undefined) ?? (skipped ? "implement" : "triage");
     // Its role is paused: it waits, and takes no slot, so the roles that go on may start.
     if (control[step] !== "started" && !personAsked(entry.job, step)) {
       waitsFor[step]++;
@@ -1080,7 +1080,7 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
     let again: string | undefined;
     // Chosen within the share: still waiting at its implement step (an earlier entry of this tick may have started it).
     if (entry.retriage) {
-      if (!entry.job || !awaitsImplement(entry.job) || where(entry.job).sessionId) continue;
+      if (!entry.job || !awaitsImplement(entry.job) || sessionIdOf(entry.job)) continue;
       startRecheck(ctx, entry.job, entry.retriage, retriageShare?.reason ?? "");
       again = entry.retriage.reasons.join("; ");
     }
@@ -1122,7 +1122,7 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
       : again
       ? `its triage is out of date (${again}) and is taken again before its implement step`
       : entry.job
-      ? `its ${step} step is due${entry.job.answerArrived ? " (the answer arrived)" : where(entry.job).resume ? " (continuing the session that was cut off)" : entry.job.resumeWith !== undefined ? (entry.job.agentSession ? " (resuming the implementor's session with what came back)" : " (a fresh implementor, with what came back: the session that wrote the change is not known)") : entry.job.failures > 0 ? ` (attempt ${entry.job.failures + 1})` : ""}`
+      ? `its ${step} step is due${entry.job.answerArrived ? " (the answer arrived)" : resumeOf(entry.job) ? " (continuing the session that was cut off)" : entry.job.resumeWith !== undefined ? (entry.job.agentSession ? " (resuming the implementor's session with what came back)" : " (a fresh implementor, with what came back: the session that wrote the change is not known)") : entry.job.failures > 0 ? ` (attempt ${entry.job.failures + 1})` : ""}`
       : step === "triage"
       ? "it is ready and first in line (triages run oldest first, a higher priority ahead)"
       : `it is ready and first in line (by To do's score, see "How Items are ordered")`;
@@ -1282,7 +1282,7 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
       target = kept;
     }
     jobs[key] = target;
-    setWhere(target, { sessionId: session.ref.id });
+    startSession(target, session.ref.id);
     // Where main is once the session's branch is cut (read after the start, so it holds the cut): a branch head already in it is not
     // taken for a merge, and one new in it is (a session that merged, told or not). `roundBase` is this round's; `base` the work's first.
     if (step === "implement") {
@@ -1294,7 +1294,6 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
     }
     if (step === "implement" && startedAs) target.sessionStart = startedAs;
     if (step === "implement") busy = busyItems(jobs);
-    setWhere(target, { notBefore: undefined, resume: undefined });
     delete target.answerArrived;
     running++;
     pace.started(step);

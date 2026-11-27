@@ -14,7 +14,7 @@ import { roleStopped, SWITCH_WORDS } from "../store/control.ts";
 import type { Resources } from "./resources.ts";
 import type { Store } from "../store/store.ts";
 import { errorText } from "./context.ts";
-import { loadJobs, saveJobs, where, stepAt } from "./jobs.ts";
+import { loadJobs, saveJobs, sessionIdOf, stepAt } from "./jobs.ts";
 import type { Job } from "./jobs.ts";
 import { workspacePath } from "./paths.ts";
 import { heldSlot, holderOf, lastSlotPath, slotPathFor } from "./slots.ts";
@@ -185,7 +185,7 @@ export function createChat(deps: ChatDeps): Chat {
     const current = config();
     if (!current) return "This server has no project configuration, so it runs no sessions.";
     if (!job) return "The Item has no work under way here, so there is no worktree to talk to its sessions in.";
-    if (where(job).merged) return "The Item is merged, so its sessions take no more messages.";
+    if (job.at.kind === "merged") return "The Item is merged, so its sessions take no more messages.";
     // Level 4: the branch is the queue's now; a turn could change it under the merge.
     const phaseAt = phaseOf(job).at;
     if (phaseAt === "queued" || phaseAt === "hand-over" || job.queued !== undefined) {
@@ -243,7 +243,7 @@ export function createChat(deps: ChatDeps): Chat {
     // Parking the Item had freed its workspace: the turn made it again, and it goes back to how it was.
     if (made !== null) {
       const job = loadJobs(store)[item];
-      if (!where(job)?.sessionId && !runner.busy(over.subject)) {
+      if (!sessionIdOf(job) && !runner.busy(over.subject)) {
         await runner.releaseWorkspace(made, `The chat turn on ${item} is over; the Item parked without its workspace, as before.`).catch((error: unknown) => {
           store.appendEvent({ kind: "orchestrator.action_failed", subject: item, actor: "orchestrator", data: { reason: `Could not free the workspace after the chat turn: ${errorText(error)}` } }, deps.now());
         });

@@ -57,7 +57,7 @@ export function pickOf(job: Job): Pick | undefined {
 
 /** Something of the implement step has begun: a change, an answer, a session to resume, a failed attempt, an approval to merge. */
 function begun(job: Job, run: StepRun, merge: true | undefined): boolean {
-  return job.head !== undefined || job.implement !== undefined || job.agentSession !== undefined || run.resume !== undefined || job.resumeWith !== undefined || job.failures > 0 || merge === true;
+  return job.head !== undefined || job.implement !== undefined || job.agentSession !== undefined || (run.is === "waiting" && run.resume !== undefined) || job.resumeWith !== undefined || job.failures > 0 || merge === true;
 }
 
 function runOf(job: Job, run: StepRun): Run {

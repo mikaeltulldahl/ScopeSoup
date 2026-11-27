@@ -14,7 +14,7 @@ import { watchMain } from "./mainGuard.ts";
 import type { Triaged, TriagedText, Job, Recheck, TriageAnswer } from "./jobs.ts";
 import { plural } from "../model/plural.ts";
 import { pastFloor, staleness, stalest } from "../core/retriage.ts";
-import { setWhere, where, stepAt } from "./jobs.ts";
+import { recheckOf, stepAt, toTriage } from "./jobs.ts";
 
 /** The most commits a triage that runs again is shown; it is told how many there were in all. */
 export const MAX_COMMITS = 20;
@@ -137,9 +137,8 @@ export async function staleTriage(ctx: Context, job: Job, item: WorkItem, items:
 
 /** The job goes back to its triage, with what changed, instead of its implement step. `share`: chosen within the re-triage share. */
 export function startRecheck(ctx: Context, job: Job, recheck: Recheck, share?: string): void {
-  setWhere(job, { step: "triage", recheck: recheck });
+  toTriage(job, recheck);
   job.failures = 0;
-  setWhere(job, { notBefore: undefined });
   delete job.base;
   delete job.roundBase;
   const when = share !== undefined ? `while it waits in To do, the stalest there, within the share for triage again (${share})` : "before the implement step";
@@ -175,7 +174,7 @@ export async function retriageCandidate<T extends { item: WorkItem; job: Job }>(
 
 /** `{{recheck}}` in the triage's prompt: empty, or what changed since the triage before. Agent and item text is data. */
 export function recheckPromptText(job: Job): string {
-  const recheck = stepAt(job) === "triage" ? where(job).recheck : undefined;
+  const recheck = recheckOf(job);
   if (!recheck) return "";
   const previous = recheck.previous;
   const answer = [

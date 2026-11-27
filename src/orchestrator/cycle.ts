@@ -14,8 +14,8 @@ import { answersText, knownAnswers } from "../store/answers.ts";
 import { persistenceLimits } from "../config/persistence.ts";
 import type { Context } from "./context.ts";
 import { ACTOR, errorText } from "./context.ts";
-import type { AskedText, Decision, ItemLinkAnswer, Job, JobParked, JobStep, ParkedAs, WherePatch, ReviewAnswer, TakenDecision, TriageAnswer, Finding } from "./jobs.ts";
-import { ASK_PERSON, answerIn, askedInLog, jobQuestions, nextPark, parkSet, asImplement, asReview, asTriage, formatFindings, hasMarkup, recoverFields, keepsRecommendations, picks, questionsSettled, releaseIn, parkedRewrite, changedRewrite, sameText, jobOf, setWhere, where, stepAt } from "./jobs.ts";
+import type { AskedText, Decision, ItemLinkAnswer, Job, JobParked, JobStep, ParkedAs, ReviewAnswer, TakenDecision, TriageAnswer, Finding } from "./jobs.ts";
+import { ASK_PERSON, answerIn, askedInLog, jobQuestions, nextPark, parkSet, asImplement, asReview, asTriage, formatFindings, hasMarkup, recoverFields, keepsRecommendations, picks, questionsSettled, releaseIn, parkedRewrite, changedRewrite, sameText, jobOf, stepAt, parkedOf, mergedOf, mergeApproved, shouldRoundOf, parkJob, editParked, release, nextStep, moveStep, endSession, wait, oweHandOver, handOverTaken, markMerged, dropMerge, dropShouldRound, setRecheck, toTriage } from "./jobs.ts";
 import { providerFor } from "./providers/index.ts";
 import type { Actions, ClaimResult, SessionResultRecord } from "./ports.ts";
 import { CLAIM_EXPIRY_MINUTES } from "./ports.ts";
@@ -67,7 +67,7 @@ export function backoffMs(failures: number, capMs: number): number {
 /** Ends the cycle for now. `ask` puts the item on everyone's list (or the person's whose hand-back it is). */
 export async function park(ctx: Context, job: Job, as: ParkedAs, reason: string, ask?: Parameters<Actions["answerTurn"]>[1], retry?: "hand-over", marks: { byStep?: true; verdict?: true } = {}): Promise<void> {
   const key = refKey(job.item);
-  setWhere(job, { parked: { as, reason, at: ctx.at, ...(retry ? { retry } : {}), ...(marks.byStep ? { byStep: true } : {}), ...(marks.verdict ? { verdict: true } : {}) }, sessionId: undefined, notBefore: undefined, resume: undefined });
+  parkJob(job, { as, reason, at: ctx.at, ...(retry ? { retry } : {}), ...(marks.byStep ? { byStep: true } : {}), ...(marks.verdict ? { verdict: true } : {}) });
   job.parks = nextPark(job, ctx.deps.store.get<WorkItem>(job.item)?.log);
   // A person's ask was for the step that ended here (decision 104).
   delete job.triageAskedBy;
@@ -90,10 +90,10 @@ export async function park(ctx: Context, job: Job, as: ParkedAs, reason: string,
  * stays escalated). What GitHub took before it failed is found by the host and not posted twice.
  */
 export async function retryPost(ctx: Context, job: Job): Promise<void> {
-  const parked = where(job).parked!;
+  const parked = parkedOf(job)!;
   await tellPeople(ctx, job, parked.postingAs ?? "needs-decision", parked.posting ?? parked.reason, "decision");
   // Through at last: the parked Item went from an escalation (the host could not be written) to a person's question, which is a change.
-  const posted = where(job).parked;
+  const posted = parkedOf(job);
   if (posted && posted.retry !== "post") {
     ctx.commit("orchestrator.question_posted", `The question that could not be posted is posted now: ${clipText(posted.reason, 300)}`, refKey(job.item), { step: stepAt(job) });
   }
@@ -139,11 +139,11 @@ async function tellPeople(ctx: Context, job: Job, as: ParkedAs, reason: string, 
       for (const line of lines) await actions.appendLog(job.item, "question", line);
     } catch (error) {
       // Not in the log, the question is asked nowhere: the parked state says so, and each tick writes it again (`retryPost`) (#230).
-      setWhere(job, { parked: { ...where(job).parked!, postingAs: where(job).parked!.retry === "post" ? where(job).parked!.postingAs : as } });
+      editParked(job, { ...parkedOf(job)!, postingAs: parkedOf(job)!.retry === "post" ? parkedOf(job)!.postingAs : as });
       await hostFailed(ctx, job, `the question${lines.length > 1 ? "s" : ""} in the item's log`, new WriteLater(errorText(error)), `The question${lines.length > 1 ? "s were" : " was"}: ${lines.map((each) => String(each.question).trim()).join(" ")}`);
       return;
     }
-    if (where(job).parked?.retry === "post" && !posted) setWhere(job, { parked: postedParked(where(job).parked!) });
+    if (parkedOf(job)?.retry === "post" && !posted) editParked(job, postedParked(parkedOf(job)!));
   }
 }
 
@@ -180,7 +180,7 @@ async function askOnHost(ctx: Context, job: Job, questions: readonly (Decision &
     return true;
   }
   if (!asked) return false;
-  setWhere(job, { parked: { ...postedParked(where(job).parked!), questions: asked.ids, texts: textsOf(asking, asked.numbers), ...(asked.at ? { askedAt: asked.at } : {}) } });
+  editParked(job, { ...postedParked(parkedOf(job)!), questions: asked.ids, texts: textsOf(asking, asked.numbers), ...(asked.at ? { askedAt: asked.at } : {}) });
   ctx.commit("orchestrator.questions_asked", `Asked ${asked.ids.length} question${asked.ids.length > 1 ? "s" : ""} on ${job.item.host} (comment${asked.ids.length > 1 ? "s" : ""} ${asked.ids.join(", ")}); the answers are read from there.`, key, { questions: asked.ids });
   return true;
 }
@@ -188,7 +188,7 @@ async function askOnHost(ctx: Context, job: Job, questions: readonly (Decision &
 /** A rewrite or split over the comment limit is not posted: the parked state's reason says so, and a person's list and log take it as before. */
 function keptLocal(ctx: Context, job: Job, what: "rewrite" | "split", limit: number = COMMENT_LIMIT): false {
   const note = `The ${what} is over ${limit.toLocaleString("en-GB")} characters, too large for a comment on ${job.item.host}: it stays on Scope Soup's board.`;
-  setWhere(job, { parked: { ...where(job).parked!, reason: `${where(job).parked!.reason} ${note}` } });
+  editParked(job, { ...parkedOf(job)!, reason: `${parkedOf(job)!.reason} ${note}` });
   ctx.commit("orchestrator.kept_local", note, refKey(job.item), { what });
   return false;
 }
@@ -201,19 +201,19 @@ function keptLocal(ctx: Context, job: Job, what: "rewrite" | "split", limit: num
 async function hostFailed(ctx: Context, job: Job, what: string, error: unknown, said: string): Promise<void> {
   const key = refKey(job.item);
   const problem = errorText(error);
-  const was = where(job).parked!;
+  const was = parkedOf(job)!;
   const { retry: _retry, posting, ...rest } = was;
   if (error instanceof WriteLater) {
     const reason = `${job.item.host} could not be written: ${problem} ${said} Scope Soup tries again at each tick by itself; answer here to start again instead.`;
     if (was.retry === "post" && was.reason === reason) return;
     ctx.commit("orchestrator.host_write_failed", `Could not post ${what} on ${job.item.host}: ${problem} It is tried again at the next tick.`, key);
-    setWhere(job, { parked: { ...rest, as: "escalated", reason, retry: "post", posting: posting ?? was.reason } });
+    editParked(job, { ...rest, as: "escalated", reason, retry: "post", posting: posting ?? was.reason });
     ctx.commit(PARK_EVENT.escalated, reason, key, { step: stepAt(job) });
     return;
   }
   ctx.commit("orchestrator.host_write_failed", `Could not post ${what} on ${job.item.host}: ${problem}`, key);
   const reason = `${job.item.host} could not be written: ${problem} ${said} Answer here to start again.`;
-  setWhere(job, { parked: { ...rest, as: "escalated", reason } });
+  editParked(job, { ...rest, as: "escalated", reason });
   ctx.commit(PARK_EVENT.escalated, reason, key, { step: stepAt(job) });
   await ctx.act("put the item on a person's list", key, () => ctx.deps.actions.answerTurn(job.item, "escalation", reason));
 }
@@ -254,7 +254,7 @@ async function rewriteOnHost(ctx: Context, job: Job): Promise<boolean> {
       return true;
     }
   }
-  setWhere(job, { parked: { ...postedParked(where(job).parked!), rewrite: { id, questions: ids, ...(ids.length > 0 ? { texts: textsOf(rewrite.questions, numbers) } : {}), ...(askedAt ? { askedAt } : {}) } } });
+  editParked(job, { ...postedParked(parkedOf(job)!), rewrite: { id, questions: ids, ...(ids.length > 0 ? { texts: textsOf(rewrite.questions, numbers) } : {}), ...(askedAt ? { askedAt } : {}) } });
   ctx.commit("orchestrator.rewrite_posted", `Posted the triage's rewrite of round ${rewrite.round} on ${job.item.host} (comment ${id})${ids.length > 0 ? ` with ${ids.length} question${ids.length > 1 ? "s" : ""}` : ""}.`, key, { rewrite: id, questions: ids });
   return true;
 }
@@ -268,8 +268,8 @@ export async function followQuestions(ctx: Context, job: Job, item: WorkItem): P
   const settled = questionsSettled(job, item);
   if (!settled) return false;
   const key = refKey(job.item);
-  const ids = where(job).parked?.questions ?? [];
-  const texts = where(job).parked?.texts ?? [];
+  const ids = parkedOf(job)?.questions ?? [];
+  const texts = parkedOf(job)?.texts ?? [];
   const was = releaseIn(ctx.jobs, key, ACTOR, settled.withdrawn);
   if (!was) return false;
   ctx.commit("orchestrator.job_released", settled.reason, key, { was });
@@ -306,7 +306,7 @@ async function questionsDeleted(ctx: Context, item: Ref, deleted: AskedText[]): 
  * again at its triage. True when the job left its parked state.
  */
 export async function followRewrite(ctx: Context, job: Job, item: WorkItem): Promise<boolean> {
-  const posted = where(job).parked?.rewrite;
+  const posted = parkedOf(job)?.rewrite;
   const rewrite = parkedRewrite(job);
   if (!posted || posted.answered || posted.questions.length === 0 || !rewrite) return false;
   if (posted.askedAt && Date.parse(item.updatedAt) < Date.parse(posted.askedAt)) return false;
@@ -325,12 +325,12 @@ export async function followRewrite(ctx: Context, job: Job, item: WorkItem): Pro
   const answers = given.map((answer) => answer!.answer);
   const settle = ctx.deps.actions.settleQuestions;
   if (keepsRecommendations(rewrite, answers)) {
-    setWhere(job, { parked: { ...where(job).parked!, rewrite: { ...posted, answered: true } } });
+    editParked(job, { ...parkedOf(job)!, rewrite: { ...posted, answered: true } });
     ctx.commit("orchestrator.rewrite_questions_answered", `The questions of the triage's rewrite (round ${rewrite.round}) were answered on ${job.item.host} with the recommendations: the rewrite waits for a person to accept, edit or reject it.`, key, { round: rewrite.round });
     return false;
   }
   const changed = rewrite.questions.map((question, index) => ({ question, answer: answers[index]! })).filter((each) => !picks(each.answer, each.question.recommendation));
-  setWhere(job, { parked: undefined, notBefore: undefined });
+  release(job);
   delete job.rewrite;
   job.failures = 0;
   ctx.commit("orchestrator.rewrite_answered", `Answered on ${job.item.host} otherwise than recommended in round ${rewrite.round} of the triage (${changed.map((each) => `${each.question.question} Answered: ${each.answer}`).join(" ")}); the triage runs again with the answers.`, key, { round: rewrite.round });
@@ -448,7 +448,7 @@ function parkRestructure(ctx: Context, job: Job, proposed: NonNullable<TriageAns
  * merging), so it keeps its context. Without a known session the implement step starts afresh with the message after its prompt.
  */
 /** What the implementor is told besides its message: merge the approved change, or the round for an approval's `should` findings. */
-type Told = Pick<WherePatch, "merge" | "shouldRound">;
+type Told = { merge?: true; shouldRound?: true };
 
 function backToImplementor(ctx: Context, job: Job, message: string, reason: string, told: Told = {}): void {
   const key = refKey(job.item);
@@ -482,9 +482,9 @@ function handable(ctx: Context, job: Job): PendingOverturn[] {
 export function overturnsBack(ctx: Context, job: Job): boolean {
   const pending = handable(ctx, job);
   if (pending.length === 0) return false;
-  const waiting = stepAt(job) === "implement" && !where(job).merge ? job.resumeWith ?? "" : "";
+  const waiting = stepAt(job) === "implement" && !mergeApproved(job) ? job.resumeWith ?? "" : "";
   // What the reviewer approved is not what a person wants: the change goes through review again before it is merged.
-  setWhere(job, { merge: undefined });
+  dropMerge(job);
   backToImplementor(ctx, job, waiting, `A person overturned ${pending.length === 1 ? "a decision" : `${pending.length} decisions`} the implementor took itself while the change has not merged. Next: the implementor's own session changes the work to match, before review.`);
   return true;
 }
@@ -492,14 +492,14 @@ export function overturnsBack(ctx: Context, job: Job): boolean {
 /** The step succeeded; the next one starts after the short continuation delay. */
 function next(ctx: Context, job: Job, step: JobStep, reason: string, told: Told = {}): void {
   job.failures = 0;
-  setWhere(job, { step, sessionId: undefined, resume: undefined, notBefore: later(ctx.at, CONTINUE_MS), ...told });
+  nextStep(job, step, later(ctx.at, CONTINUE_MS), told);
   ctx.commit("orchestrator.step", reason, refKey(job.item), { next: step });
 }
 
 /** The step failed: retry with backoff, or give the item to a person when the attempts are used up. */
 async function failed(ctx: Context, job: Job, why: string, byStep = true): Promise<void> {
   job.failures++;
-  setWhere(job, { sessionId: undefined, resume: undefined });
+  endSession(job);
   // A resumed implementor that failed may have failed because of the resume (a lost session): the next attempt starts afresh.
   if (stepAt(job) === "implement" && job.resumeWith) delete job.agentSession;
   const max = persistenceLimits(ctx.config.settings.persistence.value).maxAttempts;
@@ -510,12 +510,12 @@ async function failed(ctx: Context, job: Job, why: string, byStep = true): Promi
     return;
   }
   const delay = backoffMs(job.failures, ctx.config.settings.retryBackoffCapSeconds.value * 1000);
-  setWhere(job, { notBefore: later(ctx.at, delay) });
+  const notBefore = wait(job, later(ctx.at, delay));
   ctx.commit(
     "orchestrator.retry_scheduled",
     `The ${stepAt(job)} step failed (${job.failures} of ${max}): ${why} Trying again in ${Math.round(delay / 1000)} s.`,
     refKey(job.item),
-    { failures: job.failures, notBefore: where(job).notBefore },
+    { failures: job.failures, notBefore },
   );
 }
 
@@ -524,20 +524,21 @@ async function failed(ctx: Context, job: Job, why: string, byStep = true): Promi
  * neither reviewed nor merged, but implemented again. The reason goes into the event.
  */
 export function backToImplement(ctx: Context, job: Job, reason: string): void {
-  setWhere(job, { step: "implement" });
+  moveStep(job, "implement");
+  handOverTaken(job);
+  endSession(job);
   job.failures = 0;
-  setWhere(job, { sessionId: undefined, resume: undefined, owes: undefined });
   delete job.head;
   // The work is gone: a new implementor starts from the Item, not from findings on work that is not there.
   delete job.resumeWith;
   delete job.agentSession;
-  setWhere(job, { merge: undefined });
+  dropMerge(job);
   delete job.base;
   delete job.roundBase;
   delete job.sentBack;
   // The decisions were about work that is gone.
   delete job.taken;
-  setWhere(job, { notBefore: later(ctx.at, CONTINUE_MS) });
+  wait(job, later(ctx.at, CONTINUE_MS));
   ctx.commit("orchestrator.back_to_implement", `${reason} Nothing is reviewed or merged; next: implement.`, refKey(job.item), { next: "implement" });
 }
 
@@ -560,7 +561,7 @@ export async function emptyBranch(ctx: Context, job: Job): Promise<string | null
  */
 export async function afterBuild(ctx: Context, job: Job, item: WorkItem | null): Promise<void> {
   if (ctx.config.level >= 3) {
-    setWhere(job, { merge: undefined });
+    dropMerge(job);
     if (await fenced(ctx, job)) return;
     return next(ctx, job, "review", "Built. Next: review by another model.");
   }
@@ -627,7 +628,7 @@ const APPROVED = "Approved. Merge now as CLAUDE.md says.";
  */
 async function handOver(ctx: Context, job: Job, item: WorkItem | null, askedBy?: string): Promise<void> {
   // This is the hand-over that was owed, if one was: whatever happens now, it is not owed any more unless said again below.
-  setWhere(job, { owes: undefined });
+  handOverTaken(job);
   if (ctx.config.level < 4) return sessionMerged(ctx, job, item, askedBy);
   if (await reviewedOnMain(ctx, job)) return;
   // A person's Merge queue pick was checked against the job as it was then: only the revision the reviewer approved goes to the
@@ -667,7 +668,7 @@ async function handOver(ctx: Context, job: Job, item: WorkItem | null, askedBy?:
   }
   if (!mergeQueueOn(ctx.deps.store)) {
     // The session is over: the tick hands it over by itself once the merge queue is resumed, and settles nothing again meanwhile.
-    setWhere(job, { owes: "hand-over", sessionId: undefined, resume: undefined });
+    oweHandOver(job);
     ctx.commit("orchestrator.merge_queue_paused", `The merge queue is paused: ${job.branch} is not handed to the queue now; it is when the merge queue is resumed.`, refKey(job.item));
     return;
   }
@@ -694,7 +695,7 @@ async function reviewedOnMain(ctx: Context, job: Job): Promise<boolean> {
   }
   const head = job.reviewedHead;
   const key = refKey(job.item);
-  setWhere(job, { merged: head });
+  markMerged(job, head);
   ctx.commit("orchestrator.merged", `${job.branch} is on ${main} of ${ctx.config.remote} as ${head.slice(0, 7)} already, the revision the reviewer approved: it is merged, and not handed over again.`, key, { sha: head, main: tip, by: "found" });
   await ctx.act("write the merge to the item's log", key, () => actions.appendLog(job.item, "merged", { sha: head, target: main }));
   await closeMerged(ctx, job, head);
@@ -782,7 +783,6 @@ async function settleSessionMerge(ctx: Context, job: Job, item: WorkItem | null,
   if (late && !merged) return false;
   if (merged && mode === "forbidden") {
     // Its instructions said to commit and stop: a merge nobody reviewed, or at level 4 one the merge queue's check never saw.
-    setWhere(job, { merged: undefined });
     await park(
       ctx, job, "escalated",
       `The implementor merged ${job.branch} to ${main} (${name} contains ${merged.slice(0, 7)}) although its instructions said to commit and stop, not to merge (its session started at level ${job.sessionStart?.level ?? "?"}; the level is ${ctx.config.level} now). The change is on ${main} without the review or the merge queue's check. Look at it; close the Item if it is fine, or answer here to have it looked at again.`,
@@ -792,7 +792,7 @@ async function settleSessionMerge(ctx: Context, job: Job, item: WorkItem | null,
   }
   await writeRevision(ctx, job);
   if (merged) {
-    setWhere(job, { merged: merged });
+    markMerged(job, merged);
     const how = contains === true
       ? `${name} at ${tip.slice(0, 7)} contains its head ${head.slice(0, 7)}`
       : `${name} at ${tip.slice(0, 7)} contains ${merged.slice(0, 7)}, a squash of its head ${head.slice(0, 7)} (the same files, new since ${base!.slice(0, 7)})`;
@@ -831,7 +831,7 @@ async function settleSessionMerge(ctx: Context, job: Job, item: WorkItem | null,
  */
 function afterAnswer(ctx: Context, job: Job, name: string, askedBy: string): void {
   const what = `${name} does not contain ${job.branch} yet, and ${askedBy} answered`;
-  if (ctx.config.level === 3 && where(job).merge !== true) {
+  if (ctx.config.level === 3 && !mergeApproved(job)) {
     next(ctx, job, "review", `${what}. At level 3 a reviewer looks at the change before it is merged. Next: review.`);
     return;
   }
@@ -861,7 +861,7 @@ export function reviewOffAtLevel2(ctx: Context, job: Job): void {
  */
 export function queueOffBelowLevel4(ctx: Context, job: Job): void {
   const was = job.queued;
-  setWhere(job, { parked: undefined });
+  release(job);
   delete job.queued;
   backToImplementor(
     ctx, job, APPROVED,
@@ -885,7 +885,7 @@ export async function sendBack(ctx: Context, job: Job, finding: string, what: st
   if (failure) job.progress = { ...job.progress, mergeQueue: failure };
   // The change goes back to its implementor: no hand-over is owed until a new revision is reviewed. A person's pick of the merge
   // queue was for the revision it sent back; what comes next goes as the level says.
-  setWhere(job, { owes: undefined });
+  handOverTaken(job);
   delete job.queueAskedBy;
   delete job.reviewAskedBy;
   job.fixRounds++;
@@ -992,19 +992,19 @@ export async function settle(ctx: Context, job: Job, session: Session | null, re
 async function settleStep(ctx: Context, job: Job, session: Session | null, record: SessionResultRecord, item: WorkItem | null, main?: string | null): Promise<void> {
   const key = refKey(job.item);
   // The session is over: what follows (parked, an owed hand-over, merged, the next step) is not beside a running one.
-  setWhere(job, { sessionId: undefined });
+  endSession(job);
   if (!session) {
     await failed(ctx, job, "The session's record is missing from the store.");
     return;
   }
 
   if (session.status === "limit") {
-    setWhere(job, { notBefore: record.resumeAt ?? later(ctx.at, 30 * 60_000), resume: session.agentSessionId, sessionId: undefined });
-    ctx.commit("orchestrator.limit", `The ${stepAt(job)} session was cut off by the usage limit. It is resumed after ${where(job).notBefore}.`, key, { notBefore: where(job).notBefore });
+    const notBefore = wait(job, record.resumeAt ?? later(ctx.at, 30 * 60_000), session.agentSessionId);
+    ctx.commit("orchestrator.limit", `The ${stepAt(job)} session was cut off by the usage limit. It is resumed after ${notBefore}.`, key, { notBefore });
     return;
   }
   if (session.status === "cancelled") {
-    setWhere(job, { notBefore: later(ctx.at, CONTINUE_MS), resume: session.agentSessionId, sessionId: undefined });
+    wait(job, later(ctx.at, CONTINUE_MS), session.agentSessionId);
     ctx.commit("orchestrator.interrupted", `The ${stepAt(job)} session was stopped (${session.endReason ?? "no reason recorded"}). It continues when work may start again; this is not counted as a failure.`, key);
     return;
   }
@@ -1020,7 +1020,7 @@ async function settleStep(ctx: Context, job: Job, session: Session | null, recor
       await park(ctx, job, "escalated", reason, "escalation");
       return;
     }
-    setWhere(job, { notBefore: later(ctx.at, CONTINUE_MS), resume: session.agentSessionId, sessionId: undefined });
+    wait(job, later(ctx.at, CONTINUE_MS), session.agentSessionId);
     ctx.commit("orchestrator.interrupted", `The ${stepAt(job)} session was left by an earlier run of Scope Soup (${session.endReason ?? "no reason recorded"}). The step starts again; this is not counted as a failure.`, key);
     return;
   }
@@ -1053,7 +1053,7 @@ async function settleStep(ctx: Context, job: Job, session: Session | null, recor
   // Read again: another Item's answer earlier in this tick may have closed it.
   const now = ctx.deps.store.get<WorkItem>(job.item) ?? null;
   if (stepAt(job) === "triage" && (!now || !isOpenItem(now))) {
-    setWhere(job, { sessionId: undefined });
+    endSession(job);
     delete ctx.jobs[key];
     // A triage again on work that was built (a recheck) keeps its branch: commits on it are not Scope Soup's to throw away.
     const kept = await keptBranch(ctx, job);
@@ -1075,7 +1075,7 @@ async function settleStep(ctx: Context, job: Job, session: Session | null, recor
     const text = job.triaging ?? (item ? triagedText(item) : undefined);
     if (text) job.triaged = triagedNow(text, item, ctx.deps.store.list<WorkItem>("work"), ctx.at, main, answer.links ?? []);
     delete job.triaging;
-    setWhere(job, { recheck: undefined });
+    setRecheck(job, undefined);
     // An answer with a rewrite goes through the rewrite loop. One without (from earlier) is settled as before.
     if (answer.rewrite !== undefined) return triage(ctx, job, answer, item);
     const decision = answer.decision;
@@ -1121,7 +1121,7 @@ async function settleStep(ctx: Context, job: Job, session: Session | null, recor
     if (!answer.done) return ask(ctx, job, "implementer", answer.decision, answer.summary, item);
     // Level 2, or level 3 after the approval: the session merged it itself (or opened a pull request), so its branch may have no
     // commits over main any more. The hand-over looks at what it did.
-    const merging = ctx.config.level === 2 || (ctx.config.level === 3 && where(job).merge === true);
+    const merging = ctx.config.level === 2 || (ctx.config.level === 3 && mergeApproved(job));
     if (merging) {
       delete job.resumeWith;
       // An overturn that arrived while it worked goes back to it before the hand-over.
@@ -1130,8 +1130,8 @@ async function settleStep(ctx: Context, job: Job, session: Session | null, recor
     }
     // A round for the review's `should` findings (review.shouldFindings "fix") that committed nothing: the approved change goes on,
     // and the findings become a draft.
-    if (where(job).shouldRound) {
-      setWhere(job, { shouldRound: undefined });
+    if (shouldRoundOf(job)) {
+      dropShouldRound(job);
       if (job.head && (await headOf(ctx, job)) === job.head) return shouldNothingNew(ctx, job, item);
     }
     const empty = await emptyBranch(ctx, job);
@@ -1166,7 +1166,7 @@ async function settleStep(ctx: Context, job: Job, session: Session | null, recor
   }
 
   if (stepAt(job) === "review") {
-    setWhere(job, { shouldRound: undefined });
+    dropShouldRound(job);
     // A person's In review pick (decision 104) was for this step; what comes next goes as the level says.
     delete job.reviewAskedBy;
     const answer = asReview(record.output);
@@ -1294,7 +1294,7 @@ const linkedItem = (ctx: Context, subject: Ref, name: string): WorkItem | null =
 
 /** Closed, or Done on the board: its change merged (also while the host still shows it open). Nothing to ask about it. */
 const finishedItem = (ctx: Context, work: WorkItem): boolean =>
-  !isOpenItem(work) || (work.merged !== undefined && work.merged.reopened === undefined) || where(ctx.jobs[refKey(work.ref)])?.merged !== undefined;
+  !isOpenItem(work) || (work.merged !== undefined && work.merged.reopened === undefined) || mergedOf(ctx.jobs[refKey(work.ref)]) !== undefined;
 
 /**
  * True when `from` already waits on `target`, directly or through other open Items: its `blockedBy`, Scope Soup's own blockers, and
@@ -1553,13 +1553,13 @@ export async function withdrawSettledDuplicates(ctx: Context, job: Job): Promise
   });
   if (withdrawn.length === 0) return false;
   rewrite.questions = rewrite.questions.filter((question) => !withdrawn.includes(question));
-  if ((where(job).parked!.rewrite?.questions.length ?? 0) > 0) await questionsDeleted(ctx, job.item, []);
+  if ((parkedOf(job)!.rewrite?.questions.length ?? 0) > 0) await questionsDeleted(ctx, job.item, []);
   if (rewrite.questions.length > 0 || !sameText(rewrite.text, rewrite.original) || (rewrite.labels && !isEmptyChange(rewrite.labels))) {
     await park(ctx, job, "needs-decision", rewriteReason(rewrite), "decision");
     return true;
   }
   delete job.rewrite;
-  setWhere(job, { parked: undefined });
+  release(job);
   job.failures = 0;
   const settled = " The duplicate question was withdrawn, and nothing else waits for an answer.";
   if (job.triage) await afterTriage(ctx, job, job.triage, settled);
@@ -1662,11 +1662,11 @@ export async function afterRewrite(ctx: Context, job: Job): Promise<void> {
   const rewritten = rewrite?.settled === "accepted" || rewrite?.settled === "edited";
   if (!job.triage.ready && !job.triage.restructure && rewrite && (answered || rewritten)) {
     const settled = rewritten ? `${rewrite.settled} the rewrite${answered ? " with the answers to its questions" : ""}` : "answered its questions";
-    setWhere(job, { recheck: {
+    setRecheck(job, {
       reasons: [`a person ${settled} after it said the Item was not ready`],
       previous: job.triage, previousAt: job.triaged?.at ?? job.startedAt, commits: [], commitCount: 0, finished: [],
       ...(rewritten && job.triaged ? { text: { title: job.triaged.title, body: rewrite.original, verification: job.triaged.verification } } : {}),
-    } });
+    });
     return next(ctx, job, "triage", `A person ${settled} after triage said ${job.item.id} was not ready. Next: triage again, with the answers.`);
   }
   return afterTriage(ctx, job, job.triage, rewrite?.settled ? ` A person ${rewrite.settled} the rewrite.` : "");
@@ -1688,7 +1688,7 @@ export async function keptBranch(ctx: Context, job: Job): Promise<string | null>
 
 /** A person said "try again" after a failed hand-over: repeat it without a session, if the branch is still there. */
 export async function retryHandOver(ctx: Context, job: Job, item: WorkItem | null): Promise<void> {
-  setWhere(job, { owes: undefined });
+  handOverTaken(job);
   try {
     await ctx.deps.runner.changedPaths(job.branch);
   } catch (error) {
@@ -1763,14 +1763,13 @@ export async function writeAboutOthers(ctx: Context): Promise<void> {
     // here have questions: a rewrite alone is a proposed rewrite (`keepAboutOthers`), which leaves the job alone.
     const rewrite = changedRewrite([...entries].reverse().find((each) => each.rewrite)?.rewrite, item.body, item.verification) || original;
     // A job parked before gave back its workspace then; one between steps holds it still.
-    const holds = existing !== undefined && !where(existing).parked;
+    const holds = existing !== undefined && !parkedOf(existing);
     const job: Job = existing ?? jobOf({ item: item.ref, workspace: workspaceKey(item.ref), branch: workBranch(item.ref), failures: 0, fixRounds: 0, startedAt: ctx.at, othersAsked: true, step: "triage" });
     // Work paused on it keeps its branch, its implementor's session and the findings it is to be told; what it was about to do
     // next waits until the triage has run again with the answers.
-    setWhere(job, { step: "triage" });
+    toTriage(job);
     job.failures = 0;
     for (const field of ["decision", "proposal", "rewrite", "triaging", "answered", "answerArrived"] as const) delete job[field];
-    setWhere(job, { notBefore: undefined, resume: undefined, recheck: undefined, merge: undefined });
     const round = (job.rewriteRounds ?? 0) + 1;
     job.rewriteRounds = round;
     job.rewrite = { original, text: rewrite, questions, round, askedBy };
@@ -1820,9 +1819,8 @@ function askersOpen(ctx: Context, item: WorkItem, entries: readonly WaitingAbout
 
 /** `park` for an Item with no claim or workspace of its own to give back (no job, or one parked before). */
 async function parkFresh(ctx: Context, job: Job, reason: string): Promise<void> {
-  setWhere(job, { parked: { as: "needs-decision", reason, at: ctx.at } });
+  parkJob(job, { as: "needs-decision", reason, at: ctx.at });
   job.parks = nextPark(job, ctx.deps.store.get<WorkItem>(job.item)?.log);
-  setWhere(job, { sessionId: undefined });
   ctx.commit(PARK_EVENT["needs-decision"], reason, refKey(job.item), { step: stepAt(job) });
   await tellPeople(ctx, job, "needs-decision", reason, "decision");
 }
