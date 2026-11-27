@@ -88,6 +88,7 @@ import { parkedForAnswer } from "../core/phase.ts";
 import { phaseOf } from "../orchestrator/phase.ts";
 import type { Job } from "../orchestrator/jobs.ts";
 import { where } from "../orchestrator/jobs.ts";
+import { stepAt } from "../orchestrator/jobs.ts";
 
 export interface ServerOptions {
   store: Store;
@@ -1956,7 +1957,7 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
   /** Why a person cannot claim the item: a session of Scope Soup's runs on it (only the server knows). */
   function sessionRunning(ref: Ref): string | undefined {
     const job = loadJobs(store)[refKey(ref)];
-    return job && where(job).sessionId ? `${ref.id} has its ${where(job).step} session running now. Scope Soup stops nothing that runs: pause Scope Soup on the board, or wait for the session to end.` : undefined;
+    return job && where(job).sessionId ? `${ref.id} has its ${stepAt(job)} session running now. Scope Soup stops nothing that runs: pause Scope Soup on the board, or wait for the session to end.` : undefined;
   }
 
   /**

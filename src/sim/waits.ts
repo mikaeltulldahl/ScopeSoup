@@ -5,6 +5,7 @@ import type { Job } from "../orchestrator/jobs.ts";
 import type { WorkItem } from "../model/types.ts";
 import { itemTextHash } from "../core/answerReuse.ts";
 import { where } from "../orchestrator/jobs.ts";
+import { stepAt } from "../orchestrator/jobs.ts";
 
 export type Role = "triage" | "implement" | "review";
 export type PersonWait = "answer" | "rewrite" | "restructuring" | "not-ready" | "escalated" | "merge" | "holds";
@@ -143,12 +144,12 @@ export function wText(w: W): string {
 
 /** The lane a person's wait is in under decision 2 (a): the stage the work is at; with no change yet, To do (or Backlog, #221). */
 export function stageLane(item: WorkItem, job: Job | undefined): string {
-  if (job && (where(job).step === "review" || job.reviewedHead)) return "in-review";
-  if (job && (job.head || (where(job).step === "implement" && job.implement))) return "in-progress";
+  if (job && (stepAt(job) === "review" || job.reviewedHead)) return "in-review";
+  if (job && (job.head || (stepAt(job) === "implement" && job.implement))) return "in-progress";
   return item.backlog ? "backlog" : "todo";
 }
 
 /** The implement step is new work: it has not begun (no change, no session of it, nothing to resume, no attempt yet). */
 export function newWork(job: Job): boolean {
-  return where(job).step === "implement" && !job.head && !job.implement && !job.agentSession && job.resumeWith === undefined && !where(job).resume && job.failures === 0 && !where(job).merge;
+  return stepAt(job) === "implement" && !job.head && !job.implement && !job.agentSession && job.resumeWith === undefined && !where(job).resume && job.failures === 0 && !where(job).merge;
 }

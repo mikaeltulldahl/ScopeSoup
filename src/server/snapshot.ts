@@ -17,6 +17,7 @@ import { readControl } from "../store/control.ts";
 import { KEYS } from "../store/keys.ts";
 import type { Store } from "../store/store.ts";
 import { where } from "../orchestrator/jobs.ts";
+import { stepAt } from "../orchestrator/jobs.ts";
 
 export { KEYS } from "../store/keys.ts";
 
@@ -57,7 +58,7 @@ export function loadSnapshot(store: Store): Snapshot {
       const asked = parked.as === "needs-decision";
       // A rewrite's questions are shown with the rewrite, not as the parked state's one decision.
       const rewrite = asked && job.rewrite && !job.rewrite.settled ? job.rewrite : undefined;
-      const decision = asked && !rewrite ? job.decision ?? (where(job).step === "triage" ? job.triage?.decision : undefined) : undefined;
+      const decision = asked && !rewrite ? job.decision ?? (stepAt(job) === "triage" ? job.triage?.decision : undefined) : undefined;
       // A job stored with a proposed rewrite (removed) has no parts; the tick releases it.
       const stored = asked && job.proposal?.parts?.length ? job.proposal : undefined;
       // On GitHub each question is a comment, and its answer is read from there.
@@ -99,8 +100,8 @@ export function loadSnapshot(store: Store): Snapshot {
 /** Where a job is, for the board (decision 2: a person's wait shows in the lane of the stage its work is at). */
 export function jobStage(job: Job): JobStage {
   const phase = phaseOf(job);
-  const stage: JobStage["stage"] = phase.at === "queued" ? "queue" : where(job).step === "review" || job.reviewedHead ? "review" : job.head || (where(job).step === "implement" && job.implement) ? "implement" : "start";
-  return { subject: job.item, stage, step: where(job).step, phase };
+  const stage: JobStage["stage"] = phase.at === "queued" ? "queue" : stepAt(job) === "review" || job.reviewedHead ? "review" : job.head || (stepAt(job) === "implement" && job.implement) ? "implement" : "start";
+  return { subject: job.item, stage, step: stepAt(job), phase };
 }
 
 /** The parts of an item's restructuring that exist on its host, found by their part lines; a child is `linked` when it is a sub-issue of the item. */

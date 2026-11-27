@@ -44,6 +44,7 @@ import { plural } from "../model/plural.ts";
 import { stepOf } from "../core/phase.ts";
 import { phaseOf } from "./phase.ts";
 import { jobOf, setWhere, where } from "./jobs.ts";
+import { stepAt } from "./jobs.ts";
 
 
 const CONTINUE_MS = 1000;
@@ -78,7 +79,7 @@ export async function park(ctx: Context, job: Job, as: ParkedAs, reason: string,
   delete job.implementAskedBy;
   // Answers to an earlier set of questions do not count for this parked Item.
   delete job.answered;
-  ctx.commit(PARK_EVENT[as], reason, key, { step: where(job).step });
+  ctx.commit(PARK_EVENT[as], reason, key, { step: stepAt(job) });
   const { runner } = ctx.deps;
   if (ask) await tellPeople(ctx, job, as, reason, ask, retry);
   // The claim stays while the job does (#243): let go here, another machine took the Item and worked on it beside this parked job.
@@ -97,7 +98,7 @@ export async function retryPost(ctx: Context, job: Job): Promise<void> {
   // Through at last: the parked Item went from an escalation (the host could not be written) to a person's question, which is a change.
   const posted = where(job).parked;
   if (posted && posted.retry !== "post") {
-    ctx.commit("orchestrator.question_posted", `The question that could not be posted is posted now: ${clipText(posted.reason, 300)}`, refKey(job.item), { step: where(job).step });
+    ctx.commit("orchestrator.question_posted", `The question that could not be posted is posted now: ${clipText(posted.reason, 300)}`, refKey(job.item), { step: stepAt(job) });
   }
 }
 
@@ -109,11 +110,11 @@ async function tellPeople(ctx: Context, job: Job, as: ParkedAs, reason: string, 
   // A question from triage or the implementer, or a proposed restructuring.
   // A rewrite is one line naming the parked Item; its questions are answered with the rewrite on the item page.
   const rewriting = as === "needs-decision" && job.rewrite !== undefined;
-  const asked = as === "needs-decision" && !rewriting ? job.decision ?? (where(job).step === "triage" ? job.triage?.decision : undefined) : undefined;
+  const asked = as === "needs-decision" && !rewriting ? job.decision ?? (stepAt(job) === "triage" ? job.triage?.decision : undefined) : undefined;
   const decision = asked?.question.trim() ? asked : undefined;
   const proposal = as === "needs-decision" ? job.proposal : undefined;
   // Triage found several decisions: each is its own question in the log.
-  const all = as === "needs-decision" && !rewriting && !proposal && !job.decision && where(job).step === "triage" ? (job.triage?.decisions ?? []).filter((d) => d.question.trim()) : [];
+  const all = as === "needs-decision" && !rewriting && !proposal && !job.decision && stepAt(job) === "triage" ? (job.triage?.decisions ?? []).filter((d) => d.question.trim()) : [];
   const questions = all.length > 1 ? all : [];
   // On GitHub the questions are comments, which tell a person too. So are each triage round's rewrite and a proposed restructuring.
   const posted = as === "needs-decision" && (rewriting
@@ -170,7 +171,7 @@ async function askOnHost(ctx: Context, job: Job, questions: readonly (Decision &
   const { actions } = ctx.deps;
   const asking = questions.map((each): QuestionWrite => ({
     question: each.question, options: each.options, ...(each.recommendation ? { recommendation: each.recommendation } : {}), ...(each.context ? { context: each.context } : {}), ...(each.multiSelect ? { multiSelect: true as const } : {}),
-    parked: "needs-decision", step: where(job).step, ...(each.proposal ? { proposal: each.proposal } : {}),
+    parked: "needs-decision", step: stepAt(job), ...(each.proposal ? { proposal: each.proposal } : {}),
   }));
   let asked: { ids: string[]; at: string; numbers?: number[] } | null;
   try {
@@ -210,13 +211,13 @@ async function hostFailed(ctx: Context, job: Job, what: string, error: unknown, 
     if (was.retry === "post" && was.reason === reason) return;
     ctx.commit("orchestrator.host_write_failed", `Could not post ${what} on ${job.item.host}: ${problem} It is tried again at the next tick.`, key);
     setWhere(job, { parked: { ...rest, as: "escalated", reason, retry: "post", posting: posting ?? was.reason } });
-    ctx.commit(PARK_EVENT.escalated, reason, key, { step: where(job).step });
+    ctx.commit(PARK_EVENT.escalated, reason, key, { step: stepAt(job) });
     return;
   }
   ctx.commit("orchestrator.host_write_failed", `Could not post ${what} on ${job.item.host}: ${problem}`, key);
   const reason = `${job.item.host} could not be written: ${problem} ${said} Answer here to start again.`;
   setWhere(job, { parked: { ...rest, as: "escalated", reason } });
-  ctx.commit(PARK_EVENT.escalated, reason, key, { step: where(job).step });
+  ctx.commit(PARK_EVENT.escalated, reason, key, { step: stepAt(job) });
   await ctx.act("put the item on a person's list", key, () => ctx.deps.actions.answerTurn(job.item, "escalation", reason));
 }
 
@@ -246,7 +247,7 @@ async function rewriteOnHost(ctx: Context, job: Job): Promise<boolean> {
     try {
       const asked = await actions.askQuestions!(job.item, rewrite.questions.map((each): QuestionWrite => ({
         question: each.question, options: each.options, ...(each.recommendation ? { recommendation: each.recommendation } : {}), ...(each.context ? { context: each.context } : {}), ...(each.multiSelect ? { multiSelect: true as const } : {}),
-        parked: "needs-decision", step: where(job).step, rewrite: id,
+        parked: "needs-decision", step: stepAt(job), rewrite: id,
       })));
       ids = asked?.ids ?? [];
       numbers = asked?.numbers;
@@ -376,7 +377,7 @@ export function followLog(ctx: Context, job: Job, item: WorkItem): boolean {
 
 /** A tool was refused (read from the session's result): not a question for a person, but a setting only a person can change. */
 function parkTools(ctx: Context, job: Job, who: string, refused: string): Promise<void> {
-  const role = where(job).step;
+  const role = stepAt(job);
   const program = providerFor(ctx.config, role).refusedProgram(refused, ctx.config.roles[role].allowedTools);
   const advice = program
     ? `\`${program}\` is already allowed for the ${role} role, so what was refused was the shape of the command, not the program (a \`$(...)\`, heredoc, backtick, pipe, \`&&\` or \`;\` is not matched by the allowed form). The allowedTools do not need to change; answer here to try again with one plain command per call (a commit message goes in a file, then \`git commit -F <file>\`).`
@@ -419,7 +420,7 @@ async function ask(ctx: Context, job: Job, who: string, decision: Decision | und
   const question = decision?.question.trim() ? decision : undefined;
   if (question && (job.reusedAnswers ?? 0) < MAX_REUSED && (await reuseAnswer(ctx, job, item, question, who))) {
     job.reusedAnswers = (job.reusedAnswers ?? 0) + 1;
-    return next(ctx, job, where(job).step, `The ${who} asked a question a person has answered; the answer is in its prompt. Next: ${where(job).step} again.`);
+    return next(ctx, job, stepAt(job), `The ${who} asked a question a person has answered; the answer is in its prompt. Next: ${stepAt(job)} again.`);
   }
   if (question) job.decision = question;
   const text = question
@@ -484,7 +485,7 @@ function handable(ctx: Context, job: Job): PendingOverturn[] {
 export function overturnsBack(ctx: Context, job: Job): boolean {
   const pending = handable(ctx, job);
   if (pending.length === 0) return false;
-  const waiting = where(job).step === "implement" && !where(job).merge ? job.resumeWith ?? "" : "";
+  const waiting = stepAt(job) === "implement" && !where(job).merge ? job.resumeWith ?? "" : "";
   // What the reviewer approved is not what a person wants: the change goes through review again before it is merged.
   setWhere(job, { merge: undefined });
   backToImplementor(ctx, job, waiting, `A person overturned ${pending.length === 1 ? "a decision" : `${pending.length} decisions`} the implementor took itself while the change has not merged. Next: the implementor's own session changes the work to match, before review.`);
@@ -503,10 +504,10 @@ async function failed(ctx: Context, job: Job, why: string, byStep = true): Promi
   job.failures++;
   setWhere(job, { sessionId: undefined, resume: undefined });
   // A resumed implementor that failed may have failed because of the resume (a lost session): the next attempt starts afresh.
-  if (where(job).step === "implement" && job.resumeWith) delete job.agentSession;
+  if (stepAt(job) === "implement" && job.resumeWith) delete job.agentSession;
   const max = persistenceLimits(ctx.config.settings.persistence.value).maxAttempts;
   if (job.failures >= max) {
-    const reason = `The ${where(job).step} step failed ${job.failures} times; the limit is ${max}. Last failure: ${why}`;
+    const reason = `The ${stepAt(job)} step failed ${job.failures} times; the limit is ${max}. Last failure: ${why}`;
     if (byStep) await parkByStep(ctx, job, "escalated", reason, "escalation");
     else await park(ctx, job, "escalated", reason, "escalation");
     return;
@@ -515,7 +516,7 @@ async function failed(ctx: Context, job: Job, why: string, byStep = true): Promi
   setWhere(job, { notBefore: later(ctx.at, delay) });
   ctx.commit(
     "orchestrator.retry_scheduled",
-    `The ${where(job).step} step failed (${job.failures} of ${max}): ${why} Trying again in ${Math.round(delay / 1000)} s.`,
+    `The ${stepAt(job)} step failed (${job.failures} of ${max}): ${why} Trying again in ${Math.round(delay / 1000)} s.`,
     refKey(job.item),
     { failures: job.failures, notBefore: where(job).notBefore },
   );
@@ -922,7 +923,7 @@ async function writeSession(ctx: Context, job: Job, session: Session, record: Se
   // The triage's links, for the next sessions' `{{history}}` (decision 112).
   const links = triage && Array.isArray(output.links) ? linkWords(output.links) : [];
   if (links.length > 0) fields.links = links;
-  if (after && stepOf(phaseOf(after)) !== null) fields.next = where(after).step;
+  if (after && stepOf(phaseOf(after)) !== null) fields.next = stepAt(after);
   if (output.size === "small" || output.size === "medium" || output.size === "large") fields.size = output.size;
   await ctx.act("write the session to the item's log", refKey(job.item), () => ctx.deps.actions.appendLog(job.item, "session", fields));
 }
@@ -974,12 +975,12 @@ async function settleStep(ctx: Context, job: Job, session: Session | null, recor
 
   if (session.status === "limit") {
     setWhere(job, { notBefore: record.resumeAt ?? later(ctx.at, 30 * 60_000), resume: session.agentSessionId, sessionId: undefined });
-    ctx.commit("orchestrator.limit", `The ${where(job).step} session was cut off by the usage limit. It is resumed after ${where(job).notBefore}.`, key, { notBefore: where(job).notBefore });
+    ctx.commit("orchestrator.limit", `The ${stepAt(job)} session was cut off by the usage limit. It is resumed after ${where(job).notBefore}.`, key, { notBefore: where(job).notBefore });
     return;
   }
   if (session.status === "cancelled") {
     setWhere(job, { notBefore: later(ctx.at, CONTINUE_MS), resume: session.agentSessionId, sessionId: undefined });
-    ctx.commit("orchestrator.interrupted", `The ${where(job).step} session was stopped (${session.endReason ?? "no reason recorded"}). It continues when work may start again; this is not counted as a failure.`, key);
+    ctx.commit("orchestrator.interrupted", `The ${stepAt(job)} session was stopped (${session.endReason ?? "no reason recorded"}). It continues when work may start again; this is not counted as a failure.`, key);
     return;
   }
   // Left by an earlier run (Scope Soup restarted while it ran): the restart is not the step's failure, so the step starts again, up
@@ -989,13 +990,13 @@ async function settleStep(ctx: Context, job: Job, session: Session | null, recor
     const max = persistenceLimits(ctx.config.settings.persistence.value).maxAttempts;
     if (job.orphanRestarts >= max) {
       delete job.orphanRestarts;
-      const reason = `The ${where(job).step} session was left by an earlier run of Scope Soup ${max} times in a row (${session.endReason ?? "no reason recorded"}): Scope Soup may be stopping while it runs. Answer here to start it again.`;
-      ctx.commit("orchestrator.restart_limit", reason, key, { step: where(job).step, restarts: max });
+      const reason = `The ${stepAt(job)} session was left by an earlier run of Scope Soup ${max} times in a row (${session.endReason ?? "no reason recorded"}): Scope Soup may be stopping while it runs. Answer here to start it again.`;
+      ctx.commit("orchestrator.restart_limit", reason, key, { step: stepAt(job), restarts: max });
       await park(ctx, job, "escalated", reason, "escalation");
       return;
     }
     setWhere(job, { notBefore: later(ctx.at, CONTINUE_MS), resume: session.agentSessionId, sessionId: undefined });
-    ctx.commit("orchestrator.interrupted", `The ${where(job).step} session was left by an earlier run of Scope Soup (${session.endReason ?? "no reason recorded"}). The step starts again; this is not counted as a failure.`, key);
+    ctx.commit("orchestrator.interrupted", `The ${stepAt(job)} session was left by an earlier run of Scope Soup (${session.endReason ?? "no reason recorded"}). The step starts again; this is not counted as a failure.`, key);
     return;
   }
   delete job.orphanRestarts;
@@ -1019,25 +1020,25 @@ async function settleStep(ctx: Context, job: Job, session: Session | null, recor
   const repaired = recoverFields(record.output);
   if (repaired.recovered.length > 0) {
     record.output = repaired.value;
-    ctx.commit("orchestrator.answer_repaired", `The ${where(job).step} answer had ${repaired.recovered.join(", ")} run into another field as tool-call markup; taken out and read as part of the answer.`, key, { fields: repaired.recovered });
+    ctx.commit("orchestrator.answer_repaired", `The ${stepAt(job)} answer had ${repaired.recovered.join(", ")} run into another field as tool-call markup; taken out and read as part of the answer.`, key, { fields: repaired.recovered });
   }
 
   // Closed while its session ran (a duplicate closed from another Item's answer, a restructuring accepted, closed on the host): the
   // Item's job closes on this tick, and nothing the session said is written, on this Item or on others.
   // Read again: another Item's answer earlier in this tick may have closed it.
   const now = ctx.deps.store.get<WorkItem>(job.item) ?? null;
-  if (where(job).step === "triage" && (!now || !isOpenItem(now))) {
+  if (stepAt(job) === "triage" && (!now || !isOpenItem(now))) {
     setWhere(job, { sessionId: undefined });
     delete ctx.jobs[key];
     // A triage again on work that was built (a recheck) keeps its branch: commits on it are not Scope Soup's to throw away.
     const kept = await keptBranch(ctx, job);
-    ctx.commit("orchestrator.result_dropped", `${job.item.id} ${now ? `was ${now.duplicateOf ? `closed as a duplicate of ${now.duplicateOf.id}` : now.state}` : "left the store"} while its triage ran: the triage's result is dropped, nothing of it is written on ${job.item.id} or on other Items, and its job is closed.${kept ? ` Its branch ${job.branch} is kept: ${kept}.` : ""}`, key, { step: where(job).step });
+    ctx.commit("orchestrator.result_dropped", `${job.item.id} ${now ? `was ${now.duplicateOf ? `closed as a duplicate of ${now.duplicateOf.id}` : now.state}` : "left the store"} while its triage ran: the triage's result is dropped, nothing of it is written on ${job.item.id} or on other Items, and its job is closed.${kept ? ` Its branch ${job.branch} is kept: ${kept}.` : ""}`, key, { step: stepAt(job) });
     await ctx.act("remove the worktree", key, () => ctx.deps.runner.releaseWorkspace(job.workspace));
     if (!kept) await ctx.act("delete the branch", key, () => ctx.deps.runner.deleteBranch(job.branch));
     return;
   }
 
-  if (where(job).step === "triage") {
+  if (stepAt(job) === "triage") {
     // A person's Triage pick (decision 104) was for this step.
     delete job.triageAskedBy;
     const answer = asTriage(record.output);
@@ -1069,7 +1070,7 @@ async function settleStep(ctx: Context, job: Job, session: Session | null, recor
     return afterTriage(ctx, job, answer);
   }
 
-  if (where(job).step === "implement") {
+  if (stepAt(job) === "implement") {
     const answer = asImplement(record.output);
     // The implementor's own session: findings and merging failures resume it.
     if (session.agentSessionId) job.agentSession = session.agentSessionId;
@@ -1083,7 +1084,7 @@ async function settleStep(ctx: Context, job: Job, session: Session | null, recor
     const about = (answer.aboutOthers ?? []).filter((entry) => {
       const other = partner && linkedItem(ctx, job.item, entry.item);
       if (!other || refKey(other.ref) !== refKey(partner!)) return true;
-      ctx.commit("orchestrator.result_dropped", `${job.item.id} was closed as a duplicate of ${partner!.id} while its implementor worked: what it asked about ${partner!.id} is dropped.`, key, { step: where(job).step, item: refKey(partner!) });
+      ctx.commit("orchestrator.result_dropped", `${job.item.id} was closed as a duplicate of ${partner!.id} while its implementor worked: what it asked about ${partner!.id} is dropped.`, key, { step: stepAt(job), item: refKey(partner!) });
       return false;
     });
     keepAboutOthers(ctx, job, "implement", about);
@@ -1139,7 +1140,7 @@ async function settleStep(ctx: Context, job: Job, session: Session | null, recor
     return afterBuild(ctx, job, item);
   }
 
-  if (where(job).step === "review") {
+  if (stepAt(job) === "review") {
     setWhere(job, { shouldRound: undefined });
     // A person's In review pick (decision 104) was for this step; what comes next goes as the level says.
     delete job.reviewAskedBy;
@@ -1790,6 +1791,6 @@ async function parkFresh(ctx: Context, job: Job, reason: string): Promise<void> 
   setWhere(job, { parked: { as: "needs-decision", reason, at: ctx.at } });
   job.parks = nextPark(job, ctx.deps.store.get<WorkItem>(job.item)?.log);
   setWhere(job, { sessionId: undefined });
-  ctx.commit(PARK_EVENT["needs-decision"], reason, refKey(job.item), { step: where(job).step });
+  ctx.commit(PARK_EVENT["needs-decision"], reason, refKey(job.item), { step: stepAt(job) });
   await tellPeople(ctx, job, "needs-decision", reason, "decision");
 }

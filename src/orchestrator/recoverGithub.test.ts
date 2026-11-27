@@ -20,6 +20,7 @@ import type { Jobs } from "./jobs.ts";
 import { loadJobs, saveJobs } from "./jobs.ts";
 import { recoverFromLogs } from "./recover.ts";
 import { where } from "./jobs.ts";
+import { stepAt } from "./jobs.ts";
 
 const at = "2026-11-22T09:00:00Z";
 const R = "/repos/harbour/tides/issues";
@@ -145,7 +146,7 @@ describe("recovery from GitHub", () => {
     await actions.appendLog(ref("4"), "session", { role: "implement", outcome: "succeeded", summary: "Built it.", next: "review" });
     const { jobs, events } = await deletedStore();
     const job = jobs[key("4")]!;
-    assert.equal(where(job).step, "review");
+    assert.equal(stepAt(job), "review");
     assert.equal(job.head, "c".repeat(40));
     assert.equal(job.branch, "scopesoup/4");
     assert.equal(job.triage?.size, "small");
@@ -178,7 +179,7 @@ describe("recovery from GitHub", () => {
     const job = loadJobs(store)[key("5")]!;
     const comments = fake.comments.get("5")!;
     const rewriteId = String(comments.filter((comment) => readMarker(comment.body)?.kind === "rewrite").at(-1)!.id);
-    assert.equal(where(job).step, "triage");
+    assert.equal(stepAt(job), "triage");
     assert.equal(job.rewriteRounds, 2);
     assert.deepEqual(job.rewrite, { original: "Show the tides.", text: REWRITE, questions: [QUESTION], round: 2 });
     assert.equal(where(job).parked?.as, "needs-decision");

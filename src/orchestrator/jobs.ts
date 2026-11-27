@@ -497,6 +497,12 @@ function decode(at: JobAt): Where {
   }
 }
 
+/** The step the job is at: the one it runs or waits for, or the one it parked, owes its hand-over or merged at. */
+export function stepAt(job: Job): JobStep {
+  const at = job.at;
+  return at.kind === "triage" || at.kind === "implement" || at.kind === "review" ? at.kind : at.step;
+}
+
 /** Where the job is (`Where`), read from its stored case. */
 export function where(job: Job): Readonly<Where>;
 export function where(job: Job | null | undefined): Readonly<Where> | undefined;
@@ -550,17 +556,20 @@ function parseJob(value: unknown): Job | null {
     case "review":
       return typeof at.run === "object" && at.run !== null && (at.run.is === "waiting" || (at.run.is === "running" && typeof at.run.session === "string")) ? (job as Job) : null;
     case "parked":
-      return isStep(at.step) && typeof at.parked === "object" && at.parked !== null ? (job as Job) : null;
+      return isStep(at.step) && isParked(at.parked) ? (job as Job) : null;
     case "hand-over":
       return isStep(at.step) ? (job as Job) : null;
     case "merged":
-      return isStep(at.step) && typeof at.sha === "string" ? (job as Job) : null;
+      return isStep(at.step) && typeof at.sha === "string" && (at.parked === undefined || isParked(at.parked)) ? (job as Job) : null;
     default:
       return null;
   }
 }
 
 const isStep = (value: unknown): value is JobStep => value === "triage" || value === "implement" || value === "review";
+const PARKED_AS: readonly ParkedAs[] = ["queued", "handed-over", "needs-decision", "not-ready", "escalated"];
+const isParked = (value: unknown): value is JobParked =>
+  typeof value === "object" && value !== null && PARKED_AS.includes((value as JobParked).as) && typeof (value as JobParked).reason === "string" && typeof (value as JobParked).at === "string";
 
 const KEY = "orchestrator.jobs";
 
@@ -632,7 +641,7 @@ export function changedMeanwhile(store: Store, jobs: Jobs, key: string): "none" 
   const stored = readStored(store)[key];
   const text = baselines.get(jobs)?.get(key);
   const was = text === undefined ? undefined : (JSON.parse(text) as Job);
-  if (!stored || !was || stored.interrupt !== undefined || stored.dropAskedBy !== undefined || where(stored).step !== where(was).step) return "picked";
+  if (!stored || !was || stored.interrupt !== undefined || stored.dropAskedBy !== undefined || stepAt(stored) !== stepAt(was)) return "picked";
   return JSON.stringify(where(stored).parked) === JSON.stringify(where(was).parked) ? "changed" : "picked";
 }
 

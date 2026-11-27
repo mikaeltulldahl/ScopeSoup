@@ -17,6 +17,7 @@ import { loadJobs } from "./jobs.ts";
 import type { Actions, AgentRunner } from "./ports.ts";
 import { tick } from "./tick.ts";
 import { where } from "./jobs.ts";
+import { stepAt } from "./jobs.ts";
 
 const SHA = "b".repeat(40);
 const NEWER = "c".repeat(40);
@@ -118,7 +119,7 @@ test("the tick takes a hand-back on: a job with the branch and head, and the rev
   const w = world([item("A-1", { log: [line("created", {}), HANDBACK, line("released", { reason: "handed back" })] })]);
   await w.run();
   const job = w.job("A-1")!;
-  assert.equal(where(job).step, "review");
+  assert.equal(stepAt(job), "review");
   assert.equal(job.branch, "scopesoup/A-1");
   assert.equal(job.head, SHA);
   assert.match(job.implement!.summary, /Handed back by Ada on laptop-a: with a test/);
@@ -190,7 +191,7 @@ test("the tick takes a Jira hand-back on at the branch's head, writes the revisi
   const w = world([jiraItem()]);
   await w.run();
   const job = jiraJob(w.store)!;
-  assert.equal(where(job).step, "review");
+  assert.equal(stepAt(job), "review");
   assert.equal(job.head, SHA);
   assert.deepEqual(w.logged.filter((each) => each.includes("revision")), [`DEMO-5 revision ${JSON.stringify({ sha: SHA, branch: "scopesoup/DEMO-5", handback: "40007" })}`]);
   await w.run("2026-11-20T10:00:05.000Z");

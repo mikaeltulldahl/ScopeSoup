@@ -24,6 +24,7 @@ import { providerNamed } from "./providers/index.ts";
 import { poolRepoPath, readHoldings, samePath } from "./workspaces.ts";
 import { phaseOf } from "./phase.ts";
 import { where } from "./jobs.ts";
+import { stepAt } from "./jobs.ts";
 
 /** One turn as stored. `agentSession` is the session it continued (or the one the reply came from, when the agent forked it). */
 export interface ChatTurn {
@@ -192,7 +193,7 @@ export function createChat(deps: ChatDeps): Chat {
     if (phaseAt === "queued" || phaseAt === "hand-over" || job.queued !== undefined) {
       return "The Item is queued for merging (or being merged); talk to its sessions once it merges or comes back.";
     }
-    if (roleStopped(store, where(job).step)) return `Stop was pressed: no ${where(job).step} session runs until you press Resume ${SWITCH_WORDS[where(job).step]}.`;
+    if (roleStopped(store, stepAt(job))) return `Stop was pressed: no ${stepAt(job)} session runs until you press Resume ${SWITCH_WORDS[stepAt(job)]}.`;
     const turns = readTurns(store, item);
     if (pending.has(item) || turns.some((turn) => !turn.finishedAt && isLive(session(turn.session)))) return "Your last message is still being answered.";
     const live = store.list<Session>("session").find((each) => refKey(each.subject) === item && isLive(each));
@@ -203,7 +204,7 @@ export function createChat(deps: ChatDeps): Chat {
     if (holder && !holder.actor.bot) {
       return `${holder.actor.name} holds this Item, so Scope Soup leaves it alone.`;
     }
-    const budget = usageDecision(store, current, where(job).step, at, runner.running());
+    const budget = usageDecision(store, current, stepAt(job), at, runner.running());
     if (!budget.allow) return `The usage stop: ${budget.reason}`;
     return null;
   }

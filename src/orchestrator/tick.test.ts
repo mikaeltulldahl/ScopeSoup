@@ -48,6 +48,7 @@ import { defaultConfig, initialState, step as queueStep } from "../queue/index.t
 import { setWhere, where } from "./jobs.ts";
 import { jobOf } from "./jobs.ts";
 import type { Job, JobFields, JobParked, Where } from "./jobs.ts";
+import { stepAt } from "./jobs.ts";
 
 const T0 = Date.parse("2026-11-18T10:00:00.000Z");
 /** The fake remote's main before and after a session merged, and the head of every item branch. */
@@ -4591,7 +4592,7 @@ test("a triage puts a question and a rewrite on another backlog Item, which park
   await step(w, "1", "succeeded", { ...TRIAGE_OK, aboutOthers: [{ item: "#2", questions: [ABOUT_Q], rewrite: ABOUT_REWRITE }] });
   const job = w.job("2")!;
   assert.equal(where(job).parked?.as, "needs-decision");
-  assert.equal(where(job).step, "triage");
+  assert.equal(stepAt(job), "triage");
   assert.deepEqual(job.rewrite, { original: "Wind units.", text: ABOUT_REWRITE, questions: [{ ...ABOUT_Q, question: "Knots or metres per second? (asked by triage of 1)" }], round: 1, askedBy: ["triage of 1"] });
   assert.match(where(job).parked?.reason ?? "", /^Asked by triage of 1: a rewrite of the description and 1 question about 2 waits for an answer: 1\. Knots or metres per second\? \(asked by triage of 1\)/);
   // Its own triage did not start; item 1 went on to implement.
@@ -4687,7 +4688,7 @@ test("an implementor puts a question on an Item with paused work, which keeps it
   await step(w, "1", "succeeded", { ...IMPLEMENT_OK, aboutOthers: [{ item: "2", questions: [ABOUT_Q], rewrite: "An implementor's rewrite is not taken." }] });
   const job = w.job("2")!;
   assert.equal(where(job).parked?.as, "needs-decision");
-  assert.equal(where(job).step, "triage");
+  assert.equal(stepAt(job), "triage");
   assert.deepEqual(job.rewrite?.askedBy, ["the implementor of 1"]);
   assert.equal(job.rewrite?.text, "Wind units.");
   assert.deepEqual(job.rewrite?.questions.map((each) => each.question), ["Knots or metres per second? (asked by the implementor of 1)"]);

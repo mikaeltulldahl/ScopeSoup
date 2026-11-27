@@ -20,6 +20,7 @@ import type { ScopeSoupServer } from "./server.ts";
 import { createServer } from "./server.ts";
 import { where } from "../orchestrator/jobs.ts";
 import { jobOf } from "../orchestrator/jobs.ts";
+import { stepAt } from "../orchestrator/jobs.ts";
 
 const META = "refs/scopesoup/meta";
 const person = { name: "Test Person", email: "test.person@example.invalid" };
@@ -237,7 +238,7 @@ test("another answer to a rewrite is recorded and sends the item back to its tri
   assert.equal(answered.status, 200, JSON.stringify(answered.body));
   assert.equal(answered.body.rerun, true);
   const stored = loadJobs(store)[ref]!;
-  assert.deepEqual([where(stored).step, where(stored).parked, stored.rewrite], ["triage", undefined, undefined]);
+  assert.deepEqual([stepAt(stored), where(stored).parked, stored.rewrite], ["triage", undefined, undefined]);
   const after = await page(ref);
   assert.equal(after.item.body?.trim(), "Harbour names.");
   assert.deepEqual(after.answers.map((each) => `${each.question}: ${each.answer}`), ["Local names?: No, the official ones"]);

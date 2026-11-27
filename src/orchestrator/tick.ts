@@ -53,6 +53,7 @@ import { plural } from "../model/plural.ts";
 import { firstImplement, waitingStep } from "../core/phase.ts";
 import { phaseOf } from "./phase.ts";
 import { jobOf, setWhere, where } from "./jobs.ts";
+import { stepAt } from "./jobs.ts";
 
 export type { TickDeps } from "./context.ts";
 
@@ -181,7 +182,7 @@ function interrupted(ctx: Context, key: string, job: Job, item: WorkItem | null)
   }
   else if (own && where(job).sessionId) {
     // The session was over before the pick reached it: its result, not yet read, is not taken, and that is a change of the job.
-    ctx.commit("orchestrator.result_dropped", `${asked.by} picked ${PICK_WORDS[asked.to] ?? asked.to} for ${item?.ref.id ?? key} on the board: the result of its ${own.role} session ${own.ref.id}, which had ended, is not taken.`, key, { by: asked.by, step: where(job).step });
+    ctx.commit("orchestrator.result_dropped", `${asked.by} picked ${PICK_WORDS[asked.to] ?? asked.to} for ${item?.ref.id ?? key} on the board: the result of its ${own.role} session ${own.ref.id}, which had ended, is not taken.`, key, { by: asked.by, step: stepAt(job) });
   }
   delete job.interrupt;
   setWhere(job, { sessionId: undefined, resume: undefined });
@@ -207,7 +208,7 @@ function stopForClosed(ctx: Context, key: string, job: Job, item: WorkItem | nul
     if (after && isLive(after)) return true;
   } else if (own && where(job).sessionId) {
     if (takeEnded) return false;
-    ctx.commit("orchestrator.result_dropped", `${item ? `${item.ref.id} is ${item.state}` : `${key} is no longer in the store`}: the result of its ${own.role} session ${own.ref.id} is not taken.`, key, { step: where(job).step });
+    ctx.commit("orchestrator.result_dropped", `${item ? `${item.ref.id} is ${item.state}` : `${key} is no longer in the store`}: the result of its ${own.role} session ${own.ref.id} is not taken.`, key, { step: stepAt(job) });
   }
   delete job.interrupt;
   setWhere(job, { sessionId: undefined, resume: undefined });
@@ -439,7 +440,7 @@ async function overturnsMerged(ctx: Context, itemByKey: Map<string, WorkItem>): 
  * (and any answers a person gave since); without a known session a fresh one gets the message after its prompt.
  */
 export function implementorMessage(job: Job, decided: string): { resume?: string; message?: string } {
-  if (where(job).step !== "implement" || job.resumeWith === undefined) return where(job).resume ? { resume: where(job).resume } : {};
+  if (stepAt(job) !== "implement" || job.resumeWith === undefined) return where(job).resume ? { resume: where(job).resume } : {};
   const resume = where(job).resume ?? job.agentSession;
   if (resume) return { resume, message: `${job.resumeWith} Answer as before.${decided ? `\n\n${DECIDED}\n${decided}` : ""}` };
   // Level 3, approved, and the session that wrote the change is lost: a fresh implementor is told to merge the approved branch.
@@ -507,7 +508,7 @@ export function linkedWorks(store: Store, item: WorkItem, job: Job): { type: Lin
 /** Every variable a role template may use (the Item, where the session works, and the commands it may run). */
 export function promptVars(config: ProjectConfig, item: WorkItem, job: Job, answers: readonly RecordedAnswer[] = [], repoLabels: RepoLabel[] | null = null, linked: readonly { type: LinkType; item: WorkItem }[] = []): Record<string, string> {
   // What earlier sessions on the Item did, with the answers given since (decision 112); the answers it shows are not listed twice.
-  const earlier = earlierText(item.log ?? item.hostRecord?.log ?? [], answers, { role: where(job).step });
+  const earlier = earlierText(item.log ?? item.hostRecord?.log ?? [], answers, { role: stepAt(job) });
   const decided = answersText(answers.filter((answer) => !earlier.shown.includes(answer)), refKey(item.ref));
   return {
     project: config.project,
@@ -521,7 +522,7 @@ export function promptVars(config: ProjectConfig, item: WorkItem, job: Job, answ
     itemTitle: inertTags(item.title),
     itemBody: inertTags((item.body?.trim() || "(no description)") + (decided ? `\n\n${DECIDED}\n${decided}` : "") + deletedText(item)),
     verification: item.verification?.trim() || "(none given)",
-    allowedCommands: providerFor(config, where(job).step).commandsText(config.roles[where(job).step].allowedTools),
+    allowedCommands: providerFor(config, stepAt(job)).commandsText(config.roles[stepAt(job)].allowedTools),
     // The labels the triage may propose (never `scopesoup:*`), or that it may propose none.
     labels: labelsPromptText(repoLabels, item.labels),
     finish: finishText(config, job),
@@ -655,7 +656,7 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
     // Closing an Item ends everything it owns (decision 5): its step session is stopped at once and its result not taken; the job
     // closes below, once that session is gone. Done at the implement step is the usual end (the session merged, and the host closed
     // the Item): when that session is over already, what it said (drafts, questions about other Items) is still taken.
-    if (over && stopForClosed(ctx, key, job, item, item?.state === "done" && where(job).step === "implement")) {
+    if (over && stopForClosed(ctx, key, job, item, item?.state === "done" && stepAt(job) === "implement")) {
       running++;
       continue;
     }
@@ -707,7 +708,7 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
         continue;
       }
       // Before the job moves on (and frees its clone): the remote's main moved only fast-forward, whoever pushed.
-      const main = await watchMain(ctx, job, `after the ${where(job).step} session for ${item?.ref.id ?? key}`);
+      const main = await watchMain(ctx, job, `after the ${stepAt(job)} session for ${item?.ref.id ?? key}`);
       await settle(ctx, job, session, readSessionResult(store, ownSession), item, main);
       // Settled away (a triage dropped because its Item was closed meanwhile): its job, workspace and branch are seen to already.
       if (!jobs[key]) continue;
@@ -782,7 +783,7 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
     // work (a recheck) was under way, whose commits are not Scope Soup's to throw away.
     if (!where(job).sessionId && over) {
       delete jobs[key];
-      const kept = !item || where(job).step === "triage" ? await keptBranch(ctx, job) : null;
+      const kept = !item || stepAt(job) === "triage" ? await keptBranch(ctx, job) : null;
       const why = `${item ? `The item is ${item.state}; its job is closed.` : "The item is no longer in the store; its job is closed."}${kept ? ` Its branch ${job.branch} is kept: ${kept}.` : ""}`;
       ctx.commit(finished ? "orchestrator.finished" : "orchestrator.job_closed", why, key);
       const { actions } = ctx.deps;
@@ -873,7 +874,7 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
   // person can see.
   const personAsked = (job: Job | null | undefined, step: SessionRole): boolean =>
     ((step === "review" && job?.reviewAskedBy !== undefined) || (step === "triage" && job?.triageAskedBy !== undefined) || (step === "implement" && job?.implementAskedBy !== undefined)) && switchOnFor(store, step, level);
-  const personWork = Object.values(jobs).some((job) => waitingStep(phaseOf(job)) !== null && personAsked(job, where(job).step));
+  const personWork = Object.values(jobs).some((job) => waitingStep(phaseOf(job)) !== null && personAsked(job, stepAt(job)));
   const control = Object.fromEntries(ROLES.map((role) => [role, switchState(store, role)])) as Record<SessionRole, SwitchState>;
   const stoppedRoles = ROLES.filter((role) => control[role] === "stopped");
   if (stoppedRoles.length > 0 && running > 0) {
@@ -928,24 +929,24 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
     }
     // Backlog is no work (decision 121): a person's moves take an Item with work under way to To do. Left is a person's one-off
     // triage there, whose implement step waits for To do; a job that has a session, a revision or something to resume never waits.
-    if (item.backlog && where(job).step === "implement" && job.implementAskedBy === undefined && job.head === undefined && !job.resumeWith && !where(job).resume) {
-      reasons.push(`${item.ref.id} ${BACKLOG_REASON} before its ${where(job).step} step`);
+    if (item.backlog && stepAt(job) === "implement" && job.implementAskedBy === undefined && job.head === undefined && !job.resumeWith && !where(job).resume) {
+      reasons.push(`${item.ref.id} ${BACKLOG_REASON} before its ${stepAt(job)} step`);
       continue;
     }
     // An open blocker holds the next step of work under way, as it holds a new Item (decision 3): a person may have added it, or a
     // person's Triage pick looked at a blocked Item and found it ready. Only that pick runs on a blocked Item (#243).
-    if (!(where(job).step === "triage" && job.triageAskedBy !== undefined)) {
+    if (!(stepAt(job) === "triage" && job.triageAskedBy !== undefined)) {
       const open = (blockedNow.get(key) ?? []).filter((blocker) => openWork.has(refKey(blocker)));
       if (open.length > 0) {
-        reasons.push(`${item.ref.id} is blocked by ${open.map((blocker) => blocker.id).join(", ")} before its ${where(job).step} step`);
+        reasons.push(`${item.ref.id} is blocked by ${open.map((blocker) => blocker.id).join(", ")} before its ${stepAt(job)} step`);
         continue;
       }
     }
     // Level 0 starts only what a person picked.
-    if (level === 0 && !personAsked(job, where(job).step)) continue;
+    if (level === 0 && !personAsked(job, stepAt(job))) continue;
     // A step above the level waits at it, and keeps no slot: raising the level lets it go on. A person's pick is not held by it.
-    if (STEP_LEVEL[where(job).step] > level && !personAsked(job, where(job).step)) {
-      above.push(`${item.ref.id} at ${where(job).step}`);
+    if (STEP_LEVEL[stepAt(job)] > level && !personAsked(job, stepAt(job))) {
+      above.push(`${item.ref.id} at ${stepAt(job)}`);
       continue;
     }
     // The description a person accepted is written on the host, and the store reads it after the next sync: no step starts on the old text.
@@ -964,7 +965,7 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
     }
     const notBefore = where(job).notBefore;
     if (notBefore && Date.parse(notBefore) > Date.parse(at)) {
-      reasons.push(`${item.ref.id} waits until ${notBefore} before its ${where(job).step} step`);
+      reasons.push(`${item.ref.id} waits until ${notBefore} before its ${stepAt(job)} step`);
       // A step that follows within a moment keeps its slot, so work under way is finished before new work starts.
       if (Date.parse(notBefore) - Date.parse(at) <= KEEP_SLOT_MS) reserved++;
       if (!report.wakeAt || notBefore < report.wakeAt) report.wakeAt = notBefore;
@@ -1010,7 +1011,7 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
   // Triage again within its share (#217): one To do Item whose triage is out of date, the stalest, while the share has room and no
   // other one chosen so is under way; after the steps of work under way, ahead of new work (the share bounds it). Backlog never; at
   // level 1 no implement step waits, so nothing is chosen.
-  if (level >= 2 && control.triage === "started" && !Object.values(jobs).some((job) => where(job).recheck?.background && where(job).step === "triage")) {
+  if (level >= 2 && control.triage === "started" && !Object.values(jobs).some((job) => where(job).recheck?.background && stepAt(job) === "triage")) {
     retriageShare = pace.retriage();
     const looked = retriageLooked.get(store);
     if (retriageShare.allow && (looked === undefined || Date.parse(at) - looked >= RETRIAGE_LOOK_MS || Date.parse(at) < looked)) {

@@ -16,6 +16,7 @@ import { workBranch, workspaceKey } from "../orchestrator/paths.ts";
 import { sessionOf, stepOf, waitsForAnswer as answerAwaited } from "../core/phase.ts";
 import { phaseOf } from "../orchestrator/phase.ts";
 import { jobOf, setWhere, where } from "../orchestrator/jobs.ts";
+import { stepAt } from "../orchestrator/jobs.ts";
 
 export const MOVES = ["triage", "todo", "in-review", "merge-queue", "implement"] as const;
 export type Move = (typeof MOVES)[number];
@@ -123,7 +124,7 @@ export function moveWhys(input: MoveInput): MoveWhys {
     closed ? "reopen it first"
       : off ? off.why
       : running === "review" ? "in review already"
-      : !job || job.head === undefined || where(job).step === "triage" ? "nothing to review yet"
+      : !job || job.head === undefined || stepAt(job) === "triage" ? "nothing to review yet"
       : input.needs?.review ? input.needs.review
       : job.dropAskedBy ? "back to To do already"
       : queued ? queuedWhy
@@ -135,7 +136,7 @@ export function moveWhys(input: MoveInput): MoveWhys {
   // The merge queue now: a reviewed change, at any level when the queue can run (decision 104). The tick hands it over as after an
   // approval. Approved on the revision the branch is at now: a newer one (a fix round after an approval) is not reviewed yet.
   const approved = job?.review?.verdict === "approve" && !job.review.findings.some((finding) => finding.severity === "must")
-    && job.head !== undefined && job.reviewedHead === job.head && (where(job).step === "review" || where(job).merge === true);
+    && job.head !== undefined && job.reviewedHead === job.head && (stepAt(job) === "review" || where(job).merge === true);
   // Below level 4 the merge queue is not offered at all (decision 104): it is Scope Soup's own, not a person's.
   if (level < 4) return result;
   result["merge-queue"] = why(

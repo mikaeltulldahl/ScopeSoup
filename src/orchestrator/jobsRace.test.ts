@@ -16,7 +16,7 @@ function job(id: string, extra: Partial<Job & Where> = {}): Job {
   } as Job & Where);
 }
 
-const parked = { as: "decision", reason: "asks", at: "2026-11-20T10:00:00Z" } as unknown as JobParked;
+const parked: JobParked = { as: "needs-decision", reason: "asks", at: "2026-11-20T10:00:00Z" };
 const K1 = "h:work:1";
 const K2 = "h:work:2";
 
