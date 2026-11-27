@@ -59,6 +59,8 @@ export interface StartObs {
 
 export interface Observation {
   seed: number;
+  /** The machine observed (one of several in the multiplayer profile). */
+  machine?: string;
   step: number;
   action: Action;
   at: string;
@@ -127,7 +129,7 @@ export async function observe(world: SimWorld, seed: number, action: Action, pre
   const pathsOf = (job: Job): string[] => [...new Set(job.triage?.paths ?? [])];
   // A change the merge queue pushed is on main before the tick reads the queue's notice: until then it is busy, as the tick sees it.
   const busy = Object.values(jobs).filter((job) => isBusy(job, job.parked?.as !== "queued" && onMain(job.head)) && open.has(refKey(job.item))).map((job) => ({ key: refKey(job.item), paths: pathsOf(job), conflicts: (job.triage?.links ?? []).filter((l) => l.type === "conflictsWith").map((l) => l.item.replace(/^#/, "")) }));
-  const claimant = "scopesoup@laptop-a";
+  const claimant = `scopesoup@${world.machine}`;
   const itemObs: ItemObs[] = [];
   for (const item of items) {
     const key = refKey(item.ref);
@@ -157,7 +159,7 @@ export async function observe(world: SimWorld, seed: number, action: Action, pre
   });
   const requestsBefore = previous ? previous.ledger.requests.filter((r) => r.step < world.step).length : 0;
   return {
-    seed, step: world.step, action, at, level: world.configNow.level, slots: world.configNow.settings.maxParallelSessions.value, switches, usageReserve, fair: world.fair,
+    seed, machine: world.machine, step: world.step, action, at, level: world.configNow.level, slots: world.configNow.settings.maxParallelSessions.value, switches, usageReserve, fair: world.fair,
     items: itemObs, sessions: store.list<Session>("session"), started, liveCount: live.length, events, lastSeq,
     ...(first ? { firstEvent: JSON.stringify(first) } : {}),
     answers: knownAnswers(store), tick: action.kind === "tick" || action.kind === "inside-tick" ? world.lastTick : null, tickError: world.tickError,

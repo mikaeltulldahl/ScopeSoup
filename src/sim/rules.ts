@@ -105,7 +105,9 @@ export const RULES: Rule[] = [
         if (rebuild[i.key] && !i.job) return null;
         // A person's hold comes first in W, but the questions the job is parked on still wait for an answer under it.
         if (i.w.kind === "person" && i.w.why === "holds" && i.job?.parked) return null;
-        const open = (i.host.openQuestions ?? []).filter((q) => !q.proposal).length;
+        // Another machine's Scope Soup asked it: that machine's job waits for it, not this one's (the multiplayer profile).
+        const elsewhere = (q: { by: { agent?: boolean; machine?: string } }): boolean => !!q.by.agent && !!o.machine && !!q.by.machine && q.by.machine !== o.machine;
+        const open = (i.host.openQuestions ?? []).filter((q) => !q.proposal && !elsewhere(q)).length;
         const personAsk = i.w.kind === "person" && i.w.why !== "holds";
         if (personAsk && !asks(i.w) && open > 1) return `${i.id} has ${open} open question lines on the host, but W is ${wText(i.w)}, which asks one thing`;
         if (open > 0 && !personAsk && i.w.kind !== "session") return `${i.id} has ${open} open question line(s) on the host, but W is ${wText(i.w)}`;
