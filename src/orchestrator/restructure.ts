@@ -13,10 +13,11 @@ import { inertText } from "./hostText.ts";
 import type { Job, Proposal } from "./jobs.ts";
 import { loadJobs, releaseIn, saveJobs } from "./jobs.ts";
 import { plural } from "../model/plural.ts";
+import { setWhere, where } from "./jobs.ts";
 
 /** The restructuring this job is parked on, if it parked on one. */
 export function restructuringOf(job: Job | undefined): Proposal | undefined {
-  const proposal = job?.parked?.as === "needs-decision" ? job.proposal : undefined;
+  const proposal = where(job)?.parked?.as === "needs-decision" ? job!.proposal : undefined;
   return proposal?.parts && proposal.parts.length > 0 ? proposal : undefined;
 }
 
@@ -166,7 +167,7 @@ export function finishRestructuring(store: Store, item: Ref, actor: string, at: 
     const original = proposal.original;
     delete job.proposal;
     delete job.answered;
-    job.parked = { as: "not-ready", reason, at };
+    setWhere(job, { parked: { as: "not-ready", reason, at } });
     if (release) releaseIn(jobs, key, actor);
     saveJobs(store, jobs);
     store.appendEvent({ kind: "orchestrator.restructure_done", subject: key, actor, data: { reason, original, created: created.map((each) => refKey(each.ref)) } }, at);
@@ -188,7 +189,7 @@ export function stopRestructuring(store: Store, item: Ref, actor: string, at: st
     const created = proposal.created ?? [];
     delete job.proposal;
     delete job.answered;
-    job.parked = { as: "not-ready", reason, at };
+    setWhere(job, { parked: { as: "not-ready", reason, at } });
     saveJobs(store, jobs);
     store.appendEvent({ kind: "orchestrator.restructure_stopped", subject: key, actor, data: { reason, created: created.map((each) => refKey(each.ref)) } }, at);
     return true;

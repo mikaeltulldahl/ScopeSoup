@@ -20,6 +20,7 @@ import type { CliDeps } from "./cli.ts";
 import { runItemCli } from "./cli.ts";
 import { remoteBranches } from "./remoteBranch.ts";
 import { execFileSyncRetrying } from "../hosts/spawnRetry.ts";
+import { jobOf } from "../orchestrator/jobs.ts";
 
 const cleanups: (() => Promise<void> | void)[] = [];
 after(async () => {
@@ -240,7 +241,7 @@ test("through the server: the same commands, and it refuses an item an agent ses
   assert.equal(third.holder?.actor.name, "Cy on laptop-a");
 
   // A session is running on A-2 in this store: taking it is refused with the reason.
-  const jobs: Jobs = { "metaBranch:work:A-2": { item: { host: "metaBranch", kind: "work", id: "A-2" }, workspace: "w", branch: "scopesoup/A-2", step: "implement", failures: 0, fixRounds: 0, sessionId: "s1", startedAt: "2026-11-18T09:00:00Z" } };
+  const jobs: Jobs = { "metaBranch:work:A-2": jobOf({ item: { host: "metaBranch", kind: "work", id: "A-2" }, workspace: "w", branch: "scopesoup/A-2", step: "implement", failures: 0, fixRounds: 0, sessionId: "s1", startedAt: "2026-11-18T09:00:00Z" }) };
   saveJobs(store, jobs);
   assert.equal(await c.run("claim", "A-2"), 1);
   assert.match(c.err.at(-1)!, /implement session running now/);

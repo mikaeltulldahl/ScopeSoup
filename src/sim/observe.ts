@@ -20,6 +20,7 @@ import { waitsFor as productWaitsFor } from "../core/waits.ts";
 import { itemTextHash } from "../core/answerReuse.ts";
 import { phaseOf, pickOf } from "../orchestrator/phase.ts";
 import type { Action, Ledger, PageJson, SimWorld } from "./world.ts";
+import { where } from "../orchestrator/jobs.ts";
 
 export interface ItemObs {
   key: string;
@@ -158,7 +159,8 @@ export async function observe(world: SimWorld, seed: number, action: Action, pre
   const caps = { triage: settings.waitingCapTriage.value, work: settings.waitingCapWork.value };
   const waiting = items.filter((item) => !closedState(item)).filter((item) => {
     const job = jobs[refKey(item.ref)];
-    const asks = job ? !!job.parked && job.parked.as !== "queued" : item.needsDecision === true;
+    const parked = where(job)?.parked;
+    const asks = job ? !!parked && parked.as !== "queued" : item.needsDecision === true;
     return asks || (item.assumptions ?? []).some((each) => !each.settled);
   }).length + store.list<{ decided?: unknown }>("draft").filter((draft) => !draft.decided).length;
   const live = [...world.runner.live.values()];
@@ -166,7 +168,7 @@ export async function observe(world: SimWorld, seed: number, action: Action, pre
   // The paths an Item's work is known by: what its triage named (#187 compares these; what the branch changes is not looked at).
   const pathsOf = (job: Job): string[] => [...new Set(job.triage?.paths ?? [])];
   // A change the merge queue pushed is on main before the tick reads the queue's notice: until then it is busy, as the tick sees it.
-  const busy = Object.values(jobs).filter((job) => isBusy(job, job.parked?.as !== "queued" && onMain(job.head)) && open.has(refKey(job.item))).map((job) => ({ key: refKey(job.item), paths: pathsOf(job), conflicts: (job.triage?.links ?? []).filter((l) => l.type === "conflictsWith").map((l) => l.item.replace(/^#/, "")) }));
+  const busy = Object.values(jobs).filter((job) => isBusy(job, where(job).parked?.as !== "queued" && onMain(job.head)) && open.has(refKey(job.item))).map((job) => ({ key: refKey(job.item), paths: pathsOf(job), conflicts: (job.triage?.links ?? []).filter((l) => l.type === "conflictsWith").map((l) => l.item.replace(/^#/, "")) }));
   const claimant = `scopesoup@${world.machine}`;
   const itemObs: ItemObs[] = [];
   for (const item of items) {
@@ -174,7 +176,7 @@ export async function observe(world: SimWorld, seed: number, action: Action, pre
     const job = jobs[key];
     const mine = live.filter((each) => refKey(each.session.subject) === key).map((each) => ({ id: each.session.ref.id, role: each.session.role as Role }));
     const w = waitsFor({
-      item, job, live: mine.map((each) => each.role), settling: !!job?.sessionId && mine.length === 0, open, ownBlockers: (own[key] ?? []).map(refKey), switches, level: world.configNow.level, usageReserve, now: at,
+      item, job, live: mine.map((each) => each.role), settling: !!where(job)?.sessionId && mine.length === 0, open, ownBlockers: (own[key] ?? []).map(refKey), switches, level: world.configNow.level, usageReserve, now: at,
       workCapped: waiting >= caps.work, paceHolds: live.length === 0 && kickBlocked, liveCount: live.length, slots: world.configNow.settings.maxParallelSessions.value, busy: busy.filter((each) => each.key !== key), claimant,
     });
     const blockers = [...new Set([...item.blockedBy.map(refKey), ...(own[key] ?? []).map(refKey)])].filter((each) => open.has(each));

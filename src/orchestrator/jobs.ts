@@ -192,29 +192,80 @@ export interface ReviewAnswer {
   drafts?: ProposedDraft[];
 }
 
+/** A job parked: why, since when, and what it asked on the host. */
+export interface JobParked {
+  as: ParkedAs; reason: string; at: string;
+  /**
+   * "hand-over": the work is finished; only the hand-over failed and is retried when a person answers. "post": the parked state's
+   * questions or rewrite could not be posted on the host for a reason that can change (down, a 5xx, a rate limit); each tick posts
+   * them again by itself.
+   */
+  retry?: "hand-over" | "post";
+  /** With `retry: "post"`, the parked state's own reason, which it shows again once the post is through. */
+  posting?: string;
+  /** With `retry: "post"`, the parked state's own kind when it was not a question set (a log line that could not be written; #230). */
+  postingAs?: ParkedAs;
+  /** Parked "not-ready" by triage's verdict (not ready, or too large): a person may overrule it with Implement anyway. */
+  verdict?: true;
+  /** The implement step itself was parked here (a question, a refused tool, failed attempts), not the hand-over, merging or a person closing the change. Only such a parked Item is resumed by an answer. */
+  byStep?: true;
+  /** The question comments on the host (GitHub) this parked state waits on, in the order asked; their answers are read from the host. */
+  questions?: string[];
+  /** The text and number of each of `questions`, in the same order, so a deleted one can be named and its number kept. */
+  texts?: AskedText[];
+  /** The host's time of the last question comment, so an older read of the item is not taken for a deletion. */
+  askedAt?: string;
+  /** The triage round's rewrite comment on the host (GitHub) and its question comments, which a person answers on the board. */
+  rewrite?: { id: string; questions: string[]; /** As `texts` above. */ texts?: AskedText[]; /** The host's time of the last question comment. */ askedAt?: string; /** Each question has its answer from a reply on the host, all the recommendations: the rewrite waits for Accept on the board. */ answered?: true };
+}
+
+/**
+ * Where the job is in the cycle: its step and session, parked, an owed hand-over, merged, and the timed waits. Read with `where`,
+ * written with `setWhere`; nothing else touches these.
+ */
+export interface Where {
+  step: JobStep;
+  /** The session running this step now. */
+  sessionId?: string;
+  parked?: JobParked;
+  /** Set when a person said "try again" after a failed hand-over: the next tick hands over without a session. */
+  owes?: "hand-over";
+  /** The commit of the item's change on the main branch: in the chain the queue pushed (level 4), or as the session merged it (levels 2 and 3). */
+  merged?: string;
+  /** Level 3: the reviewer approved the change, so the implement step now merges it (the implementor's session is resumed, or a fresh one told to merge). */
+  merge?: true;
+  /** The triage runs again: why, and what changed since the one before. Cleared when its answer is taken. */
+  recheck?: Recheck;
+  /** The implement step running now is that round for the `should` findings: one that commits nothing goes on to the merge. */
+  shouldRound?: true;
+  /** The change merged, and closing its Item on the host failed: each tick tries again until it is closed (#238). */
+  closeOwed?: { sha: string; batch?: number };
+  /** The step may not start before this (a retry timer or a limit reset). */
+  notBefore?: string;
+  /**
+   * A person accepted or edited a rewrite and Scope Soup wrote it on the host, but the store still reads the Item's text from before
+   * (`from`, by `itemTextHash`) until the next sync: no step starts on that old text. Cleared once the text in the store is another, or
+   * after `WRITING_WAIT_MS` from the write (`at`) whatever the store reads, so a write that never comes back cannot hold it for good.
+   */
+  writing?: { from: string; at: string };
+  /** The agent session to continue, after a limit or a stop cut it off. */
+  resume?: string;
+}
+
 export interface Job {
   /** The implement session started last: the level it started at, and whether its finish text told it to merge (decision 108). */
   sessionStart?: { level: number; mayMerge: boolean };
   /** Sessions of this step left by an earlier run of Scope Soup in a row (`Session.orphaned`); at the attempts' limit a person is asked. */
   orphanRestarts?: number;
-  /** The change merged, and closing its Item on the host failed: each tick tries again until it is closed (#238). */
-  closeOwed?: { sha: string; batch?: number };
   item: Ref;
   workspace: string;
   branch: string;
-  step: JobStep;
-  /** The session running this step now. */
-  sessionId?: string;
   /** Failed attempts of the current step. */
   failures: number;
   /** How many times review (or a failed merging) sent the change back to the implementor. */
   fixRounds: number;
   /** How many times the job parked: each park's questions in the item's log carry it as their `set`, which replaces the set before (#230). */
   parks?: number;
-  /** The step may not start before this (a retry timer or a limit reset). */
-  notBefore?: string;
-  /** The agent session to continue, after a limit or a stop cut it off. */
-  resume?: string;
   /** The implementor's own agent session id (to resume it), kept so findings go back to the session that wrote the change. */
   agentSession?: string;
   /**
@@ -222,39 +273,10 @@ export interface Job {
    * resumes `agentSession` with it; without a known session it starts afresh with this after its prompt. Cleared when done.
    */
   resumeWith?: string;
-  /** Level 3: the reviewer approved the change, so the implement step now merges it (the implementor's session is resumed, or a fresh one told to merge). */
-  merge?: true;
   /** Levels 2 and 3: where the remote's main was when the item's first implement session started. A branch head already in it is no work done. */
   base?: string;
   /** Where main was once this round's implement session started (its branch cut): a head new in main since then was merged by it. */
   roundBase?: string;
-  parked?: {
-    as: ParkedAs; reason: string; at: string;
-    /**
-     * "hand-over": the work is finished; only the hand-over failed and is retried when a person answers. "post": the parked state's
-     * questions or rewrite could not be posted on the host for a reason that can change (down, a 5xx, a rate limit); each tick posts
-     * them again by itself.
-     */
-    retry?: "hand-over" | "post";
-    /** With `retry: "post"`, the parked state's own reason, which it shows again once the post is through. */
-    posting?: string;
-    /** With `retry: "post"`, the parked state's own kind when it was not a question set (a log line that could not be written; #230). */
-    postingAs?: ParkedAs;
-    /** Parked "not-ready" by triage's verdict (not ready, or too large): a person may overrule it with Implement anyway. */
-    verdict?: true;
-    /** The implement step itself was parked here (a question, a refused tool, failed attempts), not the hand-over, merging or a person closing the change. Only such a parked Item is resumed by an answer. */
-    byStep?: true;
-    /** The question comments on the host (GitHub) this parked state waits on, in the order asked; their answers are read from the host. */
-    questions?: string[];
-    /** The text and number of each of `questions`, in the same order, so a deleted one can be named and its number kept. */
-    texts?: AskedText[];
-    /** The host's time of the last question comment, so an older read of the item is not taken for a deletion. */
-    askedAt?: string;
-    /** The triage round's rewrite comment on the host (GitHub) and its question comments, which a person answers on the board. */
-    rewrite?: { id: string; questions: string[]; /** As `texts` above. */ texts?: AskedText[]; /** The host's time of the last question comment. */ askedAt?: string; /** Each question has its answer from a reply on the host, all the recommendations: the rewrite waits for Accept on the board. */ answered?: true };
-  };
-  /** Set when a person said "try again" after a failed hand-over: the next tick hands over without a session. */
-  owes?: "hand-over";
   /** A person asked for the owed hand-over (Try again); unset when the tick repeats it by itself. Cleared once logged. */
   owesAskedBy?: string;
   triage?: TriageAnswer;
@@ -268,12 +290,6 @@ export interface Job {
   rewrite?: Rewrite;
   /** Rounds of the rewrite loop so far on this job: each new rewrite counts up from it. */
   rewriteRounds?: number;
-  /**
-   * A person accepted or edited a rewrite and Scope Soup wrote it on the host, but the store still reads the Item's text from before
-   * (`from`, by `itemTextHash`) until the next sync: no step starts on that old text. Cleared once the text in the store is another, or
-   * after `WRITING_WAIT_MS` from the write (`at`) whatever the store reads, so a write that never comes back cannot hold it for good.
-   */
-  writing?: { from: string; at: string };
   implement?: ImplementAnswer;
   /** Every decision the implementor recorded on this job so far, oldest first: the reviewer is shown them. */
   taken?: TakenDecision[];
@@ -336,8 +352,6 @@ export interface Job {
    * go back once; what an approval still says `should` after that merges and becomes a draft (decision 95).
    */
   shouldSent?: string[];
-  /** The implement step running now is that round for the `should` findings: one that commits nothing goes on to the merge. */
-  shouldRound?: true;
   /** The change a person saw at the fence and let go on (its paths and lines): the fence is widened to it. */
   fence?: FenceSeen;
   /**
@@ -347,8 +361,6 @@ export interface Job {
   answered?: { index: number; answer: string; at: string }[];
   /** The branch's head as last written to the item's log in a `revision` line. */
   head?: string;
-  /** The commit of the item's change on the main branch: in the chain the queue pushed (level 4), or as the session merged it (levels 2 and 3). */
-  merged?: string;
   /** Level 4: the head of the branch that was handed to the queue. */
   queued?: string;
   /**
@@ -360,8 +372,6 @@ export interface Job {
   triaging?: TriagedText;
   /** What the newest triage saw, so a waiting Item whose triage is out of date gets one again (`staleTriage`). */
   triaged?: Triaged;
-  /** The triage runs again: why, and what changed since the one before. Cleared when its answer is taken. */
-  recheck?: Recheck;
   startedAt: string;
 }
 
@@ -419,6 +429,46 @@ export interface AskedText {
 
 export type Jobs = Record<string, Job>;
 
+const WHERE_KEYS = ["step", "sessionId", "parked", "owes", "merged", "merge", "recheck", "shouldRound", "closeOwed", "notBefore", "writing", "resume"] as const satisfies readonly (keyof Where)[];
+
+/** A change to where a job is: each field given is set, and one given as undefined is cleared. */
+export type WherePatch = { [K in keyof Where]?: Where[K] | undefined };
+
+/** Where the job is (`Where`). */
+export function where(job: Job): Readonly<Where>;
+export function where(job: Job | null | undefined): Readonly<Where> | undefined;
+export function where(job: Job | null | undefined): Readonly<Where> | undefined {
+  if (!job) return undefined;
+  const stored = job as Job & Where;
+  const out: Partial<Where> = {};
+  for (const key of WHERE_KEYS) if (stored[key] !== undefined) (out as Record<string, unknown>)[key] = stored[key];
+  return out as Where;
+}
+
+/** Moves the job: the fields of `patch` are set, those given as undefined cleared. */
+export function setWhere(job: Job, patch: WherePatch): void {
+  const stored = job as Job & Record<string, unknown>;
+  for (const [key, value] of Object.entries(patch)) {
+    if (value === undefined) delete stored[key];
+    else stored[key] = value;
+  }
+}
+
+/**
+ * A job from its fields and where it is, given as one object. Where-fields left out are kept from a job spread into it; a job with no
+ * step at all is at triage.
+ */
+export function jobOf(all: Job & Partial<Where>): Job {
+  const job: Job & Partial<Where> = { ...all };
+  const at: WherePatch = {};
+  for (const key of WHERE_KEYS) {
+    (at as Record<string, unknown>)[key] = job[key];
+    delete job[key];
+  }
+  setWhere(job, at);
+  return job;
+}
+
 const KEY = "orchestrator.jobs";
 
 function readStored(store: Store): Jobs {
@@ -458,8 +508,8 @@ export function changedMeanwhile(store: Store, jobs: Jobs, key: string): "none" 
   const stored = readStored(store)[key];
   const text = baselines.get(jobs)?.get(key);
   const was = text === undefined ? undefined : (JSON.parse(text) as Job);
-  if (!stored || !was || stored.interrupt !== undefined || stored.dropAskedBy !== undefined || stored.step !== was.step) return "picked";
-  return JSON.stringify(stored.parked) === JSON.stringify(was.parked) ? "changed" : "picked";
+  if (!stored || !was || stored.interrupt !== undefined || stored.dropAskedBy !== undefined || where(stored).step !== where(was).step) return "picked";
+  return JSON.stringify(where(stored).parked) === JSON.stringify(where(was).parked) ? "changed" : "picked";
 }
 
 /** The job as the store has it now, made this map's (its baseline too), so the map's next save keeps it with what is added to it. */
@@ -537,22 +587,19 @@ export function releaseJob(store: Store, item: Ref, actor: string, at: string, r
 }
 
 /** `releaseJob` on a map of jobs the caller saves (the tick's). Returns the parked state it was released from, or null when there was none. */
-export function releaseIn(jobs: Jobs, key: string, actor: string, startOver = false): NonNullable<Job["parked"]> | null {
+export function releaseIn(jobs: Jobs, key: string, actor: string, startOver = false): JobParked | null {
   const job = jobs[key];
-  if (!job || !job.parked) return null;
-  const was = job.parked;
+  const was = where(job)?.parked;
+  if (!job || !was) return null;
   if (was.retry === "hand-over") {
     // The work is done and reviewed: keep it, and let the next tick repeat only the hand-over.
-    delete job.parked;
-    job.owes = "hand-over";
+    setWhere(job, { parked: undefined, owes: "hand-over" });
     job.owesAskedBy = actor;
   } else if (!startOver && resumesStep(job)) {
     // The step that asked runs again, as a new attempt of the same round.
-    delete job.parked;
+    setWhere(job, { parked: undefined });
     delete job.decision;
-    delete job.sessionId;
-    delete job.resume;
-    delete job.notBefore;
+    setWhere(job, { sessionId: undefined, resume: undefined, notBefore: undefined });
     job.failures = 0;
     job.answerArrived = was.at;
   } else delete jobs[key];
@@ -565,9 +612,10 @@ export function releaseIn(jobs: Jobs, key: string, actor: string, startOver = fa
  * parked Item without question comments, and for a read of the item older than the questions.
  */
 export function questionsSettled(job: Job, item: Pick<WorkItem, "openQuestions" | "answers" | "updatedAt">): { withdrawn: boolean; reason: string; gone: string[] } | null {
-  const ids = job.parked?.questions;
+  const ids = where(job).parked?.questions;
   if (!ids || ids.length === 0) return null;
-  if (job.parked?.askedAt && Date.parse(item.updatedAt) < Date.parse(job.parked.askedAt)) return null;
+  const askedAt = where(job).parked?.askedAt;
+  if (askedAt && Date.parse(item.updatedAt) < Date.parse(askedAt)) return null;
   const open = new Set((item.openQuestions ?? []).map((question) => question.id));
   const answers = new Map((item.answers ?? []).flatMap((answer) => (answer.to ? [[answer.to, answer] as const] : [])));
   const gone = ids.filter((id) => !open.has(id) && !answers.has(id));
@@ -602,7 +650,7 @@ export type AnswerRefusal = "no-questions" | "parked-changed" | "answered";
 export function answerRefusal(job: Job | undefined, index: number, parkedAt: string | undefined): AnswerRefusal | null {
   const questions = job ? jobQuestions(job) : [];
   if (!job || !Number.isInteger(index) || index < 0 || index >= questions.length) return "no-questions";
-  if (parkedAt !== undefined && Date.parse(parkedAt) !== Date.parse(job.parked!.at)) return "parked-changed";
+  if (parkedAt !== undefined && Date.parse(parkedAt) !== Date.parse(where(job).parked!.at)) return "parked-changed";
   if ((job.answered ?? []).some((each) => each.index === index)) return "answered";
   return null;
 }
@@ -630,7 +678,7 @@ export function answerQuestion(store: Store, item: Ref, index: number, answer: s
  * `answerQuestion` on a map of jobs the caller saves (the tick's), with the event's reason for the caller to write: the parked state
  * it released (`was`) with the answer to the last open question, else how many are still open.
  */
-export function answerIn(jobs: Jobs, key: string, index: number, answer: string, actor: string, at: string, parkedAt?: string): { open: number; reason: string; was?: NonNullable<Job["parked"]> } | { refused: AnswerRefusal } {
+export function answerIn(jobs: Jobs, key: string, index: number, answer: string, actor: string, at: string, parkedAt?: string): { open: number; reason: string; was?: JobParked } | { refused: AnswerRefusal } {
   const job = jobs[key];
   const refused = answerRefusal(job, index, parkedAt);
   if (refused || !job) return { refused: refused ?? "no-questions" };
@@ -662,7 +710,7 @@ const sameWriter = (a: { who: string; machine?: string }, b: { who: string; mach
  * tried again), a proposed restructuring, and a parked state no answer picks up (queued, handed over).
  */
 export function askedInLog(job: Job, item: Pick<WorkItem, "log" | "openQuestions">): LogQuestion[] | null {
-  const parked = job.parked;
+  const parked = where(job).parked;
   const log = item.log;
   if (!parked || !log || parked.questions || parked.retry === "post" || job.proposal) return null;
   if (parked.as !== "needs-decision" && parked.as !== "not-ready" && parked.as !== "escalated") return null;
@@ -708,7 +756,7 @@ export function parkedRewrite(job: Job | undefined): Rewrite | undefined {
 export function rewriteRefusal(job: Job | undefined, parkedAt: string, answers: readonly string[]): RewriteRefusal | null {
   const rewrite = parkedRewrite(job);
   if (!job || !rewrite) return "no-rewrite";
-  if (Date.parse(parkedAt) !== Date.parse(job.parked!.at)) return "parked-changed";
+  if (Date.parse(parkedAt) !== Date.parse(where(job).parked!.at)) return "parked-changed";
   if (answers.length !== rewrite.questions.length || answers.some((answer) => answer.trim() === "")) return "answers";
   return null;
 }
@@ -741,8 +789,7 @@ export function settleRewrite(store: Store, item: Ref, answers: readonly string[
   const refused = rewriteRefusal(job, parkedAt, answers);
   if (refused || !job) return { refused: refused ?? "no-rewrite" };
   const rewrite = job.rewrite!;
-  delete job.parked;
-  delete job.notBefore;
+  setWhere(job, { parked: undefined, notBefore: undefined });
   job.failures = 0;
   if (!keepsRecommendations(rewrite, answers)) {
     delete job.rewrite;
@@ -769,7 +816,7 @@ export function settleRewrite(store: Store, item: Ref, answers: readonly string[
 
 /** The set a park's questions carry in the item's log: the park's count and moment, so a job rebuilt from the log does not reuse an old one (#230). */
 export function parkSet(job: Job): string {
-  return `${job.parks ?? 0}@${job.parked?.at ?? ""}`;
+  return `${job.parks ?? 0}@${where(job).parked?.at ?? ""}`;
 }
 
 /**
@@ -800,10 +847,10 @@ export function awaitWritten(store: Store, job: Job, item: Ref, bodies: readonly
   const hashes = bodies.map((body) => itemTextHash({ title: current.title, body, verification: current.verification }));
   const from = itemTextHash(current);
   if (hashes.includes(from)) {
-    delete job.writing;
+    setWhere(job, { writing: undefined });
     return;
   }
-  job.writing = { from, at };
+  setWhere(job, { writing: { from, at } });
   store.appendEvent({ kind: "orchestrator.text_wait", subject: refKey(item), actor: "orchestrator", data: { reason: `The description of ${item.id} was written on ${item.host}; its next step waits until Scope Soup reads it back from there.` } }, at);
 }
 

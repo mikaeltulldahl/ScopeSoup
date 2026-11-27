@@ -23,6 +23,7 @@ import { usageDecision } from "./tick.ts";
 import { providerNamed } from "./providers/index.ts";
 import { poolRepoPath, readHoldings, samePath } from "./workspaces.ts";
 import { phaseOf } from "./phase.ts";
+import { where } from "./jobs.ts";
 
 /** One turn as stored. `agentSession` is the session it continued (or the one the reply came from, when the agent forked it). */
 export interface ChatTurn {
@@ -185,13 +186,13 @@ export function createChat(deps: ChatDeps): Chat {
     const current = config();
     if (!current) return "This server has no project configuration, so it runs no sessions.";
     if (!job) return "The Item has no work under way here, so there is no worktree to talk to its sessions in.";
-    if (job.merged) return "The Item is merged, so its sessions take no more messages.";
+    if (where(job).merged) return "The Item is merged, so its sessions take no more messages.";
     // Level 4: the branch is the queue's now; a turn could change it under the merge.
     const phaseAt = phaseOf(job).at;
     if (phaseAt === "queued" || phaseAt === "hand-over" || job.queued !== undefined) {
       return "The Item is queued for merging (or being merged); talk to its sessions once it merges or comes back.";
     }
-    if (roleStopped(store, job.step)) return `Stop was pressed: no ${job.step} session runs until you press Resume ${SWITCH_WORDS[job.step]}.`;
+    if (roleStopped(store, where(job).step)) return `Stop was pressed: no ${where(job).step} session runs until you press Resume ${SWITCH_WORDS[where(job).step]}.`;
     const turns = readTurns(store, item);
     if (pending.has(item) || turns.some((turn) => !turn.finishedAt && isLive(session(turn.session)))) return "Your last message is still being answered.";
     const live = store.list<Session>("session").find((each) => refKey(each.subject) === item && isLive(each));
@@ -202,7 +203,7 @@ export function createChat(deps: ChatDeps): Chat {
     if (holder && !holder.actor.bot) {
       return `${holder.actor.name} holds this Item, so Scope Soup leaves it alone.`;
     }
-    const budget = usageDecision(store, current, job.step, at, runner.running());
+    const budget = usageDecision(store, current, where(job).step, at, runner.running());
     if (!budget.allow) return `The usage stop: ${budget.reason}`;
     return null;
   }
@@ -243,7 +244,7 @@ export function createChat(deps: ChatDeps): Chat {
     // Parking the Item had freed its workspace: the turn made it again, and it goes back to how it was.
     if (made !== null) {
       const job = loadJobs(store)[item];
-      if (!job?.sessionId && !runner.busy(over.subject)) {
+      if (!where(job)?.sessionId && !runner.busy(over.subject)) {
         await runner.releaseWorkspace(made, `The chat turn on ${item} is over; the Item parked without its workspace, as before.`).catch((error: unknown) => {
           store.appendEvent({ kind: "orchestrator.action_failed", subject: item, actor: "orchestrator", data: { reason: `Could not free the workspace after the chat turn: ${errorText(error)}` } }, deps.now());
         });

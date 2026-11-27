@@ -8,6 +8,7 @@ import type { Priority, WorkItem } from "../model/types.ts";
 import { refKey } from "../model/types.ts";
 import { cleanVote, voteWords } from "../model/vote.ts";
 import type { Job, Jobs, TriageAnswer } from "./jobs.ts";
+import { where } from "./jobs.ts";
 
 /** The weights, in points. One place: change them here and in docs/RUNNING.md ("How Items are ordered"). */
 export const WEIGHTS = {
@@ -76,7 +77,7 @@ export function older(a: WorkItem, b: WorkItem): number {
 export function hasTriage(item: WorkItem, job: Job | undefined): boolean {
   if ((item.log ?? []).some((line) => line.kind === "session" && line.fields.role === "triage")) return true;
   if (!job) return false;
-  return job.triage !== undefined || job.step !== "triage";
+  return job.triage !== undefined || where(job).step !== "triage";
 }
 
 /**
@@ -88,7 +89,7 @@ export function hasTriage(item: WorkItem, job: Job | undefined): boolean {
  */
 export function isStarted(_item: WorkItem, job: Job | undefined): boolean {
   if (!job) return false;
-  return job.step === "review" || job.implement !== undefined || (job.head !== undefined && job.head !== job.base);
+  return where(job).step === "review" || job.implement !== undefined || (job.head !== undefined && job.head !== job.base);
 }
 
 /** The scores of `items`, in the context of all Items. */

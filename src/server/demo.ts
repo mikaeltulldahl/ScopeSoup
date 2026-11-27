@@ -28,8 +28,8 @@ import { AlreadyAnswered } from "../ports/host.ts";
 import { refKey } from "../model/types.ts";
 import type { Chat, ChatRunner, ChatTurn } from "../orchestrator/chat.ts";
 import { chatKey, createChat } from "../orchestrator/chat.ts";
-import type { Decision, Job, Jobs } from "../orchestrator/jobs.ts";
-import { loadJobs, saveJobs } from "../orchestrator/jobs.ts";
+import type { Decision, Job, Jobs, Where } from "../orchestrator/jobs.ts";
+import { jobOf, loadJobs, saveJobs } from "../orchestrator/jobs.ts";
 import { fileDrafts } from "../orchestrator/drafts.ts";
 import { workspaceKey } from "../orchestrator/paths.ts";
 import { allowancePlans } from "../orchestrator/allowance.ts";
@@ -275,9 +275,9 @@ export function seedDemo(store: Store, now: Date, dir?: string): void {
       role, model, status: "succeeded", agentSessionId: `agent-${id}`, startedAt: at(-startedMinutesAgo), finishedAt: at(-startedMinutesAgo + minutes), ...over,
     }));
   const jobs: Jobs = {};
-  const job = (item: number, over: Partial<Job>) => {
+  const job = (item: number, over: Partial<Job & Where>) => {
     const subject = ref("work", item);
-    jobs[refKey(subject)] = { item: subject, workspace: workspaceKey(subject), branch: `scopesoup/${item}`, step: "triage", failures: 0, fixRounds: 0, startedAt: at(-180), ...over };
+    jobs[refKey(subject)] = jobOf({ item: subject, workspace: workspaceKey(subject), branch: `scopesoup/${item}`, step: "triage", failures: 0, fixRounds: 0, startedAt: at(-180), ...over });
   };
 
   store.tx(() => {

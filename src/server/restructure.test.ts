@@ -15,6 +15,8 @@ import type { Store } from "../store/store.ts";
 import { openStore } from "../store/store.ts";
 import { createServer } from "./server.ts";
 import type { ServerOptions } from "./server.ts";
+import { where } from "../orchestrator/jobs.ts";
+import { jobOf } from "../orchestrator/jobs.ts";
 
 const AT = "2026-11-18T09:00:00.000Z";
 const PARENT: Ref = { host: "fake", kind: "work", id: "7" };
@@ -33,11 +35,11 @@ function parent(over: Partial<WorkItem> = {}): WorkItem {
 }
 
 function proposalJob(created?: CreatedPart[], parts: ProposedPart[] = PARTS, original: OriginalFate = "umbrella"): Job {
-  return {
+  return jobOf({
     item: PARENT, workspace: "w", branch: "scopesoup/7", step: "triage", failures: 0, fixRounds: 0, startedAt: AT,
     proposal: { id: ID, reason: "Triage proposes to restructure the Item.", original, parts, carried: CARRIED, ...(created ? { created } : {}) },
     parked: { as: "needs-decision", reason: "Triage proposes to restructure the Item.", at: AT },
-  };
+  });
 }
 
 interface FakeHost {
@@ -179,9 +181,9 @@ describe("a proposed restructuring on a writable host", { concurrency: 4 }, () =
       assert.deepEqual(host.edits, [], "an umbrella is not changed");
       // The item parked as an umbrella, with what was made; the answer is kept for the sessions.
       const job = loadJobs(store)[KEY]!;
-      assert.equal(job.parked?.as, "not-ready");
+      assert.equal(where(job).parked?.as, "not-ready");
       assert.equal(job.proposal, undefined);
-      assert.match(job.parked?.reason ?? "", /^Restructured into 101 \(a new sub-item of 7\), 102 .*; the work happens there\.$/);
+      assert.match(where(job).parked?.reason ?? "", /^Restructured into 101 \(a new sub-item of 7\), 102 .*; the work happens there\.$/);
       assert.match(loadAnswers(store)[0]!.answer, /Accepted the proposed restructuring: 101 .* 7 is an umbrella/);
       const done = store.eventsAfter(0, 1000).filter((event) => event.kind === "orchestrator.restructure_done");
       assert.deepEqual(done.map((event) => (event.data as { created: string[] }).created), [["fake:work:101", "fake:work:102", "fake:work:103"]]);
@@ -263,7 +265,7 @@ describe("a proposed restructuring on a writable host", { concurrency: 4 }, () =
       const accepted = await board.post({ ref: KEY, action: "accept" });
       assert.equal(accepted.status, 200, JSON.stringify(accepted.body));
       assert.deepEqual(host.edits, [{ work: PARENT, patch: { state: "abandoned" } }]);
-      assert.match(loadJobs(store)[KEY]!.parked?.reason ?? "", /^Replaced by 101, 102/);
+      assert.match(where(loadJobs(store)[KEY])!.parked?.reason ?? "", /^Replaced by 101, 102/);
     } finally {
       await board.stop();
       store.close();
@@ -280,7 +282,7 @@ describe("a proposed restructuring on a writable host", { concurrency: 4 }, () =
       assert.equal(accepted.status, 400);
       assert.match(message(accepted.body), /Part 2 goes into 404, which is not another Item on fake/);
       assert.equal(host.made.length, 0);
-      assert.equal(loadJobs(store)[KEY]!.parked?.as, "needs-decision");
+      assert.equal(where(loadJobs(store)[KEY])!.parked?.as, "needs-decision");
     } finally {
       await board.stop();
       store.close();
@@ -303,7 +305,7 @@ describe("a proposed restructuring on a writable host", { concurrency: 4 }, () =
       assert.equal(rejected.status, 409);
       assert.equal((rejected.body.error as { code: string }).code, "PARTS_CREATED");
       const halfway = loadJobs(store)[KEY]!;
-      assert.equal(halfway.parked?.as, "needs-decision", "still waiting on the restructuring");
+      assert.equal(where(halfway).parked?.as, "needs-decision", "still waiting on the restructuring");
       assert.deepEqual(halfway.proposal?.created, [{ part: 0, ref: { host: "fake", kind: "work", id: "101" }, linked: true }]);
 
       // An edit after a part exists is refused, not set aside: Accept finishes the same parts.
@@ -314,7 +316,7 @@ describe("a proposed restructuring on a writable host", { concurrency: 4 }, () =
       assert.equal(again.status, 200, JSON.stringify(again.body));
       assert.deepEqual(again.body.created, ["fake:work:101", "fake:work:102", "fake:work:103"]);
       assert.deepEqual(host.made.map((each) => each.title), PARTS.map((each) => each.title), "each part made once, in order");
-      assert.equal(loadJobs(store)[KEY]!.parked?.as, "not-ready");
+      assert.equal(where(loadJobs(store)[KEY])!.parked?.as, "not-ready");
     } finally {
       await board.stop();
       store.close();
@@ -458,7 +460,7 @@ describe("a proposed restructuring on a writable host", { concurrency: 4 }, () =
       assert.equal(into.length, 1, "one write for both parts");
       const body = host.bodies.get("9")!;
       assert.match(body, /^Old files stay readable\.\n\nAlso the backups\.\n\n## Added from fake:work:7: Old files readable\n\n[^]*Part 2 of restructuring abc12345 of fake:work:7\.\n\n## Added from fake:work:7: Old files listed\n\n[^]*Part 3 of restructuring abc12345 of fake:work:7\.$/);
-      assert.deepEqual(loadJobs(store)[KEY]!.parked?.as, "not-ready");
+      assert.deepEqual(where(loadJobs(store)[KEY])!.parked?.as, "not-ready");
     } finally {
       await board.stop();
       store.close();
@@ -603,9 +605,9 @@ describe("a proposed restructuring on a writable host", { concurrency: 4 }, () =
       assert.ok(!text.includes("Read the old format"), "the part made is not in the rest");
       assert.match(text, /### 2\. Write the new format[^]*### 3\. Switch over[^]*Then: 7 becomes an umbrella over its sub-items\.$/);
       const job = loadJobs(store)[KEY]!;
-      assert.equal(job.parked?.as, "not-ready");
+      assert.equal(where(job).parked?.as, "not-ready");
       assert.equal(job.proposal, undefined);
-      assert.match(job.parked?.reason ?? "", /stopped the restructuring with 1 of 3 parts made \(101\)/);
+      assert.match(where(job).parked?.reason ?? "", /stopped the restructuring with 1 of 3 parts made \(101\)/);
       assert.match(loadAnswers(store)[0]!.answer, /^Stopped the proposed restructuring with 1 of 3 parts made \(101\)/);
       assert.equal(host.made.length, 1);
     } finally {
@@ -650,8 +652,8 @@ test("on a read-only host, accepting makes nothing and gives the restructuring a
     assert.match(text, /## Decisions carried over from 7/);
     assert.match(text, /Then: 7 becomes an umbrella over its sub-items\.$/);
     const job = loadJobs(store)[KEY]!;
-    assert.equal(job.parked?.as, "not-ready");
-    assert.match(job.parked?.reason ?? "", /carry it out by hand/);
+    assert.equal(where(job).parked?.as, "not-ready");
+    assert.match(where(job).parked?.reason ?? "", /carry it out by hand/);
     assert.match(loadAnswers(store)[0]!.answer, /Scope Soup made nothing[^]*### 1\. Read the old format/);
     // It is a person's turn to carry it out, with the reason saying so.
     const after = await board.page();

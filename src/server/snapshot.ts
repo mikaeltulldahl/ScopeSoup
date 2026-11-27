@@ -16,6 +16,7 @@ import { loadVotes, withVotes } from "../store/votes.ts";
 import { readControl } from "../store/control.ts";
 import { KEYS } from "../store/keys.ts";
 import type { Store } from "../store/store.ts";
+import { where } from "../orchestrator/jobs.ts";
 
 export { KEYS } from "../store/keys.ts";
 
@@ -51,15 +52,16 @@ export function loadSnapshot(store: Store): Snapshot {
       return { paused: control.agents !== "started", agents: control.agents, triage: control.triage, implement: control.implement, review: control.review, mergeQueue: control.mergeQueue };
     })(),
     parked: Object.values(loadJobs(store)).flatMap((job): Parked[] => {
-      if (!job.parked) return [];
-      const asked = job.parked.as === "needs-decision";
+      const parked = where(job).parked;
+      if (!parked) return [];
+      const asked = parked.as === "needs-decision";
       // A rewrite's questions are shown with the rewrite, not as the parked state's one decision.
       const rewrite = asked && job.rewrite && !job.rewrite.settled ? job.rewrite : undefined;
-      const decision = asked && !rewrite ? job.decision ?? (job.step === "triage" ? job.triage?.decision : undefined) : undefined;
+      const decision = asked && !rewrite ? job.decision ?? (where(job).step === "triage" ? job.triage?.decision : undefined) : undefined;
       // A job stored with a proposed rewrite (removed) has no parts; the tick releases it.
       const stored = asked && job.proposal?.parts?.length ? job.proposal : undefined;
       // On GitHub each question is a comment, and its answer is read from there.
-      const onHost = job.parked.questions;
+      const onHost = parked.questions;
       // There a restructuring's parts are the items that carry its part lines; they are not stored.
       const proposal = stored && onHost ? { ...stored, created: hostParts(store, job.item, stored) } : stored;
       const hostAnswers = onHost ? store.get<WorkItem>(job.item)?.answers ?? [] : [];
@@ -67,7 +69,7 @@ export function loadSnapshot(store: Store): Snapshot {
         const answer = onHost ? hostAnswers.find((given) => given.to !== undefined && given.to === onHost[index])?.answer : job.answered?.find((given) => given.index === index)?.answer;
         return { ...each, ...(answer !== undefined ? { answer } : {}) };
       });
-      return [{ subject: job.item, as: job.parked.as, reason: job.parked.reason, at: job.parked.at, ...(resumesStep(job) ? { canStartOver: true } : {}), ...(decision && !proposal ? { decision } : {}), ...(proposal ? { proposal } : {}), ...(questions.length > 0 ? { questions } : {}), ...(rewrite ? { rewrite: { original: rewrite.original, text: rewrite.text, round: rewrite.round, questions: rewrite.questions.map(({ question, options, recommendation, context, multiSelect, stopsOn }) => ({ question, options, recommendation, ...(context ? { context } : {}), ...(multiSelect ? { multiSelect } : {}), ...(stopsOn ? { stopsOn } : {}) })), ...(rewrite.labels ? { labels: rewrite.labels } : {}), ...(rewrite.droppedLabels ? { droppedLabels: rewrite.droppedLabels } : {}) } } : {}) }];
+      return [{ subject: job.item, as: parked.as, reason: parked.reason, at: parked.at, ...(resumesStep(job) ? { canStartOver: true } : {}), ...(decision && !proposal ? { decision } : {}), ...(proposal ? { proposal } : {}), ...(questions.length > 0 ? { questions } : {}), ...(rewrite ? { rewrite: { original: rewrite.original, text: rewrite.text, round: rewrite.round, questions: rewrite.questions.map(({ question, options, recommendation, context, multiSelect, stopsOn }) => ({ question, options, recommendation, ...(context ? { context } : {}), ...(multiSelect ? { multiSelect } : {}), ...(stopsOn ? { stopsOn } : {}) })), ...(rewrite.labels ? { labels: rewrite.labels } : {}), ...(rewrite.droppedLabels ? { droppedLabels: rewrite.droppedLabels } : {}) } } : {}) }];
     }),
     // Absent with no job at all (a board with no orchestrator): the lanes are read from the host alone.
     ...(() => {
@@ -97,8 +99,8 @@ export function loadSnapshot(store: Store): Snapshot {
 /** Where a job is, for the board (decision 2: a person's wait shows in the lane of the stage its work is at). */
 export function jobStage(job: Job): JobStage {
   const phase = phaseOf(job);
-  const stage: JobStage["stage"] = phase.at === "queued" ? "queue" : job.step === "review" || job.reviewedHead ? "review" : job.head || (job.step === "implement" && job.implement) ? "implement" : "start";
-  return { subject: job.item, stage, step: job.step, phase };
+  const stage: JobStage["stage"] = phase.at === "queued" ? "queue" : where(job).step === "review" || job.reviewedHead ? "review" : job.head || (where(job).step === "implement" && job.implement) ? "implement" : "start";
+  return { subject: job.item, stage, step: where(job).step, phase };
 }
 
 /** The parts of an item's restructuring that exist on its host, found by their part lines; a child is `linked` when it is a sub-issue of the item. */

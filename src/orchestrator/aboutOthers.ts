@@ -16,6 +16,7 @@ import type { ProposedRewriteView } from "../core/snapshot.ts";
 import { plural } from "../model/plural.ts";
 import { changeHandedOn, sessionOf, stepOf } from "../core/phase.ts";
 import { phaseOf } from "./phase.ts";
+import { where } from "./jobs.ts";
 
 /** Questions (and a rewrite) waiting to be written on another Item. Agent text: data. */
 export interface WaitingAbout {
@@ -129,7 +130,7 @@ export function askedBefore(ctx: Context, other: WorkItem, question: Decision): 
   const same = (each: Decision) => sameDecision(asked, { question: each.question, options: optionTexts(each.options) });
   if ((readWaitingAbouts(ctx.deps.store)[key] ?? []).some((entry) => entry.questions.some(same))) return "it already waits to be asked there";
   const job = ctx.jobs[key];
-  if (job?.parked?.as === "needs-decision" && job.rewrite?.questions.some(same)) return "it is open there";
+  if (where(job)?.parked?.as === "needs-decision" && job!.rewrite?.questions.some(same)) return "it is open there";
   const answers = knownAnswers(ctx.deps.store);
   const hash = itemTextHash(other);
   const found = reusableAnswer(answers, other, question)

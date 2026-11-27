@@ -16,6 +16,7 @@ import { findHandbacks } from "./handback.ts";
 import { loadJobs } from "./jobs.ts";
 import type { Actions, AgentRunner } from "./ports.ts";
 import { tick } from "./tick.ts";
+import { where } from "./jobs.ts";
 
 const SHA = "b".repeat(40);
 const NEWER = "c".repeat(40);
@@ -117,7 +118,7 @@ test("the tick takes a hand-back on: a job with the branch and head, and the rev
   const w = world([item("A-1", { log: [line("created", {}), HANDBACK, line("released", { reason: "handed back" })] })]);
   await w.run();
   const job = w.job("A-1")!;
-  assert.equal(job.step, "review");
+  assert.equal(where(job).step, "review");
   assert.equal(job.branch, "scopesoup/A-1");
   assert.equal(job.head, SHA);
   assert.match(job.implement!.summary, /Handed back by Ada on laptop-a: with a test/);
@@ -133,7 +134,7 @@ test("the tick takes a hand-back on: a job with the branch and head, and the rev
 test("an old file that still lists a checklist goes straight to review: the checklist stage is gone", async () => {
   const w = world([item("A-1", { log: [HANDBACK] })], [], config({ review: { checklist: ["Tests are added."] } }));
   await w.run();
-  assert.equal(w.job("A-1")!.step, "review");
+  assert.equal(where(w.job("A-1"))!.step, "review");
 });
 
 test("a hand-back waits while the item is held, the branch is not here, the stop switch is on, or the level is below 2", async () => {
@@ -164,7 +165,7 @@ test("a hand-back waits while the item is held, the branch is not here, the stop
 test("an item a person holds is left alone, even with a job waiting for its next step", async () => {
   const w = world([item("A-1", { log: [HANDBACK] })]);
   await w.run();
-  assert.equal(w.job("A-1")!.step, "review");
+  assert.equal(where(w.job("A-1"))!.step, "review");
   // A person takes it before the review starts.
   w.store.put(item("A-1", { log: [HANDBACK], holder: { actor: { id: "Bo@laptop-b", name: "Bo on laptop-b" } } }), "sync", T0);
   await w.run("2026-11-20T10:00:02.000Z");
@@ -189,7 +190,7 @@ test("the tick takes a Jira hand-back on at the branch's head, writes the revisi
   const w = world([jiraItem()]);
   await w.run();
   const job = jiraJob(w.store)!;
-  assert.equal(job.step, "review");
+  assert.equal(where(job).step, "review");
   assert.equal(job.head, SHA);
   assert.deepEqual(w.logged.filter((each) => each.includes("revision")), [`DEMO-5 revision ${JSON.stringify({ sha: SHA, branch: "scopesoup/DEMO-5", handback: "40007" })}`]);
   await w.run("2026-11-20T10:00:05.000Z");

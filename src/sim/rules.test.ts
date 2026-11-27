@@ -16,6 +16,8 @@ import type { Rule } from "./rules.ts";
 import { RULE_IDS, RULES } from "./rules.ts";
 import type { W } from "./waits.ts";
 import type { Action, Ledger } from "./world.ts";
+import { jobOf } from "../orchestrator/jobs.ts";
+import type { Where } from "../orchestrator/jobs.ts";
 
 const AT = "2026-11-18T10:00:00.000Z";
 const key = (id: string): string => `metaBranch:work:${id}`;
@@ -35,8 +37,8 @@ function workItem(id: string, over: Partial<WorkItem> = {}): WorkItem {
   return { ref: { host: "metaBranch", kind: "work", id }, title: `Item ${id}`, state: "todo", hostState: "todo", labels: [], blockedBy: [], openChildren: 0, updatedAt: AT, ...over };
 }
 
-function job(id: string, over: Partial<Job> = {}): Job {
-  return { item: { host: "metaBranch", kind: "work", id }, workspace: `w-${id}`, branch: `scopesoup/${id}`, step: "triage", failures: 0, fixRounds: 0, startedAt: AT, ...over };
+function job(id: string, over: Partial<Job & Where> = {}): Job {
+  return jobOf({ item: { host: "metaBranch", kind: "work", id }, workspace: `w-${id}`, branch: `scopesoup/${id}`, step: "triage", failures: 0, fixRounds: 0, startedAt: AT, ...over });
 }
 
 function card(id: string, over: Partial<CardView> = {}): CardView {

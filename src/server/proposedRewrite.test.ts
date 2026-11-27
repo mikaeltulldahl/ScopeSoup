@@ -16,6 +16,8 @@ import { loadJobs, saveJobs } from "../orchestrator/jobs.ts";
 import { readProposedRewrites, writeProposedRewrites } from "../orchestrator/aboutOthers.ts";
 import type { ScopeSoupServer } from "./server.ts";
 import { createServer } from "./server.ts";
+import { jobOf } from "../orchestrator/jobs.ts";
+import type { Where } from "../orchestrator/jobs.ts";
 
 let store: Store;
 let server: ScopeSoupServer;
@@ -30,8 +32,8 @@ function item(id: string, over: Partial<WorkItem> = {}): WorkItem {
   return { ref: { host: "fake", kind: "work", id }, title: `Item ${id}`, state: "todo", hostState: "open", labels: [], blockedBy: [], openChildren: 0, updatedAt: "2026-11-01T00:00:00Z", ...over };
 }
 
-function job(id: string, over: Partial<Job>): Job {
-  return { item: item(id).ref, workspace: `ws-${id}`, branch: `scopesoup/${id}`, step: "implement", failures: 0, fixRounds: 0, startedAt: at, ...over };
+function job(id: string, over: Partial<Job & Where>): Job {
+  return jobOf({ item: item(id).ref, workspace: `ws-${id}`, branch: `scopesoup/${id}`, step: "implement", failures: 0, fixRounds: 0, startedAt: at, ...over });
 }
 
 beforeEach(async () => {

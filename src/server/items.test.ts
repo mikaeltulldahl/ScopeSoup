@@ -14,6 +14,7 @@ import { createSync } from "../sync/index.ts";
 import type { ScopeSoupServer } from "./server.ts";
 import { createServer } from "./server.ts";
 import { loadJobs, saveJobs } from "../orchestrator/jobs.ts";
+import { jobOf } from "../orchestrator/jobs.ts";
 
 let repo: TestRepo;
 let host: MetaBranchHost;
@@ -152,7 +153,7 @@ test("Abandoned picked over a running session marks its job for the tick to end 
   const made = await post("/api/items", { title: "Oil the hinges", body: "", verification: "", labels: "", blockedBy: [] });
   const ref = made.body.ref as string;
   const page = await getJson<ItemPage>(`/api/item?ref=${ref}`);
-  saveJobs(store, { [ref]: { item: page.item.ref, workspace: "w", branch: "scopesoup/x", step: "implement", failures: 0, fixRounds: 0, startedAt: "2026-11-18T09:00:00Z", sessionId: "s9" } });
+  saveJobs(store, { [ref]: jobOf({ item: page.item.ref, workspace: "w", branch: "scopesoup/x", step: "implement", failures: 0, fixRounds: 0, startedAt: "2026-11-18T09:00:00Z", sessionId: "s9" }) });
   const picked = await post("/api/item/pick", { ref, seen: page.item.updatedAt, steps: [{ kind: "state", state: "abandoned" }] });
   assert.equal(picked.status, 200, JSON.stringify(picked.body));
   assert.deepEqual([loadJobs(store)[ref]?.interrupt?.by, loadJobs(store)[ref]?.interrupt?.to], ["Ada", "abandoned"]);
@@ -169,7 +170,7 @@ test("Backlog and To do (decision 121): a new Item is in Backlog, Create in To d
   // To do with a job (a triage nobody asked for in person): Backlog drops it first, then writes the lane.
   const ref = now.body.ref as string;
   const page = await pageOf(ref);
-  saveJobs(store, { [ref]: { item: page.item.ref, workspace: "w", branch: "scopesoup/x", step: "triage", failures: 0, fixRounds: 0, startedAt: "2026-11-18T09:00:00Z" } });
+  saveJobs(store, { [ref]: jobOf({ item: page.item.ref, workspace: "w", branch: "scopesoup/x", step: "triage", failures: 0, fixRounds: 0, startedAt: "2026-11-18T09:00:00Z" }) });
   const moved = await post("/api/item/pick", { ref, seen: page.item.updatedAt, steps: [{ kind: "move", to: "todo" }, { kind: "lane", lane: "backlog" }] }, undefined, agentsBase);
   assert.equal(moved.status, 200, JSON.stringify(moved.body));
   assert.equal(loadJobs(store)[ref]?.dropAskedBy, "Ada");
@@ -177,13 +178,13 @@ test("Backlog and To do (decision 121): a new Item is in Backlog, Create in To d
   // The lane edit alone drops a job too.
   const other = backlog.body.ref as string;
   const otherPage = await pageOf(other);
-  saveJobs(store, { ...loadJobs(store), [other]: { item: otherPage.item.ref, workspace: "w2", branch: "scopesoup/y", step: "triage", failures: 0, fixRounds: 0, startedAt: "2026-11-18T09:00:00Z" } });
+  saveJobs(store, { ...loadJobs(store), [other]: jobOf({ item: otherPage.item.ref, workspace: "w2", branch: "scopesoup/y", step: "triage", failures: 0, fixRounds: 0, startedAt: "2026-11-18T09:00:00Z" }) });
   assert.equal((await post("/api/item/edit", { ref: other, lane: "todo" }, undefined, agentsBase)).status, 200);
   assert.equal((await post("/api/item/edit", { ref: other, lane: "backlog" }, undefined, agentsBase)).status, 200);
   assert.equal(loadJobs(store)[other]?.dropAskedBy, "Ada");
 
   // Implement anyway on a Backlog Item: work under way, so it moves to To do.
-  saveJobs(store, { [other]: { item: otherPage.item.ref, workspace: "w2", branch: "scopesoup/y", step: "triage", failures: 0, fixRounds: 0, startedAt: "2026-11-18T09:00:00Z", parked: { as: "not-ready", reason: "Triage: not ready.", at: "2026-11-18T09:00:00Z", verdict: true } } });
+  saveJobs(store, { [other]: jobOf({ item: otherPage.item.ref, workspace: "w2", branch: "scopesoup/y", step: "triage", failures: 0, fixRounds: 0, startedAt: "2026-11-18T09:00:00Z", parked: { as: "not-ready", reason: "Triage: not ready.", at: "2026-11-18T09:00:00Z", verdict: true } }) });
   const anyway = await post("/api/item/move", { ref: other, to: "implement" }, undefined, agentsBase);
   assert.equal(anyway.status, 200, JSON.stringify(anyway.body));
   assert.equal(loadJobs(store)[other]?.implementAskedBy, "Ada");

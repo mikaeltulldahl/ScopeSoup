@@ -17,6 +17,8 @@ import type { Store } from "../store/store.ts";
 import { openStore } from "../store/store.ts";
 import type { ScopeSoupServer } from "./server.ts";
 import { createServer } from "./server.ts";
+import { where } from "../orchestrator/jobs.ts";
+import { jobOf } from "../orchestrator/jobs.ts";
 
 const API = "https://api.github.test";
 const at = "2026-11-21T09:00:00Z";
@@ -74,12 +76,12 @@ function parkedJob(id: string, hostId = "github"): string {
   const ref: Ref = { host: hostId, kind: "work", id };
   const key = `${hostId}:work:${id}`;
   store.put({ ref, title: `Tide table ${id}`, body: "Tide table units.", state: "todo", hostState: "open", labels: [], blockedBy: [], openChildren: 0, updatedAt: at }, "sync", at);
-  const job: Job = {
+  const job: Job = jobOf({
     item: ref, workspace: "w", branch: `scopesoup/${id}`, step: "triage", failures: 0, fixRounds: 0, startedAt: at,
     triage: { ready: true, size: "small", paths: [], hidesDecision: true, decisions: [question], rewrite: "Show the tide table in metres." },
     rewrite: { original: "Tide table units.", text: "Show the tide table in metres.", questions: [question], round: 1 }, rewriteRounds: 1,
     parked: { as: "needs-decision", reason: "Triage, round 1.", at },
-  };
+  });
   store.tx(() => saveJobs(store, { ...loadJobs(store), [key]: job }));
   return key;
 }
@@ -105,7 +107,7 @@ describe("a triage rewrite on a GitHub Item", () => {
     const shown = await page(key);
     assert.match(shown.answers.at(-1)!.answer, /^Accepted the triage's rewrite: the description above is the new text\.$/);
     // Written on the host, not yet read back into the store: the job waits for it, and says so.
-    assert.equal(loadJobs(store)[key]?.writing?.from, itemTextHash(store.get<WorkItem>({ host: "github", kind: "work", id: "11" })!));
+    assert.equal(where(loadJobs(store)[key])?.writing?.from, itemTextHash(store.get<WorkItem>({ host: "github", kind: "work", id: "11" })!));
     assert.equal(waitEvents(key), 1);
   });
 
@@ -127,7 +129,7 @@ describe("a triage rewrite on a GitHub Item", () => {
     assert.equal(answered.status, 200, JSON.stringify(answered.body));
     assert.equal(answered.body.settled, "rejected");
     assert.deepEqual(sent("13"), []);
-    assert.equal(loadJobs(store)[key]?.writing, undefined);
+    assert.equal(where(loadJobs(store)[key])?.writing, undefined);
     assert.equal(waitEvents(key), 0);
   });
 
@@ -155,7 +157,7 @@ describe("a triage rewrite on a GitHub Item", () => {
     const events = store.eventsAfter(0, 10_000).filter((event) => event.kind === "orchestrator.host_write_failed" && event.subject === key);
     assert.equal(events.length, 1);
     // Nothing was written, so nothing is waited for.
-    assert.equal(loadJobs(store)[key]?.writing, undefined);
+    assert.equal(where(loadJobs(store)[key])?.writing, undefined);
     assert.equal(waitEvents(key), 0);
   });
 
@@ -165,7 +167,7 @@ describe("a triage rewrite on a GitHub Item", () => {
     const answered = await post({ ref: key, parkedAt: at, answers: ["Metric"], action: "accept" });
     assert.equal(answered.status, 200, JSON.stringify(answered.body));
     assert.deepEqual(sent("16"), []);
-    assert.equal(loadJobs(store)[key]?.writing, undefined);
+    assert.equal(where(loadJobs(store)[key])?.writing, undefined);
   });
 
   test("an Item on a host whose description cannot be written here keeps the text as the answer, and nothing is waited for", async () => {
@@ -173,7 +175,7 @@ describe("a triage rewrite on a GitHub Item", () => {
     const answered = await post({ ref: key, parkedAt: at, answers: ["Metric"], action: "accept" });
     assert.equal(answered.status, 200, JSON.stringify(answered.body));
     assert.equal(answered.body.settled, "accepted");
-    assert.equal(loadJobs(store)[key]?.writing, undefined);
+    assert.equal(where(loadJobs(store)[key])?.writing, undefined);
     assert.equal(waitEvents(key), 0);
   });
 
@@ -185,7 +187,7 @@ describe("a triage rewrite on a GitHub Item", () => {
       const response = await fetch(`${url}/api/rewrite`, { method: "POST", headers: { "Content-Type": "application/json", "X-ScopeSoup-Person": "Ada" }, body: JSON.stringify({ ref: key, parkedAt: at, answers: ["Metric"], action: "accept" }) });
       assert.equal(response.status, 200);
       assert.equal(loadJobs(store)[key]?.rewrite?.settled, "accepted");
-      assert.equal(loadJobs(store)[key]?.writing, undefined);
+      assert.equal(where(loadJobs(store)[key])?.writing, undefined);
       assert.equal(waitEvents(key), 0);
     } finally {
       await other.stop();

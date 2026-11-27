@@ -26,6 +26,7 @@ import { SCOPESOUP } from "./hostActions.ts";
 import type { Decision, Finding, Job, JobStep, ParkedAs } from "./jobs.ts";
 import { formatFindings } from "./jobs.ts";
 import { workBranch, workspaceKey } from "./paths.ts";
+import { jobOf, setWhere, where } from "./jobs.ts";
 
 const SEEN_KEY = "orchestrator.logs_read";
 
@@ -54,7 +55,7 @@ export function jobFromLog(item: WorkItem): Job | null {
     const set = as === "needs-decision" && !asked.proposal ? questionSet(log, open, lineOf) : [];
     // Triage asked several questions (park writes one log line each): all of them wait again, in log order.
     if (set.length > 1) return parkOnDecisions(job, set);
-    job.parked = { as, reason: asked.question, at: asked.at, ...(line?.fields.retry === "hand-over" ? { retry: "hand-over" as const } : {}) };
+    setWhere(job, { parked: { as, reason: asked.question, at: asked.at, ...(line?.fields.retry === "hand-over" ? { retry: "hand-over" as const } : {}) } });
     if (as === "needs-decision") parkOnQuestion(job, asked);
     return job;
   }
@@ -80,7 +81,7 @@ export function jobFromHost(item: WorkItem): Job | null {
 
   if (rewrite) {
     const questions = rewrite.questions.map(decisionOf);
-    job.step = "triage";
+    setWhere(job, { step: "triage" });
     job.triage ??= { ready: true, size: "medium", paths: [], hidesDecision: false };
     job.triage.hidesDecision = questions.length > 0;
     job.rewrite = { original: (item.body ?? "").trim(), text: rewrite.text, questions, round: rewrite.round, ...(rewrite.labels ? { labels: rewrite.labels } : {}) };
@@ -92,7 +93,7 @@ export function jobFromHost(item: WorkItem): Job | null {
     const note = rewrite.bodyKnown ? "" : " The description the rewrite read is no longer known: the current one is shown as the original.";
     const ids = rewrite.questions.flatMap((question) => (question.id ? [question.id] : []));
     const askedAt = rewrite.questions[rewrite.questions.length - 1]?.at;
-    job.parked = { as: "needs-decision", reason: `${said}${note}`, at: rewrite.at, rewrite: { id: rewrite.id, questions: ids, ...(askedAt ? { askedAt } : {}) } };
+    setWhere(job, { parked: { as: "needs-decision", reason: `${said}${note}`, at: rewrite.at, rewrite: { id: rewrite.id, questions: ids, ...(askedAt ? { askedAt } : {}) } } });
     return job;
   }
 
@@ -101,11 +102,11 @@ export function jobFromHost(item: WorkItem): Job | null {
     const set = asked.proposal ? [] : open.filter((question) => !question.proposal && question.question.trim() !== "");
     if (set.length > 1) parkOnDecisions(job, set);
     else {
-      job.parked = { as: "needs-decision", reason: asked.question, at: asked.at };
+      setWhere(job, { parked: { as: "needs-decision", reason: asked.question, at: asked.at } });
       parkOnQuestion(job, asked);
     }
     const ids = (set.length > 1 ? set : [asked]).flatMap((question) => (question.id ? [question.id] : []));
-    job.parked = { ...job.parked!, questions: ids, askedAt: asked.at };
+    setWhere(job, { parked: { ...where(job).parked!, questions: ids, askedAt: asked.at } });
     return job;
   }
   return resumeFromLines(job, sessions, newest, review);
@@ -116,7 +117,7 @@ function fromLines(item: WorkItem, log: readonly LogRecord[], startedAt: string)
   const of = (kind: string): LogRecord[] => log.filter((line) => line.kind === kind);
   const revisions = of("revision");
   const newest = revisions[revisions.length - 1];
-  const job: Job = {
+  const job: Job = jobOf({
     item: item.ref,
     workspace: workspaceKey(item.ref),
     branch: str([...revisions].reverse().find((line) => str(line.fields.branch))?.fields.branch) || workBranch(item.ref),
@@ -124,7 +125,7 @@ function fromLines(item: WorkItem, log: readonly LogRecord[], startedAt: string)
     failures: 0,
     fixRounds: of("review").filter((line) => line.fields.verdict === "fail").length,
     startedAt,
-  };
+  });
   if (newest) job.head = str(newest.fields.sha);
 
   const sessions = of("session");
@@ -150,7 +151,7 @@ function fromLines(item: WorkItem, log: readonly LogRecord[], startedAt: string)
 /** Several questions wait again, in order, so the first answer does not release the item. The parked state's time is the first one's (`parkedAt`). */
 function parkOnDecisions(job: Job, set: readonly OpenQuestion[]): Job {
   const decisions: Decision[] = set.map(decisionOf);
-  job.parked = { as: "needs-decision", reason: `Triage found ${decisions.length} decisions for a person before the work can start: ${decisions.map((d, i) => `${i + 1}. ${d.question}`).join(" ")}`, at: set[0]!.at };
+  setWhere(job, { parked: { as: "needs-decision", reason: `Triage found ${decisions.length} decisions for a person before the work can start: ${decisions.map((d, i) => `${i + 1}. ${d.question}`).join(" ")}`, at: set[0]!.at } });
   job.triage ??= { ready: true, size: "medium", paths: [], hidesDecision: true };
   job.triage.hidesDecision = true;
   job.triage.decision = decisions[0];
@@ -174,7 +175,7 @@ function resumeFromLines(job: Job, sessions: readonly LogRecord[], newest: LogRe
   // 2. The last session said which step comes next: that step starts again.
   const next = str(sessions[sessions.length - 1]?.fields.next);
   if (STEPS.includes(next) || REMOVED_STEPS.includes(next)) {
-    job.step = next as JobStep;
+    setWhere(job, { step: next as JobStep });
     // A review that asked for changes sent the change back to the implementor: a fresh one gets the findings.
     if (next === "implement" && sessions[sessions.length - 1]?.fields.role === "review" && job.review?.verdict === "changes" && job.review.findings.length > 0) {
       // The log's findings already carry their severity and file.
@@ -185,8 +186,7 @@ function resumeFromLines(job: Job, sessions: readonly LogRecord[], newest: LogRe
 
   // 3. Reviewed and not merged: the hand-over (merging) is done again, without a session.
   if (newest && review && review.fields.sha === newest.fields.sha && review.fields.verdict === "pass") {
-    job.step = "review";
-    job.owes = "hand-over";
+    setWhere(job, { step: "review", owes: "hand-over" });
     return job;
   }
   return null;
@@ -238,8 +238,9 @@ export function recoverFromLogs(ctx: Context, items: readonly WorkItem[]): void 
     const job = onHost ? jobFromHost(item) : jobFromLog(item);
     if (!job) continue;
     ctx.jobs[key] = job;
-    const where = job.parked ? `parked as "${job.parked.as}": ${job.parked.reason}` : job.owes ? "reviewed and not merged: the hand-over is done again" : `the ${job.step} step starts again`;
-    ctx.commit("orchestrator.recovered", `Rebuilt from the item's ${onHost ? `comments on ${item.ref.host}` : "log"}: ${where}`, key, { step: job.step });
+    const at = where(job);
+    const said = at.parked ? `parked as "${at.parked.as}": ${at.parked.reason}` : at.owes ? "reviewed and not merged: the hand-over is done again" : `the ${at.step} step starts again`;
+    ctx.commit("orchestrator.recovered", `Rebuilt from the item's ${onHost ? `comments on ${item.ref.host}` : "log"}: ${said}`, key, { step: at.step });
   }
   store.setValue(SEEN_KEY, JSON.stringify([...seen, ...fresh.map((item) => refKey(item.ref))]));
 }
@@ -258,7 +259,7 @@ export function migrateRemovedSteps(ctx: Context): void {
   for (const [key, job] of Object.entries(ctx.jobs)) {
     if (job.proposal && !(Array.isArray(job.proposal.parts) && job.proposal.parts.length > 0)) {
       delete ctx.jobs[key];
-      ctx.commit("orchestrator.job_released", "The item was parked on a proposed rewrite of its text, which Scope Soup no longer asks about: the job is released and the item starts over at triage.", key, { was: job.parked });
+      ctx.commit("orchestrator.job_released", "The item was parked on a proposed rewrite of its text, which Scope Soup no longer asks about: the job is released and the item starts over at triage.", key, { was: where(job).parked });
       continue;
     }
     // The pre-approval check was removed: its start count goes, and an owed hand-over is simply repeated by the
@@ -272,35 +273,33 @@ export function migrateRemovedSteps(ctx: Context): void {
     // Other fields the checklist stage left (`checklist`, `seenRules`, `messageRoundUsed`) are no longer read and do no harm.
     const legacy = job as Job & { fixFindings?: Finding[] };
     if (legacy.fixFindings) {
-      const carried = (job.step as string) === "fix" && legacy.fixFindings.length > 0;
+      const carried = (where(job).step as string) === "fix" && legacy.fixFindings.length > 0;
       if (carried) job.review = { verdict: "changes", findings: legacy.fixFindings };
       delete legacy.fixFindings;
       ctx.commit("orchestrator.job_migrated", carried ? "The findings of a failed checklist are kept as the findings the implementor works from." : "The findings of a failed checklist are dropped: nothing reads them now.", key);
     }
-    if (!REMOVED_STEPS.includes(job.step)) continue;
-    if ((job.step as string) === "fix") {
+    if (!REMOVED_STEPS.includes(where(job).step)) continue;
+    if ((where(job).step as string) === "fix") {
       migrateFix(ctx, key, job);
       continue;
     }
-    const was = job.step as string;
+    const was = where(job).step as string;
     // A checklist session's answer is no longer read: whatever it was doing, the job moves on without it.
-    delete job.sessionId;
-    delete job.resume;
-    delete job.notBefore;
+    setWhere(job, { sessionId: undefined, resume: undefined, notBefore: undefined });
     job.failures = 0;
     if (ctx.config.level >= 3) {
-      job.step = "review";
+      setWhere(job, { step: "review" });
       ctx.commit("orchestrator.step_migrated", `The ${was} step was removed (the checklist stage is gone): the change goes to review instead.`, key, { from: was, to: "review" });
     } else {
       delete ctx.jobs[key];
-      ctx.commit("orchestrator.job_released", `The ${was} step was removed (the checklist stage is gone) and level ${ctx.config.level} has no review: the job is released and the item starts over.`, key, { from: was, was: job.parked });
+      ctx.commit("orchestrator.job_released", `The ${was} step was removed (the checklist stage is gone) and level ${ctx.config.level} has no review: the job is released and the item starts over.`, key, { from: was, was: where(job).parked });
     }
   }
 }
 
 /** A job at the removed "fix" step goes back to the implementor with the findings it was to fix. */
 function migrateFix(ctx: Context, key: string, job: Job): void {
-  job.step = "implement";
+  setWhere(job, { step: "implement" });
   const findings = job.review?.findings ?? [];
   job.resumeWith = findings.length > 0 ? `The reviewer asked for these changes:\n${formatFindings(findings)}\nFix them and commit.` : "The change was sent back. Look at it again, fix what is wrong and commit.";
   // The implementor's own session, when the store still has it: the newest implement session of the item that names one.
