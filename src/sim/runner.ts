@@ -6,6 +6,7 @@ import { refKey } from "../model/types.ts";
 import type { AgentRunner, SessionRequest } from "../orchestrator/ports.ts";
 import { sessionResultKey } from "../orchestrator/runner.ts";
 import type { Store } from "../store/store.ts";
+import { sweepLeftovers } from "../orchestrator/strayRefs.ts";
 import type { FakeGit } from "./git.ts";
 
 export interface LiveSession {
@@ -99,6 +100,10 @@ export function simRunner(ctx: RunnerContext, firstId = 1): SimRunner {
     async releaseWorkspace(workspace, reason) {
       runner.released.push(`${workspace}: ${reason ?? ""}`);
       git.removeWorktree(workspace);
+    },
+    async sweepLeftovers(work) {
+      const sessions = [...live.values()].map((each) => ({ item: refKey(each.session.subject), branch: each.request.branch }));
+      await sweepLeftovers({ store, git: git.refGit(), at: now(), live: [...work, ...sessions] });
     },
     async deleteBranch(branch) {
       if (branch === "main" || !branch.startsWith("scopesoup/")) {

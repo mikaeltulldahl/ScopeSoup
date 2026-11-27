@@ -3,6 +3,7 @@
 import type { LabelChange, Ref, RepoLabel, Session, SessionRole } from "../model/types.ts";
 import type { AnswerWrite, RewriteWrite, QuestionWrite, WorkPatch } from "../ports/host.ts";
 import type { AssumptionOutcome, AssumptionPick } from "./assumptions.ts";
+import type { LiveWork } from "./strayRefs.ts";
 
 export interface SessionRequest {
   role: SessionRole;
@@ -80,6 +81,11 @@ export interface AgentRunner {
   takeWorkspace(item: Ref, workspace: string, branch: string, head?: string): Promise<string | null>;
   /** Removes an item's worktree, or frees its clone of the pool. The branch stays. */
   releaseWorkspace(workspace: string, reason?: string): Promise<void>;
+  /**
+   * Removes what agents of closed Items left in Scope Soup's clone (stash entries, tags, branches) when nothing would be lost, and
+   * reports the rest (`strayRefs.ts`). `live` is the work under way here, whose refs are left alone. Absent where there is no clone.
+   */
+  sweepLeftovers?(live: readonly LiveWork[]): Promise<void>;
   /** Deletes an item's local branch (and any worktree still holding it). A branch that is not there is no error; the main branch and branches outside the item prefix are refused. */
   deleteBranch(branch: string): Promise<void>;
   /** Paths the branch changes against the main branch. */
