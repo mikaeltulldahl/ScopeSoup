@@ -76,7 +76,9 @@ export function loadSnapshot(store: Store): Snapshot {
     // The triaged Items that wait for a busy Item that changes the same files or may conflict with it.
     ...(() => {
       const jobs = loadJobs(store);
-      const busy = busyItems(jobs);
+      // A closed Item's job is busy no more, though the tick drops it only later.
+      const closed = (ref: Ref): boolean => ["done", "abandoned"].includes(store.get<WorkItem>(ref)?.state ?? "");
+      const busy = busyItems(jobs).filter((each) => !closed(each.item));
       const answers = knownAnswers(store);
       const sameFiles = Object.values(jobs).flatMap((job) => {
         const wait = sameFilesWait(job, busy, answers);

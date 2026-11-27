@@ -237,6 +237,8 @@ export interface Job {
     retry?: "hand-over" | "post";
     /** With `retry: "post"`, the parked state's own reason, which it shows again once the post is through. */
     posting?: string;
+    /** With `retry: "post"`, the parked state's own kind when it was not a question set (a log line that could not be written; #230). */
+    postingAs?: ParkedAs;
     /** Parked "not-ready" by triage's verdict (not ready, or too large): a person may overrule it with Implement anyway. */
     verdict?: true;
     /** The implement step itself was parked here (a question, a refused tool, failed attempts), not the hand-over, merging or a person closing the change. Only such a parked Item is resumed by an answer. */

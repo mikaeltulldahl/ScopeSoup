@@ -565,7 +565,7 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
       if (!resolved.some((each) => each.target) && parkedAt !== undefined && !(job?.parked && Date.parse(job.parked.at) === Date.parse(parkedAt))) return sendError(response, 409, "PARKED_CHANGED", `${ref} parked on other questions now: reload the item.`);
       const already = resolved.find((each) => each.target?.answer !== undefined);
       if (already) return sendError(response, 409, "ALREADY_ANSWERED", `Question ${already.index + 1} on ${ref} has an answer already.`);
-      const lines = resolved.map((each) => ({ kind: "answer", by: by(), fields: { answer: each.text, ...(each.asked ? { to: each.asked.at, toBy: each.asked.by } : {}) } }));
+      const lines = resolved.map((each) => ({ kind: "answer", by: by(), fields: { answer: each.text, ...(each.asked ? { to: each.asked.at, toBy: each.asked.by, toQuestion: each.asked.question } : {}) } }));
       try {
         if (lines.length > 1 && write.appendLogs) logged = await write.appendLogs(subject, lines);
         else for (const line of lines) logged = await write.appendLog(subject, line);
@@ -826,7 +826,7 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
     const asked = write?.appendLog && work.ref.host === items!.host && !(options.questions && work.ref.host === options.questions.host) ? work.openQuestions ?? [] : [];
     for (const question of asked) {
       try {
-        await write!.appendLog!(work.ref, { kind: "answer", by: by(), fields: { answer: said, to: question.at, toBy: question.by } });
+        await write!.appendLog!(work.ref, { kind: "answer", by: by(), fields: { answer: said, to: question.at, toBy: question.by, toQuestion: question.question } });
       } catch (error) {
         return error instanceof Error ? error.message : String(error);
       }
@@ -1201,7 +1201,7 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
     if (write?.appendLog && subject.host === items!.host) {
       const said = "rerun" in outcome ? `Answered the triage's questions: ${answers.join(" | ")}` : `${outcome.settled === "rejected" ? "Rejected" : outcome.settled === "edited" ? "Edited and accepted" : "Accepted"} the triage's rewrite${answers.length > 0 ? `, keeping the recommendations: ${answers.join(" | ")}` : ""}.`;
       try {
-        await write.appendLog(subject, { kind: "answer", by: by(), fields: { answer: said, ...(asked ? { to: asked.at, toBy: asked.by } : {}) } });
+        await write.appendLog(subject, { kind: "answer", by: by(), fields: { answer: said, ...(asked ? { to: asked.at, toBy: asked.by, toQuestion: asked.question } : {}) } });
       } catch (error) {
         options.onRefresh?.();
         return sendJson(response, 200, { ...result, logged: false, problem: error instanceof Error ? error.message : String(error) });

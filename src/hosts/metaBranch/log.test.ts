@@ -245,3 +245,14 @@ test("log: a new set of questions from Scope Soup replaces the set still open (d
   ));
   assert.deepEqual(picture.openQuestions.map((line) => line.question), ["A person's own?", "First of two?", "Second of two?"]);
 });
+
+test("log: an answer to one of several questions asked in the same instant closes that one only (#230)", () => {
+  const soup = { who: "scopesoup", machine: "laptop-a", agent: true };
+  const t = "2026-11-18T10:00:00Z";
+  const picture = fold(jsonl(
+    { at: t, by: soup, kind: "question", question: "First?" },
+    { at: t, by: soup, kind: "question", question: "Second?" },
+    { at: "2026-11-18T10:05:00Z", by: robin, kind: "answer", answer: "Yes", to: t, toBy: soup, toQuestion: "Second?" },
+  ));
+  assert.deepEqual(picture.openQuestions.map((line) => line.question), ["First?"]);
+});

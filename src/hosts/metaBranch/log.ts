@@ -223,7 +223,7 @@ function foldOrder(a: LogEntry, b: LogEntry): number {
  *   revision whose sha is already there is the same revision. `merged` counts only when its sha is
  *   the newest revision's.
  * - `question` is open until an `answer` names it by its `at` in `to` (and, when the answer has
- *   it, its writer in `toBy`), whichever of the two folds first, or, without `to`, until the next
+ *   it, its writer in `toBy` and its text in `toQuestion`, for several asked at once), whichever of the two folds first, or, without `to`, until the next
  *   answer (which takes the newest question open at the end of its own instant), or until a question of
  *   another `set` by the same writer replaces it (each park of Scope Soup's writes one set).
  */
@@ -234,7 +234,7 @@ export function foldLog(log: ParsedLog): LogPicture {
   picture.lines = ordered;
   const merges: MergedLine[] = [];
   // Answers that named a question not folded yet.
-  const earlyAnswers: { to: number; toBy?: LogActor }[] = [];
+  const earlyAnswers: { to: number; toBy?: LogActor; toQuestion?: string }[] = [];
   // Answers without `to`, by their instant: each takes the newest open question once its instant is folded, so a question of the same
   // instant that folds after it (an earlier `by` as text) is the one it answers.
   const newestAnswers: number[] = [];
@@ -340,7 +340,7 @@ export function foldLog(log: ParsedLog): LogPicture {
           else if (reason && (text(fields.description) || text(fields.verification))) break;
         }
         // An answer naming this question may fold before it: the same instant with an earlier `by` as text, or another clock.
-        const early = earlyAnswers.findIndex((answer) => answer.to === Date.parse(at) && (answer.toBy === undefined || sameActor(by, answer.toBy)));
+        const early = earlyAnswers.findIndex((answer) => answer.to === Date.parse(at) && (answer.toBy === undefined || sameActor(by, answer.toBy)) && (answer.toQuestion === undefined || answer.toQuestion === question));
         if (early >= 0) {
           earlyAnswers.splice(early, 1);
           break;
@@ -369,9 +369,17 @@ export function foldLog(log: ParsedLog): LogPicture {
           break;
         }
         const to = Date.parse(data.to);
+        // With `toQuestion`, of several asked in the same instant only the one with that text (or, with none, the first); without, all.
+        const toQuestion = text(data.toQuestion);
+        const named = (question: QuestionLine): boolean => Date.parse(question.at) === to && (toBy === undefined || sameActor(question.by, toBy));
         const before = picture.openQuestions.length;
-        picture.openQuestions = picture.openQuestions.filter((question) => !(Date.parse(question.at) === to && (toBy === undefined || sameActor(question.by, toBy))));
-        if (picture.openQuestions.length === before) earlyAnswers.push({ to, ...(toBy ? { toBy } : {}) });
+        if (toQuestion === undefined) picture.openQuestions = picture.openQuestions.filter((question) => !named(question));
+        else {
+          const exact = picture.openQuestions.findIndex((question) => named(question) && question.question === toQuestion);
+          const found = exact >= 0 ? exact : picture.openQuestions.findIndex(named);
+          if (found >= 0) picture.openQuestions.splice(found, 1);
+        }
+        if (picture.openQuestions.length === before) earlyAnswers.push({ to, ...(toBy ? { toBy } : {}), ...(toQuestion ? { toQuestion } : {}) });
         break;
       }
       case "settings":
