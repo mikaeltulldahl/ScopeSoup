@@ -526,6 +526,43 @@ async function holdsOn(id: string, options: Shrunk, actions: Action[]): Promise<
 }
 
 describe("runs the simulator shrank, held since their fix", { concurrency: 1 }, () => {
+  // Fixed (#268): a hand-over finds the reviewed revision on main already (the queue merged it, its notice lost with the store): merged.
+  test("E5: merged by the queue, then the store lost: the rebuilt hand-over closes it, nothing is merged again", async () => {
+    await holdsOn("E5", {items: 12, level: 4, slots: 2, steps: 600, profile: "normal", ageing: true}, [
+      {kind: "close", item: "A-2", state: "done"},
+      {kind: "tick"},
+      {kind: "close", item: "A-1", state: "done"},
+      {kind: "move", item: "A-3", v: 146012},
+      {kind: "tick"},
+      {kind: "move", item: "A-3", v: 836288},
+      {kind: "tick"},
+      {kind: "end", item: "A-5", v: 141136},
+      {kind: "tick"},
+      {kind: "lose-store"},
+      {kind: "switch", to: "resume"},
+      {kind: "tick"},
+      {kind: "end", item: "A-5", v: 853882},
+      {kind: "tick"},
+      {kind: "clock", ms: 60000},
+      {kind: "tick"},
+      {kind: "end", item: "A-5", v: 139211},
+      {kind: "tick"},
+      {kind: "queue", item: "A-5", merge: true},
+      {kind: "lose-store"},
+      {kind: "fair"},
+      {kind: "tick"},
+      {kind: "clock", ms: 1860000},
+      {kind: "tick"},
+      {kind: "end", item: "A-5", v: 98},
+      {kind: "tick"},
+      {kind: "clock", ms: 1000},
+      {kind: "tick"},
+      {kind: "end", item: "A-5", v: 129},
+      {kind: "tick"},
+      {kind: "queue", item: "A-5", merge: true},
+    ]);
+  });
+
   // Fixed (#268): a move back to To do drops a hand-over the job owed, so its wait is the drop's.
   test("A1: an escalated hand-over answered, then put back in To do: no hand-over is waited for", async () => {
     await holdsOn("A1", {items: 9, level: 2, slots: 3, steps: 600, profile: "normal", ageing: true}, [

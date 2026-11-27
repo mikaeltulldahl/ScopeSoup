@@ -629,6 +629,7 @@ async function handOver(ctx: Context, job: Job, item: WorkItem | null, askedBy?:
   // This is the hand-over that was owed, if one was: whatever happens now, it is not owed any more unless said again below.
   setWhere(job, { owes: undefined });
   if (ctx.config.level < 4) return sessionMerged(ctx, job, item, askedBy);
+  if (await reviewedOnMain(ctx, job)) return;
   // A person's Merge queue pick was checked against the job as it was then: only the revision the reviewer approved goes to the
   // queue. A session may have committed since (one the pick ended), so the branch's head is read again (decision 104).
   if (job.queueAskedBy !== undefined) {
@@ -671,6 +672,33 @@ async function handOver(ctx: Context, job: Job, item: WorkItem | null, askedBy?:
     return;
   }
   return handOverToQueue(ctx, job);
+}
+
+/**
+ * Main holds the revision the reviewer approved already: the merge queue merged it and its notice was lost with the store, or a person
+ * merged it. It is merged, whoever put it there (recover.ts), so it is not handed over again: the Item closes as after a merge (#268).
+ * True when it did.
+ */
+async function reviewedOnMain(ctx: Context, job: Job): Promise<boolean> {
+  if (!job.reviewedHead || job.review?.verdict !== "approve") return false;
+  const { runner, actions } = ctx.deps;
+  const main = ctx.config.mainBranch;
+  let tip: string;
+  try {
+    const head = await runner.head(job.branch);
+    if (head !== job.reviewedHead) return false;
+    tip = (await runner.fetchMain(job.branch)).main;
+    if ((await runner.contains(job.branch, head, tip)) !== true) return false;
+  } catch {
+    return false;
+  }
+  const head = job.reviewedHead;
+  const key = refKey(job.item);
+  setWhere(job, { merged: head });
+  ctx.commit("orchestrator.merged", `${job.branch} is on ${main} of ${ctx.config.remote} as ${head.slice(0, 7)} already, the revision the reviewer approved: it is merged, and not handed over again.`, key, { sha: head, main: tip, by: "found" });
+  await ctx.act("write the merge to the item's log", key, () => actions.appendLog(job.item, "merged", { sha: head, target: main }));
+  await closeMerged(ctx, job, head);
+  return true;
 }
 
 /** The branch's head, or null when it cannot be read. */
