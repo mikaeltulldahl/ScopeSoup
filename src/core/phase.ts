@@ -73,6 +73,11 @@ export function stepOf(phase: Phase): Step | null {
   }
 }
 
+/** The step that waits to start: a step phase with no session running. Null for a running or parked phase. */
+export function waitingStep(phase: Phase): Step | null {
+  return (phase.at === "triage" || phase.at === "implement" || phase.at === "review") && phase.run.is === "waiting" ? phase.at : null;
+}
+
 /** The session the phase runs now, if any. */
 export function sessionOf(phase: Phase): string | undefined {
   return (phase.at === "triage" || phase.at === "implement" || phase.at === "review") && phase.run.is === "running" ? phase.run.session : undefined;
