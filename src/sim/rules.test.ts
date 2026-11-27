@@ -522,6 +522,18 @@ async function holdsOn(id: string, options: Shrunk, actions: Action[]): Promise<
 }
 
 describe("runs the simulator shrank, held since their fix", { concurrency: 1 }, () => {
+  // Held (#268): a job rebuilt from the log counts no parks, so its question line's set is not an earlier park's; the answer names it.
+  test("A3: a question parked, the store lost and the job rebuilt, then answered: the question closes on the host", async () => {
+    await holdsOn("A3", {items: 7, level: 4, slots: 1, steps: 600, profile: "calm", ageing: true}, [
+      {kind: "tick"},
+      {kind: "end", item: "A-1", v: 307922},
+      {kind: "tick"},
+      {kind: "lose-store"},
+      {kind: "tick"},
+      {kind: "answer", item: "A-1", v: 270589},
+    ]);
+  });
+
   // Fixed (#268): two triages running at once each find the other a blocker; the second link would close a ring and is not kept.
   test("H2: A-4's triage finds A-8 a blocker while A-8's triage runs, which then finds A-4 one: no ring", async () => {
     await holdsOn("H2", {items: 11, level: 3, slots: 3, steps: 600, profile: "normal", ageing: true}, [
