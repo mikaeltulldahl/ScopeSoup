@@ -10,8 +10,7 @@ export interface Known {
 }
 
 export const KNOWN: Record<string, Known> = {
-  // Seen in the long run only (seed in the long run). Less looked into than the ones above: the report says which may be the simulator's own.
-  // Since #229 (a released claim is read back at once, with an event about the Item) the normal run's seeds no longer show it.
-  // Pre-existing on main (its shrunk steps fail there too), reached when #223's pace and waiting caps moved the long runs.
-  B4: { seed: 62, long: true, what: "a rewrite's question naming another Item as a duplicate stays open, between ticks, after a person closes that Item (#262)" },
+  // Seen in the long run only (seed in the long run).
+  // Reached when #268 changed the long run's draws; it waits for a decision on the meta branch's fold.
+  A3: { seed: 92, long: true, what: "questions parked after a close and a reopen in the same second read as closed by the close (#270)" },
 };
