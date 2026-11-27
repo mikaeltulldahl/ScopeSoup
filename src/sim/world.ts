@@ -237,6 +237,8 @@ export class SimWorld {
   readonly shared: boolean;
   /** The read-back the server asks for after it wrote a description does not come (a fetch that failed): the store reads the old text until a sync. */
   private lagRead = false;
+  /** A read-back was lost: the server's next poll reads it, so a minute or more on the clock syncs first. */
+  private readBackOwed = false;
   private actions: ReturnType<typeof createHostActions>;
 
   constructor(options: WorldOptions, machine?: MachineOptions) {
@@ -307,7 +309,7 @@ export class SimWorld {
       store: this.store, port: 0, now: () => new Date(this.ms), configFile: "/srv/scopesoup/scopesoup.config.json",
       items: { host: this.host.info.id, write: this.host.write!, work: this.host.work! }, machine: this.machine, ...(this.requests ? { requests: this.requests } : {}),
       planning: () => ({ bugLabels: ["bug"], plannedSessions: this.configNow.settings.maxParallelSessions.value, level: this.configNow.level }),
-      syncNow: () => (this.lagRead ? Promise.resolve() : this.sync()),
+      syncNow: () => (this.lagRead ? Promise.resolve(void (this.readBackOwed = true)) : this.sync()),
     });
   }
 
@@ -347,6 +349,7 @@ export class SimWorld {
   async sync(): Promise<void> {
     if (this.remote.down > 0) return;
     await syncHost(this.store, this.host, { pipelines: [], recentLimit: 0, batchLimit: 0, full: true }, () => this.now());
+    this.readBackOwed = false;
   }
 
   /** One request to the server, in the process, as the board's person. */
@@ -512,6 +515,8 @@ export class SimWorld {
       case "sync":
         return this.sync();
       case "clock":
+        // A running server polls its host: a read-back a lost fetch owed comes with the next poll, within a minute.
+        if (this.readBackOwed && action.ms >= 60_000) await this.sync();
         this.ms += action.ms;
         return;
       case "main-commit": {
