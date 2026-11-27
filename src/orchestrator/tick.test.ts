@@ -4658,8 +4658,8 @@ test("pressing Overturn twice does not resume twice; a change in the queue or me
   const told = w.runner.requests.filter((request) => /overturned decision/.test(request.message ?? ""));
   assert.equal(told.length, 1);
 
-  // Not taken: in the merge queue, handed over, merged, done, or no work under way.
-  const job = w.job("1")!;
+  // Not taken: in the merge queue, handed over, merged, done, or no work under way. (Parked, the job runs no session.)
+  const { sessionId: _running, ...job } = w.job("1")!;
   assert.equal(takesOverturn({ ...job, parked: { as: "queued", reason: "", at: "" } }, { state: "doing" }), false);
   assert.equal(takesOverturn({ ...job, parked: { as: "handed-over", reason: "", at: "" } }, { state: "doing" }), false);
   assert.equal(takesOverturn({ ...job, merged: HEAD }, { state: "doing" }), false);

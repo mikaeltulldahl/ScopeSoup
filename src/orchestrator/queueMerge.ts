@@ -16,6 +16,7 @@ import type { Notice, QueueDriver, QueueSink } from "./queueDriver.ts";
 import { closeMerged } from "./mergedClose.ts";
 import { giveLease, takeLease } from "./mergeQueueLease.ts";
 import { clearResumeRequest, recordFlakyTests, recordQueueNote, resumeRequestedBy, shortExcerpt } from "./queueHealth.ts";
+import { phaseOf } from "./phase.ts";
 
 /** Hands a reviewed change to the queue and lets the item be parked as "queued". */
 export async function handOverToQueue(ctx: Context, job: Job): Promise<void> {
@@ -128,7 +129,7 @@ async function apply(ctx: Context, notice: Notice): Promise<void> {
     case "send-back": {
       const key = refKey(notice.change);
       const job = ctx.jobs[key];
-      if (!job?.parked || job.parked.as !== "queued") return;
+      if (!job || phaseOf(job).at !== "queued") return;
       const { finding, what } = sendBackText(ctx, notice.reason, command);
       // A red batch is a failed check on this change's commit; a conflict is not a check and has no line.
       if (notice.reason.kind === "culprit" && isFullSha(notice.sha)) {
@@ -169,7 +170,7 @@ async function apply(ctx: Context, notice: Notice): Promise<void> {
       // CI on GitHub did not finish in time, or never ran: the change parked for a person; an answer hands it over again.
       for (const change of notice.changes) {
         const job = ctx.jobs[refKey(change)];
-        if (!job?.parked || job.parked.as !== "queued") continue;
+        if (!job || phaseOf(job).at !== "queued") continue;
         delete job.queued;
         await park(ctx, job, "escalated", notice.message, "escalation", "hand-over");
       }

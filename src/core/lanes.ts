@@ -3,6 +3,7 @@
 import type { Batch, BatchMember, Change, Ref, Session, Verdict, WorkItem } from "../model/types.ts";
 import { refKey } from "../model/types.ts";
 import type { Index, JobStage } from "./snapshot.ts";
+import { parkedForPerson as isParkedForPerson } from "./phase.ts";
 
 // Backlog: what a person has not chosen yet, which no agent starts; To do: what agents may start (decision 121).
 export const LANES = ["backlog", "todo", "blocked", "in-progress", "in-review", "queued", "checking", "done"] as const;
@@ -74,7 +75,7 @@ export function isApproved(change: Change, index: Index): boolean {
 /** Parked for a person (a question, a hand-over, an escalation, not ready): not waiting in the merge queue, whatever its verdicts. */
 export function parkedForPerson(work: Ref, index: Index): boolean {
   const phase = index.jobByWork.get(refKey(work))?.phase;
-  return phase?.at === "asked" || phase?.at === "not-ready" || phase?.at === "stuck" || phase?.at === "with-person";
+  return !!phase && isParkedForPerson(phase);
 }
 
 function currentChange(item: WorkItem, index: Index): Change | undefined {

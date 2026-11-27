@@ -22,6 +22,7 @@ import type { AgentRunner } from "./ports.ts";
 import { usageDecision } from "./tick.ts";
 import { providerNamed } from "./providers/index.ts";
 import { poolRepoPath, readHoldings, samePath } from "./workspaces.ts";
+import { phaseOf } from "./phase.ts";
 
 /** One turn as stored. `agentSession` is the session it continued (or the one the reply came from, when the agent forked it). */
 export interface ChatTurn {
@@ -186,7 +187,8 @@ export function createChat(deps: ChatDeps): Chat {
     if (!job) return "The Item has no work under way here, so there is no worktree to talk to its sessions in.";
     if (job.merged) return "The Item is merged, so its sessions take no more messages.";
     // Level 4: the branch is the queue's now; a turn could change it under the merge.
-    if (job.parked?.as === "queued" || job.queued !== undefined || job.owes === "hand-over") {
+    const phaseAt = phaseOf(job).at;
+    if (phaseAt === "queued" || phaseAt === "hand-over" || job.queued !== undefined) {
       return "The Item is queued for merging (or being merged); talk to its sessions once it merges or comes back.";
     }
     if (roleStopped(store, job.step)) return `Stop was pressed: no ${job.step} session runs until you press Resume ${SWITCH_WORDS[job.step]}.`;

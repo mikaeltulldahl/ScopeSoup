@@ -41,6 +41,8 @@ import { busyWhy, duplicateAsked, duplicatePairSettled, workingWhy, isOpenItem, 
 import type { WaitingAbout } from "./aboutOthers.ts";
 import { workBranch, workspaceKey } from "./paths.ts";
 import { plural } from "../model/plural.ts";
+import { stepOf } from "../core/phase.ts";
+import { phaseOf } from "./phase.ts";
 
 
 const CONTINUE_MS = 1000;
@@ -927,7 +929,7 @@ async function writeSession(ctx: Context, job: Job, session: Session, record: Se
   // The triage's links, for the next sessions' `{{history}}` (decision 112).
   const links = triage && Array.isArray(output.links) ? linkWords(output.links) : [];
   if (links.length > 0) fields.links = links;
-  if (after && !after.parked && !after.owes) fields.next = after.step;
+  if (after && stepOf(phaseOf(after)) !== null) fields.next = after.step;
   if (output.size === "small" || output.size === "medium" || output.size === "large") fields.size = output.size;
   await ctx.act("write the session to the item's log", refKey(job.item), () => ctx.deps.actions.appendLog(job.item, "session", fields));
 }

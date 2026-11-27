@@ -17,6 +17,8 @@ import type { Store } from "../store/store.ts";
 import { openDrafts } from "./drafts.ts";
 import type { Jobs } from "./jobs.ts";
 import { providerFor } from "./providers/index.ts";
+import { parkedForPerson } from "../core/phase.ts";
+import { phaseOf } from "./phase.ts";
 
 /** How far back the sessions a role's expected use is the median of are looked for. */
 const HISTORY_MS = 2 * 24 * 3600_000;
@@ -125,7 +127,7 @@ export function waitingForPerson(store: Store, items: readonly WorkItem[], jobs:
   return countWaiting(open.map((item) => {
     const job = jobs[refKey(item.ref)];
     return {
-      asks: job ? !!job.parked && job.parked.as !== "queued" : item.needsDecision === true,
+      asks: job ? parkedForPerson(phaseOf(job)) : item.needsDecision === true,
       openDecisions: (item.assumptions ?? []).filter((each) => !each.settled).length,
     };
   }), openDrafts(store).length);

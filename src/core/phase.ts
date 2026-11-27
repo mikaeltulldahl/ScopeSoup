@@ -83,12 +83,22 @@ export function sessionOf(phase: Phase): string | undefined {
   return (phase.at === "triage" || phase.at === "implement" || phase.at === "review") && phase.run.is === "running" ? phase.run.session : undefined;
 }
 
+/** Parked for a person's answer: a question, not ready, or stuck (a failed hand-over too, which an answer tries again). */
+export function parkedForAnswer(phase: Phase): boolean {
+  return phase.at === "asked" || phase.at === "not-ready" || phase.at === "stuck";
+}
+
+/** Parked for a person: for an answer, or handed over to merge. */
+export function parkedForPerson(phase: Phase): boolean {
+  return parkedForAnswer(phase) || phase.at === "with-person";
+}
+
 /**
  * Parked for a person's answer on the Item's page (a question, a rewrite, a restructuring, not ready, escalated). A failed hand-over is
  * not: its answer only repeats the hand-over.
  */
 export function waitsForAnswer(phase: Phase): boolean {
-  return phase.at === "asked" || phase.at === "not-ready" || (phase.at === "stuck" && phase.from !== "hand-over");
+  return parkedForAnswer(phase) && !(phase.at === "stuck" && phase.from === "hand-over");
 }
 
 /** The implement step has not begun: no change, no attempt, nothing to resume. Its start is new work (decision 133). */
