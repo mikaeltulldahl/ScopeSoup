@@ -4267,7 +4267,7 @@ test("while a person's chat turn runs on an item, the cycle starts nothing on it
 test("a chat turn a person starts while the tick prepares the item's step keeps the item: the step is not started", async () => {
   const w = world(config({ level: 2 }), [item("1", { state: "doing" })]);
   w.store.addUsageSample(usage(0.1, 0.1));
-  const due = { item: ref("1"), workspace: workspaceKey(ref("1")), branch: "scopesoup/1", step: "implement" as const, failures: 0, fixRounds: 1, agentSession: "agent-1", resumeWith: "Fix it.", startedAt: new Date(T0).toISOString() };
+  const due = { item: ref("1"), workspace: workspaceKey(ref("1")), branch: "scopesoup/1", step: "implement" as const, failures: 0, fixRounds: 1, agentSession: "agent-1", resumeWith: "Fix it.", startedAt: new Date(T0).toISOString(), seenInTodo: true as const };
   w.store.tx(() => saveJobs(w.store, { [refKey(ref("1"))]: due }));
   // Not busy when the tick picks the item; a person's turn starts while the tick awaits the workspace, before its start.
   let talking = false;
@@ -4585,8 +4585,8 @@ test("a cross-Item rewrite with no question is proposed on that Item and leaves 
   w.store.tx(() => {
     const jobs = loadJobs(w.store);
     // Approved and to be merged, waiting for its merge turn; and one in a backoff wait after a failed attempt.
-    jobs[refKey(ref("2"))] = { item: ref("2"), workspace: workspaceKey(ref("2")), branch: "scopesoup/2", step: "implement", failures: 0, fixRounds: 1, startedAt: at, merge: true, notBefore: later, agentSession: "agent-2" };
-    jobs[refKey(ref("3"))] = { item: ref("3"), workspace: workspaceKey(ref("3")), branch: "scopesoup/3", step: "implement", failures: 1, fixRounds: 0, startedAt: at, notBefore: later };
+    jobs[refKey(ref("2"))] = { item: ref("2"), workspace: workspaceKey(ref("2")), branch: "scopesoup/2", step: "implement", failures: 0, fixRounds: 1, startedAt: at, merge: true, notBefore: later, agentSession: "agent-2", seenInTodo: true };
+    jobs[refKey(ref("3"))] = { item: ref("3"), workspace: workspaceKey(ref("3")), branch: "scopesoup/3", step: "implement", failures: 1, fixRounds: 0, startedAt: at, notBefore: later, seenInTodo: true };
     saveJobs(w.store, jobs);
   });
   const before = { two: structuredClone(w.job("2")), three: structuredClone(w.job("3")) };
