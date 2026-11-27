@@ -522,6 +522,36 @@ async function holdsOn(id: string, options: Shrunk, actions: Action[]): Promise<
 }
 
 describe("runs the simulator shrank, held since their fix", { concurrency: 1 }, () => {
+  // Fixed (#268): an answer to the park names it, also when the store still reads an earlier park's question.
+  test("A3: a rewrite accepted whose read-back is lost, parked not ready, then answered: the not-ready question closes", async () => {
+    await holdsOn("A3", {items: 9, level: 4, slots: 3, steps: 600, profile: "normal", ageing: true}, [
+      {kind: "tick"},
+      {kind: "end", item: "A-3", v: 59958},
+      {kind: "tick"},
+      {kind: "end", item: "A-4", v: 90194},
+      {kind: "level", to: 2},
+      {kind: "answer", item: "A-3", v: 6498},
+      {kind: "tick"},
+      {kind: "answer", item: "A-3", v: 295300},
+      {kind: "close", item: "A-6", state: "abandoned"},
+      {kind: "tick"},
+      {kind: "end", item: "A-3", v: 503417},
+      {kind: "end", item: "A-1", v: 181024},
+      {kind: "tick"},
+      {kind: "main-commit", v: 208949},
+      {kind: "tick"},
+      {kind: "end", item: "A-1", v: 7487},
+      {kind: "close", item: "A-5", state: "abandoned"},
+      {kind: "tick"},
+      {kind: "end", item: "A-7", v: 724465},
+      {kind: "tick"},
+      {kind: "sync"},
+      {kind: "answer", item: "A-7", v: 353567},
+      {kind: "tick"},
+      {kind: "answer", item: "A-7", v: 730785},
+    ]);
+  });
+
   // Fixed (#268): a move answers the park the store has not read back, also when it still reads an earlier park's question.
   test("A3: a rewrite rejected whose read-back is lost, parked not ready, then Implement anyway: the not-ready question is answered", async () => {
     await holdsOn("A3", {items: 7, level: 2, slots: 2, steps: 600, profile: "normal", ageing: true}, [

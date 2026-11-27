@@ -582,6 +582,12 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
     const several = parked?.questions ?? [];
     const open = item.openQuestions ?? [];
     const resolved: { text: string; index: number; target?: ParkedQuestion; asked?: OpenQuestion; question?: string }[] = [];
+    // The newest open question the store reads, unless it is an earlier park's while this park's question is not read back yet (a lost
+    // read-back after an answer, #268): then the answer names this park's set instead.
+    const parkedJob = loadJobs(store)[ref];
+    const parkNow = parkedJob && where(parkedJob).parked ? parkSet(parkedJob) : undefined;
+    const newestOpen = open[open.length - 1];
+    const newest = newestOpen && !(parkNow && newestOpen.set !== undefined && newestOpen.set !== parkNow) ? newestOpen : undefined;
     for (const { text, to, index: given } of entries) {
       // `question` only means something while the item parked on several questions; a stale page or a re-triage is refused below.
       if (given !== undefined && several.length === 0) return sendError(response, 409, "NO_OPEN_QUESTIONS", `${ref} does not wait on several questions (any more): reload the item.`);
@@ -594,7 +600,7 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
       if (index >= several.length) return sendError(response, 404, "QUESTION_NOT_FOUND", `No open question ${index} on ${ref}.`);
       const target = index >= 0 ? several[index] : undefined;
       // For one of several, the log's question line written for it, so the answer closes it there too.
-      const asked = named ?? (target ? open.find((question) => !question.proposal && question.question === target.question) : open[open.length - 1]);
+      const asked = named ?? (target ? open.find((question) => !question.proposal && question.question === target.question) : newest);
       const question = target?.question ?? asked?.question ?? parked?.decision?.question;
       resolved.push({ text, index, ...(target ? { target } : {}), ...(asked ? { asked } : {}), ...(question ? { question } : {}) });
     }
