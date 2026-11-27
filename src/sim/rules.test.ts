@@ -515,6 +515,26 @@ async function holdsOn(id: string, options: Shrunk, actions: Action[]): Promise<
 }
 
 describe("runs the simulator shrank, held since their fix", { concurrency: 1 }, () => {
+  // Fixed (#268): a step a person picked at a level below its switch runs while the agents are paused; the card says its timer.
+  test("A1: Implement anyway at level 1, cut off by a restart: the card says when it starts, not that agents are paused", async () => {
+    await holdsOn("A1", {items: 7, level: 3, slots: 2, steps: 600, profile: "rough", ageing: true}, [
+      {kind: "close", item: "A-1", state: "abandoned"},
+      {kind: "foreign-claim", item: "A-2"},
+      {kind: "slots", to: 3},
+      {kind: "level", to: 1},
+      {kind: "tick"},
+      {kind: "end", item: "A-5", v: 411021},
+      {kind: "end", item: "A-3", v: 652790},
+      {kind: "tick"},
+      {kind: "end", item: "A-7", v: 844819},
+      {kind: "tick"},
+      {kind: "move", item: "A-7", v: 578128},
+      {kind: "tick"},
+      {kind: "restart"},
+      {kind: "tick"},
+    ]);
+  });
+
   // Fixed (#268): a step Scope Soup's lost store would rebuild from the log is not rebuilt for an Item a person moved to Backlog.
   test("J1: the store lost after a move to Backlog, and the Item still claimed: no triage starts there", async () => {
     await holdsOn("J1", {items: 3, level: 4, slots: 2, steps: 600, profile: "calm", ageing: true}, [

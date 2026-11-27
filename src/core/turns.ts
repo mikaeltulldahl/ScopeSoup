@@ -14,7 +14,7 @@ import { sameFilesWords } from "./sameFiles.ts";
 import { clearWithoutTriage } from "./statedSize.ts";
 import { itemTextHash } from "./answerReuse.ts";
 import { waitingRun } from "./phase.ts";
-import { WRITING_WAIT_MS } from "./waits.ts";
+import { STEP_LEVEL, WRITING_WAIT_MS } from "./waits.ts";
 
 /** How a card is coloured: is it moving, waiting its turn, stuck, or a person's? */
 export type Tone = "moving" | "waiting" | "blocked" | "yours" | "done";
@@ -195,16 +195,20 @@ function todoTurn(situation: Situation, ctx: TurnContext): Draft {
   if (item.openChildren > 0) return umbrellaTurn(item);
   if ((item.children ?? 0) > 0 && item.state === "todo") return allPartsDoneTurn(item);
   if (item.state === "waiting") return { actor: "nobody", tone: "blocked", reason: `waiting on the host (status "${item.hostState}")` };
-  if (ctx.index.snapshot.paused) return { actor: "nobody", tone: "blocked", reason: "ready, but agents are paused (press Resume all)" };
+  const job = ctx.index.jobByWork.get(refKey(item.ref));
+  // A step a person picked runs whatever the switches, below the level that shows its switch (decision 104): no switch words then.
+  const level = ctx.index.snapshot.level;
+  const pickRuns = !!job?.picked && level !== undefined && level < STEP_LEVEL[job.step];
+  if (ctx.index.snapshot.paused && !pickRuns) return { actor: "nobody", tone: "blocked", reason: "ready, but agents are paused (press Resume all)" };
   if (ctx.index.snapshot.usage?.status === "rejected") return { actor: "nobody", tone: "blocked", reason: `ready, but the usage limit is reached${resetWords(ctx)}` };
   // Its next step is the triage and triage is paused: it waits for that switch, not for a slot. (A stated size skips the triage from level 2.)
   // With a job, its step says it.
-  const step = ctx.index.jobByWork.get(refKey(item.ref))?.step;
+  const step = job?.step;
   const triageNext = step ? step === "triage" : ctx.notTriaged?.has(refKey(item.ref)) && !((ctx.index.snapshot.level ?? 0) >= 2 && clearWithoutTriage(item));
-  if (triageNext && ctx.index.snapshot.triage !== "started") return { actor: "nobody", tone: "blocked", reason: "ready, but triage is paused (Resume on To do)" };
+  if (triageNext && ctx.index.snapshot.triage !== "started" && !pickRuns) return { actor: "nobody", tone: "blocked", reason: "ready, but triage is paused (Resume on To do)" };
   // Its next step is the implement (it is triaged, or needs no triage), and no implementor takes it now: implementors are
   // paused, or the level is below 2. The status line says which; the card says only "ready".
-  if (!triageNext && (ctx.index.snapshot.implement !== "started" || (ctx.index.snapshot.level ?? 2) < 2)) return { actor: "nobody", tone: "waiting", reason: "ready" };
+  if (!triageNext && !pickRuns && (ctx.index.snapshot.implement !== "started" || (ctx.index.snapshot.level ?? 2) < 2)) return { actor: "nobody", tone: "waiting", reason: "ready" };
   return nextStepTurn(situation, ctx, { actor: "agent", tone: "waiting", reason: "ready; waiting for a free agent slot" });
 }
 

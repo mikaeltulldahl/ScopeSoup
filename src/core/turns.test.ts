@@ -411,4 +411,9 @@ test("with a job, the lane and the reason follow what the Item waits for (decisi
   // Past their moment they say nothing; nor does a text read back already.
   assert.equal(timed(timer(at(-1))), "ready; waiting for a free agent slot");
   assert.equal(timed({ text: { from: "another text", at: at(-10) } }), "ready; waiting for a free agent slot");
+  // A step a person picked runs whatever the switches below the level that shows its switch (decision 104): its timer is said, not
+  // that agents are paused (#268). At the level that shows the switch, the switch holds it.
+  const picked = (level: number) => turnOf({ ...snapshot({ works: [work(1)], jobs: [{ subject, stage: "start", step: "implement", picked: true, phase: { at: "implement", run: { is: "waiting", ...timer(at(1)) }, why: "first" } }] }), paused: true, implement: "paused", level }, 1).reason;
+  assert.equal(picked(1), "its implement step starts in 1 min");
+  assert.equal(picked(2), "ready, but agents are paused (press Resume all)");
 });
