@@ -3,6 +3,7 @@
 
 import type { ConfigSource } from "../config/loader.ts";
 import type { ProjectConfig } from "../config/types.ts";
+import { AlreadyAnswered, BodyChanged, NotScopeSoups, TooLarge, WorkGone, WriteLater } from "../ports/host.ts";
 import type { Store } from "../store/store.ts";
 import type { Jobs } from "./jobs.ts";
 import { saveJobs } from "./jobs.ts";
@@ -86,6 +87,16 @@ export function createLog(store: Store, at: string, jobs: () => Jobs | null): Pi
       });
     },
   };
+}
+
+/**
+ * Event data for a catch that reports a caught error: `thrown: true` unless it is an error a host gives on purpose (down, refused,
+ * gone, already answered, not ours), so that a programming error hiding behind a catch can be told from a host that did not answer
+ * (the simulator's rule G4 reads it).
+ */
+export function thrownData(error: unknown): { thrown: true } | Record<string, never> {
+  const host = error instanceof WriteLater || error instanceof WorkGone || error instanceof AlreadyAnswered || error instanceof BodyChanged || error instanceof NotScopeSoups || error instanceof TooLarge;
+  return host ? {} : { thrown: true };
 }
 
 export function errorText(error: unknown): string {

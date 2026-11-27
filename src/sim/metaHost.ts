@@ -9,6 +9,7 @@ import type { ItemFields } from "../hosts/metaBranch/item.ts";
 import { mapItems } from "../hosts/metaBranch/map.ts";
 import { canonicalItem, serializeItem, serializeLogLine } from "../hosts/metaBranch/serialize.ts";
 import type { Change, Ref, WorkItem } from "../model/types.ts";
+import { WriteLater } from "../ports/host.ts";
 import type { Host, LogLineInput, NewWork, Page, WorkPatch, WriteOutcome, WritePort } from "../ports/host.ts";
 
 export interface MetaFiles {
@@ -31,14 +32,14 @@ export class MetaRemote {
 
   /** Swaps in `next` if the remote is still at `expected`. Throws on a write that is not append-only. */
   swap(expected: number, next: ReadonlyMap<string, MetaFiles>): boolean {
-    if (this.down > 0) throw new Error("the remote did not answer");
+    if (this.down > 0) throw new WriteLater("the remote did not answer");
     if (expected !== this.version) return false;
     for (const [id, before] of this.files) {
       const after = next.get(id);
       if (!after || !after.log.startsWith(before.log)) {
         const why = `the write would ${after ? "change" : "remove"} the log of ${id}`;
         this.refusedRewrites.push(why);
-        throw new Error(`The remote refused it: ${why}.`);
+        throw new WriteLater(`The remote refused it: ${why}.`);
       }
     }
     this.files = next;
@@ -47,7 +48,7 @@ export class MetaRemote {
   }
 
   read(): { version: number; files: ReadonlyMap<string, MetaFiles> } {
-    if (this.down > 0) throw new Error("the remote did not answer");
+    if (this.down > 0) throw new WriteLater("the remote did not answer");
     return { version: this.version, files: this.files };
   }
 }
@@ -99,7 +100,7 @@ export function metaHost(options: MetaHostOptions): Host {
       }
       remote.retries++;
     }
-    throw new Error("the remote kept moving");
+    throw new WriteLater("the remote kept moving");
   }
 
   const fieldsOf = (files: Map<string, MetaFiles>, id: string): ItemFields => {

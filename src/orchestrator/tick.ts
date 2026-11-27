@@ -24,7 +24,7 @@ import { linkedItem } from "./aboutOthers.ts";
 import type { Context, TickDeps } from "./context.ts";
 import type { ClaimResult } from "./ports.ts";
 import { CLAIM_EXPIRY_MINUTES } from "./ports.ts";
-import { createLog, errorText } from "./context.ts";
+import { createLog, errorText, thrownData } from "./context.ts";
 import { afterRewrite, backToImplement, emptyBranch, followLog, followRewrite, followQuestions, keptBranch, overturnsBack, park, queueOffBelowLevel4, retryHandOver, retryPost, reviewOffAtLevel2, settle, withdrawSettledDuplicates, writeAboutOthers } from "./cycle.ts";
 import { loadOwnBlockers, withOwnBlockers } from "../store/blockers.ts";
 import { decide } from "./usageCheck.ts";
@@ -389,7 +389,7 @@ async function renewClaims(ctx: Context, itemByKey: Map<string, WorkItem>): Prom
       const renewed = await actions.claim(job.item, until, ctx.at);
       if (!renewed.won) await lost(job, item, key, renewed.why);
     } catch (error) {
-      ctx.say("orchestrator.claim_lost", `The claim on ${item.ref.id} could not be renewed: ${errorText(error)}.`, key);
+      ctx.say("orchestrator.claim_lost", `The claim on ${item.ref.id} could not be renewed: ${errorText(error)}.`, key, thrownData(error));
     }
   }
 }
