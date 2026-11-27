@@ -11,5 +11,4 @@ export const KNOWN_MULTI: Record<string, Known> = {
   // Seen in the long run only (seed in the long run).
   A3: { seed: 1, long: true, what: "an answer a person gave on another machine's board closes the question on the meta remote, but the job parked on it on the machine where the work runs does not take it (the answers are per store, as M1 and M6)" },
   A1: { seed: 36, long: true, what: "Scope Soup's own blockers are kept per store: an Item one machine's triage blocked stays blocked in that store (W) after the blocker left the host's record, while another machine works on it and the board shows its lane (pre-existing on main; the two-jobs cause of #243 is gone)" },
-  M4: { seed: 31, long: true, what: "a pick carried out whose answer line could not be pushed (the remote kept moving) is never answered on the meta remote, so other boards show it waiting" },
 };
