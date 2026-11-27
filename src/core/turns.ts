@@ -260,7 +260,7 @@ function reviewTurn(situation: Situation, change: Change, ctx: TurnContext): Dra
     return nextStepTurn(situation, ctx, { actor: "agent", tone: "waiting", since: change.updatedAt, reason: "it has a new revision since the last review; waiting for a reviewer session" });
   }
   // Below level 3 nobody reviews, and the review switch is not shown: the change waits for its implementor to merge it.
-  if (level !== undefined && level < 3) return belowReviewTurn(change, level, ctx);
+  if (level !== undefined && level < 3) return nextStepTurn(situation, ctx, belowReviewTurn(change, level, ctx));
   if (ctx.index.snapshot.review !== "started") return { actor: "agent", tone: "blocked", since: change.updatedAt, reason: "waiting for a reviewer session, and review is paused (Resume on In review)" };
   return nextStepTurn(situation, ctx, { actor: "agent", tone: "waiting", since: change.updatedAt, reason: "waiting for a reviewer session" });
 }

@@ -241,10 +241,17 @@ export function foldLog(log: ParsedLog): LogPicture {
   // Answers without `to`, by their instant: each takes the newest open question once its instant is folded, so a question of the same
   // instant that folds after it (an earlier `by` as text) is the one it answers.
   const newestAnswers: number[] = [];
+  // The questions of a set that were answered: the same question of that set written again later (a retried write) stays answered.
+  const answered = new Set<string>();
+  const answeredKey = (question: { set?: string; question: string; by: LogActor }): string | null => (question.set ? JSON.stringify([question.set, question.question, question.by.who, question.by.machine ?? ""]) : null);
+  const markAnswered = (question: QuestionLine | undefined): void => {
+    const key = question ? answeredKey(question) : null;
+    if (key) answered.add(key);
+  };
   const answerNewest = (before: number): void => {
     while (newestAnswers.length > 0 && newestAnswers[0]! < before) {
       newestAnswers.shift();
-      picture.openQuestions.pop();
+      markAnswered(picture.openQuestions.pop());
     }
   };
   for (const entry of ordered) {
@@ -258,6 +265,7 @@ export function foldLog(log: ParsedLog): LogPicture {
       bad(`a ${entry.kind} line needs \`sha\`, a full commit id (40 or 64 lower-case hex digits)`);
       return null;
     };
+    const openBefore = entry.kind === "answer" ? [...picture.openQuestions] : null;
     switch (entry.kind) {
       case "claimed": {
         if (!isLogTime(data.until)) {
@@ -348,11 +356,16 @@ export function foldLog(log: ParsedLog): LogPicture {
         const early = earlyAnswers.findIndex((answer) => answer.to === Date.parse(at) && (answer.toBy === undefined || sameActor(by, answer.toBy)) && (answer.toQuestion === undefined || answer.toQuestion === question));
         if (early >= 0) {
           earlyAnswers.splice(early, 1);
+          markAnswered(line);
           break;
         }
+        // The same question of the same set written again (a write retried after it was taken): one question, open or answered.
+        if (set && picture.openQuestions.some((open) => open.set === set && open.question === question && sameActor(open.by, by))) break;
+        if (answered.has(answeredKey(line) ?? "")) break;
         const bySet = set ? setAnswers.findIndex((answer) => answer.set === set && (answer.toQuestion === undefined || answer.toQuestion === question)) : -1;
         if (bySet >= 0) {
           setAnswers.splice(bySet, 1);
+          markAnswered(line);
           break;
         }
         picture.openQuestions.push(line);
@@ -417,6 +430,7 @@ export function foldLog(log: ParsedLog): LogPicture {
       default:
         picture.unknown.push(entry);
     }
+    if (openBefore) for (const question of openBefore) if (!picture.openQuestions.includes(question)) markAnswered(question);
   }
   answerNewest(Infinity);
   // The change has merged when the newest revision has: an older revision's `merged` says nothing.

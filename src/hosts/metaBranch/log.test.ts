@@ -274,3 +274,11 @@ test("log: an answer named by its park's set closes that set's question, also on
   ));
   assert.deepEqual(later.openQuestions.map((line) => line.question), ["Second park?"]);
 });
+
+test("log: the same question of a set written twice (a retried write) is one question, and stays answered (#230)", () => {
+  const soup = { who: "scopesoup", machine: "laptop-a", agent: true };
+  const ask = (at: string) => ({ at, by: soup, kind: "question", question: "Go?", parked: "needs-decision", set: "1" });
+  assert.equal(fold(jsonl(ask("2026-11-18T10:00:00Z"), ask("2026-11-18T10:01:00Z"))).openQuestions.length, 1);
+  const answered = { at: "2026-11-18T10:01:00Z", by: { who: "Ada", machine: "laptop-a" }, kind: "answer", answer: "Yes", to: "2026-11-18T10:00:00Z", toBy: soup, toQuestion: "Go?" };
+  assert.equal(fold(jsonl(ask("2026-11-18T10:00:00Z"), answered, ask("2026-11-18T10:01:00Z"))).openQuestions.length, 0);
+});
