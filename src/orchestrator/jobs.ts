@@ -520,14 +520,18 @@ function stepCase(step: JobStep, run: StepRun, from?: JobAt, marks: { merge?: tr
       const recheck = from?.kind === "triage" ? from.recheck : undefined;
       return { kind: "triage", run, ...(recheck ? { recheck } : {}) };
     }
-    case "implement": {
-      const merge = marks.merge ?? (from?.kind === "implement" ? from.merge : undefined);
-      const shouldRound = marks.shouldRound ?? (from?.kind === "implement" ? from.shouldRound : undefined);
-      return { kind: "implement", run, ...(merge ? { merge } : {}), ...(shouldRound ? { shouldRound } : {}) };
-    }
+    case "implement":
+      return { kind: "implement", run, ...(from?.kind === "implement" ? marksOf(from) : {}), ...marks };
     case "review":
       return { kind: "review", run };
   }
+}
+
+/** The approval to merge and the round for the `should` findings that a case carries. */
+function marksOf(at: JobAt): { merge?: true; shouldRound?: true } {
+  const merge = at.kind === "implement" || at.kind === "parked" || at.kind === "hand-over" ? at.merge : undefined;
+  const shouldRound = at.kind === "implement" || at.kind === "parked" ? at.shouldRound : undefined;
+  return { ...(merge ? { merge } : {}), ...(shouldRound ? { shouldRound } : {}) };
 }
 
 const waitingRun = (writing: TextWritten | undefined, notBefore?: string, resume?: string): StepRun =>
@@ -535,14 +539,13 @@ const waitingRun = (writing: TextWritten | undefined, notBefore?: string, resume
 
 /** An owed hand-over at `step`; `merge` comes from an implement step, a parked job or a hand-over owed before. */
 function handOverCase(step: JobStep, from: JobAt, writing: TextWritten | undefined, merge?: true): JobAt {
-  const approved = merge ?? (from.kind === "implement" || from.kind === "parked" || from.kind === "hand-over" ? from.merge : undefined);
+  const approved = merge ?? marksOf(from).merge;
   return { kind: "hand-over", step, ...(approved ? { merge: approved } : {}), ...(writing ? { writing } : {}) };
 }
 
 /** The step waits for nothing but its start, with the parked job's or owed hand-over's text wait and approval. */
 function backAtStep(at: Extract<JobAt, { kind: "parked" | "hand-over" }>): StepCase {
-  const marks = at.kind === "parked" ? { ...(at.merge ? { merge: at.merge } : {}), ...(at.shouldRound ? { shouldRound: at.shouldRound } : {}) } : at.merge ? { merge: at.merge } : {};
-  return stepCase(at.step, waitingRun(at.writing), at, at.step === "implement" ? marks : {});
+  return stepCase(at.step, waitingRun(at.writing), at, at.step === "implement" ? marksOf(at) : {});
 }
 
 /** A session starts on the step that waits. */
@@ -608,8 +611,7 @@ export function parkJob(job: Job, parked: JobParked): void {
         job.at = handOverCase(at.kind, at, writing);
         return;
       }
-      const marks = at.kind === "implement" ? { ...(at.merge ? { merge: at.merge } : {}), ...(at.shouldRound ? { shouldRound: at.shouldRound } : {}) } : {};
-      job.at = { kind: "parked", step: at.kind, parked, ...marks, ...(writing ? { writing } : {}) };
+      job.at = { kind: "parked", step: at.kind, parked, ...marksOf(at), ...(writing ? { writing } : {}) };
       return;
     }
   }
@@ -646,13 +648,9 @@ export function nextStep(job: Job, step: JobStep, notBefore: string, told: { mer
     case "hand-over":
       job.at = handOverCase(step, at, at.writing, told.merge);
       return;
-    case "parked": {
-      const merge = told.merge ?? at.merge;
-      const shouldRound = told.shouldRound ?? at.shouldRound;
-      const { merge: _m, shouldRound: _s, ...rest } = at;
-      job.at = { ...rest, step, ...(merge ? { merge } : {}), ...(shouldRound ? { shouldRound } : {}) };
+    case "parked":
+      job.at = { ...at, step, ...told };
       return;
-    }
     case "triage":
     case "implement":
     case "review":
