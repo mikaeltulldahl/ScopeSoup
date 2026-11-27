@@ -13,7 +13,7 @@ import { durationWords, ms, refLabel } from "./snapshot.ts";
 import { sameFilesWords } from "./sameFiles.ts";
 import { clearWithoutTriage } from "./statedSize.ts";
 import { itemTextHash } from "./answerReuse.ts";
-import type { Phase, Run } from "./phase.ts";
+import { waitingRun } from "./phase.ts";
 import { WRITING_WAIT_MS } from "./waits.ts";
 
 /** How a card is coloured: is it moving, waiting its turn, stuck, or a person's? */
@@ -226,11 +226,6 @@ function nextStepTurn(situation: Situation, ctx: TurnContext, slot: Draft): Draf
   if (session?.status === "limit") return sessionTurn(session, ctx);
   if (item.holder && item.holder.actor.bot && holdStands(item.holder, ctx.now.getTime())) return heldTurn(item, ctx);
   return slot;
-}
-
-/** The job's step when it waits to start, with its timed waits. */
-function waitingRun(phase: Phase): Extract<Run, { is: "waiting" }> | undefined {
-  return (phase.at === "triage" || phase.at === "implement" || phase.at === "review") && phase.run.is === "waiting" ? phase.run : undefined;
 }
 
 function progressTurn(situation: Situation, ctx: TurnContext): Draft {

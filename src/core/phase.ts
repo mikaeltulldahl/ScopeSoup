@@ -73,9 +73,14 @@ export function stepOf(phase: Phase): Step | null {
   }
 }
 
+/** The run of a step that waits to start, with its timed waits. Undefined for a running or parked phase. */
+export function waitingRun(phase: Phase): Extract<Run, { is: "waiting" }> | undefined {
+  return (phase.at === "triage" || phase.at === "implement" || phase.at === "review") && phase.run.is === "waiting" ? phase.run : undefined;
+}
+
 /** The step that waits to start: a step phase with no session running. Null for a running or parked phase. */
 export function waitingStep(phase: Phase): Step | null {
-  return (phase.at === "triage" || phase.at === "implement" || phase.at === "review") && phase.run.is === "waiting" ? phase.at : null;
+  return waitingRun(phase) ? stepOf(phase) : null;
 }
 
 /** The session the phase runs now, if any. */
