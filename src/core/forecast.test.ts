@@ -58,19 +58,20 @@ test("the weekly window uses the last day", () => {
   assert.match(heavy?.words ?? "", /^used up about \w{3} \d\d:\d\d$/);
 });
 
-// --- Per-session rate ---
+test("a small drop without a reset is a wobble: the readings before it still count", () => {
+  // 0.2 an hour, with one reading 0.001 low on the way.
+  const forecast = forecastWindow([sample(-60, 0.2, 240), sample(-30, 0.3, 240), sample(-20, 0.299, 240), sample(0, 0.4, 240)], "five_hour", now);
+  assert.equal(forecast?.at, at(180));
+});
 
-const ran = (from: number, to: number) => ({ startedAt: at(from), finishedAt: at(to) });
-// 0.2 used in the last hour while 2 sessions ran: 0.1 per session-hour.
+// --- Paused or idle ---
+
+// 0.2 used in the last hour.
 const history = [sample(-60, 0.2, 240), sample(0, 0.4, 240)];
-const load = (over: Partial<ForecastLoad>): ForecastLoad => ({ sessions: [ran(-60, 0), ran(-60, 0)], planned: 2, paused: false, workReady: true, ...over });
+const load = (over: Partial<ForecastLoad>): ForecastLoad => ({ paused: false, workReady: true, ...over });
 
-test("a slider change takes effect at once", () => {
-  // 0.1 per session-hour, 0.4 used, 0.6 left.
-  assert.equal(forecastWindow(history, "five_hour", now, load({ planned: 2 }))?.at, at(180));
-  assert.equal(forecastWindow(history, "five_hour", now, load({ planned: 4 }))?.at, at(90));
-  // One session: 6 h to full, the reset is in 4 h.
-  assert.equal(forecastWindow(history, "five_hour", now, load({ planned: 1 }))?.outcome, "lasts");
+test("with work ready the rate is the one the readings show, whatever is planned", () => {
+  assert.equal(forecastWindow(history, "five_hour", now, load({}))?.at, at(180));
 });
 
 test("paused or idle lasts to the reset", () => {
@@ -78,17 +79,18 @@ test("paused or idle lasts to the reset", () => {
   const lasts = { outcome: "lasts", words: "lasts to the reset", atReset: 0.4 };
   assert.deepEqual(forecastWindow(history, "five_hour", now, load({ paused: true })), lasts);
   assert.deepEqual(forecastWindow(history, "five_hour", now, load({ workReady: false })), lasts);
-  assert.deepEqual(forecastWindow(history, "five_hour", now, load({ paused: true, sessions: [] })), lasts);
 });
 
-test("too few session-hours fall back to the raw rate", () => {
-  // Raw rate is 0.2 per hour: full in 3 h, whatever is planned.
-  assert.equal(forecastWindow(history, "five_hour", now, load({ sessions: [ran(-10, -5)], planned: 4 }))?.at, at(180));
-  assert.equal(forecastWindow(history, "five_hour", now, load({ sessions: [], planned: 4 }))?.at, at(180));
-});
-
-test("a session still running counts to the latest reading, and time outside the span does not", () => {
-  const open = { startedAt: at(-60) };
-  assert.equal(forecastWindow(history, "five_hour", now, load({ sessions: [open, open], planned: 2 }))?.at, at(180));
-  assert.equal(forecastWindow(history, "five_hour", now, load({ sessions: [ran(-200, -100), ran(-60, 0), ran(-60, 0)], planned: 2 }))?.at, at(180));
+test("a week of readings: the weekly forecast continues the rate of the last day", () => {
+  // Hourly readings since the reset 6 days ago: slow for 5 days (0.01 a day), then 0.12 a day; the reset is in a day.
+  const day = 24 * 60;
+  const readings: UsageSample[] = [];
+  for (let minutes = -6 * day; minutes <= 0; minutes += 60) {
+    const level = minutes <= -day ? 0.01 * ((minutes + 6 * day) / day) : 0.05 + 0.12 * ((minutes + day) / day);
+    readings.push(sample(minutes, Math.round(level * 1000) / 1000, day, "seven_day"));
+  }
+  const forecast = forecastWindow(readings, "seven_day", now, load({ paused: false }));
+  // 0.17 now, 0.12 more by the reset.
+  assert.equal(forecast?.outcome, "lasts");
+  assert.ok(Math.abs((forecast?.atReset ?? 0) - 0.29) < 0.002, String(forecast?.atReset));
 });

@@ -7,7 +7,7 @@ import type { AllowanceView, UsagePageWindow, UsageView } from "./api.ts";
 import type { ConfigView } from "./api.ts";
 import { fetchConfig, fetchUsage, postConfig, useView } from "./api.ts";
 import { clockTime, span as spanWords } from "./format.ts";
-import { expectedAtReset, paceLines, resetMarks, snapReserve, stackPlot, timeTicks, usageBar, usageParts, WINDOW_MS } from "../../src/core/usage.ts";
+import { expectedAtReset, paceInView, resetMarks, snapReserve, stackPlot, timeTicks, usageBar, usageParts, WINDOW_MS } from "../../src/core/usage.ts";
 import type { UsageKey, UsagePlotKey } from "../../src/core/usage.ts";
 
 /** Bottom to top in the plot, top to bottom in the table. */
@@ -137,6 +137,8 @@ function canDrag(view: ConfigView | null): boolean {
 interface Picked {
   kind: UsagePageWindow["kind"];
   value: number;
+  /** The pointer still holds the marker; a reload of the page's data then leaves it alone. */
+  dragging: boolean;
 }
 
 const HINT_KEY = "scopesoup.usageReserveHint";
@@ -189,13 +191,14 @@ function Meter({ window, now, saver, picked, pick, hint, dismissHint }: { window
   const move = (event: PointerEvent) => {
     const box = track.current?.getBoundingClientRect();
     if (!box || !draggable || box.width <= 0) return;
-    pick({ kind: window.kind, value: snapReserve(1 - (event.clientX - box.left) / box.width) });
+    pick({ kind: window.kind, value: snapReserve(1 - (event.clientX - box.left) / box.width), dragging: true });
   };
   const drop = (event: PointerEvent) => {
     (event.currentTarget as HTMLElement).releasePointerCapture?.(event.pointerId);
     const name = RESERVE_SETTING[window.kind];
     const saved = saver.view?.present && saver.view.config ? saver.view.config.settings[name].value : undefined;
     if (dragged === null || dragged === saved) return pick(null);
+    pick({ kind: window.kind, value: dragged, dragging: false });
     void saver.save(name, dragged).then((ok) => {
       if (!ok) pick(null);
     });
@@ -243,7 +246,7 @@ function Meter({ window, now, saver, picked, pick, hint, dismissHint }: { window
                 if (saver.busy) return;
                 dismissHint();
                 (event.currentTarget as HTMLElement).setPointerCapture?.(event.pointerId);
-                pick({ kind: window.kind, value: snapReserve(reserve ?? 0) });
+                pick({ kind: window.kind, value: snapReserve(reserve ?? 0), dragging: true });
               }}
               onPointerMove={(event) => dragged !== null && (event.buttons & 1) !== 0 && move(event)}
               onPointerUp={drop}
@@ -300,9 +303,11 @@ function Plot({ window, from, to }: { window: UsagePageWindow; from: number; to:
   const limit = window.reserve === undefined ? undefined : 1 - window.reserve;
   const ticks = width > 0 ? timeTicks(from, end, Math.max(2, Math.floor(inner / 72)), (ms) => -new Date(ms).getTimezoneOffset() * 60_000) : [];
   const total = (index: number) => bands.at(-1)?.hi[index] ?? 0;
-  // Each reset in the plot (those passed, and the coming one if it is in view), and per window a pace line from 0 at its start to the reserve level at its reset.
-  const resets = resetMarks([...plot.resets, ...(window.current ? [window.current.resetsAt] : [])], from, end);
-  const pace = paceLines(resets, WINDOW_MS[window.kind], limit ?? 1);
+  // Each reset in the plot (those passed, and the coming one if it is in view), and per window in view a pace line from 0 at its
+  // start to the reserve level at its reset, also when the reset is past the plot's edge (the clip cuts it there).
+  const allResets = [...plot.resets, ...(window.current ? [window.current.resetsAt] : [])];
+  const resets = resetMarks(allResets, from, end);
+  const pace = paceInView(allResets, from, end, WINDOW_MS[window.kind], limit ?? 1);
 
   // Direct labels at the right: each band at its middle now, and the forecast at its end.
   const last = plot.points.length - 1;
@@ -586,8 +591,10 @@ export function Usage() {
   const [provider, setProvider] = useState("claude");
   const plan = data?.allowances?.find((each) => each.provider === provider);
   const onAllowance = plan !== undefined;
+  // New data ends a saved pick, which it now shows; not one being dragged or still saving: the page reloads on every change
+  // to the store, and dropping the pick then would end the drag under the pointer.
   useEffect(() => {
-    if (data) pick(null);
+    if (data && !saver.busy) pick((current) => (current?.dragging ? current : null));
   }, [data]);
   return (
     <section class="usage">
