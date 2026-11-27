@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import type { CardView } from "../core/views.ts";
 import type { RecordedAnswer, ScopeSoupEvent, WorkItem } from "../model/types.ts";
-import type { Job, Where } from "../orchestrator/jobs.ts";
+import type { Job, JobAt } from "../orchestrator/jobs.ts";
 import type { SessionRequest } from "../orchestrator/ports.ts";
 import { FakeGit } from "./git.ts";
 import type { GitObs, ItemObs, Observation, StartObs } from "./observe.ts";
@@ -16,7 +16,7 @@ import type { Rule } from "./rules.ts";
 import { RULE_IDS, RULES } from "./rules.ts";
 import type { W } from "./waits.ts";
 import type { Action, Ledger } from "./world.ts";
-import { jobOf } from "../orchestrator/jobs.ts";
+import { atStep } from "../orchestrator/jobs.ts";
 
 const AT = "2026-11-18T10:00:00.000Z";
 const key = (id: string): string => `metaBranch:work:${id}`;
@@ -36,8 +36,8 @@ function workItem(id: string, over: Partial<WorkItem> = {}): WorkItem {
   return { ref: { host: "metaBranch", kind: "work", id }, title: `Item ${id}`, state: "todo", hostState: "todo", labels: [], blockedBy: [], openChildren: 0, updatedAt: AT, ...over };
 }
 
-function job(id: string, over: Partial<Job & Where> = {}): Job {
-  return jobOf({ item: { host: "metaBranch", kind: "work", id }, workspace: `w-${id}`, branch: `scopesoup/${id}`, step: "triage", failures: 0, fixRounds: 0, startedAt: AT, ...over });
+function job(id: string, over: Partial<Job> = {}): Job {
+  return { item: { host: "metaBranch", kind: "work", id }, workspace: `w-${id}`, branch: `scopesoup/${id}`, failures: 0, fixRounds: 0, startedAt: AT, at: atStep("triage"), ...over };
 }
 
 function card(id: string, over: Partial<CardView> = {}): CardView {
@@ -104,7 +104,7 @@ describe("each rule fires on a bad state built by hand", { concurrency: 1 }, () 
     // A review runs on an Item whose change the store has not read yet: In review, not To do (#230).
     assert.match(fires("A1", obs({ items: [item("A-1", { kind: "session", role: "review" }, { card: card("A-1", { lane: "todo" }) })] })) ?? "", /card is in todo/);
     // A question at implement, with a commit: In progress (decision 2).
-    const asked = item("A-1", { kind: "person", why: "answer", n: 1 }, { job: job("A-1", { step: "implement", head: "1".repeat(40) }), card: card("A-1", { lane: "todo", actor: "anyone" }) });
+    const asked = item("A-1", { kind: "person", why: "answer", n: 1 }, { job: job("A-1", { at: atStep("implement"), head: "1".repeat(40) }), card: card("A-1", { lane: "todo", actor: "anyone" }) });
     assert.match(fires("A1", obs({ items: [asked] })) ?? "", /its lane is in-progress/);
   });
   it("A1", "a timed wait whose card says another cause (decision 3, #230)", () => {
@@ -127,7 +127,7 @@ describe("each rule fires on a bad state built by hand", { concurrency: 1 }, () 
     assert.match(fires("A4", before, obs({ action: tick, started: [started("A-1", "implement")] })) ?? "", /while W was start\(implement, switch\)/);
   });
   it("A5", "parked as queued with nothing in the queue", () => {
-    assert.match(fires("A5", obs({ items: [item("A-1", { kind: "queue" }, { job: job("A-1", { parked: { as: "queued", reason: "", at: AT } }) })] })) ?? "", /queue does not have it/);
+    assert.match(fires("A5", obs({ items: [item("A-1", { kind: "queue" }, { job: job("A-1", { at: { kind: "parked", step: "triage", parked: { as: "queued", reason: "", at: AT } } }) })] })) ?? "", /queue does not have it/);
   });
   it("A6", "idle with no session while an Item waits only for a slot", () => {
     assert.match(fires("A6", obs({ action: tick, tick: report({ idle: "Nothing to do." }), items: [item("A-1", SLOT)] })) ?? "", /waits only for a slot/);
@@ -167,13 +167,13 @@ describe("each rule fires on a bad state built by hand", { concurrency: 1 }, () 
     assert.equal(fires("B7", obs({ started: [started("A-1", "triage")] }), obs({ ledger: older, started: [started("A-1", "triage")] })), null);
     // A person picked the review again on a change reviewed before: their ask is new input (#268).
     const reviewed = ledger({ ended: [{ step: 1, item: key("A-1"), role: "review", session: "s-A-1", status: "succeeded", settled: true }] });
-    const picked = obs({ ledger: reviewed, items: [item("A-1", SLOT, { job: job("A-1", { step: "review", reviewAskedBy: "Ada" }) })] });
+    const picked = obs({ ledger: reviewed, items: [item("A-1", SLOT, { job: job("A-1", { at: atStep("review"), reviewAskedBy: "Ada" }) })] });
     assert.equal(fires("B7", obs({ started: [started("A-1", "review")] }), picked, obs({ ledger: reviewed, started: [started("A-1", "review")] })), null);
     assert.match(fires("B7", obs({ started: [started("A-1", "review")] }), obs({ ledger: reviewed, started: [started("A-1", "review")] })) ?? "", /same input/);
     assert.match(fires("B7", obs({ ledger: ledger({ asksInFair: new Map([[key("A-1"), 4]]) }) })) ?? "", /asked 4 times/);
     const shown = (text: string, body: string, questions: number): string | null => {
       const rewrite = { original: body.trim(), text, questions: Array.from({ length: questions }, () => ({ question: "?", options: [], recommendation: "" })), round: 1 };
-      const parked = job("A-1", { step: "triage", parked: { as: "needs-decision", reason: "", at: AT }, rewrite } as never);
+      const parked = job("A-1", { at: { kind: "parked", step: "triage", parked: { as: "needs-decision", reason: "", at: AT } }, rewrite } as never);
       return fires("B7", obs({ items: [item("A-1", { kind: "person", why: "rewrite" }, { item: workItem("A-1", { body }), job: parked })] }));
     };
     assert.match(shown("Do it.", "Do it.", 0) ?? "", /equals its description/);
@@ -181,26 +181,26 @@ describe("each rule fires on a bad state built by hand", { concurrency: 1 }, () 
     assert.equal(shown("Do it.", "Do it.", 1), null); // the questions are asked with the description as it is
   });
   it("B8", "an answer to the implementor's question sends the Item back to triage", () => {
-    const parked = obs({ items: [item("A-1", { kind: "person", why: "answer", n: 1 }, { job: job("A-1", { step: "implement", parked: { as: "needs-decision", reason: "", at: AT, byStep: true } }) })] });
+    const parked = obs({ items: [item("A-1", { kind: "person", why: "answer", n: 1 }, { job: job("A-1", { at: { kind: "parked", step: "implement", parked: { as: "needs-decision", reason: "", at: AT, byStep: true } } }) })] });
     const answered = obs({ requests: [{ step: 1, path: "/api/answer", body: {}, status: 200, response: {}, item: "A-1" }], items: parked.items });
     assert.match(fires("B8", parked, answered, obs({ started: [started("A-1", "triage")], items: parked.items })) ?? "", /next session is triage/);
     // Questions another Item's agent asked about it were written before the implementor resumed: answered, it is triaged again (#264).
     const written = obs({ events: [event(key("A-1"), "orchestrator", "orchestrator.about_other_written")], items: parked.items });
     assert.equal(fires("B8", parked, answered, written, obs({ started: [started("A-1", "triage")], items: parked.items })), null);
     // A person's Merge queue over a running review: the review must not start again before the hand-over.
-    const reviewing = obs({ items: [item("A-1", { kind: "session", role: "review" }, { job: job("A-1", { step: "review", sessionId: "s1" }) })] });
+    const reviewing = obs({ items: [item("A-1", { kind: "session", role: "review" }, { job: job("A-1", { at: atStep("review", { is: "running", session: "s1" }) }) })] });
     const picked = obs({ requests: [{ step: 1, path: "/api/item/move", body: { to: "merge-queue" }, status: 200, response: {}, item: "A-1" }], items: reviewing.items });
     assert.match(fires("B8", reviewing, picked, obs({ started: [started("A-1", "review")], items: reviewing.items })) ?? "", /picked for the merge queue, but a review session started/);
     // The pick's own event (person.moved) does not clear what the pick expects (#268); one read from another machine's board does.
     const own = obs({ ...picked, events: [event(key("A-1"), "Ada", "person.moved")] });
     assert.match(fires("B8", reviewing, own, obs({ started: [started("A-1", "review")], items: reviewing.items })) ?? "", /picked for the merge queue/);
     assert.equal(fires("B8", reviewing, picked, obs({ events: [event(key("A-1"), "Ada", "person.moved")], items: reviewing.items }), obs({ started: [started("A-1", "review")], items: reviewing.items })), null);
-    const queued = obs({ items: [item("A-1", { kind: "queue" }, { job: job("A-1", { step: "review", parked: { as: "queued", reason: "", at: AT } }) })] });
+    const queued = obs({ items: [item("A-1", { kind: "queue" }, { job: job("A-1", { at: { kind: "parked", step: "review", parked: { as: "queued", reason: "", at: AT } } }) })] });
     assert.equal(fires("B8", reviewing, picked, queued, obs({ started: [started("A-1", "review")], items: queued.items })), null);
   });
   it("B9", "a triage taken again with nothing it read changed: age alone is no input (#217)", () => {
     const g = new FakeGit();
-    const waiting = (over: Partial<WorkItem> = {}) => item("A-1", NOTHING, { item: workItem("A-1", over), paths: ["src/a.ts"], job: job("A-1", { step: "implement" }) });
+    const waiting = (over: Partial<WorkItem> = {}) => item("A-1", NOTHING, { item: workItem("A-1", over), paths: ["src/a.ts"], job: job("A-1", { at: atStep("implement") }) });
     const first = obs({ git: gitObs(g), items: [waiting()], started: [started("A-1", "triage")] });
     const settled = ledger({ ended: [{ step: 1, item: key("A-1"), role: "triage", session: "s-A-1", status: "succeeded", settled: true }] });
     const chose = { ...event(key("A-1"), "orchestrator", "orchestrator.triage_again"), data: {} };
@@ -228,8 +228,8 @@ describe("each rule fires on a bad state built by hand", { concurrency: 1 }, () 
   });
   it("B11", "a step starts on the old text after a person accepted a rewrite the store has not read back, or the job forgets to wait (#268)", () => {
     const body = { item: workItem("A-1", { body: "Do thing 1." }) };
-    const running = item("A-1", { kind: "session", role: "triage" }, { ...body, job: job("A-1", { sessionId: "s1" }) });
-    const waits = item("A-1", { kind: "session", role: "triage" }, { ...body, job: job("A-1", { sessionId: "s1", writing: { from: "h", at: AT } }) });
+    const running = item("A-1", { kind: "session", role: "triage" }, { ...body, job: job("A-1", { at: atStep("triage", { is: "running", session: "s1" }) }) });
+    const waits = item("A-1", { kind: "session", role: "triage" }, { ...body, job: job("A-1", { at: atStep("triage", { is: "running", session: "s1", writing: { from: "h", at: AT } }) }) });
     const old = obs({ items: [running] });
     const texts = new Map([[key("A-1"), { title: "Item A-1", body: "Rewritten." }]]);
     const accepted = (i: ItemObs) => obs({ step: 2, requests: [{ step: 2, path: "/api/proposed-rewrite", body: { action: "accept" }, status: 200, response: { written: true }, item: "A-1" }], ledger: ledger({ texts }), items: [i] });
@@ -266,8 +266,8 @@ describe("each rule fires on a bad state built by hand", { concurrency: 1 }, () 
   });
   it("D3", "an implement step starts while a busy Item has the same paths (#187)", () => {
     const before = obs({ items: [
-      item("A-1", SLOT, { job: job("A-1", { step: "implement", triage: { ready: true, size: "small", paths: ["src/a.ts"], hidesDecision: false } }), paths: ["src/a.ts"] }),
-      item("A-2", { kind: "session", role: "implement" }, { job: job("A-2", { step: "implement", sessionId: "s2" }), paths: ["src/a.ts"] }),
+      item("A-1", SLOT, { job: job("A-1", { at: atStep("implement"), triage: { ready: true, size: "small", paths: ["src/a.ts"], hidesDecision: false } }), paths: ["src/a.ts"] }),
+      item("A-2", { kind: "session", role: "implement" }, { job: job("A-2", { at: atStep("implement", { is: "running", session: "s2" }) }), paths: ["src/a.ts"] }),
     ] });
     assert.match(fires("D3", before, obs({ items: before.items, started: [started("A-1", "implement")] })) ?? "", /busy on the same paths/);
   });
@@ -282,7 +282,7 @@ describe("each rule fires on a bad state built by hand", { concurrency: 1 }, () 
     const full = obs({ waiting: 2 });
     assert.match(fires("D9", full, obs({ action: tick, waiting: 2, started: [started("A-1", "triage")] })) ?? "", /new triage started on A-1 while 2 things waited/);
     // Work under way goes on: a triage of an Item that has a job (a recheck) is not new.
-    const under = obs({ waiting: 5, items: [item("A-1", SLOT, { job: job("A-1", { step: "implement" }) }), item("A-2", SLOT, { job: job("A-2", { step: "implement", head: "abc" }) })] });
+    const under = obs({ waiting: 5, items: [item("A-1", SLOT, { job: job("A-1", { at: atStep("implement") }) }), item("A-2", SLOT, { job: job("A-2", { at: atStep("implement"), head: "abc" }) })] });
     assert.equal(fires("D9", under, obs({ action: tick, waiting: 5, started: [started("A-1", "triage"), started("A-2", "implement")] })), null);
     assert.match(fires("D9", under, obs({ action: tick, waiting: 5, started: [started("A-1", "implement")] })) ?? "", /new work started on A-1 while 5 things waited/);
     // An answer settled in the tick brought it under the cap.
@@ -372,7 +372,7 @@ describe("each rule fires on a bad state built by hand", { concurrency: 1 }, () 
     assert.equal(fires("G1", queued, obs({ action: { kind: "restart" }, switches: paused, items: queued.items }), merges), null);
     assert.match(fires("G1", queued, obs({ action: { kind: "restart" }, switches: paused, items: queued.items }), { ...merges, level: 4 }) ?? "", /was queue before the restart/);
     // A person picked Triage over the running implement session: after the restart the triage comes next, not the implement step (#268).
-    const interrupted = job("A-1", { step: "triage", sessionId: "s1", interrupt: { by: "Ada", at: AT, to: "triage" } });
+    const interrupted = job("A-1", { at: atStep("triage", { is: "running", session: "s1" }), interrupt: { by: "Ada", at: AT, to: "triage" } });
     const implementing = obs({ items: [item("A-1", { kind: "session", role: "implement" }, { job: interrupted })] });
     const triageNext = obs({ action: tick, switches: paused, items: [item("A-1", { kind: "start", role: "triage", cause: "switch" })] });
     const restarted = obs({ action: { kind: "restart" }, switches: paused, items: implementing.items });
@@ -402,9 +402,10 @@ describe("each rule fires on a bad state built by hand", { concurrency: 1 }, () 
     assert.equal(fires("H3", queued(0), queued(3 * 3600_000)), null);
     // A text wait past 30 minutes that the card still gives as the reason; a parked job keeps the wait for its next step, and its card
     // asks the person, so that is no text wait (#268).
-    const text = (reason: string, over: Partial<Where> = {}) => obs({ action: tick, at: "2026-11-18T11:00:00.000Z", items: [item("A-1", SLOT, { job: job("A-1", { writing: { from: "h", at: AT }, ...over }), card: card("A-1", { reason }) })] });
+    const writing = { from: "h", at: AT };
+    const text = (reason: string, at: JobAt = atStep("triage", { is: "waiting", writing })) => obs({ action: tick, at: "2026-11-18T11:00:00.000Z", items: [item("A-1", SLOT, { job: job("A-1", { at }), card: card("A-1", { reason }) })] });
     assert.match(fires("H3", text("waits until the description written at a person's Accept is read back from metaBranch (at most 1 minute more)")) ?? "", /still waits for its text/);
-    assert.equal(fires("H3", text("Answer the question: a rewrite of the description waits for a person", { parked: { as: "needs-decision", reason: "r", at: AT } })), null);
+    assert.equal(fires("H3", text("Answer the question: a rewrite of the description waits for a person", { kind: "parked", step: "triage", parked: { as: "needs-decision", reason: "r", at: AT }, writing })), null);
   });
   it("H4", "a person is waited for and the page offers nothing (#183)", () => {
     const o = obs({ items: [item("A-1", { kind: "person", why: "escalated" }, { served: { item: { ref: { host: "metaBranch", kind: "work", id: "A-1" }, title: "Item", state: "todo" }, lane: "backlog" } })] });
@@ -498,11 +499,11 @@ describe("each rule fires on a bad state built by hand", { concurrency: 1 }, () 
     assert.equal(fires("J3", inTodo, obs({ lanes: LANES }), inTodo), null);
   });
   it("J4", "Scope Soup chooses to triage again an Item in Backlog (#217)", () => {
-    const before = obs({ lanes: LANES, items: [item("A-1", NOTHING, { card: card("A-1", { lane: "backlog" }), job: job("A-1", { step: "implement" }) })] });
+    const before = obs({ lanes: LANES, items: [item("A-1", NOTHING, { card: card("A-1", { lane: "backlog" }), job: job("A-1", { at: atStep("implement") }) })] });
     const chose = { ...event(key("A-1"), "orchestrator", "orchestrator.triage_again"), data: { background: true } };
     assert.match(fires("J4", before, obs({ lanes: LANES, events: [chose] })) ?? "", /in Backlog and Scope Soup chose to triage it again/);
     // In To do it may; a person's Triage or answer in Backlog writes no such event.
-    const inTodo = obs({ lanes: LANES, items: [item("A-1", NOTHING, { card: card("A-1", { lane: "todo" as never }), job: job("A-1", { step: "implement" }) })] });
+    const inTodo = obs({ lanes: LANES, items: [item("A-1", NOTHING, { card: card("A-1", { lane: "todo" as never }), job: job("A-1", { at: atStep("implement") }) })] });
     assert.equal(fires("J4", inTodo, obs({ lanes: LANES, events: [chose] })), null);
     assert.equal(fires("J4", before, obs({ lanes: LANES, started: [started("A-1", "triage", { vars: { itemTitle: "Item A-1", itemBody: "Do it.", recheck: "A person answered." } })] })), null);
   });

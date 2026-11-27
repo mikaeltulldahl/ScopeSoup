@@ -24,7 +24,7 @@ import { refKey } from "../model/types.ts";
 import type { Context } from "./context.ts";
 import { SCOPESOUP } from "./hostActions.ts";
 import type { Decision, Finding, Job, JobStep, ParkedAs } from "./jobs.ts";
-import { formatFindings, jobOf, editParked, moveStep, oweHandOver, owesHandOver, parkJob, parkedOf, stepAt } from "./jobs.ts";
+import { formatFindings, atStep, editParked, moveStep, oweHandOver, owesHandOver, parkJob, parkedOf, stepAt } from "./jobs.ts";
 import { workBranch, workspaceKey } from "./paths.ts";
 
 const SEEN_KEY = "orchestrator.logs_read";
@@ -114,15 +114,15 @@ function fromLines(item: WorkItem, log: readonly LogRecord[], startedAt: string)
   const of = (kind: string): LogRecord[] => log.filter((line) => line.kind === kind);
   const revisions = of("revision");
   const newest = revisions[revisions.length - 1];
-  const job: Job = jobOf({
+  const job: Job = {
     item: item.ref,
     workspace: workspaceKey(item.ref),
     branch: str([...revisions].reverse().find((line) => str(line.fields.branch))?.fields.branch) || workBranch(item.ref),
-    step: "triage",
+    at: atStep("triage"),
     failures: 0,
     fixRounds: of("review").filter((line) => line.fields.verdict === "fail").length,
     startedAt,
-  });
+  };
   if (newest) job.head = str(newest.fields.sha);
 
   const sessions = of("session");

@@ -5,16 +5,17 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { work } from "../core/testing.ts";
 import { compareItems } from "../orchestrator/candidates.ts";
-import type { Jobs, JobFields, Where } from "../orchestrator/jobs.ts";
+import type { Jobs, JobStep } from "../orchestrator/jobs.ts";
+import { atStep } from "../orchestrator/jobs.ts";
 import { refKey } from "../model/types.ts";
 import type { WorkItem } from "../model/types.ts";
 import { voteToPlace } from "./place.ts";
-import { jobOf } from "../orchestrator/jobs.ts";
 
-const asJob = (fields: object) => jobOf(fields as JobFields & Partial<Where>);
+
+const asJob = (step: JobStep, fields: object) => ({ ...fields, at: atStep(step) });
 
 const TRIAGED = { log: [{ at: "2026-03-02T10:00:00.000Z", by: { who: "scopesoup", agent: true as const }, kind: "session" as const, fields: { role: "triage" } }] };
-const triaged = (ids: number[]): Jobs => Object.fromEntries(ids.map((id) => [refKey(work(id).ref), asJob({ step: "triage", triage: { size: id % 2 ? "small" : "large", ready: true, paths: [], hidesDecision: false } })])) as unknown as Jobs;
+const triaged = (ids: number[]): Jobs => Object.fromEntries(ids.map((id) => [refKey(work(id).ref), asJob("triage", { triage: { size: id % 2 ? "small" : "large", ready: true, paths: [], hidesDecision: false } })])) as unknown as Jobs;
 const sorted = (items: WorkItem[], jobs: Jobs): WorkItem[] => [...items].sort(compareItems(["bug"], jobs, items));
 const ids = (items: WorkItem[], jobs: Jobs): string[] => sorted(items, jobs).map((item) => item.ref.id);
 

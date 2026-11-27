@@ -28,7 +28,7 @@ import type { PoolDeps } from "./workspaces.ts";
 import { isolateGitConfig } from "./fixtures/git-env.ts";
 import { followRestore } from "./fixtures/restore.ts";
 import { execFileSyncRetrying } from "../hosts/spawnRetry.ts";
-import { loadJobs as readJobs, where } from "./jobs.ts";
+import { loadJobs as readJobs, parkedOf } from "./jobs.ts";
 
 /** A store with agents and the merge queue started, as after a person pressed both Start buttons. */
 const openStore = (path: string): ReturnType<typeof openStoreAs> => {
@@ -241,7 +241,7 @@ test("two items get different clones, a third waits for one, and each item keeps
 
 /** What the stored job of item `id` is parked as, if it is parked. */
 function parkedAs(store: Store, id: string): string | undefined {
-  return where(readJobs(store)[refKey(ref(id))])?.parked?.as;
+  return parkedOf(readJobs(store)[refKey(ref(id))])?.as;
 }
 
 test("at level 3, implement is followed by review and nothing else: no checklist session", async () => {

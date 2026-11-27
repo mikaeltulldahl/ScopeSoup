@@ -33,7 +33,7 @@ import type { Store } from "../store/store.ts";
 import type { UsageCheckDecision } from "./usageCheck.ts";
 import type { Job, Jobs, Recheck } from "./jobs.ts";
 import type { RetriageBudget } from "../core/retriage.ts";
-import { adoptStored, changedMeanwhile, dropUnreadable, loadJobs, NO_DECISIONS, takenText, WRITING_WAIT_MS, jobOf, stepAt, sessionIdOf, parkedOf, resumeOf, mergeApproved, shouldRoundOf, writingOf, timerOf, recheckOf, endSession, markMerged, awaitText, startSession } from "./jobs.ts";
+import { adoptStored, changedMeanwhile, dropUnreadable, loadJobs, NO_DECISIONS, takenText, WRITING_WAIT_MS, atStep, stepAt, sessionIdOf, parkedOf, resumeOf, mergeApproved, shouldRoundOf, writingOf, timerOf, recheckOf, endSession, markMerged, awaitText, startSession } from "./jobs.ts";
 import { workBranch, workspaceKey } from "./paths.ts";
 import { adoptHandbacks } from "./handback.ts";
 import { recoverFromLogs } from "./recover.ts";
@@ -1128,10 +1128,10 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
       : `it is ready and first in line (by To do's score, see "How Items are ordered")`;
     const label = `${step} for ${entry.item.ref.id} "${entry.item.title}"`;
 
-    const job: Job = entry.job ?? jobOf({
+    const job: Job = entry.job ?? {
       item: entry.item.ref, workspace: workspaceKey(entry.item.ref), branch: workBranch(entry.item.ref),
       failures: 0, fixRounds: 0, startedAt: at, ...(entry.item.backlog ? {} : { seenInTodo: true as const }),
-      ...(skipped ? { triage: { ready: true, size: skipped.size, paths: [], hidesDecision: false } } : {}), step });
+      ...(skipped ? { triage: { ready: true, size: skipped.size, paths: [], hidesDecision: false } } : {}), at: atStep(step) };
     // The ceiling as it is now, before anything is taken for the start: a person may have lowered it during this tick.
     const ceilingFirst = Math.min(slots, deps.config.load().config?.settings.maxParallelSessions.value ?? slots);
     if (running >= ceilingFirst) {

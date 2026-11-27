@@ -219,41 +219,8 @@ export interface JobParked {
   rewrite?: { id: string; questions: string[]; /** As `texts` above. */ texts?: AskedText[]; /** The host's time of the last question comment. */ askedAt?: string; /** Each question has its answer from a reply on the host, all the recommendations: the rewrite waits for Accept on the board. */ answered?: true };
 }
 
-/**
- * Where the job is in the cycle: its step and session, parked, an owed hand-over, merged, and the timed waits. Read with `where`,
- * written with `setWhere`; nothing else touches these.
- */
-export interface Where {
-  step: JobStep;
-  /** The session running this step now. */
-  sessionId?: string;
-  parked?: JobParked;
-  /** Set when a person said "try again" after a failed hand-over: the next tick hands over without a session. */
-  owes?: "hand-over";
-  /** The commit of the item's change on the main branch: in the chain the queue pushed (level 4), or as the session merged it (levels 2 and 3). */
-  merged?: string;
-  /** Level 3: the reviewer approved the change, so the implement step now merges it (the implementor's session is resumed, or a fresh one told to merge). */
-  merge?: true;
-  /** The triage runs again: why, and what changed since the one before. Cleared when its answer is taken. */
-  recheck?: Recheck;
-  /** The implement step running now is that round for the `should` findings: one that commits nothing goes on to the merge. */
-  shouldRound?: true;
-  /** The change merged, and closing its Item on the host failed: each tick tries again until it is closed (#238). */
-  closeOwed?: { sha: string; batch?: number };
-  /** The step may not start before this (a retry timer or a limit reset). */
-  notBefore?: string;
-  /**
-   * A person accepted or edited a rewrite and Scope Soup wrote it on the host, but the store still reads the Item's text from before
-   * (`from`, by `itemTextHash`) until the next sync: no step starts on that old text. Cleared once the text in the store is another, or
-   * after `WRITING_WAIT_MS` from the write (`at`) whatever the store reads, so a write that never comes back cannot hold it for good.
-   */
-  writing?: TextWritten;
-  /** The agent session to continue, after a limit or a stop cut it off. */
-  resume?: string;
-}
-
 export interface Job {
-  /** Where the job is (`JobAt`); read and moved with `where` and `setWhere`. */
+  /** Where the job is: read with `stepAt`, `parkedOf` and the like or a switch on it, and changed only by the moves below. */
   at: JobAt;
   /** The implement session started last: the level it started at, and whether its finish text told it to merge (decision 108). */
   sessionStart?: { level: number; mayMerge: boolean };
@@ -431,12 +398,10 @@ export interface AskedText {
 
 export type Jobs = Record<string, Job>;
 
-const WHERE_KEYS = ["step", "sessionId", "parked", "owes", "merged", "merge", "recheck", "shouldRound", "closeOwed", "notBefore", "writing", "resume"] as const satisfies readonly (keyof Where)[];
-
-/** A change to where a job is: each field given is set, and one given as undefined is cleared. */
-export type WherePatch = { [K in keyof Where]?: Where[K] | undefined };
-
-/** A step's session: waiting to start (not before `notBefore`, until the written text is read back, to resume `resume`), or running. */
+/**
+ * A step's session: waiting to start, or running. A waiting step starts no earlier than `notBefore` (a retry timer, the pause between
+ * steps, a limit's reset) and resumes `resume`, the agent session a limit or a stop cut off.
+ */
 export type StepRun =
   | { is: "waiting"; notBefore?: string; writing?: TextWritten; resume?: string }
   /** `owes`: a person's Merge queue ends this session; once the tick has ended it, the hand-over follows. */
@@ -454,55 +419,22 @@ export type TextWritten = { from: string; at: string };
  * and running, owed and parked, merged at a step with a session) cannot be stored.
  */
 export type JobAt =
+  /** `recheck`: the triage runs again, told why and what changed since the one before. */
   | { kind: "triage"; run: StepRun; recheck?: Recheck }
+  /**
+   * `merge`: level 3, the reviewer approved, so this step merges (the implementor's session resumed, or a fresh one told to). `shouldRound`:
+   * this round is for the review's `should` findings, and one that commits nothing goes on to the merge.
+   */
   | { kind: "implement"; run: StepRun; merge?: true; shouldRound?: true }
   | { kind: "review"; run: StepRun }
   | { kind: "parked"; step: JobStep; parked: JobParked; merge?: true; shouldRound?: true; writing?: TextWritten }
   /** `merge`: the reviewer approved it at level 3, so an answer to a failed hand-over resumes the implementor to merge. */
   | { kind: "hand-over"; step: JobStep; merge?: true; writing?: TextWritten }
+  /**
+   * `sha`: the change's commit on main. `closeOwed`: closing the Item on the host failed, and each tick tries again (#238). `parked`: what
+   * it was parked as when it merged (queued, mostly).
+   */
   | { kind: "merged"; step: JobStep; sha: string; closeOwed?: { sha: string; batch?: number }; parked?: JobParked };
-
-const opt = <K extends string, V>(key: K, value: V | undefined): Partial<Record<K, V>> => (value === undefined ? {} : ({ [key]: value } as Record<K, V>));
-
-/** Where-fields as the stored case, in the order the tick acts on them: merged, a running session, an owed hand-over, parked, the step. */
-function encode(at: Where): JobAt {
-  if (at.merged !== undefined) return { kind: "merged", step: at.step, sha: at.merged, ...opt("closeOwed", at.closeOwed), ...opt("parked", at.parked) };
-  const run: StepRun = at.sessionId !== undefined
-    ? { is: "running", session: at.sessionId, ...opt("owes", at.owes), ...opt("writing", at.writing) }
-    : { is: "waiting", ...opt("notBefore", at.notBefore), ...opt("writing", at.writing), ...opt("resume", at.resume) };
-  if (at.sessionId === undefined) {
-    if (at.owes) return { kind: "hand-over", step: at.step, ...opt("merge", at.merge), ...opt("writing", at.writing) };
-    if (at.parked) return { kind: "parked", step: at.step, parked: at.parked, ...opt("merge", at.merge), ...opt("shouldRound", at.shouldRound), ...opt("writing", at.writing) };
-  }
-  switch (at.step) {
-    case "triage":
-      return { kind: "triage", run, ...opt("recheck", at.recheck) };
-    case "implement":
-      return { kind: "implement", run, ...opt("merge", at.merge), ...opt("shouldRound", at.shouldRound) };
-    case "review":
-      return { kind: "review", run };
-  }
-}
-
-function decode(at: JobAt): Where {
-  switch (at.kind) {
-    case "merged":
-      return { step: at.step, merged: at.sha, ...opt("closeOwed", at.closeOwed), ...opt("parked", at.parked) };
-    case "hand-over":
-      return { step: at.step, owes: "hand-over", ...opt("merge", at.merge), ...opt("writing", at.writing) };
-    case "parked":
-      return { step: at.step, parked: at.parked, ...opt("merge", at.merge), ...opt("shouldRound", at.shouldRound), ...opt("writing", at.writing) };
-    case "triage":
-    case "implement":
-    case "review": {
-      const run = at.run.is === "running"
-        ? { sessionId: at.run.session, ...opt("owes", at.run.owes), ...opt("writing", at.run.writing) }
-        : { ...opt("notBefore", at.run.notBefore), ...opt("writing", at.run.writing), ...opt("resume", at.run.resume) };
-      const extra = at.kind === "triage" ? opt("recheck", at.recheck) : at.kind === "implement" ? { ...opt("merge", at.merge), ...opt("shouldRound", at.shouldRound) } : {};
-      return { step: at.kind, ...run, ...extra };
-    }
-  }
-}
 
 /** The step the job is at: the one it runs or waits for, or the one it parked, owes its hand-over or merged at. */
 export function stepAt(job: Job): JobStep {
@@ -517,19 +449,19 @@ export function runOf(job: Job): StepRun | undefined {
 }
 
 /** The session the job runs now, if any. */
-export function sessionIdOf(job: Job | undefined): string | undefined {
+export function sessionIdOf(job: Job | null | undefined): string | undefined {
   const run = job ? runOf(job) : undefined;
   return run?.is === "running" ? run.session : undefined;
 }
 
 /** What the job is parked on; for a merged job, what it was parked as when it merged (queued, mostly). */
-export function parkedOf(job: Job | undefined): JobParked | undefined {
+export function parkedOf(job: Job | null | undefined): JobParked | undefined {
   const at = job?.at;
   return at?.kind === "parked" ? at.parked : at?.kind === "merged" ? at.parked : undefined;
 }
 
 /** The sha of the job's change on main, once it merged. */
-export function mergedOf(job: Job | undefined): string | undefined {
+export function mergedOf(job: Job | null | undefined): string | undefined {
   return job?.at.kind === "merged" ? job.at.sha : undefined;
 }
 
@@ -546,32 +478,32 @@ export function shouldRoundOf(job: Job): boolean {
 }
 
 /** The hand-over is owed: now, or once the session that runs is over. */
-export function owesHandOver(job: Job | undefined): boolean {
+export function owesHandOver(job: Job | null | undefined): boolean {
   const at = job?.at;
   return at?.kind === "hand-over" || (at !== undefined && (at.kind === "triage" || at.kind === "implement" || at.kind === "review") && at.run.is === "running" && at.run.owes !== undefined);
 }
 
 /** The description Scope Soup wrote that the next step waits to read back, if any. */
-export function writingOf(job: Job | undefined): TextWritten | undefined {
+export function writingOf(job: Job | null | undefined): TextWritten | undefined {
   const at = job?.at;
   if (!at || at.kind === "merged") return undefined;
   return at.kind === "parked" || at.kind === "hand-over" ? at.writing : at.run.writing;
 }
 
 /** The retry timer of a step that waits to start, if any. */
-export function timerOf(job: Job | undefined): string | undefined {
+export function timerOf(job: Job | null | undefined): string | undefined {
   const run = job ? runOf(job) : undefined;
   return run?.is === "waiting" ? run.notBefore : undefined;
 }
 
 /** The agent session a waiting step resumes, if any. */
-export function resumeOf(job: Job | undefined): string | undefined {
+export function resumeOf(job: Job | null | undefined): string | undefined {
   const run = job ? runOf(job) : undefined;
   return run?.is === "waiting" ? run.resume : undefined;
 }
 
 /** Why a triage runs again, while the job is at its triage. */
-export function recheckOf(job: Job | undefined): Recheck | undefined {
+export function recheckOf(job: Job | null | undefined): Recheck | undefined {
   return job?.at.kind === "triage" ? job.at.recheck : undefined;
 }
 
@@ -582,15 +514,15 @@ type StepCase = Extract<JobAt, { kind: JobStep }>;
 const isStepCase = (at: JobAt): at is StepCase => at.kind === "triage" || at.kind === "implement" || at.kind === "review";
 
 /** What a step case carries beside its run, kept only when the job stays at that step. */
-function stepCase(step: JobStep, run: StepRun, from: JobAt, marks: { merge?: true; shouldRound?: true } = {}): StepCase {
+function stepCase(step: JobStep, run: StepRun, from?: JobAt, marks: { merge?: true; shouldRound?: true } = {}): StepCase {
   switch (step) {
     case "triage": {
-      const recheck = from.kind === "triage" ? from.recheck : undefined;
+      const recheck = from?.kind === "triage" ? from.recheck : undefined;
       return { kind: "triage", run, ...(recheck ? { recheck } : {}) };
     }
     case "implement": {
-      const merge = marks.merge ?? (from.kind === "implement" ? from.merge : undefined);
-      const shouldRound = marks.shouldRound ?? (from.kind === "implement" ? from.shouldRound : undefined);
+      const merge = marks.merge ?? (from?.kind === "implement" ? from.merge : undefined);
+      const shouldRound = marks.shouldRound ?? (from?.kind === "implement" ? from.shouldRound : undefined);
       return { kind: "implement", run, ...(merge ? { merge } : {}), ...(shouldRound ? { shouldRound } : {}) };
     }
     case "review":
@@ -844,44 +776,12 @@ export function awaitText(job: Job, written: TextWritten | undefined): void {
   job.at = { ...at, run: written ? { ...run, writing: written } : run } as StepCase;
 }
 
-/** Where the job is (`Where`), read from its stored case. */
-export function where(job: Job): Readonly<Where>;
-export function where(job: Job | null | undefined): Readonly<Where> | undefined;
-export function where(job: Job | null | undefined): Readonly<Where> | undefined {
-  return job ? decode(job.at) : undefined;
-}
-
-/** Moves the job: the fields of `patch` are set, those given as undefined cleared, and the result stored as its case. */
-export function setWhere(job: Job, patch: WherePatch): void {
-  job.at = encode(applied(decode(job.at), patch));
-}
-
-function applied(at: Where, patch: WherePatch): Where {
-  const next: Record<string, unknown> = { ...at };
-  for (const [key, value] of Object.entries(patch)) {
-    if (value === undefined) delete next[key];
-    else next[key] = value;
-  }
-  return next as unknown as Where;
-}
-
 /** A job's fields other than where it is. */
 export type JobFields = Omit<Job, "at">;
 
-/**
- * A job from its fields and where it is, given as one object. Where-fields left out are kept from a job spread into it; a job with no
- * step at all is at triage.
- */
-export function jobOf(all: JobFields & Partial<Where> & { at?: JobAt }): Job {
-  const { at, ...rest } = all;
-  const fields: Record<string, unknown> = { ...rest };
-  const patch: WherePatch = {};
-  for (const key of WHERE_KEYS) {
-    if (key in fields) (patch as Record<string, unknown>)[key] = fields[key];
-    delete fields[key];
-  }
-  const start: Where = at ? decode(at) : { step: "triage" };
-  return { ...(fields as unknown as JobFields), at: encode(applied(start, patch)) };
+/** A step that waits to start, with nothing to resume and no timer: where a new job begins. */
+export function atStep(step: JobStep, run: StepRun = { is: "waiting" }): JobAt {
+  return stepCase(step, run);
 }
 
 /** The job as stored, or null when it is not of the stored shape (an older one): such a job is dropped, not read (decision 136). */
@@ -890,7 +790,6 @@ function parseJob(value: unknown): Job | null {
   const job = value as Partial<Job> & Record<string, unknown>;
   const at = job.at as Partial<JobAt> | undefined;
   if (!job.item || typeof job.branch !== "string" || typeof at !== "object" || at === null) return null;
-  if (WHERE_KEYS.some((key) => key in job)) return null;
   switch (at.kind) {
     case "triage":
     case "implement":

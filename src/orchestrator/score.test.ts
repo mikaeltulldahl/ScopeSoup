@@ -8,16 +8,17 @@ import type { WorkItem } from "../model/types.ts";
 import { voteWords } from "../model/vote.ts";
 import { openStore } from "../store/store.ts";
 import { loadVotes, setVote, withVotes } from "../store/votes.ts";
-import type { Jobs, JobFields, Where } from "./jobs.ts";
+import type { Jobs, JobStep, StepRun } from "./jobs.ts";
+import { atStep } from "./jobs.ts";
 import { explainOrder, older, ordinal, voteForPlace, voteLimits, WEIGHTS } from "./score.ts";
 import { compareItems } from "./candidates.ts";
-import { jobOf } from "./jobs.ts";
 
-const asJob = (fields: object) => jobOf(fields as JobFields & Partial<Where>);
+
+const asJob = (step: JobStep, fields: object, run?: StepRun) => ({ ...fields, at: atStep(step, run) });
 
 const TRIAGED = { log: [{ at: "2026-03-02T10:00:00.000Z", by: { who: "scopesoup", agent: true as const }, kind: "session" as const, fields: { role: "triage" } }] };
 const job = (id: number, size: "small" | "medium" | "large" = "medium", started = false) =>
-  ({ [refKey(work(id).ref)]: asJob({ step: started ? "implement" : "triage", ...(started ? { implement: { done: true } } : {}), triage: { size, ready: true, paths: [], hidesDecision: false } }) }) as unknown as Jobs;
+  ({ [refKey(work(id).ref)]: asJob(started ? "implement" : "triage", { ...(started ? { implement: { done: true } } : {}), triage: { size, ready: true, paths: [], hidesDecision: false } }) }) as unknown as Jobs;
 const order = (items: WorkItem[], jobs: Jobs = {}): string[] => [...items].sort(compareItems(["bug"], jobs, items)).map((item) => item.ref.id);
 
 test("score: a started Item beats a fresh one of slightly higher priority", () => {
@@ -57,22 +58,22 @@ test("score: started means code written; an answer or a past session is not a st
   const key = refKey(work(2).ref);
   const base = { triage: { size: "medium", ready: true, paths: [], hidesDecision: false } };
   const items = [work(1, { priority: "major", ...TRIAGED }), work(2, { ...TRIAGED, answers: [{ at: "2026-03-03T10:00:00.000Z", by: { who: "a" }, text: "yes" }] } as never)];
-  const answered = { ...job(1), [key]: asJob({ ...base, step: "triage", answerArrived: "x", answered: [{ index: 0, answer: "yes", at: "x" }], resume: "s" }) } as unknown as Jobs;
+  const answered = { ...job(1), [key]: asJob("triage", { ...base, answerArrived: "x", answered: [{ index: 0, answer: "yes", at: "x" }] }, { is: "waiting", resume: "s" }) } as unknown as Jobs;
   assert.deepEqual(order(items, answered), ["1", "2"]);
   // A branch head that differs from main is code written.
-  const ahead = { ...job(1), [key]: asJob({ ...base, step: "triage", head: "bbb", base: "aaa" }) } as unknown as Jobs;
+  const ahead = { ...job(1), [key]: asJob("triage", { ...base, head: "bbb", base: "aaa" }) } as unknown as Jobs;
   assert.deepEqual(order(items, ahead), ["2", "1"]);
   // A head equal to main is no code.
-  const none = { ...job(1), [key]: asJob({ ...base, step: "triage", head: "aaa", base: "aaa" }) } as unknown as Jobs;
+  const none = { ...job(1), [key]: asJob("triage", { ...base, head: "aaa", base: "aaa" }) } as unknown as Jobs;
   assert.deepEqual(order(items, none), ["1", "2"]);
   // The implement step right after the triage, with no implement session yet, is no start.
-  const fresh = { ...job(1), [key]: asJob({ ...base, step: "implement" }) } as unknown as Jobs;
+  const fresh = { ...job(1), [key]: asJob("implement", { ...base }) } as unknown as Jobs;
   assert.deepEqual(order(items, fresh), ["1", "2"]);
   // Once an implement session has run it is.
-  const ran = { ...job(1), [key]: asJob({ ...base, step: "implement", implement: { done: true } }) } as unknown as Jobs;
+  const ran = { ...job(1), [key]: asJob("implement", { ...base, implement: { done: true } }) } as unknown as Jobs;
   assert.deepEqual(order(items, ran), ["2", "1"]);
   // The review step counts.
-  const review = { ...job(1), [key]: asJob({ ...base, step: "review" }) } as unknown as Jobs;
+  const review = { ...job(1), [key]: asJob("review", { ...base }) } as unknown as Jobs;
   assert.deepEqual(order(items, review), ["2", "1"]);
 });
 

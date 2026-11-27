@@ -15,7 +15,7 @@ import type { Job, Jobs } from "../orchestrator/jobs.ts";
 import { workBranch, workspaceKey } from "../orchestrator/paths.ts";
 import { sessionOf, stepOf, waitsForAnswer as answerAwaited } from "../core/phase.ts";
 import { phaseOf } from "../orchestrator/phase.ts";
-import { jobOf, stepAt, mergeApproved, sessionIdOf, setRecheck, release, clearTimer, moveStep, handOverTaken, toReview } from "../orchestrator/jobs.ts";
+import { atStep, stepAt, mergeApproved, sessionIdOf, release, clearTimer, moveStep, handOverTaken, toReview } from "../orchestrator/jobs.ts";
 
 export const MOVES = ["triage", "todo", "in-review", "merge-queue", "implement"] as const;
 export type Move = (typeof MOVES)[number];
@@ -164,7 +164,7 @@ export function applyMove(jobs: Jobs, key: string, move: Move, input: MoveInput,
   if (!jobs[key] && move === "triage" && !input.elsewhere) {
     // Level 0, or in Backlog: no job yet. The person's pick makes one at triage, which the tick runs whatever the level (decision 104).
     const ref = input.item.ref;
-    jobs[key] = jobOf({ item: ref, workspace: workspaceKey(ref), branch: workBranch(ref), step: "triage", failures: 0, fixRounds: 0, startedAt: at, triageAskedBy: by });
+    jobs[key] = { item: ref, workspace: workspaceKey(ref), branch: workBranch(ref), at: atStep("triage"), failures: 0, fixRounds: 0, startedAt: at, triageAskedBy: by };
     return { ok: true, reason: `${by} set ${id} to triage: its triage runs next${input.item.backlog ? "; it stays in Backlog, and nothing more starts until a person moves it to To do" : ""}.` };
   }
   const job = jobs[key];
@@ -175,12 +175,14 @@ export function applyMove(jobs: Jobs, key: string, move: Move, input: MoveInput,
   const role = running ? (ROLE_WORDS[running] ?? "the agent") : "";
   const ends = running ? ` ${role.charAt(0).toUpperCase()}${role.slice(1)}'s session is ended now; its result is not taken.` : "";
   if (move === "triage") {
-    const fresh: Job = jobOf({
+    // The session that runs goes on until the tick ends it. As decision 68's triage again: the one that runs is told the answer before, as data.
+    const session = sessionIdOf(job);
+    const recheck = job.triage ? { reasons: [`${by} asked for it on the board`], previous: job.triage, previousAt: job.triaged?.at ?? job.startedAt, commits: [], commitCount: 0, finished: [] } : undefined;
+    jobs[key] = {
       item: job.item, workspace: job.workspace, branch: job.branch, failures: 0, fixRounds: 0, startedAt: at,
-      ...(job.triaged ? { triaged: job.triaged } : {}), ...interrupt, triageAskedBy: by, step: "triage", sessionId: sessionIdOf(job) });
-    // As decision 68's triage again: the one that runs is told the answer before, as data.
-    if (job.triage) setRecheck(fresh, { reasons: [`${by} asked for it on the board`], previous: job.triage, previousAt: job.triaged?.at ?? job.startedAt, commits: [], commitCount: 0, finished: [] });
-    jobs[key] = fresh;
+      ...(job.triaged ? { triaged: job.triaged } : {}), ...interrupt, triageAskedBy: by,
+      at: { kind: "triage", run: session ? { is: "running", session } : { is: "waiting" }, ...(recheck ? { recheck } : {}) },
+    };
     return { ok: true, reason: `${by} set ${id} to triage: its triage is taken again, next; the one before and the work since are dropped (the branch stays).${ends}` };
   }
   if (move === "implement") {

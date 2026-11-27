@@ -28,8 +28,8 @@ import { AlreadyAnswered } from "../ports/host.ts";
 import { refKey } from "../model/types.ts";
 import type { Chat, ChatRunner, ChatTurn } from "../orchestrator/chat.ts";
 import { chatKey, createChat } from "../orchestrator/chat.ts";
-import type { Decision, Job, Jobs, Where } from "../orchestrator/jobs.ts";
-import { jobOf, loadJobs, saveJobs } from "../orchestrator/jobs.ts";
+import type { Decision, Job, Jobs } from "../orchestrator/jobs.ts";
+import { atStep, loadJobs, saveJobs } from "../orchestrator/jobs.ts";
 import { fileDrafts } from "../orchestrator/drafts.ts";
 import { workspaceKey } from "../orchestrator/paths.ts";
 import { allowancePlans } from "../orchestrator/allowance.ts";
@@ -275,9 +275,9 @@ export function seedDemo(store: Store, now: Date, dir?: string): void {
       role, model, status: "succeeded", agentSessionId: `agent-${id}`, startedAt: at(-startedMinutesAgo), finishedAt: at(-startedMinutesAgo + minutes), ...over,
     }));
   const jobs: Jobs = {};
-  const job = (item: number, over: Partial<Job & Where>) => {
+  const job = (item: number, over: Partial<Job>) => {
     const subject = ref("work", item);
-    jobs[refKey(subject)] = jobOf({ item: subject, workspace: workspaceKey(subject), branch: `scopesoup/${item}`, step: "triage", failures: 0, fixRounds: 0, startedAt: at(-180), ...over });
+    jobs[refKey(subject)] = { item: subject, workspace: workspaceKey(subject), branch: `scopesoup/${item}`, at: atStep("triage"), failures: 0, fixRounds: 0, startedAt: at(-180), ...over };
   };
 
   store.tx(() => {
@@ -295,7 +295,7 @@ export function seedDemo(store: Store, now: Date, dir?: string): void {
       triage: { ready: true, size: "small", paths: ["src/week"], hidesDecision: true, decision: REWRITE_QUESTION, decisions: [REWRITE_QUESTION], rewrite: REWRITE_TEXT },
       rewrite: { original: REWRITE_ORIGINAL, text: REWRITE_TEXT, questions: [REWRITE_QUESTION], round: 1 },
       rewriteRounds: 1,
-      parked: { as: "needs-decision", reason: `Triage, round 1: a rewrite of the description and 1 question wait for an answer: 1. ${REWRITE_QUESTION.question}`, at: at(-36) },
+      at: { kind: "parked", step: "triage", parked: { as: "needs-decision", reason: `Triage, round 1: a rewrite of the description and 1 question wait for an answer: 1. ${REWRITE_QUESTION.question}`, at: at(-36) } },
     });
     item(52, "Chart datum and the first test harbours", {
       body: "Harbours publish heights against different datums, and the first data set needs a few harbours to test against.",
@@ -303,7 +303,7 @@ export function seedDemo(store: Store, now: Date, dir?: string): void {
     step("t-52", 52, "triage", "opus", 30, 5);
     job(52, {
       triage: { ready: true, size: "small", paths: [], hidesDecision: true, decision: DEMO_QUESTIONS[0]!, decisions: DEMO_QUESTIONS },
-      parked: { as: "needs-decision", reason: `The triage asks ${DEMO_QUESTIONS.length} questions.`, at: at(-25) },
+      at: { kind: "parked", step: "triage", parked: { as: "needs-decision", reason: `The triage asks ${DEMO_QUESTIONS.length} questions.`, at: at(-25) } },
     });
     // A triage proposes to restructure item 53: it keeps one part, one becomes a sub-item, one goes into item 82, one stands on its own.
     item(53, "Favourite harbours, shared by link and kept offline", {
@@ -312,14 +312,14 @@ export function seedDemo(store: Store, now: Date, dir?: string): void {
     step("t-53", 53, "triage", "opus", 20, 4);
     job(53, {
       proposal: DEMO_RESTRUCTURING,
-      parked: { as: "needs-decision", reason: `${DEMO_RESTRUCTURING.reason} Accept, edit or reject it on the item page.`, at: at(-16) },
+      at: { kind: "parked", step: "triage", parked: { as: "needs-decision", reason: `${DEMO_RESTRUCTURING.reason} Accept, edit or reject it on the item page.`, at: at(-16) } },
     });
     // Triage found item 46 too large and proposed no split: a person may split it, or press Implement anyway (decision 105).
     item(46, "Tide alerts for every harbour", { body: "Push an alert before each high tide, for any harbour, with per-harbour thresholds and quiet hours." });
     step("t-46", 46, "triage", "opus", 12, 3);
     job(46, {
       triage: { ready: true, size: "large", paths: ["src/alerts", "src/harbours"], hidesDecision: false },
-      parked: { as: "not-ready", reason: "Triage: too large for one change (large means a story), and it proposed no split. Split it into smaller Items first, or answer here to have triage propose the split.", at: at(-9), verdict: true },
+      at: { kind: "parked", step: "triage", parked: { as: "not-ready", reason: "Triage: too large for one change (large means a story), and it proposed no split. Split it into smaller Items first, or answer here to have triage propose the split.", at: at(-9), verdict: true } },
     });
     item(44, "Export a harbour's table as PDF", { blockedBy: [ref("work", 52)] });
     item(47, "Offline copy of the last viewed harbour", { blockedBy: [ref("work", 44)] });
@@ -333,7 +333,7 @@ export function seedDemo(store: Store, now: Date, dir?: string): void {
     put(session("s-58b", ref("work", 58), { status: "succeeded", model: "sonnet", startedAt: at(-24), finishedAt: at(-14.7), endReason: "succeeded", attempt: 2, costUsd: 0.64 }));
     put(session("s-58c", ref("work", 58), { role: "review", status: "succeeded", model: "opus", startedAt: at(-17), finishedAt: at(-14.5), endReason: "succeeded", costUsd: 0.31 }));
     put(session("s-58", ref("work", 58), { model: "opus", agentSessionId: "agent-s-58", startedAt: at(-14), lastEventAt: at(0), lastAction: "writing tests for the phase calculation", costUsd: 1.84 }));
-    job(58, { step: "implement", sessionId: "s-58", agentSession: "agent-s-58", startedAt: at(-120) });
+    job(58, { at: atStep("implement", { is: "running", session: "s-58" }), agentSession: "agent-s-58", startedAt: at(-120) });
     // Two people's holds. Whoever is picked at the top of the board sees their own in Your turn; another's names them.
     const held = (id: number, title: string, who: string, machine: string, since: number) =>
       item(id, title, {
@@ -358,7 +358,7 @@ export function seedDemo(store: Store, now: Date, dir?: string): void {
     step("t-63", 63, "triage", "opus", 90, 3);
     step("i-63", 63, "implement", "sonnet", 60, 40);
     put(session("s-63", ref("work", 63), { role: "review", model: "opus", agentSessionId: "agent-s-63", startedAt: at(-3), lastEventAt: at(0), lastAction: "reading the search index changes" }));
-    job(63, { step: "review", sessionId: "s-63", agentSession: "agent-i-63", startedAt: at(-90) });
+    job(63, { at: atStep("review", { is: "running", session: "s-63" }), agentSession: "agent-i-63", startedAt: at(-90) });
     item(64, "Delete my account and all saved harbours", { state: "doing", verification: "After deletion the account's rows are gone from every table." });
     changeFor(64, "Delete my account and all saved harbours", { updatedAt: at(-200) });
     // Item 66: a triage, an implementor and a reviewer ran; the review sent findings back twice, and the implementor's own
@@ -385,7 +385,7 @@ export function seedDemo(store: Store, now: Date, dir?: string): void {
     step("i-66b", 66, "implement", "sonnet", 120, 14, { costUsd: 0.57, agentSessionId: "agent-i-66", ...streamOf("i-66b") });
     step("r-66b", 66, "review", "opus", 95, 7, { costUsd: 0.74, ...streamOf("r-66b") });
     job(66, {
-      step: "implement", agentSession: "agent-i-66", fixRounds: 2, startedAt: at(-240),
+      at: atStep("implement"), agentSession: "agent-i-66", fixRounds: 2, startedAt: at(-240),
       resumeWith: "The review found: a day without a sunset shows 00:00.",
       review: { verdict: "changes", findings: [{ severity: "must", file: "src/day/SunRow.tsx", text: "A day without a sunset (polar day) shows 00:00 instead of leaving the time out." }] },
     });
@@ -435,7 +435,7 @@ export function seedDemo(store: Store, now: Date, dir?: string): void {
       if (each.state !== "open" || !each.verdicts.some((verdict) => verdict.dimension === "review" && verdict.value === "pass")) continue;
       for (const work of each.works) {
         if (jobs[refKey(work)]) continue;
-        job(Number(work.id), { step: "review", head: each.revisions[each.revisions.length - 1]?.sha, parked: { as: "queued", reason: "Reviewed: it waits in the merge queue.", at: each.updatedAt } });
+        job(Number(work.id), { head: each.revisions[each.revisions.length - 1]?.sha, at: { kind: "parked", step: "review", parked: { as: "queued", reason: "Reviewed: it waits in the merge queue.", at: each.updatedAt } } });
       }
     }
     saveJobs(store, jobs);

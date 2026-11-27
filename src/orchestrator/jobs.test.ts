@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { LogRecord, OpenQuestion } from "../model/types.ts";
-import type { Job } from "./jobs.ts";
-import { asImplement, askedInLog, asReview, asTriage, changedRewrite, hasMarkup, recoverFields, sameText, withoutVerification, dropUnreadable, loadJobs, saveJobs, setWhere, where, jobOf } from "./jobs.ts";
+import type { Job, JobAt, JobParked } from "./jobs.ts";
+import { asImplement, askedInLog, asReview, asTriage, changedRewrite, hasMarkup, recoverFields, sameText, withoutVerification, dropUnreadable, loadJobs, saveJobs, parkedOf, writingOf, atStep, awaitText, endSession, handOverTaken, markMerged, mergedOf, nextStep, owesHandOver, parkJob, release, startSession, toReview } from "./jobs.ts";
 import { openStore } from "../store/store.ts";
 
 test("a stored answer that carries the removed tests or untested fields is still read", () => {
@@ -155,11 +155,11 @@ test("a triage's rewrite that changes only whitespace, or only appends the Verif
 const ASKED_AT = "2026-11-18T10:00:00.000Z";
 const B = { who: "scopesoup", machine: "laptop-b", agent: true };
 const decisions = ["Should it do part 1?", "Should it do part 2?"].map((question) => ({ question, options: ["yes", "no"], recommendation: "yes" }));
-const parkedJob = (several: boolean): Job => (jobOf({
-  item: { host: "metaBranch", kind: "work", id: "A-1" }, workspace: "w", branch: "scopesoup/A-1", step: "triage", failures: 0, fixRounds: 0, startedAt: ASKED_AT, parks: 2,
-  triage: { ready: true, size: "small", paths: [], hidesDecision: true, decision: decisions[0]!, ...(several ? { decisions } : {}) },
-  parked: { as: "needs-decision", reason: several ? "Triage found 2 decisions" : decisions[0]!.question, at: ASKED_AT },
-}));
+const parkedJob = (several: boolean): Job => ({
+  item: { host: "metaBranch", kind: "work", id: "A-1" }, workspace: "w", branch: "scopesoup/A-1", failures: 0, fixRounds: 0, startedAt: ASKED_AT, parks: 2,
+    triage: { ready: true, size: "small", paths: [], hidesDecision: true, decision: decisions[0]!, ...(several ? { decisions } : {}) },
+  at: { kind: "parked", step: "triage", parked: { as: "needs-decision", reason: several ? "Triage found 2 decisions" : decisions[0]!.question, at: ASKED_AT } },
+});
 const question = (text: string, set: string, at = ASKED_AT): LogRecord => ({ at, by: B, kind: "question", fields: { question: text, parked: "needs-decision", set } });
 const answer = (text: string, fields: Record<string, unknown>): LogRecord => ({ at: "2026-11-18T10:00:30.000Z", by: { who: "Ada", machine: "laptop-a", agent: false }, kind: "answer", fields: { answer: text, ...fields } });
 const open = (line: LogRecord): OpenQuestion => ({ at: line.at, by: line.by, question: line.fields.question as string, options: [] });
@@ -183,30 +183,41 @@ test("of several questions each is read on its own; another park's lines and oth
   assert.equal(askedInLog(parkedJob(false), { log: [question("Something else?", set), answer("yes", { toSet: set })], openQuestions: [] }), null);
   // Nothing in the log (a GitHub Item, or a post tried again): nothing to read.
   assert.equal(askedInLog(parkedJob(false), { openQuestions: [] }), null);
-  assert.equal(askedInLog(jobOf({ ...parkedJob(false), parked: { ...where(parkedJob(false)).parked!, retry: "post" } }), { log: [first!], openQuestions: [] }), null);
+  assert.equal(askedInLog({ ...parkedJob(false), at: { kind: "parked", step: "triage", parked: { ...parkedOf(parkedJob(false))!, retry: "post" } } }, { log: [first!], openQuestions: [] }), null);
 });
 
-test("where a job is is stored as one case: a parked job runs no session, an owed hand-over is not parked, merged is the end", () => {
+test("each move builds the case it goes to, keeping what that case carries and nothing else", () => {
   const base = { item: { host: "meta", kind: "work" as const, id: "A-1" }, workspace: "w", branch: "scopesoup/A-1", failures: 0, fixRounds: 0, startedAt: "2026-01-01T00:00:00Z" };
-  const running = jobOf({ ...base, step: "implement", sessionId: "s1", merge: true });
-  assert.deepEqual(running.at, { kind: "implement", run: { is: "running", session: "s1" }, merge: true });
-  setWhere(running, { sessionId: undefined, parked: { as: "escalated", reason: "r", at: "t", byStep: true } });
-  assert.deepEqual(running.at, { kind: "parked", step: "implement", parked: { as: "escalated", reason: "r", at: "t", byStep: true }, merge: true });
-  // Parked and running at once cannot be written: the running session wins, as the tick settles it first.
-  setWhere(running, { sessionId: "s2" });
-  assert.equal(running.at.kind, "implement");
-  assert.equal(where(running).parked, undefined);
-  const owed = jobOf({ ...base, step: "review", owes: "hand-over", notBefore: "n" });
-  assert.deepEqual(owed.at, { kind: "hand-over", step: "review" });
-  const merged = jobOf({ ...owed, merged: "abc", sessionId: "s3" });
-  assert.deepEqual(merged.at, { kind: "merged", step: "review", sha: "abc" });
-  // A spread job keeps where it is; a field given as undefined clears it.
-  assert.deepEqual(jobOf({ ...running, sessionId: undefined }).at, { kind: "implement", run: { is: "waiting" }, merge: true });
+  const parked: JobParked = { as: "escalated", reason: "r", at: "t", byStep: true };
+  const job: Job = { ...base, at: { kind: "implement", run: { is: "running", session: "s1" }, merge: true } };
+  // Parking ends the session; the approval to merge stays for the answer.
+  parkJob(job, parked);
+  assert.deepEqual(job.at, { kind: "parked", step: "implement", parked, merge: true });
+  release(job);
+  assert.deepEqual(job.at, { kind: "implement", run: { is: "waiting" }, merge: true });
+  // Staying at the step keeps what the step carries; another step does not.
+  nextStep(job, "implement", "n");
+  assert.deepEqual(job.at, { kind: "implement", run: { is: "waiting", notBefore: "n" }, merge: true });
+  nextStep(job, "review", "n");
+  assert.deepEqual(job.at, { kind: "review", run: { is: "waiting", notBefore: "n" } });
+  // A Merge queue pick over a running review owes the hand-over once the session is over.
+  startSession(job, "s2");
+  toReview(job, true);
+  assert.deepEqual(job.at, { kind: "review", run: { is: "running", session: "s2", owes: "hand-over" } });
+  endSession(job);
+  assert.deepEqual(job.at, { kind: "hand-over", step: "review" });
+  assert.equal(owesHandOver(job), true);
+  // A merged job keeps what it was parked as.
+  handOverTaken(job);
+  parkJob(job, { as: "queued", reason: "q", at: "t" });
+  markMerged(job, "abc");
+  assert.deepEqual(job.at, { kind: "merged", step: "review", sha: "abc", parked: { as: "queued", reason: "q", at: "t" } });
+  assert.equal(mergedOf(job), "abc");
 });
 
 test("a stored job of an older shape is dropped with an event at the tick, and is never read", () => {
   const store = openStore(":memory:");
-  const good = jobOf({ item: { host: "meta", kind: "work", id: "A-1" }, workspace: "w", branch: "scopesoup/A-1", step: "triage", failures: 0, fixRounds: 0, startedAt: "t" });
+  const good: Job = { item: { host: "meta", kind: "work", id: "A-1" }, workspace: "w", branch: "scopesoup/A-1", failures: 0, fixRounds: 0, startedAt: "t", at: atStep("triage") };
   store.setValue("orchestrator.jobs", JSON.stringify({ "meta:work:A-1": good, "meta:work:A-2": { item: { host: "meta", kind: "work", id: "A-2" }, workspace: "w", branch: "scopesoup/A-2", step: "implement", sessionId: "s", failures: 0, fixRounds: 0, startedAt: "t" } }));
   assert.deepEqual(Object.keys(loadJobs(store)), ["meta:work:A-1"]);
   // A save before the tick keeps it, so it is not lost without its event.
@@ -221,11 +232,16 @@ test("a stored job of an older shape is dropped with an event at the tick, and i
 test("the wait for a written description outlasts a session, a parked state and an owed hand-over, so the next step still waits for it", () => {
   const base = { item: { host: "meta", kind: "work" as const, id: "A-1" }, workspace: "w", branch: "scopesoup/A-1", failures: 0, fixRounds: 0, startedAt: "t" };
   const writing = { from: "old-hash", at: "2026-01-01T00:00:00.000Z" };
-  for (const at of [{ sessionId: "s1" }, { parked: { as: "escalated" as const, reason: "r", at: "t", byStep: true as const } }, { owes: "hand-over" as const }]) {
-    const job = jobOf({ ...base, step: "implement", ...at });
-    setWhere(job, { writing });
-    assert.deepEqual(where(job).writing, writing, JSON.stringify(at));
-    setWhere(job, { sessionId: undefined, parked: undefined, owes: undefined });
-    assert.deepEqual(job.at, { kind: "implement", run: { is: "waiting", writing } }, JSON.stringify(at));
+  const starts: { at: JobAt; leave: (job: Job) => void }[] = [
+    { at: atStep("implement", { is: "running", session: "s1" }), leave: endSession },
+    { at: { kind: "parked", step: "implement", parked: { as: "escalated", reason: "r", at: "t", byStep: true } }, leave: (job) => release(job) },
+    { at: { kind: "hand-over", step: "implement" }, leave: handOverTaken },
+  ];
+  for (const start of starts) {
+    const job: Job = { ...base, at: start.at };
+    awaitText(job, writing);
+    assert.deepEqual(writingOf(job), writing, start.at.kind);
+    start.leave(job);
+    assert.deepEqual(job.at, { kind: "implement", run: { is: "waiting", writing } }, start.at.kind);
   }
 });

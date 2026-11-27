@@ -22,7 +22,7 @@ import { openStore } from "../store/store.ts";
 import type { Store } from "../store/store.ts";
 import { createSync } from "../sync/index.ts";
 import { createHostActions } from "./hostActions.ts";
-import { loadJobs, where } from "./jobs.ts";
+import { loadJobs, owesHandOver, parkedOf, stepAt } from "./jobs.ts";
 import type { AgentRunner, SessionRequest } from "./ports.ts";
 import { jobFromLog } from "./recover.ts";
 import { sessionResultKey } from "./runner.ts";
@@ -144,7 +144,7 @@ test("an item run to reviewed is found where it was after the local store is del
   // Approved below level 4: the implementor is resumed to merge it; here it opens a pull request instead.
   await first.end("succeeded", { ...IMPLEMENT_OK, mergedAs: "https://git.example.invalid/team/project/pull/1" });
   assert.deepEqual(first.requests.map((request) => request.role), ["triage", "implement", "review", "implement"]);
-  assert.equal(where(loadJobs(first.store)[key])?.parked?.as, "handed-over");
+  assert.equal(parkedOf(loadJobs(first.store)[key])?.as, "handed-over");
   await first.sync();
   assert.deepEqual(kinds(first.store, item), ["session", "revision", "session", "review", "session", "question", "session"]);
   const log = first.store.get<WorkItem>(item)?.log ?? [];
@@ -156,7 +156,7 @@ test("an item run to reviewed is found where it was after the local store is del
   await second.run();
   assert.equal(second.requests.length, 0, "no new session");
   const job = loadJobs(second.store)[key];
-  assert.equal(where(job)?.parked?.as, "handed-over");
+  assert.equal(parkedOf(job)?.as, "handed-over");
   assert.equal(job?.branch, "scopesoup/A-1");
   assert.ok(second.store.eventsAfter(0, 1000).some((event) => event.kind === "orchestrator.recovered" && event.subject === key));
   await second.run();
@@ -169,7 +169,7 @@ test("a pending question and its later answer both survive the deleted local sto
   const first = start(host);
   await first.run();
   await first.end("succeeded", { ...TRIAGE_OK, hidesDecision: true, decision: { question: "Letters or digits in ids?", options: ["letters", "digits"], recommendation: "letters" } });
-  assert.equal(where(loadJobs(first.store)[key])?.parked?.as, "needs-decision");
+  assert.equal(parkedOf(loadJobs(first.store)[key])?.as, "needs-decision");
 
   // Deleted: the item still waits, with its question, and nothing is started.
   const second = start(host);
@@ -268,7 +268,7 @@ test("three open triage questions all wait again after a deleted store; the firs
     { question: "Log parse errors?", options: ["yes", "no"], recommendation: "yes" },
   ];
   await first.end("succeeded", { ...TRIAGE_OK, hidesDecision: true, decisions });
-  assert.equal(where(loadJobs(first.store)[key])?.parked?.as, "needs-decision");
+  assert.equal(parkedOf(loadJobs(first.store)[key])?.as, "needs-decision");
   await first.sync();
   assert.equal(first.store.get<WorkItem>(item)?.openQuestions?.length, 3);
 
@@ -277,11 +277,11 @@ test("three open triage questions all wait again after a deleted store; the firs
   await second.run();
   assert.equal(second.requests.length, 0);
   const job = loadJobs(second.store)[key];
-  assert.equal(where(job)?.parked?.as, "needs-decision");
+  assert.equal(parkedOf(job)?.as, "needs-decision");
   assert.deepEqual(job?.triage?.decisions?.map((each) => each.question), decisions.map((each) => each.question));
   const parked = loadSnapshot(second.store).parked?.find((each) => refKey(each.subject) === key);
   assert.deepEqual(parked?.questions?.map((each) => each.question), decisions.map((each) => each.question));
-  assert.equal(parked?.at, where(job)?.parked?.at);
+  assert.equal(parked?.at, parkedOf(job)?.at);
 
   // A person answers on the board, as the page does: by index, naming the parked state it read.
   const server = createServer({ store: second.store, port: 0, items: { host: "metaBranch", write: host.write! }, syncNow: () => second.sync() });
@@ -294,7 +294,7 @@ test("three open triage questions all wait again after a deleted store; the firs
   };
   try {
     assert.equal((await answer(0, "letters")).released, false);
-    assert.equal(where(loadJobs(second.store)[key])?.parked?.as, "needs-decision");
+    assert.equal(parkedOf(loadJobs(second.store)[key])?.as, "needs-decision");
     assert.equal((await answer(1, "drop")).released, false);
     assert.equal((await answer(2, "yes")).released, true);
   } finally {
@@ -313,10 +313,10 @@ test("a log read back: mid-session starts that step again, a new item and a pers
     line("session", { role: "implement", outcome: "succeeded", summary: "Added it.", next: "review" }),
     line("revision", { sha: SHA1, branch: "scopesoup/A-9" }),
   ]));
-  assert.equal(where(mid)?.step, "review");
+  assert.equal(stepAt(mid!), "review");
   assert.equal(mid?.implement?.summary, "Added it.");
   assert.equal(mid?.head, SHA1);
-  assert.equal(where(mid)?.parked, undefined);
+  assert.equal(parkedOf(mid), undefined);
   assert.equal(jobFromLog(workItem([])), null);
   assert.equal(jobFromLog(workItem([{ ...line("session", { role: "triage", next: "implement" }), by: { who: "robin", agent: false } }])), null);
   assert.equal(jobFromLog({ ...workItem([line("session", { role: "triage", next: "implement" })]), state: "done" }), null);
@@ -329,7 +329,7 @@ test("a log whose last review sent the change back to the implementor is read ba
     line("review", { sha: SHA1, verdict: "fail", findings: ["[must] src/a.ts: Off by one."] }),
     line("session", { role: "review", outcome: "succeeded", summary: "changes, 1 finding(s)", next: "implement" }),
   ]));
-  assert.equal(where(back)?.step, "implement");
+  assert.equal(stepAt(back!), "implement");
   assert.equal(back?.resumeWith, "The reviewer asked for these changes:\n- [must] src/a.ts: Off by one.\nFix them and commit.");
 });
 
@@ -340,7 +340,7 @@ test("an approval the work was dropped after is not handed over again: a triage 
     line("review", { sha: SHA1, verdict: "pass", findings: [] }),
     line("session", { role: "review", outcome: "succeeded", summary: "approve" }),
   ];
-  assert.equal(where(jobFromLog(workItem(reviewed)))?.owes, "hand-over");
+  assert.equal(owesHandOver(jobFromLog(workItem(reviewed))), true);
   // A person put it back in To do; its triage ran again and found it blocked (no step next).
   assert.equal(jobFromLog(workItem([...reviewed, line("session", { role: "triage", outcome: "succeeded", summary: "Blocked by A-1." })])), null);
 });
@@ -351,7 +351,7 @@ test("a passing review whose revision line was lost (a host outage) still hands 
     line("review", { sha: SHA1, verdict: "pass", findings: [] }),
     line("session", { role: "review", outcome: "succeeded", summary: "approve" }),
   ]));
-  assert.deepEqual([where(job)?.owes, job?.head, job?.reviewedHead], ["hand-over", SHA1, SHA1]);
+  assert.deepEqual([owesHandOver(job), job?.head, job?.reviewedHead], [true, SHA1, SHA1]);
 });
 
 test("a parked decision read back from the log keeps its options as { label, description } and its context", () => {
@@ -363,7 +363,7 @@ test("a parked decision read back from the log keeps its options as { label, des
     openQuestions: [{ at, by, question: "Keep it?", options, recommendation: "Keep", context: "Also check the budget line." }],
   };
   const job = jobFromLog(item);
-  assert.equal(where(job)?.parked?.as, "needs-decision");
+  assert.equal(parkedOf(job)?.as, "needs-decision");
   assert.deepEqual(job?.triage?.decision, { question: "Keep it?", options, recommendation: "Keep", context: "Also check the budget line." });
   const plain = jobFromLog({ ...item, openQuestions: [{ at, by, question: "Keep it?", options: ["Keep", "Drop"] }] });
   assert.deepEqual(plain?.triage?.decision, { question: "Keep it?", options: ["Keep", "Drop"], recommendation: "" });
@@ -393,7 +393,7 @@ test("a proposed restructuring waits across a deleted store, with its parts and 
   const first = start(host);
   await first.run();
   await first.end("succeeded", { ...TRIAGE_OK, restructure: { reason: "Two changes.", original: "keeps", parts } });
-  assert.equal(where(loadJobs(first.store)[key])?.parked?.as, "needs-decision");
+  assert.equal(parkedOf(loadJobs(first.store)[key])?.as, "needs-decision");
 
   const second = start(host);
   await second.run();
@@ -410,7 +410,7 @@ test("an implementer's question with options survives a deleted store, and the a
   await first.run();
   await first.end("succeeded", TRIAGE_OK);
   await first.end("succeeded", { ...IMPLEMENT_OK, done: false, needs: "decision", blockedReason: "x", decision: { question: "Digits or letters?", options: ["digits", "letters"], recommendation: "digits" } });
-  assert.equal(where(loadJobs(first.store)[key])?.parked?.as, "needs-decision");
+  assert.equal(parkedOf(loadJobs(first.store)[key])?.as, "needs-decision");
 
   const second = start(host);
   await second.run();

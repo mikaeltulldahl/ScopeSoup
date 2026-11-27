@@ -11,8 +11,8 @@ import type { WorkItem } from "../model/types.ts";
 import type { Store } from "../store/store.ts";
 import { openStore } from "../store/store.ts";
 import { knownAnswers } from "../store/answers.ts";
-import type { Job, Where } from "../orchestrator/jobs.ts";
-import { loadJobs, saveJobs, jobOf } from "../orchestrator/jobs.ts";
+import type { Job } from "../orchestrator/jobs.ts";
+import { loadJobs, saveJobs, atStep } from "../orchestrator/jobs.ts";
 import { readProposedRewrites, writeProposedRewrites } from "../orchestrator/aboutOthers.ts";
 import type { ScopeSoupServer } from "./server.ts";
 import { createServer } from "./server.ts";
@@ -30,8 +30,8 @@ function item(id: string, over: Partial<WorkItem> = {}): WorkItem {
   return { ref: { host: "fake", kind: "work", id }, title: `Item ${id}`, state: "todo", hostState: "open", labels: [], blockedBy: [], openChildren: 0, updatedAt: "2026-11-01T00:00:00Z", ...over };
 }
 
-function job(id: string, over: Partial<Job & Where>): Job {
-  return jobOf({ item: item(id).ref, workspace: `ws-${id}`, branch: `scopesoup/${id}`, step: "implement", failures: 0, fixRounds: 0, startedAt: at, ...over });
+function job(id: string, over: Partial<Job>): Job {
+  return { item: item(id).ref, workspace: `ws-${id}`, branch: `scopesoup/${id}`, failures: 0, fixRounds: 0, startedAt: at, at: atStep("implement"), ...over };
 }
 
 beforeEach(async () => {
@@ -42,9 +42,9 @@ beforeEach(async () => {
   for (const id of ["1", "2", "3"]) store.put(item(id, { body: `Wind units ${id}.` }), "sync", at);
   // An approved change waiting for its merge turn, one in a backoff wait, and one triaged and parked as not ready.
   saveJobs(store, {
-    [key("1")]: job("1", { merge: true, fixRounds: 1, agentSession: "agent-1", notBefore: later }),
-    [key("2")]: job("2", { failures: 1, notBefore: later }),
-    [key("3")]: job("3", { step: "triage", parked: { as: "not-ready", reason: "Triage: not ready. Which source?", at, verdict: true } }),
+    [key("1")]: job("1", { at: { kind: "implement", run: { is: "waiting", notBefore: later }, merge: true }, fixRounds: 1, agentSession: "agent-1" }),
+    [key("2")]: job("2", { at: atStep("implement", { is: "waiting", notBefore: later }), failures: 1 }),
+    [key("3")]: job("3", { at: { kind: "parked", step: "triage", parked: { as: "not-ready", reason: "Triage: not ready. Which source?", at, verdict: true } } }),
   });
   writeProposedRewrites(store, Object.fromEntries(["1", "2", "3"].map((id) => [key(id), { askedBy: "triage of 9", from: key("9"), original: `Wind units ${id}.`, text: `Show wind ${id} in knots.`, at }])));
   server = createServer({ store, now: () => new Date(T0), port: 0, configFile: file, programFound: () => true, planning: () => ({ bugLabels: ["bug"], level: 3 }) });

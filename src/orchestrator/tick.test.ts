@@ -21,7 +21,7 @@ import { readPacing } from "./pacing.ts";
 import type { MergeQueue } from "./mergeQueue.ts";
 import { createLoop } from "./loop.ts";
 import { workspaceKey } from "./paths.ts";
-import { answerQuestion, asImplement, asTriage, loadJobs, jobQuestions, releaseJob, resumesStep, saveJobs, settleRewrite, WRITING_WAIT_MS, setWhere, where, jobOf, stepAt } from "./jobs.ts";
+import { answerQuestion, asImplement, asTriage, loadJobs, jobQuestions, releaseJob, resumesStep, saveJobs, settleRewrite, WRITING_WAIT_MS, stepAt, mergeApproved, mergedOf, owesHandOver, parkedOf, sessionIdOf, shouldRoundOf, writingOf, atStep, endSession, moveStep, release } from "./jobs.ts";
 import { readProposedRewrites } from "./aboutOthers.ts";
 import { loadOwnBlockers, setOwnBlockers } from "../store/blockers.ts";
 import { buildItemPage } from "../core/item-page.ts";
@@ -45,7 +45,7 @@ import type { ControlAction } from "../store/control.ts";
 import { KEYS } from "../store/keys.ts";
 import { QUEUE_KEY, readQueueHealth, requestQueueResume } from "./queueHealth.ts";
 import { defaultConfig, initialState, step as queueStep } from "../queue/index.ts";
-import type { Job, JobFields, JobParked, Where } from "./jobs.ts";
+import type { Job, JobFields, JobParked } from "./jobs.ts";
 import { applyMove } from "../server/moves.ts";
 
 const T0 = Date.parse("2026-11-18T10:00:00.000Z");
@@ -308,7 +308,7 @@ test("ready items: todo, not blocked, not held, no decision pending, no open cha
     item("13", { holder: { actor: { id: "a", name: "Ada" }, until: "2026-11-18T09:00:00Z" } }),
   ];
   const change = { ref: { host: "fake", kind: "change", id: "c1" }, state: "open", works: [ref("11")] } as Change;
-  const jobs = { [refKey(ref("12"))]: jobOf({ item: ref("12"), step: "implement" } as unknown as Job & Where) };
+  const jobs = { [refKey(ref("12"))]: ({ item: ref("12"), at: atStep("implement") } as unknown as Job) };
   const { ready, held } = readyItems(items, [change], jobs, new Date(T0).toISOString());
   assert.deepEqual(ready.map((entry) => entry.ref.id), ["1", "6", "10"]);
   assert.deepEqual(held.map((entry) => `${entry.item.ref.id}: ${entry.reason}`), [
@@ -320,7 +320,7 @@ test("ready items: todo, not blocked, not held, no decision pending, no open cha
 test("order: Items with a triage first, bugs first by label, then smaller, then older; the rest oldest first", () => {
   const triaged = { log: [{ at: new Date(T0).toISOString(), by: { who: "scopesoup", agent: true as const }, kind: "session" as const, fields: { role: "triage" } }] };
   const items = [item("30", triaged), item("7", { ...triaged, labels: ["Bug"] }), item("4"), item("12"), item("5", { ...triaged, labels: ["bug"] }), item("2", { labels: ["bug"] }), item("1")];
-  const jobs = { [refKey(ref("12"))]: jobOf({ triage: { size: "small" } } as unknown as Job), [refKey(ref("4"))]: jobOf({ triage: { size: "large" } } as unknown as Job) };
+  const jobs = { [refKey(ref("12"))]: ({ triage: { size: "small" }, at: atStep("triage") } as unknown as Job), [refKey(ref("4"))]: ({ triage: { size: "large" }, at: atStep("triage") } as unknown as Job) };
   assert.deepEqual(items.sort(compareItems(["bug"], jobs, items)).map((entry) => entry.ref.id), ["5", "7", "12", "30", "4", "1", "2"]);
   const named = [item("b", { updatedAt: "2026-11-02T00:00:00Z" }), item("a", { updatedAt: "2026-11-03T00:00:00Z" })];
   assert.deepEqual(named.sort(compareItems([], {}, named)).map((entry) => entry.ref.id), ["b", "a"]);
@@ -357,7 +357,7 @@ test("level 1 (Triage): only triage starts, a stated size gets its triage too, a
   await step(w, "1", "succeeded", TRIAGE_OK);
   w.clock.ms += 5000;
   await w.run();
-  assert.equal(where(w.job("1"))?.step, "implement");
+  assert.equal(stepAt(w.job("1")!), "implement");
   assert.deepEqual(roles(w), ["triage", "triage"]);
   assert.ok(w.reasons("orchestrator.idle").some((reason) => /1 item waits at a step above level 1 \(Triage\) \(1 at implement\)/.test(reason)));
 });
@@ -370,7 +370,7 @@ test("level 2 (Implement): triage and implement start, a stated size skips triag
   await step(w, "1", "succeeded", TRIAGE_OK);
   await step(w, "1", "succeeded", IMPLEMENT_OK);
   assert.deepEqual(roles(w), ["triage", "implement"]);
-  assert.equal(where(w.job("1"))?.parked?.as, "queued");
+  assert.equal(parkedOf(w.job("1"))?.as, "queued");
   assert.match(w.reasons("orchestrator.merged")[0] ?? "", /The implementing session merged it/);
   assert.deepEqual((w.queue as ReturnType<typeof fakeQueue>).enqueued, []);
   const stated = world(config({ level: 2 }), [item("1", STATED_EARLY)]);
@@ -383,8 +383,8 @@ test("level 3 (Review): triage, implement and review start; an approved change g
   w.queue = fakeQueue();
   await toHandOver(w);
   assert.deepEqual(roles(w), ["triage", "implement", "review", "implement"]);
-  assert.equal(where(w.job("1"))?.parked?.as, "queued");
-  assert.equal(where(w.job("1"))?.merged, HEAD);
+  assert.equal(parkedOf(w.job("1"))?.as, "queued");
+  assert.equal(mergedOf(w.job("1")), HEAD);
   assert.deepEqual((w.queue as ReturnType<typeof fakeQueue>).enqueued, []);
 });
 
@@ -395,7 +395,7 @@ test("level 4 (Autopilot): triage, implement and review start, and the reviewed 
   await toHandOver(w);
   assert.deepEqual(roles(w), ["triage", "implement", "review"]);
   assert.deepEqual(queue.enqueued, ["1 scopesoup/1"]);
-  assert.equal(where(w.job("1"))?.parked?.as, "queued");
+  assert.equal(parkedOf(w.job("1"))?.as, "queued");
   // The approval is tied to the revision it was given on (the board's Merge queue reads it).
   assert.equal(w.job("1")?.reviewedHead, w.job("1")?.head);
   assert.ok(w.job("1")?.head);
@@ -411,8 +411,8 @@ test("a level change is an event, and a change built after the level went below 
   state = { config: config({ level: 2 }), changed: true };
   await step(w, "1", "succeeded", IMPLEMENT_OK);
   // The session was started at level 3 and told not to merge, so main does not contain it: a person is told, nothing is lost.
-  assert.equal(where(w.job("1"))?.parked?.as, "escalated");
-  assert.match(where(w.job("1"))?.parked?.reason ?? "", /does not contain scopesoup\/1/);
+  assert.equal(parkedOf(w.job("1"))?.as, "escalated");
+  assert.match(parkedOf(w.job("1"))?.reason ?? "", /does not contain scopesoup\/1/);
   assert.deepEqual(roles(w), ["triage", "implement"]);
   assert.deepEqual(w.reasons("orchestrator.level_changed"), ["The level changed from level 3 (Review) to level 2 (Implement)."]);
 });
@@ -428,7 +428,7 @@ test("a session started at level 2 that merged, finished after the level became 
   await step(w, "1", "succeeded", { ...IMPLEMENT_OK, mergedAs: MAIN_MERGED });
   assert.equal(w.runner.main, MAIN_MERGED);
   assert.deepEqual(w.reasons("orchestrator.escalated"), []);
-  assert.equal(where(w.job("1"))?.merged, HEAD);
+  assert.equal(mergedOf(w.job("1")), HEAD);
   assert.deepEqual(roles(w), ["triage", "implement"], "no review of what is merged");
   assert.match(w.reasons("orchestrator.merged")[0] ?? "", /The implementing session merged it under the level its session started with \(started at level 2, the level is now 3\)/);
 });
@@ -443,8 +443,8 @@ for (const [name, raw] of [["level 3 before approval", { level: 3 }], ["level 4"
     assert.match(w.runner.requests.at(-1)?.vars.finish ?? "", /do not merge/);
     w.runner.main = MAIN_MERGED; // it merged on its own, against its instructions
     await step(w, "1", "succeeded", { ...IMPLEMENT_OK, mergedAs: MAIN_MERGED });
-    assert.equal(where(w.job("1"))?.parked?.as, "escalated");
-    assert.equal(where(w.job("1"))?.merged, undefined);
+    assert.equal(parkedOf(w.job("1"))?.as, "escalated");
+    assert.equal(mergedOf(w.job("1")), undefined);
     assert.deepEqual(w.reasons("orchestrator.merged"), []);
     assert.match(w.reasons("orchestrator.escalated")[0] ?? "", /merged scopesoup\/1 to main .* although its instructions said to commit and stop, not to merge \(its session started at level (3|4)/);
   });
@@ -457,7 +457,7 @@ for (const [name, raw] of [["level 3 before approval", { level: 3 }], ["level 4"
     await step(w, "1", "succeeded", TRIAGE_OK);
     w.runner.main = MAIN_MERGED; // it merged on its own and its answer names no merge
     await step(w, "1", "succeeded", IMPLEMENT_OK);
-    assert.equal(where(w.job("1"))?.parked?.as, "escalated");
+    assert.equal(parkedOf(w.job("1"))?.as, "escalated");
     assert.match(w.reasons("orchestrator.escalated")[0] ?? "", /merged scopesoup\/1 to main .* although its instructions said to commit and stop/);
   });
 }
@@ -476,7 +476,7 @@ test("main moved before the implementor's branch was cut and it changed nothing:
   await step(w, "1", "succeeded", TRIAGE_OK);
   assert.equal(w.runner.requests.at(-1)?.role, "implement");
   await step(w, "1", "succeeded", IMPLEMENT_OK);
-  assert.equal(where(w.job("1"))?.parked?.as, "escalated");
+  assert.equal(parkedOf(w.job("1"))?.as, "escalated");
   assert.match(w.reasons("orchestrator.escalated")[0] ?? "", /^Nothing to change: /);
 });
 
@@ -491,7 +491,7 @@ test("a session left by an earlier run (Scope Soup restarted) starts its step ag
     await w.run();
   };
   for (let i = 0; i < max - 1; i++) await orphan();
-  assert.equal(where(w.job("1"))?.parked, undefined);
+  assert.equal(parkedOf(w.job("1")), undefined);
   assert.equal(w.job("1")?.failures, 0);
   assert.deepEqual(roles(w), Array(max).fill("triage"));
   assert.match(w.reasons("orchestrator.interrupted")[0] ?? "", /left by an earlier run of Scope Soup .* not counted as a failure/);
@@ -500,10 +500,10 @@ test("a session left by an earlier run (Scope Soup restarted) starts its step ag
   w.clock.ms += 20_000;
   await w.run();
   for (let i = 0; i < max - 1; i++) await orphan();
-  assert.equal(where(w.job("1"))?.parked, undefined);
+  assert.equal(parkedOf(w.job("1")), undefined);
   // The limit in a row: a crash at every start ends with a person.
   await orphan();
-  assert.equal(where(w.job("1"))?.parked?.as, "escalated");
+  assert.equal(parkedOf(w.job("1"))?.as, "escalated");
   assert.equal(w.events("orchestrator.restart_limit").length, 1);
 });
 
@@ -513,10 +513,10 @@ test("a change in the merge queue when the level is lowered to 3 leaves the queu
   const w = world({ load: () => state }, [item("1")]);
   w.queue = queue;
   await toHandOver(w);
-  assert.equal(where(w.job("1"))?.parked?.as, "queued");
+  assert.equal(parkedOf(w.job("1"))?.as, "queued");
   state = { config: config({ level: 3, ...MERGES }), changed: true };
   await w.run();
-  assert.equal(where(w.job("1"))?.parked, undefined);
+  assert.equal(parkedOf(w.job("1")), undefined);
   assert.equal(w.job("1")?.queued, undefined);
   assert.match(w.reasons("orchestrator.step").at(-1) ?? "", /waited in the merge queue, but the project is at level 3 now/);
   w.clock.ms += 1000;
@@ -524,7 +524,7 @@ test("a change in the merge queue when the level is lowered to 3 leaves the queu
   assert.equal(w.runner.requests.at(-1)?.role, "implement");
   assert.match(w.runner.requests.at(-1)?.vars.finish ?? "", /merge it to/);
   await step(w, "1", "succeeded", IMPLEMENT_OK);
-  assert.equal(where(w.job("1"))?.merged, HEAD);
+  assert.equal(mergedOf(w.job("1")), HEAD);
 });
 
 test("level 3, nothing committed and nothing merged (the answer names no merge): still \"nothing to change\" for a person", async () => {
@@ -535,9 +535,9 @@ test("level 3, nothing committed and nothing merged (the answer names no merge):
   await step(w, "1", "succeeded", TRIAGE_OK);
   await step(w, "1", "succeeded", { ...IMPLEMENT_OK, mergedAs: MAIN_MERGED });
   assert.equal(w.runner.main, MAIN_START, "the session was told not to merge, so main is as before");
-  assert.equal(where(w.job("1"))?.parked?.as, "escalated");
+  assert.equal(parkedOf(w.job("1"))?.as, "escalated");
   assert.match(w.reasons("orchestrator.escalated")[0] ?? "", /^Nothing to change: /);
-  assert.equal(where(w.job("1"))?.merged, undefined);
+  assert.equal(mergedOf(w.job("1")), undefined);
 });
 
 /** A person presses one of the switches (store/control.ts). */
@@ -608,7 +608,7 @@ test("Pause agents: a running session finishes its step and is settled, and noth
   w.runner.end("1", "succeeded", TRIAGE_OK);
   w.clock.ms += 60_000;
   await w.run();
-  assert.equal(where(w.job("1"))?.step, "implement");
+  assert.equal(stepAt(w.job("1")!), "implement");
   assert.equal(w.runner.requests.length, 1, "neither the next step nor a new item starts");
   assert.deepEqual(w.runner.stops, []);
 
@@ -647,7 +647,7 @@ describe("each role's switch", { concurrency: 4 }, () => {
     assert.deepEqual(roles(w), ["triage", "triage"]);
     const idle = await step(w, "1", "succeeded", TRIAGE_OK);
     assert.deepEqual(roles(w), ["triage", "triage"], "1's implement step waits");
-    assert.equal(where(w.job("1"))?.step, "implement");
+    assert.equal(stepAt(w.job("1")!), "implement");
     assert.match(idle.idle ?? "", /because implementors are paused \(1 item waits for them\)/);
     assert.equal(idle.queued, 0, "a step waiting for a paused role is not work to stay awake for");
     press(w, "implement.start");
@@ -664,7 +664,7 @@ describe("each role's switch", { concurrency: 4 }, () => {
     await step(w, "1", "succeeded", TRIAGE_OK);
     const idle = await step(w, "1", "succeeded", IMPLEMENT_OK);
     assert.deepEqual(roles(w), ["triage", "implement"]);
-    assert.equal(where(w.job("1"))?.step, "review");
+    assert.equal(stepAt(w.job("1")!), "review");
     assert.match(idle.idle ?? "", /^Nothing was started because review is paused \(1 item waits for it\)/);
     w.store.put(item("2"), "sync", at(w));
     w.clock.ms += 1000;
@@ -841,7 +841,7 @@ test("start picks from the whole backlog: an old inviteLabel was dropped with a 
   const w = world(result.config, [item("1"), item("2", { labels: ["scopesoup"] }), item("3")]);
   w.store.addUsageSample(usage(0.1, 0.1));
   assert.deepEqual((await w.run()).started.map((entry) => entry.item), ["fake:work:1", "fake:work:2", "fake:work:3"]);
-  const jobs = { [refKey(ref("1"))]: jobOf({ item: ref("1"), step: "implement" } as unknown as Job & Where) };
+  const jobs = { [refKey(ref("1"))]: ({ item: ref("1"), at: atStep("implement") } as unknown as Job) };
   const { ready, held } = readyItems([item("1"), item("2")], [], jobs, new Date(T0).toISOString());
   assert.deepEqual([ready.map((each) => each.ref.id), held.map((entry) => `${entry.item.ref.id}: ${entry.reason}`)], [["2"], ["1: already in work (implement)"]]);
 });
@@ -895,7 +895,7 @@ test("the triage-to-implement handover writes a store event at once, so a board 
   w.store.addUsageSample(usage(0.1, 0.1));
   await w.run();
   const seen: { kind: string; subject?: string; next?: unknown; step?: string }[] = [];
-  w.store.onEvent((event) => seen.push({ kind: event.kind, subject: event.subject, next: (event.data as { next?: unknown } | null)?.next, step: where(w.job("1"))?.step }));
+  w.store.onEvent((event) => seen.push({ kind: event.kind, subject: event.subject, next: (event.data as { next?: unknown } | null)?.next, step: stepAt(w.job("1")!) }));
   w.runner.end("1", "succeeded", TRIAGE_OK);
   await w.run();
   // The delay before implement starts is no reason to wait for a poll: the handover itself is an event, and the job it describes is already saved.
@@ -945,8 +945,8 @@ test("the job cycle: triage, implement, review, the implementor resumed with the
   assert.equal(w.runner.requests.length, 6);
   // A change that touches a migration does not wait for an answer any more: the session merged it, and it is done.
   const job = w.job("1");
-  assert.equal(where(job)?.parked?.as, "queued");
-  assert.equal(where(job)?.merged, HEAD);
+  assert.equal(parkedOf(job)?.as, "queued");
+  assert.equal(mergedOf(job), HEAD);
   assert.equal(w.reasons("orchestrator.waiting_person").length, 0);
   assert.match(w.reasons("orchestrator.merged")[0] ?? "", /scopesoup\/1 is merged: origin\/main at 2222222 contains its head 3333333\. The implementing session merged it/);
   assert.deepEqual(w.closes, [`1 ${HEAD} -`]);
@@ -968,7 +968,7 @@ test("level 2: Scope Soup's claim is released once the implementing session merg
   await step(w, "1", "succeeded", TRIAGE_OK);
   assert.ok(!w.calls.includes("release 1"));
   await step(w, "1", "succeeded", IMPLEMENT_OK);
-  assert.equal(where(w.job("1"))?.merged, HEAD);
+  assert.equal(mergedOf(w.job("1")), HEAD);
   assert.equal(w.calls.filter((call) => call === "release 1").length, 1);
   assert.ok(w.hostWrites.includes("release 1 merged on main as 3333333"), w.hostWrites.join(" | "));
 });
@@ -980,15 +980,15 @@ async function toHandOver(w: World): Promise<void> {
   await step(w, "1", "succeeded", IMPLEMENT_OK);
   await step(w, "1", "succeeded", REVIEW_OK);
   // Below level 4 an approval resumes the implementor to merge it.
-  if (where(w.job("1"))?.merge) await step(w, "1", "succeeded", IMPLEMENT_OK);
+  if (mergeApproved(w.job("1")!)) await step(w, "1", "succeeded", IMPLEMENT_OK);
 }
 
 test("a session that said done but did not merge and named no pull request: a person is told where the branch is; nothing is lost or merged", async () => {
   const w = world(config({ rules: STAGE1 }), [item("1")]);
   w.runner.merges = false;
   await toHandOver(w);
-  assert.equal(where(w.job("1"))?.parked?.as, "escalated");
-  assert.equal(where(w.job("1"))?.parked?.retry, "hand-over");
+  assert.equal(parkedOf(w.job("1"))?.as, "escalated");
+  assert.equal(parkedOf(w.job("1"))?.retry, "hand-over");
   assert.deepEqual(w.calls.filter((call) => call.startsWith("answerTurn")), ["answerTurn 1 escalation"]);
   const said = w.reasons("orchestrator.escalated")[0] ?? "";
   assert.match(said, /does not contain scopesoup\/1/);
@@ -1012,9 +1012,9 @@ test("a failed setup parks the Item for a person with the setup's reason, not co
   });
   await w.run();
   const job = w.job("1");
-  assert.equal(where(job)?.parked?.as, "escalated");
+  assert.equal(parkedOf(job)?.as, "escalated");
   assert.equal(job?.failures, 0);
-  assert.equal(where(job)?.parked?.reason, "Setup failed in /srv/ws/slot-1 (exit 1); the output is on Scope Soup's board on laptop-a. This is the project's setup, not the agent's work, and it is not counted as a failed attempt. Fix the setup (setupCommand on the Settings page, or the setup script it runs) and answer here to try again.");
+  assert.equal(parkedOf(job)?.reason, "Setup failed in /srv/ws/slot-1 (exit 1); the output is on Scope Soup's board on laptop-a. This is the project's setup, not the agent's work, and it is not counted as a failed attempt. Fix the setup (setupCommand on the Settings page, or the setup script it runs) and answer here to try again.");
   assert.equal(w.reasons("orchestrator.retry_scheduled").length, 0);
   assert.ok(w.calls.includes("answerTurn 1 escalation"));
   // What went to the host: a person's turn, the question and the session line in the item's log. None carries the output.
@@ -1032,7 +1032,7 @@ test("a session that opened a pull request instead of merging is handed over wit
   await w.run();
   await step(w, "1", "succeeded", TRIAGE_OK);
   await step(w, "1", "succeeded", { ...IMPLEMENT_OK, mergedAs: "https://git.example.invalid/team/project/pull/7" });
-  assert.equal(where(w.job("1"))?.parked?.as, "handed-over");
+  assert.equal(parkedOf(w.job("1"))?.as, "handed-over");
   assert.match(w.reasons("orchestrator.handed_over")[0] ?? "", /opened a pull request instead of merging: https:\/\/git\.example\.invalid\/team\/project\/pull\/7/);
   const board = buildBoard(loadSnapshot(w.store), new Date(w.clock.ms));
   assert.deepEqual(board.yourTurn.map((card) => [card.key, card.actor]), [[refKey(ref("1")), "anyone"]]);
@@ -1043,7 +1043,7 @@ test("pool workspaces: a branch the session did not merge is named in the pool's
   const w = world(config({ rules: STAGE1, workspaces: { kind: "pool", paths: ["/pool/one", "/pool/two"] } }), [item("1")]);
   w.runner.merges = false;
   await toHandOver(w);
-  assert.equal(where(w.job("1"))?.parked?.as, "escalated");
+  assert.equal(parkedOf(w.job("1"))?.as, "escalated");
   const said = w.reasons("orchestrator.escalated")[0] ?? "";
   assert.match(said, /no pull request/);
   assert.match(said, /in one of the pool's clones/);
@@ -1057,14 +1057,14 @@ test("a released failed hand-over starts over when the branch is gone", async ()
   (queue as unknown as { failWith: string }).failWith = "the remote is not the configured repository";
   w.queue = queue;
   await toHandOver(w);
-  assert.equal(where(w.job("1"))?.parked?.retry, "hand-over");
+  assert.equal(parkedOf(w.job("1"))?.retry, "hand-over");
   w.runner.changedPaths = async () => {
     throw new Error("unknown revision");
   };
   releaseJob(w.store, ref("1"), "Ada", new Date(w.clock.ms).toISOString(), "Try again.");
   await w.run();
   assert.equal(w.runner.requests.at(-1)?.role, "triage");
-  assert.equal(where(w.job("1"))?.step, "triage");
+  assert.equal(stepAt(w.job("1")!), "triage");
 });
 
 test("triage that finds a decision, or an item that is not ready, goes to a person", async () => {
@@ -1078,7 +1078,7 @@ test("triage that finds a decision, or an item that is not ready, goes to a pers
   assert.equal(w.reasons("orchestrator.needs_decision")[0], "Round up or down? Options: up | down. Recommended: down.");
   assert.deepEqual(w.reasons("orchestrator.not_ready"), ["Triage: not ready. No acceptance criteria.", "Triage: too large for one change (large means a story), and it proposed no split. Split it into smaller Items first, or answer here to have triage propose the split."]);
   // Both are triage's verdicts, which a person may overrule with Implement anyway (decision 105).
-  assert.deepEqual([where(w.job("2"))?.parked?.verdict, where(w.job("3"))?.parked?.verdict], [true, true]);
+  assert.deepEqual([parkedOf(w.job("2"))?.verdict, parkedOf(w.job("3"))?.verdict], [true, true]);
   assert.deepEqual(w.calls, ["answerTurn 1 decision", "answerTurn 2 not-ready", "answerTurn 3 not-ready"]);
   // In the item's log: the question with its options and why the item parked, then the session, with no next step.
   assert.equal(w.lines[0], '1 question {"question":"Round up or down?","options":["up","down"],"recommendation":"down","parked":"needs-decision","set":"1@2026-11-18T10:00:00.000Z"}');
@@ -1112,7 +1112,7 @@ test("triage that finds three decisions keeps all three, writes one question eac
   await w.run();
   assert.equal(w.job("1")?.triage?.decisions?.length, 3);
   assert.deepEqual(w.job("1")?.triage?.decisions?.map((d) => d.question), decisions.map((d) => d.question));
-  assert.equal(where(w.job("1"))?.parked?.as, "needs-decision");
+  assert.equal(parkedOf(w.job("1"))?.as, "needs-decision");
   assert.match(w.reasons("orchestrator.needs_decision")[0] ?? "", /^Triage found 3 decisions for a person/);
   assert.equal(w.lines.filter((line) => line.startsWith("1 question ")).length, 3);
 });
@@ -1157,7 +1157,7 @@ test("two open questions from triage: the first answer leaves the item parked, t
   assert.deepEqual(answer(0, "Round down."), { released: false, open: 1 });
   w.clock.ms += 60_000;
   await w.run();
-  assert.equal(where(w.job("1"))?.parked?.as, "needs-decision", "still waits for the second answer");
+  assert.equal(parkedOf(w.job("1"))?.as, "needs-decision", "still waits for the second answer");
   assert.equal(w.runner.requests.length, 1, "no session starts on one answer");
   assert.deepEqual(answer(1, "Swedish kronor."), { released: true, open: 0 });
   w.clock.ms += 60_000;
@@ -1172,7 +1172,7 @@ test("an implementer that stops for a decision is not retried", async () => {
   await w.run();
   await step(w, "1", "succeeded", TRIAGE_OK);
   await step(w, "1", "succeeded", { ...IMPLEMENT_OK, done: false, summary: "Which currency?" });
-  assert.equal(where(w.job("1"))?.parked?.as, "needs-decision");
+  assert.equal(parkedOf(w.job("1"))?.as, "needs-decision");
   assert.equal(w.reasons("orchestrator.needs_decision")[0], "The implementer stopped: Which currency?");
 });
 
@@ -1182,7 +1182,7 @@ test("an implementer that stopped after a refused command is escalated, not put 
   await step(w, "1", "succeeded", TRIAGE_OK);
   // The refusal is read from the session's result (permission denials), not from the answer.
   await step(w, "1", "succeeded", { ...IMPLEMENT_OK, done: false, summary: "I could not run node." }, { denied: ["node -e \"1\""] });
-  assert.equal(where(w.job("1"))?.parked?.as, "escalated");
+  assert.equal(parkedOf(w.job("1"))?.as, "escalated");
   assert.match(w.reasons("orchestrator.escalated")[0] ?? "", /tool was refused: node -e "1"\. Add the command to allowedTools of the implement role .* answer here to try again/);
   assert.equal(w.reasons("orchestrator.needs_decision").length, 0);
   assert.deepEqual(w.calls, ["answerTurn 1 escalation"]);
@@ -1217,7 +1217,7 @@ test("a triage answer with markup in a string is retried and the failure carries
   const broken = { ...TRIAGE_OK, ready: false, riskReason: "r</notReadyReason>\nSize is large" };
   w.runner.end("1", "succeeded", broken);
   await w.run();
-  assert.equal(where(w.job("1"))?.parked, undefined);
+  assert.equal(parkedOf(w.job("1")), undefined);
   const reason = w.reasons("orchestrator.retry_scheduled")[0] ?? "";
   assert.match(reason, /triage step failed \(1 of 3\)/);
   assert.match(reason, /The answer was: .*notReadyReason/);
@@ -1252,7 +1252,7 @@ test("failures are retried with backoff, then escalated to a person", async () =
   // An answer of the wrong shape is a failure too.
   w.runner.end("1", "succeeded", { ready: "yes" });
   await w.run();
-  assert.equal(where(w.job("1"))?.parked?.as, "escalated");
+  assert.equal(parkedOf(w.job("1"))?.as, "escalated");
   assert.match(w.reasons("orchestrator.escalated")[0] ?? "", /triage step failed 3 times; the limit is 3\. Last failure: The triage answer does not have the expected shape/);
   assert.deepEqual(w.calls, ["answerTurn 1 escalation"]);
   w.clock.ms += 3600_000;
@@ -1281,7 +1281,7 @@ test("review rounds are bounded", async () => {
   await step(w, "1", "succeeded", REVIEW_CHANGES);
   await step(w, "1", "succeeded", { done: true, summary: "Tried." });
   await step(w, "1", "succeeded", REVIEW_CHANGES);
-  assert.equal(where(w.job("1"))?.parked?.as, "escalated");
+  assert.equal(parkedOf(w.job("1"))?.as, "escalated");
   assert.match(w.reasons("orchestrator.escalated")[0] ?? "", /still asks for changes after 1 round back to the implementor; the limit is 1\. Open findings: Off by one\./);
   assert.deepEqual(w.runner.requests.map((request) => request.role), ["triage", "implement", "review", "implement", "review"]);
 });
@@ -1305,8 +1305,8 @@ const musts = (...texts: string[]) => ({ verdict: "changes", findings: texts.map
 test("the fence: a change with files far outside the triage's paths parked with the report and a proposed split, not review", async () => {
   const w = await toReview(["src/a.ts", "src/a.test.ts", ...OUTSIDE]);
   const job = w.job("1");
-  assert.deepEqual([where(job)?.parked?.as, where(job)?.parked?.byStep, where(job)?.step, roles(w)], ["needs-decision", true, "implement", ["triage", "implement"]]);
-  const reason = where(job)?.parked?.reason ?? "";
+  assert.deepEqual([parkedOf(job)?.as, parkedOf(job)?.byStep, stepAt(job!), roles(w)], ["needs-decision", true, "implement", ["triage", "implement"]]);
+  const reason = parkedOf(job)?.reason ?? "";
   assert.match(reason, /^This grew beyond the Item\. 6 changed files are outside the paths its triage named \(5 are allowed\): lib\/one\/a\.ts, lib\/one\/b\.ts, lib\/two\/c\.ts, tools\/d\.ts, web\/e\/f\.ts, web\/e\/g\.ts\. The triage said small and named: src\/a\.ts\./);
   assert.match(reason, /Proposed split: 1\. the triage's paths: src\/a\.ts, src\/a\.test\.ts\. 2\. lib\/one: lib\/one\/a\.ts, lib\/one\/b\.ts\. 3\. web\/e: web\/e\/f\.ts, web\/e\/g\.ts\. 4. the rest: lib\/two\/c\.ts, tools\/d\.ts\./);
   assert.match(reason, /Recommended: Cut it back\.$/);
@@ -1329,15 +1329,15 @@ test("the fence: a change well beyond its size parked with how much larger it is
   await w.run();
   await step(w, "1", "succeeded", TRIAGE_OK);
   await step(w, "1", "succeeded", IMPLEMENT_OK);
-  assert.equal(where(w.job("1"))?.parked?.as, "needs-decision");
-  assert.match(where(w.job("1"))?.parked?.reason ?? "", /^This grew beyond the Item\. It changes 750 lines, 2\.5 times the 300 a small Item is held to\. .*Proposed split: 1\. src: src\/a\.ts, src\/a\.test\.ts \(750 lines\)\./);
+  assert.equal(parkedOf(w.job("1"))?.as, "needs-decision");
+  assert.match(parkedOf(w.job("1"))?.reason ?? "", /^This grew beyond the Item\. It changes 750 lines, 2\.5 times the 300 a small Item is held to\. .*Proposed split: 1\. src: src\/a\.ts, src\/a\.test\.ts \(750 lines\)\./);
 });
 
 test("the fence: a change inside the paths and size goes on to review; with no paths named the fence does not apply", async () => {
   const inside = await toReview(["src/a.ts", "src/a.test.ts", "docs/A.md", "docs/B.md", "README.md", "lib/x.ts", "tools/y.ts"]);
-  assert.deepEqual([where(inside.job("1"))?.parked, roles(inside).at(-1)], [undefined, "review"]);
+  assert.deepEqual([parkedOf(inside.job("1")), roles(inside).at(-1)], [undefined, "review"]);
   const unnamed = await toReview(["src/a.ts", ...OUTSIDE, "more/1.ts", "more/2.ts"], { ...TRIAGE_OK, paths: [] });
-  assert.deepEqual([where(unnamed.job("1"))?.parked, roles(unnamed).at(-1), unnamed.events("orchestrator.fenced").length], [undefined, "review", 0]);
+  assert.deepEqual([parkedOf(unnamed.job("1")), roles(unnamed).at(-1), unnamed.events("orchestrator.fenced").length], [undefined, "review", 0]);
 });
 
 test("progress: a review round that does not lower the must findings escalates before the round limit", async () => {
@@ -1346,7 +1346,7 @@ test("progress: a review round that does not lower the must findings escalates b
   await step(w, "1", "succeeded", { done: true, summary: "Tried." });
   await step(w, "1", "succeeded", musts("Wrong time zone.", "Name is unclear."));
   const job = w.job("1");
-  assert.equal(where(job)?.parked?.as, "escalated");
+  assert.equal(parkedOf(job)?.as, "escalated");
   assert.equal(job?.fixRounds, 1);
   assert.match(w.reasons("orchestrator.escalated")[0] ?? "", /^The review round left 2 `must` findings, not fewer than the 2 of the round before: a round that gets nowhere ends the run\. After 1 round back to the implementor \(the limit is 4\)\. Open findings: Wrong time zone\. \/ Name is unclear\./);
   assert.deepEqual(roles(w), ["triage", "implement", "review", "implement", "review"]);
@@ -1357,10 +1357,10 @@ test("progress: fewer must findings go on; the same finding twice in a row escal
   await step(w, "1", "succeeded", musts("Off by one.", "No test.", "Wrong time zone."));
   await step(w, "1", "succeeded", { done: true, summary: "Tried." });
   await step(w, "1", "succeeded", musts("Missing doc.", "Name is unclear."));
-  assert.deepEqual([where(w.job("1"))?.parked, roles(w).at(-1), w.job("1")?.progress?.must], [undefined, "implement", 2]);
+  assert.deepEqual([parkedOf(w.job("1")), roles(w).at(-1), w.job("1")?.progress?.must], [undefined, "implement", 2]);
   await step(w, "1", "succeeded", { done: true, summary: "Tried again." });
   await step(w, "1", "succeeded", musts("name  is UNCLEAR."));
-  assert.equal(where(w.job("1"))?.parked?.as, "escalated");
+  assert.equal(parkedOf(w.job("1"))?.as, "escalated");
   assert.match(w.reasons("orchestrator.escalated")[0] ?? "", /^The review gives the same finding as the round before: name {2}is UNCLEAR\. The same failure twice in a row ends the run\. After 2 rounds/);
 });
 
@@ -1368,7 +1368,7 @@ test("should findings with review.shouldFindings \"fix\" (the default): back to 
   const w = await toReview(["src/a.ts"]);
   const approve = { verdict: "approve", findings: [{ severity: "should", file: "src/a.ts", text: "Name the helper after what it returns." }] };
   await step(w, "1", "succeeded", approve);
-  assert.deepEqual([where(w.job("1"))?.merge, w.job("1")?.fixRounds, roles(w).at(-1)], [undefined, 0, "implement"]);
+  assert.deepEqual([mergeApproved(w.job("1")!), w.job("1")?.fixRounds, roles(w).at(-1)], [false, 0, "implement"]);
   assert.match(w.job("1")?.resumeWith ?? "", /^The reviewer approves, and asks for these smaller changes before the merge:\n- \[should\] src\/a\.ts: Name the helper/);
   assert.deepEqual(openDrafts(w.store), []);
   w.runner.headSha = "4".repeat(40);
@@ -1376,7 +1376,7 @@ test("should findings with review.shouldFindings \"fix\" (the default): back to 
   assert.equal(roles(w).at(-1), "review");
   // The second approval still says it: the merge goes on, and it becomes one draft.
   await step(w, "1", "succeeded", approve);
-  assert.deepEqual([where(w.job("1"))?.merge, w.job("1")?.fixRounds, where(w.job("1"))?.parked], [true, 0, undefined]);
+  assert.deepEqual([mergeApproved(w.job("1")!), w.job("1")?.fixRounds, parkedOf(w.job("1"))], [true, 0, undefined]);
   const drafts = openDrafts(w.store);
   assert.deepEqual(drafts.map((each) => [each.from.id, each.role, each.title]), [["1", "reviewer", "Follow-ups from the review of #1 (Item 1)"]]);
   assert.equal(w.events("orchestrator.escalated").length, 0);
@@ -1388,7 +1388,7 @@ test("a round for should findings that commits nothing is not \"nothing to chang
   await step(w, "1", "succeeded", { verdict: "approve", findings: [{ severity: "should", text: "Shorter name." }] });
   assert.equal(roles(w).at(-1), "implement");
   await step(w, "1", "succeeded", { done: true, summary: "The name is fine as it is." });
-  assert.deepEqual([where(w.job("1"))?.parked, where(w.job("1"))?.merge, where(w.job("1"))?.shouldRound, roles(w).at(-1)], [undefined, true, undefined, "implement"]);
+  assert.deepEqual([parkedOf(w.job("1")), mergeApproved(w.job("1")!), shouldRoundOf(w.job("1")!), roles(w).at(-1)], [undefined, true, false, "implement"]);
   assert.equal(w.runner.requests.filter((request) => request.role === "review").length, 1, "not reviewed again");
   assert.deepEqual(openDrafts(w.store).map((each) => each.title), ["Follow-ups from the review of #1 (Item 1)"]);
   assert.equal(w.events("orchestrator.escalated").length, 0);
@@ -1397,7 +1397,7 @@ test("a round for should findings that commits nothing is not \"nothing to chang
 test("should findings with review.shouldFindings \"draft\": the change merges and they become one draft, filed once; no should finding files nothing", async () => {
   const w = await toReview(["src/a.ts"], TRIAGE_OK, { review: { shouldFindings: "draft" } });
   await step(w, "1", "succeeded", { verdict: "approve", findings: [{ severity: "should", file: "src/a.ts", text: "Name the helper @bob likes; fixes #8." }, { severity: "should", text: "Add a test for the empty list." }] });
-  assert.deepEqual([where(w.job("1"))?.merge, roles(w).at(-1)], [true, "implement"]);
+  assert.deepEqual([mergeApproved(w.job("1")!), roles(w).at(-1)], [true, "implement"]);
   const drafts = openDrafts(w.store);
   assert.equal(drafts.length, 1);
   assert.doesNotMatch(`${drafts[0]!.title} ${drafts[0]!.description}`, /@bob|fixes #8/);
@@ -1466,14 +1466,14 @@ async function handedOver(over: Partial<WorkItem> = {}): Promise<World> {
   await w.run();
   await step(w, "1", "succeeded", TRIAGE_OK);
   await step(w, "1", "succeeded", { ...IMPLEMENT_OK, mergedAs: "https://git.example.invalid/team/project/pull/1" });
-  assert.equal(where(w.job("1"))?.parked?.as, "handed-over");
+  assert.equal(parkedOf(w.job("1"))?.as, "handed-over");
   return w;
 }
 
 test("a handed-over item stays put until the host calls it done; then it finishes: job gone, branch deleted, event written", async () => {
   const w = await handedOver();
   await w.run();
-  assert.equal(where(w.job("1"))?.parked?.as, "handed-over");
+  assert.equal(parkedOf(w.job("1"))?.as, "handed-over");
   assert.equal((await w.run()).started.length, 0);
   w.store.put(item("1", { state: "done" }), "sync", new Date(w.clock.ms).toISOString());
   await w.run();
@@ -1535,7 +1535,7 @@ test("a failing host action is logged and does not stop the cycle", async () => 
     throw new Error("worktree is locked");
   };
   await step(w, "1", "succeeded", IMPLEMENT_OK);
-  assert.equal(where(w.job("1"))?.parked?.as, "queued");
+  assert.equal(parkedOf(w.job("1"))?.as, "queued");
   assert.deepEqual(w.reasons("orchestrator.action_failed"), ["Could not remove the worktree: worktree is locked"]);
 });
 
@@ -1585,7 +1585,7 @@ test("a first build with nothing committed is \"nothing to change\" for a person
   // Implemented with nothing committed on the first build: nothing to change, for a person to close; no retry and no review.
   await step(w, "1", "succeeded", { done: true, summary: "Item 1 is already done on main." });
   assert.deepEqual(roles(), ["triage", "implement"]);
-  assert.equal(where(w.job("1"))?.parked?.as, "escalated");
+  assert.equal(parkedOf(w.job("1"))?.as, "escalated");
   assert.equal(w.job("1")?.failures, 0);
   assert.deepEqual(w.reasons("orchestrator.retry_scheduled"), []);
   assert.match(w.reasons("orchestrator.escalated")[0] ?? "", /^Nothing to change: the implementer reported the work done, but The branch scopesoup\/1 has no commits over main, .* It said: Item 1 is already done on main\. If that is right, close the Item; answer here to have it try again\.$/);
@@ -1601,12 +1601,12 @@ test("a first build with nothing committed is \"nothing to change\" for a person
   ahead = 1;
   w.runner.end("1", "succeeded", IMPLEMENT_OK);
   await w.run();
-  assert.equal(where(w.job("1"))?.step, "review");
+  assert.equal(stepAt(w.job("1")!), "review");
   ahead = 0;
   w.clock.ms += 1000;
   await w.run();
   assert.deepEqual(roles(), ["triage", "implement", "implement"], "no review of an empty branch");
-  assert.equal(where(w.job("1"))?.step, "implement");
+  assert.equal(stepAt(w.job("1")!), "implement");
   assert.match(w.reasons("orchestrator.back_to_implement")[0] ?? "", /^review for 1 "Item 1" does not start: The branch scopesoup\/1 has no commits over main, so there is no change to review or merge\. Nothing is reviewed or merged; next: implement\.$/);
   ahead = 1;
   w.clock.ms += 1000;
@@ -1620,8 +1620,8 @@ test("a first build with nothing committed is \"nothing to change\" for a person
   w.runner.end("1", "succeeded", REVIEW_OK);
   await w.run();
   assert.deepEqual(queue.enqueued, []);
-  assert.equal(where(w.job("1"))?.step, "implement");
-  assert.equal(where(w.job("1"))?.parked, undefined);
+  assert.equal(stepAt(w.job("1")!), "implement");
+  assert.equal(parkedOf(w.job("1")), undefined);
   assert.equal(w.reasons("orchestrator.back_to_implement").length, 2);
   assert.ok(!w.events().some((event) => event.kind === "orchestrator.mergeQueue" || event.kind === "orchestrator.merged"));
 });
@@ -1708,7 +1708,7 @@ test("persistence: each slider position sets the attempts per step and the fix r
         assert.equal(f.runner.requests.length, n + 1, `position ${position}, attempt ${n + 1} starts`);
       }
     }
-    assert.equal(where(f.job("1"))?.parked?.as, "escalated", `position ${position} escalates after ${attempts} attempts`);
+    assert.equal(parkedOf(f.job("1"))?.as, "escalated", `position ${position} escalates after ${attempts} attempts`);
     assert.match(f.reasons("orchestrator.escalated")[0] ?? "", new RegExp(`failed ${attempts} times; the limit is ${attempts}`));
 
     // Fix rounds: the review keeps asking for changes.
@@ -1724,7 +1724,7 @@ test("persistence: each slider position sets the attempts per step and the fix r
       await step(w, "1", "succeeded", { done: true, summary: "Tried." });
       await step(w, "1", "succeeded", findings(r + 1));
     }
-    assert.equal(where(w.job("1"))?.parked?.as, "escalated", `position ${position} escalates after ${rounds} fix rounds`);
+    assert.equal(parkedOf(w.job("1"))?.as, "escalated", `position ${position} escalates after ${rounds} fix rounds`);
     // Each round resumes the implementor's own session; there is no fix role.
     assert.equal(w.runner.requests.filter((request) => request.role === "implement" && request.resume !== undefined).length, rounds);
   }
@@ -1778,8 +1778,8 @@ async function buildRun(over: { paths?: string[]; rules?: Record<string, unknown
   await step(w, "1", "succeeded", IMPLEMENT_OK);
   if (w.runner.requests.some((request) => request.role === "review")) await step(w, "1", "succeeded", REVIEW_OK);
   // Approved below level 4: the implementor is resumed to merge it.
-  if (where(w.job("1"))?.merge) await step(w, "1", "succeeded", IMPLEMENT_OK);
-  return { roles: w.runner.requests.map((request) => request.role as string), parked: where(w.job("1"))?.parked?.as, w };
+  if (mergeApproved(w.job("1")!)) await step(w, "1", "succeeded", IMPLEMENT_OK);
+  return { roles: w.runner.requests.map((request) => request.role as string), parked: parkedOf(w.job("1"))?.as, w };
 }
 
 test("after implement the change goes straight to review: no checklist session, and a change to any path is merged without waiting for an Approve", async () => {
@@ -1854,7 +1854,7 @@ async function asksRun(settings: Record<string, unknown>, triage: unknown) {
 test("a recommended answer on a low-risk item still parked for a person, and no assumption line is written, whatever an old autonomy says", async () => {
   for (const settings of [{}, { autonomy: { value: 3, reason: "old" } }]) {
     const w = await asksRun(settings, ASKS);
-    assert.equal(where(w.job("1"))?.parked?.as, "needs-decision");
+    assert.equal(parkedOf(w.job("1"))?.as, "needs-decision");
     assert.deepEqual(w.runner.requests.map((request) => request.role), ["triage"]);
     assert.equal("autonomy" in (w.runner.requests[0]?.vars ?? {}), false);
     assert.equal(w.lines.filter((line) => line.includes(" assumption ")).length, 0);
@@ -1867,7 +1867,7 @@ test("a set of several decisions from triage is not reused; a person is asked al
   const decisions = ["Round up or down?", "Which currency?", "Keep the old format?"].map((question) => ({ question, options: ["a", "b"], recommendation: "a" }));
   const w = await asksRun({}, { ...TRIAGE_OK, risk: "low", hidesDecision: true, decisions });
   assert.deepEqual(w.runner.requests.map((request) => request.role), ["triage"]);
-  assert.equal(where(w.job("1"))?.parked?.as, "needs-decision");
+  assert.equal(parkedOf(w.job("1"))?.as, "needs-decision");
   assert.equal(w.reasons("orchestrator.answer_reused").length, 0);
   assert.match(w.reasons("orchestrator.needs_decision")[0] ?? "", /^Triage found 3 decisions for a person/);
   assert.equal(w.lines.filter((line) => line.startsWith("1 question ")).length, 3);
@@ -1918,9 +1918,9 @@ test("merging by queue: a reviewed change is handed to the queue and parked as q
   await toHandOver(w);
   assert.deepEqual(queue.enqueued, ["1 scopesoup/1"]);
   const job = w.job("1");
-  assert.equal(where(job)?.parked?.as, "queued");
+  assert.equal(parkedOf(job)?.as, "queued");
   assert.equal(job?.queued, SHA);
-  assert.match(where(job)?.parked?.reason ?? "", /waits in the merge queue/);
+  assert.match(parkedOf(job)?.reason ?? "", /waits in the merge queue/);
   assert.equal(w.runner.main, MAIN_START, "nothing is pushed by the tick or the session");
   // The next tick tells the queue which changes still wait.
   await w.run();
@@ -2009,11 +2009,11 @@ test("merging by queue: a long check runs beside the ticks; a tick starts ready 
   await run();
   assert.equal(drains, 1, "no second check starts while one runs");
   assert.equal(most, 1);
-  assert.equal(where(w.job("1"))?.merged, undefined);
+  assert.equal(mergedOf(w.job("1")), undefined);
   open();
   await new Promise((resolve) => setTimeout(resolve, 5));
   await run();
-  assert.equal(where(w.job("1"))?.merged, SHA2);
+  assert.equal(mergedOf(w.job("1")), SHA2);
   await new Promise((resolve) => setTimeout(resolve, 5));
   assert.equal(calls.at(-1), "release");
   assert.equal(calls.filter((call) => call === "acquire").length, 1);
@@ -2062,7 +2062,7 @@ test("merging by queue: Stop ends a running check's drain; its waiting notice is
   await run();
   await new Promise((resolve) => setTimeout(resolve, 5));
   assert.deepEqual(outcome, ["refused"]);
-  assert.equal(where(w.job("1"))?.merged, undefined, "the notice was not applied");
+  assert.equal(mergedOf(w.job("1")), undefined, "the notice was not applied");
   assert.equal(calls.at(-1), "release");
 });
 
@@ -2085,12 +2085,12 @@ test("merging by queue: the level lowered while a drain checks the change: it wa
   await run();
   state = { config: config({ ...QUEUE, level: 3 }), changed: true };
   await run();
-  assert.equal(where(w.job("1"))?.parked?.as, "queued", "it stays in the queue while the drain runs");
+  assert.equal(parkedOf(w.job("1"))?.as, "queued", "it stays in the queue while the drain runs");
   assert.deepEqual(queue.kept.at(-1) ?? [], ["fake:work:1"], "not reconciled away while the drain runs");
   open();
   await new Promise((resolve) => setTimeout(resolve, 5));
   await run();
-  assert.equal(where(w.job("1"))?.merged, SHA2);
+  assert.equal(mergedOf(w.job("1")), SHA2);
   assert.ok(!w.runner.requests.slice(3).some((request) => request.role === "implement"), "no implementor is resumed to merge it again");
 });
 
@@ -2100,11 +2100,12 @@ test("merging by queue: a mark-merged notice for a job that no longer waits in t
   w.queue = queue;
   await toHandOver(w);
   const job = loadJobs(w.store)["fake:work:1"]!;
-  setWhere(job, { parked: undefined, step: "implement" });
+  release(job);
+  moveStep(job, "implement");
   saveJobs(w.store, { "fake:work:1": job });
   queue.notices.push({ kind: "mark-merged", batch: 3, tested: SHA2, members: [{ change: ref("1"), sha: SHA2, head: SHA }] });
   await w.run();
-  assert.equal(where(w.job("1"))?.merged, undefined);
+  assert.equal(mergedOf(w.job("1")), undefined);
   assert.equal(w.events("orchestrator.queue_notice_stale").length, 1);
 });
 
@@ -2184,7 +2185,7 @@ test("merging by queue: Pause merge queue lets a running check's drain finish; i
   await run();
   await new Promise((resolve) => setTimeout(resolve, 5));
   assert.deepEqual(outcome, ["applied"]);
-  assert.equal(where(w.job("1"))?.merged, SHA2, "the merge under way finished");
+  assert.equal(mergedOf(w.job("1")), SHA2, "the merge under way finished");
   assert.equal(calls.at(-1), "release");
 });
 
@@ -2195,7 +2196,7 @@ test("merging by queue: a change the queue merged gets its revision and merged l
   await toHandOver(w);
   queue.notices.push({ kind: "mark-merged", batch: 3, tested: SHA2, members: [{ change: ref("1"), sha: SHA2, head: SHA }] });
   await w.run();
-  assert.equal(where(w.job("1"))?.merged, SHA2);
+  assert.equal(mergedOf(w.job("1")), SHA2);
   assert.deepEqual(logCalls(w), [
     `appendLog 1 revision {"sha":"${HEAD}","branch":"scopesoup/1"}`,
     `appendLog 1 review {"sha":"${HEAD}","verdict":"pass","findings":[],"model":"opus"}`,
@@ -2244,8 +2245,8 @@ test("merging by queue: when the close fails the item is not started again; with
   await w.run();
   // The issue is still open on the host, but the job parked as merged and nothing starts for it; each tick tries the close again.
   assert.deepEqual(w.closes, [`1 ${SHA2} 3`, `1 ${SHA2} 3`]);
-  assert.equal(where(w.job("1"))?.merged, SHA2);
-  assert.equal(where(w.job("1"))?.parked?.as, "queued");
+  assert.equal(mergedOf(w.job("1")), SHA2);
+  assert.equal(parkedOf(w.job("1"))?.as, "queued");
   assert.equal(w.events("orchestrator.started").length, startedBefore);
   assert.deepEqual(w.reasons("orchestrator.item_closed"), []);
   // The failure leaves a standing note on the board, once.
@@ -2275,8 +2276,8 @@ test("merging by queue: a change sent back as the culprit of a batch returns to 
   queue.notices.push({ kind: "send-back", change: ref("1"), sha: SHA, batch: 2, reason: { kind: "culprit", prefix: 2, chainSha: SHA2, files: ["test/a.test.js"], excerpt: "1 test failed: adds" } });
   await w.run();
   const job = w.job("1");
-  assert.equal(where(job)?.step, "implement");
-  assert.equal(where(job)?.parked, undefined);
+  assert.equal(stepAt(job!), "implement");
+  assert.equal(parkedOf(job), undefined);
   assert.equal(job?.queued, undefined);
   await w.run();
   w.clock.ms += 1000;
@@ -2303,15 +2304,15 @@ test("merging by queue: the same failing check twice in a row escalates; another
   };
   queue.notices.push(culprit(["test/a.test.js"], "1 test failed: adds"));
   await again();
-  assert.equal(where(w.job("1"))?.parked?.as, "queued");
+  assert.equal(parkedOf(w.job("1"))?.as, "queued");
   // Another failing file is another failure: back to the implementor.
   queue.notices.push(culprit(["test/b.test.js"], "1 test failed: subtracts"));
   await again();
-  assert.equal(where(w.job("1"))?.parked?.as, "queued");
+  assert.equal(parkedOf(w.job("1"))?.as, "queued");
   // The same files fail again, with other output: the same failure twice in a row.
   queue.notices.push(culprit(["test/b.test.js"], "1 test failed: subtracts (12 ms)"));
   await w.run();
-  assert.equal(where(w.job("1"))?.parked?.as, "escalated");
+  assert.equal(parkedOf(w.job("1"))?.as, "escalated");
   assert.match(w.reasons("orchestrator.escalated").at(-1) ?? "", /^The check failed with this change in a batch, the same failure as at the merge before\. The same failure twice in a row ends the run\. Nothing was pushed\./);
   assert.equal(w.job("1")?.fixRounds, 2);
 });
@@ -2348,7 +2349,7 @@ async function toQueueAfterPause(w: World, queue: ReturnType<typeof fakeQueue>):
   assert.equal(w.reasons("orchestrator.merge_queue_paused").length, 1, "the hand-over waits, said once: the review session is not settled again each tick");
   w.store.setValue(KEYS.mergeQueue, "started");
   await w.run();
-  assert.equal(where(w.job("1"))?.parked?.as, "queued");
+  assert.equal(parkedOf(w.job("1"))?.as, "queued");
   assert.equal(w.job("1")?.queued, HEAD);
 }
 
@@ -2396,7 +2397,7 @@ test("merging by queue: an approved change waiting through many ticks for a paus
   // Once the queue is started, it takes the change; still one review line.
   w.store.setValue(KEYS.mergeQueue, "started");
   await w.run();
-  assert.equal(where(w.job("1"))?.parked?.as, "queued");
+  assert.equal(parkedOf(w.job("1"))?.as, "queued");
   assert.equal(reviews().length, 1);
 });
 
@@ -2427,7 +2428,7 @@ for (const kind of ["culprit", "conflict"] as const) {
       assert.equal(w.events("orchestrator.queued").length, queued);
       assert.equal(w.reasons("orchestrator.handover_retry").length, retries);
       assert.deepEqual(w.reasons("orchestrator.escalated"), []);
-      assert.equal(where(w.job("1"))?.step, "implement");
+      assert.equal(stepAt(w.job("1")!), "implement");
       assert.equal(w.job("1")?.fixRounds, 1);
       if (implementors === "paused") {
         assert.equal(w.runner.requests.length, started, "no implementor runs while implementors are paused");
@@ -2448,7 +2449,7 @@ for (const kind of ["culprit", "conflict"] as const) {
       await step(w, "1", "succeeded", REVIEW_OK);
       assert.equal(queue.enqueued.length, enqueued + 1);
       assert.equal(w.job("1")?.queued, FIXED);
-      assert.equal(where(w.job("1"))?.parked?.as, "queued");
+      assert.equal(parkedOf(w.job("1"))?.as, "queued");
     });
   }
 }
@@ -2468,7 +2469,7 @@ test("merging by queue: the same failure again after a fix round that made a new
   assert.equal(w.job("1")?.queued, FIXED);
   queue.notices.push({ ...SEND_BACKS.culprit, sha: FIXED });
   await w.run();
-  assert.equal(where(w.job("1"))?.parked?.as, "escalated");
+  assert.equal(parkedOf(w.job("1"))?.as, "escalated");
   assert.match(w.reasons("orchestrator.escalated").at(-1) ?? "", /the same failure as at the merge before/);
   assert.equal(w.job("1")?.fixRounds, 1);
 });
@@ -2484,7 +2485,7 @@ test("merging by queue: a fix round that commits nothing is a failed attempt of 
   w.clock.ms += 1000;
   await w.run();
   await step(w, "1", "succeeded", IMPLEMENT_OK);
-  assert.equal(where(w.job("1"))?.step, "implement");
+  assert.equal(stepAt(w.job("1")!), "implement");
   assert.equal(w.job("1")?.failures, 1);
   assert.match(w.reasons("orchestrator.retry_scheduled").at(-1) ?? "", /still at 3333333, the revision the merge queue sent back: nothing new was committed/);
   assert.equal(queue.enqueued.length, enqueued);
@@ -2498,8 +2499,8 @@ test("merging by queue, CI on GitHub: a culprit resumes the implementor with the
   const queue = fakeQueue();
   w.queue = queue;
   await toHandOver(w);
-  assert.equal(where(w.job("1"))?.parked?.as, "queued", "no checkCommand is needed");
-  assert.match(where(w.job("1"))?.parked?.reason ?? "", /the project's CI on GitHub checks the chain on a pull request/);
+  assert.equal(parkedOf(w.job("1"))?.as, "queued", "no checkCommand is needed");
+  assert.match(parkedOf(w.job("1"))?.reason ?? "", /the project's CI on GitHub checks the chain on a pull request/);
   const excerpt = `The check "test" on GitHub ended failure on ${SHA2.slice(0, 7)}.
 The end of its log:
 Error: expected 2, got 3`;
@@ -2523,14 +2524,14 @@ test("merging by queue, CI on GitHub: pending too long, or no CI: the Item is pa
   queue.notices.push({ kind: "parked", batch: 2, changes: [ref("1")], message });
   await w.run();
   const job = w.job("1");
-  assert.equal(where(job)?.parked?.as, "escalated");
-  assert.equal(where(job)?.parked?.retry, "hand-over");
-  assert.equal(where(job)?.parked?.reason, message);
+  assert.equal(parkedOf(job)?.as, "escalated");
+  assert.equal(parkedOf(job)?.retry, "hand-over");
+  assert.equal(parkedOf(job)?.reason, message);
   assert.equal(job?.queued, undefined);
   assert.equal(w.runner.requests.filter((request) => request.role === "implement").length, 1, "no implementor is resumed");
   assert.ok(releaseJob(w.store, ref("1"), "Ada", new Date(w.clock.ms).toISOString(), "Look again."));
   await w.run();
-  assert.equal(where(w.job("1"))?.parked?.as, "queued");
+  assert.equal(parkedOf(w.job("1"))?.as, "queued");
   assert.deepEqual(queue.enqueued, ["1 scopesoup/1", "1 scopesoup/1"]);
 });
 
@@ -2541,8 +2542,8 @@ test("merging by queue, CI on GitHub: without a GitHub host to write to nothing 
   w.queue = queue;
   await toHandOver(w);
   assert.deepEqual(queue.enqueued, []);
-  assert.equal(where(w.job("1"))?.parked?.as, "escalated");
-  assert.match(where(w.job("1"))?.parked?.reason ?? "", /no GitHub host it may write to.*Give Scope Soup a GitHub host with writes on/);
+  assert.equal(parkedOf(w.job("1"))?.as, "escalated");
+  assert.match(parkedOf(w.job("1"))?.reason ?? "", /no GitHub host it may write to.*Give Scope Soup a GitHub host with writes on/);
 });
 
 test("merging by queue: an item that is not waiting any more leaves the queue; the queue is not driven while merging is paused", async () => {
@@ -2568,9 +2569,9 @@ test("merging by queue: a queue that cannot take the change escalates it, and an
   (queue as unknown as { failWith: string }).failWith = "the remote is not the configured repository";
   w.queue = queue;
   await toHandOver(w);
-  assert.equal(where(w.job("1"))?.parked?.as, "escalated");
-  assert.match(where(w.job("1"))?.parked?.reason ?? "", /could not be handed to the merge queue: the remote is not the configured repository/);
-  assert.equal(where(w.job("1"))?.parked?.retry, "hand-over");
+  assert.equal(parkedOf(w.job("1"))?.as, "escalated");
+  assert.match(parkedOf(w.job("1"))?.reason ?? "", /could not be handed to the merge queue: the remote is not the configured repository/);
+  assert.equal(parkedOf(w.job("1"))?.retry, "hand-over");
 });
 
 /** A review stored by an older Scope Soup, with the risk fields nothing reads now. */
@@ -2582,7 +2583,7 @@ test("a hand-over a person asked for (Try again) is logged as theirs, with who i
   (queue as unknown as { failWith: string | undefined }).failWith = "the remote is not the configured repository";
   w.queue = queue;
   await toHandOver(w);
-  assert.equal(where(w.job("1"))?.parked?.retry, "hand-over");
+  assert.equal(parkedOf(w.job("1"))?.retry, "hand-over");
   (queue as unknown as { failWith: string | undefined }).failWith = undefined;
   assert.ok(releaseJob(w.store, ref("1"), "Ada", new Date(w.clock.ms).toISOString(), "Try again."));
   assert.equal(w.job("1")?.owesAskedBy, "Ada");
@@ -2599,7 +2600,7 @@ test("a reviewed change goes to the queue without a check before it; the queue d
   const queue = fakeQueue();
   w.queue = queue;
   await toHandOver(w);
-  assert.equal(where(w.job("1"))?.parked?.as, "queued");
+  assert.equal(parkedOf(w.job("1"))?.as, "queued");
   assert.deepEqual(queue.enqueued, ["1 scopesoup/1"]);
 });
 
@@ -2610,14 +2611,14 @@ test("merging by queue: without a check command nothing is queued; a person is t
   w.queue = queue;
   await toHandOver(w);
   assert.deepEqual(queue.enqueued, []);
-  assert.equal(where(w.job("1"))?.parked?.as, "escalated");
-  assert.equal(where(w.job("1"))?.parked?.retry, "hand-over");
-  assert.match(where(w.job("1"))?.parked?.reason ?? "", /names no checkCommand/);
+  assert.equal(parkedOf(w.job("1"))?.as, "escalated");
+  assert.equal(parkedOf(w.job("1"))?.retry, "hand-over");
+  assert.match(parkedOf(w.job("1"))?.reason ?? "", /names no checkCommand/);
   cfg = config(QUEUE);
   assert.ok(releaseJob(w.store, ref("1"), "Ada", new Date(w.clock.ms).toISOString(), "Set it."));
   await w.run();
   assert.deepEqual(queue.enqueued, ["1 scopesoup/1"]);
-  assert.equal(where(w.job("1"))?.parked?.as, "queued");
+  assert.equal(parkedOf(w.job("1"))?.as, "queued");
 });
 
 test("merging by queue: the board's resume lets a paused queue go on at the next tick, once, and is refused when the queue is not paused", async () => {
@@ -2776,8 +2777,8 @@ test("claims across machines: a claim lost at renewal stops the Item's session a
       w.store.put(item("1", { holder: { actor: { id: "scopesoup@laptop-b", name: "scopesoup on laptop-b", bot: true }, until: new Date(w.clock.ms + 60 * 60_000).toISOString() } }), "sync", new Date(w.clock.ms).toISOString());
     }
     await w.run();
-    assert.equal(where(w.job("1"))?.parked?.as, "escalated", how);
-    assert.match(where(w.job("1"))?.parked?.reason ?? "", /^The claim on 1 was lost: (scopesoup on laptop-b claimed it first|scopesoup on laptop-b holds it)\./);
+    assert.equal(parkedOf(w.job("1"))?.as, "escalated", how);
+    assert.match(parkedOf(w.job("1"))?.reason ?? "", /^The claim on 1 was lost: (scopesoup on laptop-b claimed it first|scopesoup on laptop-b holds it)\./);
     assert.equal(w.runner.stops.length, 1, how);
     assert.match(w.reasons("orchestrator.claim_lost")[0] ?? "", /Its session here is stopped/);
     // Nothing starts again on its own: the Item waits for a person.
@@ -2797,7 +2798,7 @@ test("an implementer that stops with a question and options puts them to a perso
   await w.run();
   await step(w, "1", "succeeded", TRIAGE_OK);
   await step(w, "1", "succeeded", BLOCKED);
-  assert.equal(where(w.job("1"))?.parked?.as, "needs-decision");
+  assert.equal(parkedOf(w.job("1"))?.as, "needs-decision");
   assert.deepEqual(w.job("1")?.decision, ASKED);
   assert.equal(w.reasons("orchestrator.needs_decision")[0], "Keep the old format? Options: keep | migrate. Recommended: keep.");
   assert.deepEqual(w.calls, ["answerTurn 1 decision"]);
@@ -2820,7 +2821,7 @@ test("an answer to an escalation in a review round resumes the implementor in th
     await step(w, "1", "succeeded", IMPLEMENT_OK);
     await step(w, "1", "succeeded", REVIEW_CHANGES);
     await step(w, "1", "succeeded", { done: false, summary: "git commit was refused." }, { denied: ["git commit -m x"] });
-    assert.equal(where(w.job("1"))?.parked?.as, "escalated");
+    assert.equal(parkedOf(w.job("1"))?.as, "escalated");
     const round = w.job("1")?.fixRounds;
     assert.ok(round);
     const at = new Date(w.clock.ms).toISOString();
@@ -2853,7 +2854,7 @@ test("a question with { label, description } options and a context reads as 'lab
   await w.run();
   await step(w, "1", "succeeded", TRIAGE_OK);
   await step(w, "1", "succeeded", { ...BLOCKED, decision: asked });
-  assert.equal(where(w.job("1"))?.parked?.as, "needs-decision");
+  assert.equal(parkedOf(w.job("1"))?.as, "needs-decision");
   assert.equal(w.reasons("orchestrator.needs_decision")[0], "Keep the old format? Options: keep: no migration needed | migrate: one format to maintain. Recommended: keep.");
   const line = w.lines.find((l) => l.includes(" question ")) ?? "";
   assert.match(line, /"options":\[\{"label":"keep","description":"no migration needed"\},\{"label":"migrate","description":"one format to maintain"\}\]/);
@@ -2868,7 +2869,7 @@ test("an implementer's question parked for a person, whatever the risk, the reco
       await w.run();
       await step(w, "1", "succeeded", TRIAGE_OK);
       await step(w, "1", "succeeded", answer);
-      assert.equal(where(w.job("1"))?.parked?.as, "needs-decision");
+      assert.equal(parkedOf(w.job("1"))?.as, "needs-decision");
       assert.deepEqual(w.runner.requests.map((request) => request.role), ["triage", "implement"]);
       assert.equal(w.lines.filter((line) => line.includes(" assumption ")).length, 0);
     }
@@ -2882,7 +2883,7 @@ test("a resumed implementor that stops with a question is asked like a fresh one
   await step(w, "1", "succeeded", IMPLEMENT_OK);
   await step(w, "1", "succeeded", REVIEW_CHANGES);
   await step(w, "1", "succeeded", { done: false, summary: "Two findings contradict.", question: ASKED });
-  assert.equal(where(w.job("1"))?.parked?.as, "needs-decision");
+  assert.equal(parkedOf(w.job("1"))?.as, "needs-decision");
   assert.deepEqual(w.job("1")?.decision, ASKED);
   assert.equal(w.lines.filter((line) => line.includes(" assumption ")).length, 0);
   // One that did not finish and asked nothing parked for a person with what it said, as a fresh implementor does.
@@ -2892,7 +2893,7 @@ test("a resumed implementor that stops with a question is asked like a fresh one
   await step(f, "1", "succeeded", IMPLEMENT_OK);
   await step(f, "1", "succeeded", REVIEW_CHANGES);
   await step(f, "1", "succeeded", { done: false, summary: "Gave up." });
-  assert.equal(where(f.job("1"))?.parked?.as, "needs-decision");
+  assert.equal(parkedOf(f.job("1"))?.as, "needs-decision");
   assert.equal(f.reasons("orchestrator.needs_decision")[0], "The implementer stopped: Gave up.");
 });
 
@@ -2923,12 +2924,12 @@ test("a proposed rewrite of the item's text in an answer (removed) is dropped: n
   w.store.addUsageSample(usage(0.1, 0.1));
   await w.run();
   await step(w, "1", "succeeded", { ...TRIAGE_OK, proposal: rewrite });
-  assert.equal(where(w.job("1"))?.parked, undefined);
-  assert.equal(where(w.job("1"))?.step, "implement");
+  assert.equal(parkedOf(w.job("1")), undefined);
+  assert.equal(stepAt(w.job("1")!), "implement");
   assert.equal(w.job("1")?.proposal, undefined);
   await step(w, "1", "succeeded", { ...IMPLEMENT_OK, proposal: rewrite });
-  assert.equal(where(w.job("1"))?.parked, undefined);
-  assert.equal(where(w.job("1"))?.step, "review");
+  assert.equal(parkedOf(w.job("1")), undefined);
+  assert.equal(stepAt(w.job("1")!), "review");
   assert.equal(w.lines.filter((line) => line.includes(" question ")).length, 0);
 });
 
@@ -2946,7 +2947,7 @@ test("a triage that proposes a restructuring parks it, with a person's recorded 
   // Proposed whatever the size: a duplicate can be small.
   await step(w, "1", "succeeded", { ...TRIAGE_OK, restructure: RESTRUCTURE });
   const job = w.job("1");
-  assert.equal(where(job)?.parked?.as, "needs-decision");
+  assert.equal(parkedOf(job)?.as, "needs-decision");
   assert.deepEqual(job?.proposal?.parts, PARTS, "the Item a part goes into is named by its id");
   assert.equal(job?.proposal?.original, "umbrella");
   assert.equal(job?.proposal?.carried, "- Asked: Which format?\n  Answered: Keep the old format.");
@@ -2970,14 +2971,14 @@ test("a triage that proposes a restructuring parks it, with a person's recorded 
     const odd = world(config(), [item("1")]);
     await odd.run();
     await step(odd, "1", "succeeded", { ...TRIAGE_OK, restructure });
-    assert.equal(where(odd.job("1"))?.step, "implement");
+    assert.equal(stepAt(odd.job("1")!), "implement");
     assert.equal(odd.job("1")?.triage?.restructure, undefined);
   }
   // A large one without a restructuring is parked as "not ready".
   const bare = world(config(), [item("1")]);
   await bare.run();
   await step(bare, "1", "succeeded", { ...TRIAGE_OK, size: "large" });
-  assert.equal(where(bare.job("1"))?.parked?.as, "not-ready");
+  assert.equal(parkedOf(bare.job("1"))?.as, "not-ready");
   assert.equal(bare.job("1")?.proposal, undefined);
 });
 
@@ -2989,7 +2990,7 @@ async function answeredRun(changeText: boolean) {
   w.store.addUsageSample(usage(0.1, 0.1));
   await w.run();
   await step(w, "1", "succeeded", ASKS);
-  assert.equal(where(w.job("1"))?.parked?.as, "needs-decision");
+  assert.equal(parkedOf(w.job("1"))?.as, "needs-decision");
   const at = new Date(w.clock.ms).toISOString();
   addAnswer(w.store, { subject: ref("1"), answer: "Down.", by: "Ada", at, question: "Round up or down?", options: ["up", "down"], textHash: itemTextHash(item("1", { body: "Round the amounts." })) });
   assert.ok(releaseJob(w.store, ref("1"), "Ada", at, "answered"));
@@ -3002,8 +3003,8 @@ async function answeredRun(changeText: boolean) {
 
 test("a reworded question on an unchanged item reuses the recorded answer", async () => {
   const w = await answeredRun(false);
-  assert.equal(where(w.job("1"))?.step, "implement");
-  assert.equal(where(w.job("1"))?.parked, undefined);
+  assert.equal(stepAt(w.job("1")!), "implement");
+  assert.equal(parkedOf(w.job("1")), undefined);
   assert.equal(w.reasons("orchestrator.needs_decision").length, 1);
   assert.equal(w.reasons("orchestrator.answer_reused").length, 1);
   // The reuse is an event in the store, not a line in the item's log.
@@ -3012,7 +3013,7 @@ test("a reworded question on an unchanged item reuses the recorded answer", asyn
 
 test("the same question after the item's text changed is asked again", async () => {
   const w = await answeredRun(true);
-  assert.equal(where(w.job("1"))?.parked?.as, "needs-decision");
+  assert.equal(parkedOf(w.job("1"))?.as, "needs-decision");
   assert.equal(w.reasons("orchestrator.needs_decision").length, 2);
   assert.equal(w.reasons("orchestrator.answer_reused").length, 0);
 });
@@ -3039,7 +3040,7 @@ function answerRewrite(w: World, id: string, answers: string[], action: "accept"
   const at = new Date(w.clock.ms).toISOString();
   return w.store.tx(() => {
     job.rewrite!.questions.forEach((question, index) => addAnswer(w.store, { subject: ref(id), answer: answers[index]!, by: "Ada", at, question: question.question }));
-    return settleRewrite(w.store, ref(id), answers, action, "Ada", at, where(job).parked!.at);
+    return settleRewrite(w.store, ref(id), answers, action, "Ada", at, parkedOf(job)!.at);
   });
 }
 
@@ -3054,7 +3055,7 @@ test("a triage with a question and a rewrite parked with both on the Item page, 
   }
   assert.deepEqual(roles(w), ["triage"]);
   const job = w.job("1")!;
-  assert.equal(where(job).parked?.as, "needs-decision");
+  assert.equal(parkedOf(job)?.as, "needs-decision");
   assert.deepEqual(job.rewrite, { original: "Tide table units.", text: REWRITE, questions: [QUESTION], round: 1 });
   // The rewrite's questions are not the old one-by-one questions, and the log has one line naming the parked state.
   assert.deepEqual(jobQuestions(job), []);
@@ -3128,8 +3129,8 @@ test("a not-ready triage's rewrite accepted with the recommended answers is tria
   // Rejected with no question: nothing it asked for was given, so the verdict parks as before.
   assert.deepEqual(answerRewrite(w, "1", [], "reject"), { settled: "rejected" });
   await w.run();
-  assert.equal(where(w.job("1"))?.parked?.as, "not-ready");
-  assert.match(where(w.job("1"))?.parked?.reason ?? "", /^Triage: not ready\. Still unclear\./);
+  assert.equal(parkedOf(w.job("1"))?.as, "not-ready");
+  assert.match(parkedOf(w.job("1"))?.reason ?? "", /^Triage: not ready\. Still unclear\./);
 });
 
 test("rejecting a rewrite leaves the text's hash as the triage saw it and starts no triage again", async () => {
@@ -3139,7 +3140,7 @@ test("rejecting a rewrite leaves the text's hash as the triage saw it and starts
   await step(w, "1", "succeeded", { ...TRIAGE, questions: [] });
   assert.deepEqual(answerRewrite(w, "1", [], "reject"), { settled: "rejected" });
   assert.equal(w.job("1")?.triaged?.textHash, itemTextHash(w.store.get<WorkItem>(ref("1"))!));
-  assert.equal(where(w.job("1"))?.writing, undefined);
+  assert.equal(writingOf(w.job("1")), undefined);
   await w.run();
   w.clock.ms += 1000;
   await w.run();
@@ -3155,7 +3156,7 @@ test("an accepted rewrite not yet read back from the host holds the next step; t
   const job = w.job("1")!;
   const at = new Date(w.clock.ms).toISOString();
   // Scope Soup wrote the rewrite on the host; the store reads the old text until the next sync.
-  assert.deepEqual(w.store.tx(() => settleRewrite(w.store, ref("1"), [], "accept", "Ada", at, where(job).parked!.at, [REWRITE], true)), { settled: "accepted" });
+  assert.deepEqual(w.store.tx(() => settleRewrite(w.store, ref("1"), [], "accept", "Ada", at, parkedOf(job)!.at, [REWRITE], true)), { settled: "accepted" });
   assert.equal(w.events("orchestrator.text_wait").length, 1);
   for (let i = 0; i < 3; i++) {
     w.clock.ms += 60_000;
@@ -3168,7 +3169,7 @@ test("an accepted rewrite not yet read back from the host holds the next step; t
   assert.deepEqual(roles(w), ["triage", "implement"]);
   assert.match(w.runner.requests[1]!.vars.itemBody ?? "", /Show the tide table in metres/);
   assert.equal(w.events("orchestrator.triage_again").length, 0);
-  assert.equal(where(w.job("1"))?.writing, undefined);
+  assert.equal(writingOf(w.job("1")), undefined);
   assert.deepEqual(w.reasons("orchestrator.text_read"), ["The description written on fake is read back: 1's next step may start."]);
 });
 
@@ -3178,7 +3179,7 @@ test("a written description never read back holds the next step only for the lim
   await w.run();
   await step(w, "1", "succeeded", { ...TRIAGE, questions: [] });
   const at = new Date(w.clock.ms).toISOString();
-  w.store.tx(() => settleRewrite(w.store, ref("1"), [], "accept", "Ada", at, where(w.job("1"))!.parked!.at, [REWRITE], true));
+  w.store.tx(() => settleRewrite(w.store, ref("1"), [], "accept", "Ada", at, parkedOf(w.job("1"))!.at, [REWRITE], true));
   w.clock.ms += WRITING_WAIT_MS - 60_000;
   await w.run();
   assert.deepEqual(roles(w), ["triage"]);
@@ -3187,7 +3188,7 @@ test("a written description never read back holds the next step only for the lim
   assert.match(w.reasons("orchestrator.text_unread")[0] ?? "", /is still not read back after 30 minutes: 1 goes on with the text the store has\.$/);
   w.clock.ms += 1000;
   await w.run();
-  assert.equal(where(w.job("1"))?.writing, undefined);
+  assert.equal(writingOf(w.job("1")), undefined);
   assert.equal(roles(w).length > 1, true);
 });
 
@@ -3312,8 +3313,8 @@ test("a dependency write that GitHub answers OK to but does not keep it: parks t
   w.clock.ms += 60_000;
   await tick(deps);
   assert.match(w.reasons("orchestrator.host_write_failed")[0] ?? "", /^Could not write 1 blocked by 2: GitHub answered but did not apply it on #1 \(blocked by #2 not added\)/);
-  assert.equal(where(loadJobs(w.store)[ghKey("1")])?.parked?.as, "escalated");
-  assert.match(where(loadJobs(w.store)[ghKey("1")])?.parked?.reason ?? "", /the dependency could not be written on github/);
+  assert.equal(parkedOf(loadJobs(w.store)[ghKey("1")])?.as, "escalated");
+  assert.match(parkedOf(loadJobs(w.store)[ghKey("1")])?.reason ?? "", /the dependency could not be written on github/);
   assert.equal(w.store.getValue("scopesoup.blockedBy"), null);
   assert.deepEqual(w.store.get<WorkItem>({ host: "github", kind: "work", id: "1" })?.blockedBy, []);
   assert.deepEqual(roles(w), ["triage"]);
@@ -3324,7 +3325,7 @@ test("a blocks link on GitHub is written as blocked_by on the other issue, and t
   w.runner.end("1", "succeeded", { ...TRIAGE, links: [{ type: "blocks", item: "2", reason: "The list needs the units." }] });
   await tick(deps);
   assert.deepEqual(fake.sent, [{ call: `POST ${DEPS}/2/dependencies/blocked_by`, body: { issue_id: 9001 } }]);
-  assert.equal(where(loadJobs(w.store)[ghKey("1")])?.parked?.as, "needs-decision");
+  assert.equal(parkedOf(loadJobs(w.store)[ghKey("1")])?.as, "needs-decision");
   assert.deepEqual(w.store.get<WorkItem>({ host: "github", kind: "work", id: "2" })?.blockedBy.map((each) => each.id), ["1"]);
 });
 
@@ -3353,8 +3354,8 @@ test("a duplicateOf link becomes a question; keeping the recommendation parked t
   await w.run();
   w.clock.ms += 60_000;
   await w.run();
-  assert.equal(where(w.job("1"))?.parked?.as, "not-ready");
-  assert.match(where(w.job("1"))?.parked?.reason ?? "", /A person answered: Close 1 as a duplicate of 2\. Scope Soup closes nothing itself/);
+  assert.equal(parkedOf(w.job("1"))?.as, "not-ready");
+  assert.match(parkedOf(w.job("1"))?.reason ?? "", /A person answered: Close 1 as a duplicate of 2\. Scope Soup closes nothing itself/);
   assert.deepEqual(roles(w), ["triage"]);
   assert.deepEqual(w.closes, []);
 });
@@ -3441,7 +3442,7 @@ test("questions waiting for an Item are dropped when the Item that asked is clos
   await step(w, "1", "succeeded", TRIAGE_OK);
   assert.match(w.reasons("orchestrator.about_other_dropped").at(-1) ?? "", /^What triage of 2 asked about 1 is dropped: 2 was closed as a duplicate of 1 before it was written\.$/);
   assert.equal(w.reasons("orchestrator.about_other_written").length, 0);
-  assert.notEqual(where(w.job("1"))?.parked?.as, "needs-decision");
+  assert.notEqual(parkedOf(w.job("1"))?.as, "needs-decision");
 });
 
 test("a triage reporting duplicateOf asks only Scope Soup's duplicate question, not its own which-one-stays question here or on the other Item", async () => {
@@ -3521,8 +3522,8 @@ test("a pair settled on one Item withdraws the duplicate question still open on 
   await w.run();
   assert.match(w.reasons("orchestrator.question_withdrawn")[0] ?? "", /^A person answered which of 1 and 2 closes at \S+ \("Close 2 as a duplicate of 1"\): the duplicate question on 1 is withdrawn\.$/);
   assert.equal(w.job("1")?.rewrite, undefined);
-  assert.equal(where(w.job("1"))?.parked, undefined);
-  assert.equal(where(w.job("1"))?.step, "implement");
+  assert.equal(parkedOf(w.job("1")), undefined);
+  assert.equal(stepAt(w.job("1")!), "implement");
   assert.equal(w.store.get<WorkItem>(ref("1"))?.state, "todo");
 
   // "Keep both" settles it too; with a rewrite still to accept, the Item stays parked on that alone.
@@ -3532,8 +3533,8 @@ test("a pair settled on one Item withdraws the duplicate question still open on 
   await kept.w.run();
   assert.equal(kept.w.reasons("orchestrator.question_withdrawn").length, 1);
   assert.deepEqual(kept.w.job("1")?.rewrite?.questions, []);
-  assert.equal(where(kept.w.job("1"))?.parked?.as, "needs-decision");
-  assert.match(where(kept.w.job("1"))?.parked?.reason ?? "", /^Triage, round 1: a rewrite of the description waits for a person to accept, edit or reject\.$/);
+  assert.equal(parkedOf(kept.w.job("1"))?.as, "needs-decision");
+  assert.match(parkedOf(kept.w.job("1"))?.reason ?? "", /^Triage, round 1: a rewrite of the description waits for a person to accept, edit or reject\.$/);
   assert.deepEqual(kept.closed, []);
 });
 
@@ -3548,7 +3549,7 @@ test("an answer that would close an Item whose duplicate is closed already is no
   assert.deepEqual(closed, ["2 of 1"]);
   assert.match(w.reasons("orchestrator.duplicate_close_skipped")[0] ?? "", /^A person answered "Close 1 as a duplicate of 2", but 2 is closed already as a duplicate of 1: 1 is not closed, and its work goes on\.$/);
   assert.equal(w.store.get<WorkItem>(ref("1"))?.state, "todo");
-  assert.equal(where(w.job("1"))?.step, "implement");
+  assert.equal(stepAt(w.job("1")!), "implement");
 });
 
 test("a waiting rewrite whose which-duplicate questions are all dropped is only proposed, and the Item's work goes on", async () => {
@@ -3563,7 +3564,7 @@ test("a waiting rewrite whose which-duplicate questions are all dropped is only 
   assert.match(w.reasons("orchestrator.about_other_dropped").at(-1) ?? "", /^Triage of 1 asked 2 which duplicate to keep: .* Not asked: a person answered which of 1 and 2 closes/);
   assert.equal(readProposedRewrites(w.store)[refKey(ref("2"))]?.text, ABOUT_REWRITE);
   assert.equal(w.reasons("orchestrator.about_other_written").length, 0);
-  assert.equal(where(w.job("2"))?.step, "implement");
+  assert.equal(stepAt(w.job("2")!), "implement");
 });
 
 test("an implementor whose Item was closed as a duplicate is not taken from (decision 5); when done, everything it said is kept", async () => {
@@ -3695,7 +3696,7 @@ function answerRewriteOf(w: World, subject: Ref, answers: string[], textHash?: s
   const at = new Date(w.clock.ms).toISOString();
   return w.store.tx(() => {
     job.rewrite!.questions.forEach((question, index) => addAnswer(w.store, { subject, answer: answers[index]!, by: "Ada", at, question: question.question, ...(textHash ? { textHash } : {}) }));
-    return settleRewrite(w.store, subject, answers, "accept", "Ada", at, where(job).parked!.at);
+    return settleRewrite(w.store, subject, answers, "accept", "Ada", at, parkedOf(job)!.at);
   });
 }
 
@@ -3748,8 +3749,8 @@ test("no hold is offered when the other Item already waits on this one, and a ho
   setOwnBlockers(w.store, ref("1"), [ref("2")], "orchestrator", new Date(w.clock.ms).toISOString(), "A person answered to hold 1 until 2 is done.");
   assert.deepEqual(answerRewrite(w, "2", ["Metric", "Hold 2 until 1 is done"]), { settled: "accepted" });
   await w.run();
-  assert.equal(where(w.job("2"))?.parked?.as, "escalated");
-  assert.match(where(w.job("2"))?.parked?.reason ?? "", /1 already waits on 2 \(directly or through other Items\)/);
+  assert.equal(parkedOf(w.job("2"))?.as, "escalated");
+  assert.match(parkedOf(w.job("2"))?.reason ?? "", /1 already waits on 2 \(directly or through other Items\)/);
   assert.equal(loadOwnBlockers(w.store)[refKey(ref("2"))], undefined);
   // Triaged again, it asks nothing about 1 (the hold is not applied, and none is offered), so both go on.
   assert.ok(releaseJob(w.store, ref("2"), "Ada", new Date(w.clock.ms).toISOString(), "Look again."));
@@ -3805,7 +3806,7 @@ test("on GitHub the answer closes the Item as a duplicate, with the target's dat
   assert.equal(fake.calls.some((call) => call.startsWith("PATCH")), false);
   const job = loadJobs(w.store)[ghKey("1")]!;
   const at = new Date(w.clock.ms).toISOString();
-  assert.deepEqual(w.store.tx(() => settleRewrite(w.store, ghRef("1"), ["Close 1 as a duplicate of 2"], "accept", "Ada", at, where(job).parked!.at)), { settled: "accepted" });
+  assert.deepEqual(w.store.tx(() => settleRewrite(w.store, ghRef("1"), ["Close 1 as a duplicate of 2"], "accept", "Ada", at, parkedOf(job)!.at)), { settled: "accepted" });
   await tick(deps);
   assert.deepEqual(fake.sent.find((each) => each.call === `PATCH ${DEPS}/1`)?.body, { state: "closed", state_reason: "duplicate", duplicate_issue_id: 9002 });
   assert.match(w.reasons("orchestrator.item_closed")[0] ?? "", /^1 was closed on its host as a duplicate of 2/);
@@ -3828,8 +3829,8 @@ test("on GitHub a hold is one dependency call and no record of Scope Soup's own;
   assert.deepEqual(answerRewriteOf(w, ghRef("1"), ["Metric", "Hold 1 until 2 is done"]), { settled: "accepted" });
   await tick(deps);
   const job = loadJobs(w.store)[ghKey("1")];
-  assert.equal(where(job)?.parked?.as, "escalated");
-  assert.match(where(job)?.parked?.reason ?? "", /could not be written on github: GitHub refused the dependency\. .*the hold is kept/);
+  assert.equal(parkedOf(job)?.as, "escalated");
+  assert.match(parkedOf(job)?.reason ?? "", /could not be written on github: GitHub refused the dependency\. .*the hold is kept/);
   // Answered, it is triaged again; the hold comes from the answer (this round names no conflict) and is written now.
   deps.actions.addBlockers = real;
   assert.ok(releaseJob(w.store, ghRef("1"), "Ada", new Date(w.clock.ms).toISOString(), "Try again."));
@@ -3892,8 +3893,8 @@ test("an Item parked on two questions posts two question comments and the label;
   w.runner.end("1", "succeeded", TWO_QUESTIONS);
   await tick(deps);
   const job = loadJobs(w.store)[ghKey("1")];
-  assert.equal(where(job)?.parked?.as, "needs-decision");
-  const ids = where(job)?.parked?.questions ?? [];
+  assert.equal(parkedOf(job)?.as, "needs-decision");
+  const ids = parkedOf(job)?.questions ?? [];
   assert.deepEqual(ids, fake.comments.get("1")!.map((comment) => String(comment.id)));
   assert.match(fake.comments.get("1")![1]!.body!, /^\*\*Q2: Which unit\?\*\*/);
   assert.deepEqual(labelsOn(fake), ["scopesoup:needs-decision"]);
@@ -3906,7 +3907,7 @@ test("an Item parked on two questions posts two question comments and the label;
   fake.reply(1, "kim", "COLLABORATOR", "A2: feet");
   await sync();
   await tick(deps);
-  assert.deepEqual(where(loadJobs(w.store)[ghKey("1")])?.parked?.questions, ids);
+  assert.deepEqual(parkedOf(loadJobs(w.store)[ghKey("1")])?.questions, ids);
   assert.deepEqual(w.store.get<WorkItem>({ host: "github", kind: "work", id: "1" })?.openQuestions?.map((each) => each.question), ["Round up or down?"]);
   // The board shows question 2 answered, from GitHub.
   assert.deepEqual(loadSnapshot(w.store).parked?.[0]?.questions?.map((each) => each.answer), [undefined, "feet"]);
@@ -3918,7 +3919,7 @@ test("an Item parked on two questions posts two question comments and the label;
   assert.deepEqual(labelsOn(fake), []);
   assert.equal(w.store.getValue("person.answers"), null);
   // The triage runs again in the same tick, with the answers in its prompt.
-  assert.equal(where(loadJobs(w.store)[ghKey("1")])?.parked, undefined);
+  assert.equal(parkedOf(loadJobs(w.store)[ghKey("1")]), undefined);
   assert.deepEqual(roles(w), ["triage", "triage"]);
   assert.match(w.runner.requests[1]?.vars?.itemBody ?? "", /Asked: Which unit\?\n  Answered: feet/);
 });
@@ -3927,7 +3928,7 @@ test("a deleted question comment un-parks the Item, and it starts again at its t
   const { w, fake, host, deps } = await questionWorld();
   w.runner.end("1", "succeeded", { ...TRIAGE_OK, hidesDecision: true, decision: { question: "Round up or down?", options: ["up", "down"], recommendation: "down" } });
   await tick(deps);
-  const id = where(loadJobs(w.store)[ghKey("1")])?.parked?.questions?.[0];
+  const id = parkedOf(loadJobs(w.store)[ghKey("1")])?.questions?.[0];
   assert.ok(id);
   const put = (items: WorkItem[]): void => {
     for (const item of items) w.store.put(item, "sync", new Date(w.clock.ms).toISOString());
@@ -3951,7 +3952,7 @@ test("a deleted question comment un-parks the Item, and it starts again at its t
   await tick(deps);
   assert.match(w.reasons("orchestrator.job_released").at(-1) ?? "", /was deleted on github: the Item is no longer parked/);
   // A new triage starts in the same tick.
-  assert.equal(where(loadJobs(w.store)[ghKey("1")])?.parked, undefined);
+  assert.equal(parkedOf(loadJobs(w.store)[ghKey("1")]), undefined);
   assert.deepEqual(roles(w), ["triage", "triage"]);
 });
 
@@ -3962,7 +3963,7 @@ test("questions GitHub does not take (the label is dropped) post nothing, write 
   await tick(deps);
   assert.equal(fake.comments.get("1"), undefined);
   assert.match(w.reasons("orchestrator.host_write_failed")[0] ?? "", /^Could not post the questions on github: GitHub answered but did not apply it on #1 \(label scopesoup:needs-decision not added\)/);
-  const parked = where(loadJobs(w.store)[ghKey("1")])?.parked;
+  const parked = parkedOf(loadJobs(w.store)[ghKey("1")]);
   assert.equal(parked?.as, "escalated");
   assert.equal(parked?.questions, undefined);
   assert.match(parked?.reason ?? "", /^github could not be written: .* The questions were: Round up or down\? Which unit\?/);
@@ -3975,11 +3976,11 @@ test("a triage round posts its rewrite as a comment with the hash of the body it
   w.runner.end("1", "succeeded", TRIAGE);
   await tick(deps);
   const job = loadJobs(w.store)[ghKey("1")]!;
-  assert.equal(where(job).parked?.as, "needs-decision");
+  assert.equal(parkedOf(job)?.as, "needs-decision");
   const [rewrite, question] = fake.comments.get("1")!;
-  assert.deepEqual(where(job).parked?.rewrite, { id: String(rewrite!.id), questions: [String(question!.id)], texts: [{ question: "Metric or imperial?", n: 1 }], askedAt: question!.created_at });
+  assert.deepEqual(parkedOf(job)?.rewrite, { id: String(rewrite!.id), questions: [String(question!.id)], texts: [{ question: "Metric or imperial?", n: 1 }], askedAt: question!.created_at });
   // The rewrite's questions are followed apart from the issue questions': their answers settle the rewrite only with Accept on the board, or start a new round.
-  assert.equal(where(job).parked?.questions, undefined);
+  assert.equal(parkedOf(job)?.questions, undefined);
   assert.match(rewrite!.body!, /^<details><summary>Triage, round 1: proposed description<\/summary>\n\nShow the tide table in metres\. Done when the table shows metres only\.\n\n<\/details>\n\n<!-- scopesoup:rewrite /);
   assert.deepEqual(readMarker(rewrite!.body)?.data, { v: 1, round: 1, bodySha: createHash("sha256").update("Show the tides.").digest("hex") });
   assert.equal(readMarker(question!.body)?.data.rewrite, rewrite!.id);
@@ -3997,8 +3998,8 @@ test("a rewrite over 60,000 characters stays on the board, and the parked Item s
   await tick(deps);
   assert.equal(fake.comments.get("1"), undefined);
   const job = loadJobs(w.store)[ghKey("1")]!;
-  assert.equal(where(job).parked?.rewrite, undefined);
-  assert.match(where(job).parked?.reason ?? "", / The rewrite is over 60,000 characters, too large for a comment on github: it stays on Scope Soup's board\.$/);
+  assert.equal(parkedOf(job)?.rewrite, undefined);
+  assert.match(parkedOf(job)?.reason ?? "", / The rewrite is over 60,000 characters, too large for a comment on github: it stays on Scope Soup's board\.$/);
   // As before: a person's list and the log line.
   assert.equal(w.calls.filter((call) => call.startsWith("answerTurn")).length, 1);
 });
@@ -4009,7 +4010,7 @@ test("a proposed restructuring is a question comment with the restructuring in i
   await tick(deps);
   const job = loadJobs(w.store)[ghKey("1")]!;
   const [asked] = fake.comments.get("1")!;
-  assert.deepEqual(where(job).parked?.questions, [String(asked!.id)]);
+  assert.deepEqual(parkedOf(job)?.questions, [String(asked!.id)]);
   assert.equal(asked!.body!.split("\n\n<!--")[0], `**Q1: Proposed restructuring: ${RESTRUCTURE_REASON}**\n\n1. **Part one** (new sub-issue): Do the first half.\n2. **Part two** (added to #2): Do the second half.\n\nThis Item becomes an umbrella over its sub-issues.\n\nAccept, edit or reject the restructuring on Scope Soup's board.`);
   assert.deepEqual(readMarker(asked!.body)?.data.proposal, { id: job.proposal!.id, reason: RESTRUCTURE_REASON, original: "umbrella", parts: PARTS });
   assert.match(job.proposal!.id, /^[0-9a-f]{8}$/, "its own id, carried by its marker lines");
@@ -4032,7 +4033,7 @@ test("a trusted A1: reply to a rewrite question other than the recommendation st
   assert.deepEqual(labelsOn(other.fake), []);
   const rerun = loadJobs(other.w.store)[ghKey("1")];
   assert.equal(rerun?.rewrite, undefined);
-  assert.equal(where(rerun)?.parked, undefined);
+  assert.equal(parkedOf(rerun), undefined);
   // The next triage is round 2, with the answer in its prompt.
   other.w.clock.ms += 60_000;
   await tick(other.deps);
@@ -4049,8 +4050,8 @@ test("a trusted A1: reply to a rewrite question other than the recommendation st
   await same.sync();
   await tick(same.deps);
   const waiting = loadJobs(same.w.store)[ghKey("1")]!;
-  assert.equal(where(waiting).parked?.as, "needs-decision");
-  assert.equal(where(waiting).parked?.rewrite?.answered, true);
+  assert.equal(parkedOf(waiting)?.as, "needs-decision");
+  assert.equal(parkedOf(waiting)?.rewrite?.answered, true);
   assert.equal(waiting.rewrite?.settled, undefined);
   // The label stays while the rewrite waits for Accept, Edit or Reject.
   assert.deepEqual(labelsOn(same.fake), ["scopesoup:needs-decision"]);
@@ -4070,7 +4071,7 @@ test("a question post GitHub answers 502 after taking it is retried by the next 
   fake.fail((call) => call === `POST ${R1}/comments`, 502, { applied: true });
   w.runner.end("1", "succeeded", TWO_QUESTIONS);
   await tick(deps);
-  const parked = where(loadJobs(w.store)[ghKey("1")])?.parked;
+  const parked = parkedOf(loadJobs(w.store)[ghKey("1")]);
   assert.equal(parked?.as, "escalated");
   assert.equal(parked?.retry, "post");
   assert.match(parked?.reason ?? "", /^github could not be written: GitHub 502 .* Scope Soup tries again at each tick by itself/);
@@ -4079,7 +4080,7 @@ test("a question post GitHub answers 502 after taking it is retried by the next 
   assert.deepEqual(w.calls.filter((call) => call.startsWith("answerTurn")), []);
 
   await tick(deps);
-  const after = where(loadJobs(w.store)[ghKey("1")])?.parked;
+  const after = parkedOf(loadJobs(w.store)[ghKey("1")]);
   assert.equal(after?.as, "needs-decision");
   assert.equal(after?.retry, undefined);
   assert.match(after?.reason ?? "", /^Triage found 2 decisions/);
@@ -4097,7 +4098,7 @@ test("a post GitHub refuses for good (403, missing rights) stays an escalation a
   fake.refusesComments = true;
   w.runner.end("1", "succeeded", TWO_QUESTIONS);
   await tick(deps);
-  const parked = where(loadJobs(w.store)[ghKey("1")])?.parked;
+  const parked = parkedOf(loadJobs(w.store)[ghKey("1")]);
   assert.equal(parked?.as, "escalated");
   assert.equal(parked?.retry, undefined);
   assert.match(parked?.reason ?? "", /Answer here to start again\.$/);
@@ -4105,7 +4106,7 @@ test("a post GitHub refuses for good (403, missing rights) stays an escalation a
   fake.clear();
   await tick(deps);
   assert.equal(fake.calls.some((call) => !call.startsWith("GET")), false);
-  assert.equal(where(loadJobs(w.store)[ghKey("1")])?.parked?.as, "escalated");
+  assert.equal(parkedOf(loadJobs(w.store)[ghKey("1")])?.as, "escalated");
 });
 
 test("a 429 with retry-after holds the writes: the tick finishes in under 1 s while they wait, sends nothing, and posts once the wait is over", async () => {
@@ -4115,7 +4116,7 @@ test("a 429 with retry-after holds the writes: the tick finishes in under 1 s wh
   let started = performance.now();
   await tick(deps);
   assert.ok(performance.now() - started < 1000, "the tick that met the rate limit waited");
-  assert.equal(where(loadJobs(w.store)[ghKey("1")])?.parked?.retry, "post");
+  assert.equal(parkedOf(loadJobs(w.store)[ghKey("1")])?.retry, "post");
   assert.match(w.reasons("orchestrator.host_write_failed")[0] ?? "", /GitHub 429/);
 
   fake.clear();
@@ -4134,7 +4135,7 @@ test("a 429 with retry-after holds the writes: the tick finishes in under 1 s wh
 
   w.clock.ms += 21_000;
   await tick(deps);
-  assert.equal(where(loadJobs(w.store)[ghKey("1")])?.parked?.as, "needs-decision");
+  assert.equal(parkedOf(loadJobs(w.store)[ghKey("1")])?.as, "needs-decision");
   assert.equal(questionsOn(fake).length, 2);
 });
 
@@ -4142,7 +4143,7 @@ test("after Q2 is deleted unanswered the next question is Q3: the log comment ke
   const { w, fake, deps, sync } = await questionWorld();
   w.runner.end("1", "succeeded", TWO_QUESTIONS);
   await tick(deps);
-  const [, second] = where(loadJobs(w.store)[ghKey("1")])!.parked!.questions!;
+  const [, second] = parkedOf(loadJobs(w.store)[ghKey("1")])!.questions!;
   fake.reply(1, "robin", "OWNER", "A1: down");
   fake.deleteComment(Number(second));
   await sync();
@@ -4163,7 +4164,7 @@ test("deleting Q1 while Q2 is open withdraws Q2: edited to say so, and no longer
   const { w, fake, deps, sync } = await questionWorld();
   w.runner.end("1", "succeeded", TWO_QUESTIONS);
   await tick(deps);
-  const [first, second] = where(loadJobs(w.store)[ghKey("1")])!.parked!.questions!;
+  const [first, second] = parkedOf(loadJobs(w.store)[ghKey("1")])!.questions!;
   fake.deleteComment(Number(first));
   await sync();
   await tick(deps);
@@ -4186,7 +4187,7 @@ test("after Q1 (\"Which unit?\") is deleted, the next triage's prompt names it a
   const { w, fake, deps, sync } = await questionWorld();
   w.runner.end("1", "succeeded", { ...TRIAGE_OK, hidesDecision: true, decision: { question: "Which unit?", options: ["metres", "feet"], recommendation: "metres" } });
   await tick(deps);
-  fake.deleteComment(Number(where(loadJobs(w.store)[ghKey("1")])!.parked!.questions![0]));
+  fake.deleteComment(Number(parkedOf(loadJobs(w.store)[ghKey("1")])!.questions![0]));
   await sync();
   await tick(deps);
   const told = /Questions a person deleted on the host \(do not ask them again; decide these points with your own judgement\):\n- Which unit\?/;
@@ -4267,7 +4268,7 @@ test("the triage is shown the repository's labels and the Item's, never scopesou
   assert.deepEqual(job.rewrite?.labels, { add: ["bug"], remove: ["question"] });
   // A label the repository does not have is dropped and noted, not an error; scopesoup:* is never proposed.
   assert.deepEqual(job.rewrite?.droppedLabels, ["tidal"]);
-  assert.match(where(job).parked?.reason ?? "", / Labels: \+bug, −question\. The triage named label the repository does not have, dropped: tidal\.$/);
+  assert.match(parkedOf(job)?.reason ?? "", / Labels: \+bug, −question\. The triage named label the repository does not have, dropped: tidal\.$/);
   const [rewrite] = fake.comments.get("1")!;
   assert.deepEqual(readMarker(rewrite!.body)?.data.labels, { add: ["bug"], remove: ["question"] });
   assert.match(rewrite!.body!, /<\/details>\n\nLabels: \+bug, −question\n\n<!-- scopesoup:rewrite /);
@@ -4284,7 +4285,7 @@ test("with no question and the description kept, a label proposal still waits fo
   w.runner.end("1", "succeeded", { ...TRIAGE_OK, rewrite: "", links: [], labels: { add: ["bug"], remove: [] } });
   await tick(deps);
   const job = loadJobs(w.store)[ghKey("1")]!;
-  assert.equal(where(job).parked?.as, "needs-decision");
+  assert.equal(parkedOf(job)?.as, "needs-decision");
   assert.deepEqual(job.rewrite?.labels, { add: ["bug"], remove: [] });
   assert.deepEqual(roles(w), ["triage"]);
 });
@@ -4296,8 +4297,8 @@ test("a triage with no question and a changed description posts its rewrite and 
   w.runner.end("1", "succeeded", { ...TRIAGE_OK, rewrite: REWRITE, links: [] });
   await tick(deps);
   const job = loadJobs(w.store)[ghKey("1")]!;
-  assert.equal(where(job).parked?.as, "needs-decision");
-  assert.deepEqual(where(job).parked?.rewrite?.questions, []);
+  assert.equal(parkedOf(job)?.as, "needs-decision");
+  assert.deepEqual(parkedOf(job)?.rewrite?.questions, []);
   assert.deepEqual(fake.comments.get("1")!.map((comment) => readMarker(comment.body)?.kind), ["rewrite"]);
   assert.deepEqual(labelsOn(fake), ["question", "scopesoup:needs-decision"]);
 });
@@ -4306,14 +4307,14 @@ test("a rewrite that parked only on a label proposal puts scopesoup:needs-decisi
   const { w, fake, deps } = await labelWorld();
   w.runner.end("1", "succeeded", { ...TRIAGE_OK, rewrite: "", links: [], labels: { add: ["bug"], remove: [] } });
   await tick(deps);
-  assert.equal(where(loadJobs(w.store)[ghKey("1")])?.parked?.as, "needs-decision");
+  assert.equal(parkedOf(loadJobs(w.store)[ghKey("1")])?.as, "needs-decision");
   assert.deepEqual(labelsOn(fake), ["question", "scopesoup:needs-decision"]);
 });
 
 test("while a person's chat turn runs on an item, the cycle starts nothing on it and leaves its job alone", async () => {
   const w = world(config({ level: 2, settings: { maxParallelSessions: { value: 3, reason: "test" } } }), [item("1", { state: "doing" }), item("2"), item("3", { state: "done" })]);
   w.store.addUsageSample(usage(0.1, 0.1));
-  const due = jobOf({ item: ref("1"), workspace: workspaceKey(ref("1")), branch: "scopesoup/1", step: "implement" as const, failures: 0, fixRounds: 1, agentSession: "agent-1", resumeWith: "Fix it.", startedAt: new Date(T0).toISOString() } as JobFields & Partial<Where>);
+  const due = { item: ref("1"), workspace: workspaceKey(ref("1")), branch: "scopesoup/1", failures: 0, fixRounds: 1, agentSession: "agent-1", resumeWith: "Fix it.", startedAt: new Date(T0).toISOString(), at: atStep("implement") };
   // Item 3 is done, which would close its job and remove its worktree and branch: not while a person talks to its session.
   const closing = { ...due, item: ref("3"), workspace: workspaceKey(ref("3")), branch: "scopesoup/3" };
   w.store.tx(() => saveJobs(w.store, { [refKey(ref("1"))]: due, [refKey(ref("3"))]: closing }));
@@ -4340,7 +4341,7 @@ test("while a person's chat turn runs on an item, the cycle starts nothing on it
 test("a chat turn a person starts while the tick prepares the item's step keeps the item: the step is not started", async () => {
   const w = world(config({ level: 2 }), [item("1", { state: "doing" })]);
   w.store.addUsageSample(usage(0.1, 0.1));
-  const due = jobOf({ item: ref("1"), workspace: workspaceKey(ref("1")), branch: "scopesoup/1", step: "implement" as const, failures: 0, fixRounds: 1, agentSession: "agent-1", resumeWith: "Fix it.", startedAt: new Date(T0).toISOString(), seenInTodo: true as const } as JobFields & Partial<Where>);
+  const due = { item: ref("1"), workspace: workspaceKey(ref("1")), branch: "scopesoup/1", failures: 0, fixRounds: 1, agentSession: "agent-1", resumeWith: "Fix it.", startedAt: new Date(T0).toISOString(), seenInTodo: true as const, at: atStep("implement") };
   w.store.tx(() => saveJobs(w.store, { [refKey(ref("1"))]: due }));
   // Not busy when the tick picks the item; a person's turn starts while the tick awaits the workspace, before its start.
   let talking = false;
@@ -4380,7 +4381,7 @@ test("an implementor answer with two decisions records them in one assumption li
   assert.deepEqual(JSON.parse(lines[0]!.slice("1 assumption ".length)).decisions, TAKEN);
   assert.match(w.reasons("orchestrator.decisions_recorded")[0] ?? "", /^The implementor decided 2 questions itself as cheap to change later: 1\. Which name for the helper\? Chose: roundHeight\. 2\. Sort the list by\? Chose: time\. .*the work goes on\.$/);
   // Nothing parked: the review starts, and the reviewer is shown both decisions to check.
-  assert.equal(where(w.job("1"))?.parked, undefined);
+  assert.equal(parkedOf(w.job("1")), undefined);
   assert.deepEqual(roles(w), ["triage", "implement", "review"]);
   const told = w.runner.requests[2]?.vars.decisions ?? "";
   assert.match(told, /should have been a question; give it as a `must` finding with `ask` true\.\n1\. Which name for the helper\? Chose: roundHeight\. Other options: round; toDecimal\. Why: Says what it rounds\.\n2\. Sort the list by\?/);
@@ -4392,7 +4393,7 @@ test("a question of the expensive kind still parks the Item, and the decisions t
   await w.run();
   await step(w, "1", "succeeded", TRIAGE_OK);
   await step(w, "1", "succeeded", { done: false, summary: "The file format must change.", question: ASKED, decisions: [TAKEN[0]] });
-  assert.equal(where(w.job("1"))?.parked?.as, "needs-decision");
+  assert.equal(parkedOf(w.job("1"))?.as, "needs-decision");
   assert.deepEqual(w.job("1")?.decision, ASKED);
   assert.equal(w.lines.filter((line) => line.includes(" assumption ")).length, 1);
   assert.equal(w.lines.filter((line) => line.includes(" question ")).length, 1);
@@ -4424,7 +4425,7 @@ test("an implement question run into the summary as markup is asked with its opt
   await w.run();
   await step(w, "1", "succeeded", TRIAGE_OK);
   await step(w, "1", "succeeded", { done: false, summary: MARKUP_QUESTION });
-  assert.equal(where(w.job("1"))?.parked?.as, "needs-decision");
+  assert.equal(parkedOf(w.job("1"))?.as, "needs-decision");
   assert.deepEqual(w.job("1")?.decision?.options, [{ label: "Keep 0.06", description: "Square metres." }, { label: "Return 6", description: "Not square metres." }]);
   assert.equal(w.job("1")?.decision?.recommendation, "Keep 0.06");
   assert.equal(w.lines.filter((line) => line.includes(" assumption ")).length, 1);
@@ -4437,7 +4438,7 @@ test("an implement answer whose markup cannot be taken out is retried as malform
   await step(w, "1", "succeeded", TRIAGE_OK);
   w.runner.end("1", "succeeded", { done: true, summary: 'Done.</summary>\n<parameter name="decisions">[{"question":' });
   await w.run();
-  assert.equal(where(w.job("1"))?.parked, undefined);
+  assert.equal(parkedOf(w.job("1")), undefined);
   assert.match(w.reasons("orchestrator.retry_scheduled")[0] ?? "", /implement step failed \(1 of 3\): The implementer's answer does not have the expected shape, or has tool-call markup inside a string\./);
   assert.ok(w.hostWrites.some((write) => write.includes("appendLog 1 session") && write.includes("tool-call markup inside its summary and was not taken")), w.hostWrites.join("\n"));
   assert.deepEqual(w.hostWrites.filter((write) => /<parameter|<\/summary>/.test(write)), []);
@@ -4455,7 +4456,7 @@ test("the reviewer's send-back for a decision that should have been a question r
   assert.match(last?.message ?? "", /stop and ask it in `question`, and change nothing for it yet\. Fix the others and commit\./);
   // The implementor asks it: the Item parked for a person, and an answer resumes the implement step.
   await step(w, "1", "succeeded", { done: false, summary: "Asked.", question: ASKED });
-  assert.equal(where(w.job("1"))?.parked?.as, "needs-decision");
+  assert.equal(parkedOf(w.job("1"))?.as, "needs-decision");
   assert.ok(releaseJob(w.store, ref("1"), "Ada", new Date(w.clock.ms).toISOString(), "answered"));
   assert.ok(w.job("1")?.answerArrived);
   await w.run();
@@ -4466,12 +4467,12 @@ test("the reviewer's send-back for a decision that should have been a question r
 test("after a started Item whose answer arrived counts as started; a blocker still starts first", async () => {
   for (const answered of [true, false]) {
     const w = world(config({ settings: { maxParallelSessions: { value: 1, reason: "test" } } }), [item("1"), item("2", { labels: ["bug"], priority: "blocker" })]);
-    const job = (id: string) => jobOf({ item: ref(id), workspace: workspaceKey(ref(id)), branch: `scopesoup/${id}`, step: "implement" as const, failures: 0, fixRounds: 0, startedAt: new Date(T0).toISOString() } as JobFields & Partial<Where>);
+    const job = (id: string) => ({ item: ref(id), workspace: workspaceKey(ref(id)), branch: `scopesoup/${id}`, failures: 0, fixRounds: 0, startedAt: new Date(T0).toISOString(), at: atStep("implement") });
     saveJobs(w.store, { [refKey(ref("1"))]: { ...job("1"), ...(answered ? { answerArrived: new Date(T0).toISOString() } : {}) }, [refKey(ref("2"))]: job("2") });
     await w.run();
     assert.deepEqual(w.runner.requests.map((request) => request.subject.id), ["2"]);
   }
-  const jobs = { [refKey(ref("1"))]: jobOf({ answerArrived: "2026-11-18T10:00:00Z" } as unknown as Job) };
+  const jobs = { [refKey(ref("1"))]: ({ answerArrived: "2026-11-18T10:00:00Z", at: atStep("triage") } as unknown as Job) };
   const triagedLog = [{ at: new Date(T0).toISOString(), by: { who: "scopesoup", agent: true as const }, kind: "session" as const, fields: { role: "triage" } }];
   const both = [item("2", { priority: "blocker", log: triagedLog }), item("1")];
   assert.deepEqual([...both].sort(compareItems([], jobs, both)).map((each) => each.ref.id), ["2", "1"]);
@@ -4515,11 +4516,11 @@ test("Overturn on an Item waiting for review sends it back to the implementor fi
   // The implementor is done; the review waits for its continuation delay.
   w.runner.end("1", "succeeded", IMPLEMENT_OK);
   await w.run();
-  assert.equal(where(w.job("1"))?.step, "review");
+  assert.equal(stepAt(w.job("1")!), "review");
   assert.equal(overturn(w, "1"), true);
   w.clock.ms += 1000;
   await w.run();
-  assert.equal(where(w.job("1"))?.step, "implement");
+  assert.equal(stepAt(w.job("1")!), "implement");
   w.clock.ms += 1000;
   await w.run();
   assert.deepEqual(roles(w), ["triage", "implement", "implement"]);
@@ -4538,7 +4539,7 @@ test("Overturn on an Item waiting for review sends it back to the implementor fi
   assert.equal(last.resume, "agent-s3");
   assert.doesNotMatch(last.message ?? "", /Merge now/);
   assert.match(last.message ?? "", /A person overturned decision "Which name for the helper\?" \(you chose: roundHeight\): Call it round/);
-  assert.equal(where(w.job("1"))?.merge, undefined);
+  assert.equal(mergeApproved(w.job("1")!), false);
   assert.deepEqual(w.job("1")?.overturned, ["d-1", "d-other"]);
 });
 
@@ -4561,13 +4562,15 @@ test("pressing Overturn twice does not resume twice; a change in the queue or me
   assert.equal(told.length, 1);
 
   // Not taken: in the merge queue, handed over, merged, done, or no work under way. (Parked, the job runs no session.)
-  const job = jobOf({ ...w.job("1")!, sessionId: undefined });
-  assert.equal(takesOverturn(jobOf({ ...job, parked: { as: "queued", reason: "", at: "" } }), { state: "doing" }), false);
-  assert.equal(takesOverturn(jobOf({ ...job, parked: { as: "handed-over", reason: "", at: "" } }), { state: "doing" }), false);
-  assert.equal(takesOverturn(jobOf({ ...job, merged: HEAD }), { state: "doing" }), false);
+  const job: Job = { ...w.job("1")! };
+  if (sessionIdOf(job)) endSession(job);
+  const stepNow = stepAt(job);
+  assert.equal(takesOverturn({ ...job, at: { kind: "parked", step: stepNow, parked: { as: "queued", reason: "", at: "" } } }, { state: "doing" }), false);
+  assert.equal(takesOverturn({ ...job, at: { kind: "parked", step: stepNow, parked: { as: "handed-over", reason: "", at: "" } } }, { state: "doing" }), false);
+  assert.equal(takesOverturn({ ...job, at: { kind: "merged", step: stepNow, sha: HEAD } }, { state: "doing" }), false);
   assert.equal(takesOverturn(job, { state: "done" }), false);
   assert.equal(takesOverturn(undefined, { state: "doing" }), false);
-  assert.equal(takesOverturn(jobOf({ ...job, parked: { as: "needs-decision", reason: "", at: "", byStep: true } }), { state: "doing" }), true);
+  assert.equal(takesOverturn({ ...job, at: { kind: "parked", step: stepNow, parked: { as: "needs-decision", reason: "", at: "", byStep: true } } }, { state: "doing" }), true);
 });
 
 test("an overturn kept for work whose change merged before it was handed gets the new Item an Overturn after merging files", async () => {
@@ -4601,10 +4604,10 @@ test("a triage puts a question and a rewrite on another backlog Item, which park
   assert.deepEqual(roles(w), ["triage"]);
   await step(w, "1", "succeeded", { ...TRIAGE_OK, aboutOthers: [{ item: "#2", questions: [ABOUT_Q], rewrite: ABOUT_REWRITE }] });
   const job = w.job("2")!;
-  assert.equal(where(job).parked?.as, "needs-decision");
+  assert.equal(parkedOf(job)?.as, "needs-decision");
   assert.equal(stepAt(job), "triage");
   assert.deepEqual(job.rewrite, { original: "Wind units.", text: ABOUT_REWRITE, questions: [{ ...ABOUT_Q, question: "Knots or metres per second? (asked by triage of 1)" }], round: 1, askedBy: ["triage of 1"] });
-  assert.match(where(job).parked?.reason ?? "", /^Asked by triage of 1: a rewrite of the description and 1 question about 2 waits for an answer: 1\. Knots or metres per second\? \(asked by triage of 1\)/);
+  assert.match(parkedOf(job)?.reason ?? "", /^Asked by triage of 1: a rewrite of the description and 1 question about 2 waits for an answer: 1\. Knots or metres per second\? \(asked by triage of 1\)/);
   // Its own triage did not start; item 1 went on to implement.
   assert.deepEqual(w.runner.requests.map((request) => `${request.role} ${request.subject.id}`), ["triage 1", "implement 1"]);
   assert.ok(w.calls.includes("answerTurn 2 decision"));
@@ -4647,7 +4650,7 @@ test("a cross-Item rewrite that changes only whitespace is dropped, not written 
   await step(w, "1", "succeeded", { ...TRIAGE_OK, aboutOthers: [{ item: "2", questions: [], rewrite: "Wind units.\n\nShow them  on the chart." }] });
   assert.deepEqual(w.reasons("orchestrator.about_other_written"), []);
   assert.deepEqual(w.reasons("orchestrator.about_other_dropped"), ["Triage of 1 rewrote 2's description as it already is (whitespace aside), with no question: nothing to write."]);
-  assert.notEqual(where(w.job("2"))?.parked?.as, "needs-decision");
+  assert.notEqual(parkedOf(w.job("2"))?.as, "needs-decision");
 });
 
 test("a cross-Item rewrite with no question is proposed on that Item and leaves its job exactly as it is (decision 110)", async () => {
@@ -4658,8 +4661,8 @@ test("a cross-Item rewrite with no question is proposed on that Item and leaves 
   w.store.tx(() => {
     const jobs = loadJobs(w.store);
     // Approved and to be merged, waiting for its merge turn; and one in a backoff wait after a failed attempt.
-    jobs[refKey(ref("2"))] = jobOf({ item: ref("2"), workspace: workspaceKey(ref("2")), branch: "scopesoup/2", step: "implement", failures: 0, fixRounds: 1, startedAt: at, merge: true, notBefore: later, agentSession: "agent-2", seenInTodo: true });
-    jobs[refKey(ref("3"))] = jobOf({ item: ref("3"), workspace: workspaceKey(ref("3")), branch: "scopesoup/3", step: "implement", failures: 1, fixRounds: 0, startedAt: at, notBefore: later, seenInTodo: true });
+    jobs[refKey(ref("2"))] = { item: ref("2"), workspace: workspaceKey(ref("2")), branch: "scopesoup/2", failures: 0, fixRounds: 1, startedAt: at, agentSession: "agent-2", seenInTodo: true, at: { kind: "implement", run: { is: "waiting", notBefore: later }, merge: true } };
+    jobs[refKey(ref("3"))] = { item: ref("3"), workspace: workspaceKey(ref("3")), branch: "scopesoup/3", failures: 1, fixRounds: 0, startedAt: at, seenInTodo: true, at: atStep("implement", { is: "waiting", notBefore: later }) };
     saveJobs(w.store, jobs);
   });
   const before = { two: structuredClone(w.job("2")), three: structuredClone(w.job("3")) };
@@ -4687,17 +4690,17 @@ test("an implementor puts a question on an Item with paused work, which keeps it
   const at = new Date(w.clock.ms).toISOString();
   w.store.tx(() => {
     const jobs = loadJobs(w.store);
-    jobs[refKey(ref("2"))] = jobOf({
-      item: ref("2"), workspace: workspaceKey(ref("2")), branch: "scopesoup/2", step: "implement", failures: 0, fixRounds: 1, startedAt: at,
-      agentSession: "agent-old", resumeWith: "Fix the rounding.", parked: { as: "escalated", reason: "The implement step failed 3 times.", at, byStep: true },
-    });
+    jobs[refKey(ref("2"))] = {
+      item: ref("2"), workspace: workspaceKey(ref("2")), branch: "scopesoup/2", failures: 0, fixRounds: 1, startedAt: at,
+      agentSession: "agent-old", resumeWith: "Fix the rounding.", at: { kind: "parked", step: "implement", parked: { as: "escalated", reason: "The implement step failed 3 times.", at, byStep: true } }
+};
     saveJobs(w.store, jobs);
   });
   await w.run();
   await step(w, "1", "succeeded", TRIAGE_OK);
   await step(w, "1", "succeeded", { ...IMPLEMENT_OK, aboutOthers: [{ item: "2", questions: [ABOUT_Q], rewrite: "An implementor's rewrite is not taken." }] });
   const job = w.job("2")!;
-  assert.equal(where(job).parked?.as, "needs-decision");
+  assert.equal(parkedOf(job)?.as, "needs-decision");
   assert.equal(stepAt(job), "triage");
   assert.deepEqual(job.rewrite?.askedBy, ["the implementor of 1"]);
   assert.equal(job.rewrite?.text, "Wind units.");
@@ -4716,7 +4719,7 @@ test("a question for an Item held by a person, or with a running session, waits 
   w.runner.end("1", "succeeded", { ...TRIAGE_OK, aboutOthers: [{ item: "2", questions: [ABOUT_Q] }, { item: "3", questions: [{ ...ABOUT_Q, question: "Gusts too?" }] }] });
   await w.run();
   assert.equal(w.job("2"), undefined);
-  assert.equal(where(w.job("3"))?.parked, undefined);
+  assert.equal(parkedOf(w.job("3")), undefined);
   const waits = w.reasons("orchestrator.about_other_wait");
   assert.ok(waits.includes("Questions from triage of 1 wait for 2: it is held by Pat."), waits.join(" / "));
   assert.ok(waits.includes("Questions from triage of 1 wait for 3: its triage session runs."), waits.join(" / "));
@@ -4725,13 +4728,13 @@ test("a question for an Item held by a person, or with a running session, waits 
   await w.run();
   w.clock.ms += 1000;
   await w.run();
-  assert.equal(where(w.job("3"))?.parked?.as, "needs-decision");
+  assert.equal(parkedOf(w.job("3"))?.as, "needs-decision");
   assert.deepEqual(w.job("3")?.rewrite?.questions.map((each) => each.question), ["Gusts too? (asked by triage of 1)"]);
   assert.equal(w.runner.requests.some((request) => request.role === "implement" && request.subject.id === "3"), false);
   // Pat lets go of item 2.
   w.store.put(item("2"), "sync", new Date(w.clock.ms).toISOString());
   await w.run();
-  assert.equal(where(w.job("2"))?.parked?.as, "needs-decision");
+  assert.equal(parkedOf(w.job("2"))?.as, "needs-decision");
   assert.deepEqual(w.job("2")?.rewrite?.askedBy, ["triage of 1"]);
   assert.equal(w.store.getValue("orchestrator.aboutOthers"), "{}");
 });
@@ -4743,7 +4746,7 @@ test("a question about another Item that is open there, or a person answered the
   w.store.addUsageSample(usage(0.1, 0.1));
   await w.run();
   await step(w, "3", "succeeded", { ...TRIAGE_OK, aboutOthers: [{ item: "2", questions: [q] }] });
-  const parked = where(w.job("2"))!.parked!;
+  const parked = parkedOf(w.job("2"))!;
   assert.equal(parked.as, "needs-decision");
   assert.equal(w.reasons("orchestrator.about_other_written").length, 1);
   // Asked again while it is open there: not added.
@@ -4761,7 +4764,7 @@ test("a question about another Item that is open there, or a person answered the
   assert.match(w.reasons("orchestrator.about_other_dropped").at(-1) ?? "", /^Triage of 1 asked about 2 again: .* Not asked again: a person answered it there at .* \("Yes: every file that uses m\."\)\.$/);
   assert.equal(w.store.getValue("orchestrator.aboutOthers") ?? "{}", "{}");
   assert.equal(w.reasons("orchestrator.about_other_written").length, 1);
-  assert.notEqual(where(w.job("2"))?.parked?.as, "needs-decision");
+  assert.notEqual(parkedOf(w.job("2"))?.as, "needs-decision");
 });
 
 test("a question for an Item whose change is in review waits, and does not pull it back to triage", async () => {
@@ -4776,8 +4779,8 @@ test("a question for an Item whose change is in review waits, and does not pull 
   w.runner.end("1", "succeeded", IMPLEMENT_OK);
   w.runner.end("2", "succeeded", { ...TRIAGE_OK, aboutOthers: [{ item: "1", questions: [ABOUT_Q] }] });
   await w.run();
-  assert.equal(where(w.job("1"))?.parked, undefined);
-  assert.equal(where(w.job("1"))?.step, "review");
+  assert.equal(parkedOf(w.job("1")), undefined);
+  assert.equal(stepAt(w.job("1")!), "review");
   assert.ok(w.reasons("orchestrator.about_other_wait").some((reason) => /^Questions from triage of 2 wait for 1: its (change is in review|review session runs)\.$/.test(reason)), w.reasons("orchestrator.about_other_wait").join(" / "));
   assert.deepEqual(w.reasons("orchestrator.about_other_written"), []);
 });
@@ -4792,7 +4795,7 @@ test("questions about an unknown or closed Item, or the asker's own, are dropped
   assert.match(dropped[0]!, /asked about "99", but there is no such open Item other than its own: 1 question dropped/);
   assert.match(dropped[1]!, /asked about "2", but it is done/);
   assert.equal(w.store.getValue("orchestrator.aboutOthers") ?? "{}", "{}");
-  assert.equal(where(w.job("1"))?.step, "implement");
+  assert.equal(stepAt(w.job("1")!), "implement");
 });
 
 test("an answer's aboutOthers: an entry with tool-call markup or without a question is dropped, and an implementor's rewrite is not read", () => {
@@ -4822,7 +4825,7 @@ test("on GitHub the other Item's rewrite and question are posted there, the agen
   assert.ok(all.includes(`F${zw}ixes #3 too? Ask @${zw}ada. (asked by triage of 1)`), all);
   assert.ok(all.includes(`C${zw}loses #4. Show knots.`), all);
   assert.ok(!/Fixes #3|@ada|Closes #4/.test(all), all);
-  const parked = where(loadJobs(w.store)[ghKey("2")])?.parked;
+  const parked = parkedOf(loadJobs(w.store)[ghKey("2")]);
   assert.equal(parked?.as, "needs-decision");
   assert.equal(parked?.rewrite?.questions.length, 1);
 });
@@ -4854,7 +4857,7 @@ test("Jira at level 2: claimed in a property, a question comment answered by a p
   // The triage asks: one question comment with its property, and the needs-decision label.
   w.runner.end(made.work.id, "succeeded", { ...TRIAGE_OK, hidesDecision: true, decision: { question: "Round up or down?", options: ["up", "down"], recommendation: "down" } });
   await tick(deps);
-  assert.equal(where(loadJobs(w.store)[key])?.parked?.as, "needs-decision");
+  assert.equal(parkedOf(loadJobs(w.store)[key])?.as, "needs-decision");
   const comments = jira.fake.comments[made.work.id] ?? [];
   assert.equal(comments.length, 1);
   assert.equal((jira.fake.commentProperties[comments[0]!.id]?.scopesoup as { kind: string }).kind, "question");
@@ -4864,7 +4867,7 @@ test("Jira at level 2: claimed in a property, a question comment answered by a p
   jira.fake.comments[made.work.id]!.push({ id: "99001", author: jira.person, created: "2026-11-18T10:05:00.000+0000", body: { version: 1, type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "A1: down" }] }] } });
   await sync();
   await tick(deps);
-  assert.equal(where(loadJobs(w.store)[key])?.parked, undefined);
+  assert.equal(parkedOf(loadJobs(w.store)[key]), undefined);
   assert.deepEqual(roles(w), ["triage", "triage"]);
   assert.equal(jira.fake.issues.get(made.work.id)!.fields.labels?.includes("scopesoup-needs-decision"), false);
 
@@ -4916,10 +4919,10 @@ test("a job a person put back in To do on the board is dropped once its session 
 // --- A person's picks on the board (decision 104): at any level, ending the running session at once ---
 
 /** A job at the review step with a revision, as a person's In review leaves it (src/server/moves.ts). */
-const pickedReview = (id: string, over: Record<string, unknown> = {}) => jobOf({
-  item: ref(id), workspace: workspaceKey(ref(id)), branch: `scopesoup/${id}`, step: "review" as const, failures: 0, fixRounds: 0,
-  startedAt: new Date(T0).toISOString(), head: HEAD, reviewAskedBy: "Ada", ...over,
-} as JobFields & Partial<Where>);
+const pickedReview = (id: string, over: Record<string, unknown> = {}) => ({
+  item: ref(id), workspace: workspaceKey(ref(id)), branch: `scopesoup/${id}`, failures: 0, fixRounds: 0,
+  startedAt: new Date(T0).toISOString(), head: HEAD, reviewAskedBy: "Ada", at: atStep("review"), ...over
+});
 
 test("a review step a person picked runs below level 3, even at level 0 with its hidden switch paused; only Stop holds it", async () => {
   for (const level of [0, 1, 2]) {
@@ -4945,7 +4948,7 @@ test("a review step a person picked runs below level 3, even at level 0 with its
 });
 
 test("a person's Merge queue pick hands over only the revision the reviewer approved: the branch's head is read again", async () => {
-  const picked = (over: Record<string, unknown> = {}) => pickedReview("1", { reviewAskedBy: undefined, reviewedHead: HEAD, review: { verdict: "approve", findings: [] }, owes: "hand-over", owesAskedBy: "Ada", queueAskedBy: "Ada", ...over });
+  const picked = (over: Record<string, unknown> = {}) => pickedReview("1", { reviewAskedBy: undefined, reviewedHead: HEAD, review: { verdict: "approve", findings: [] }, at: { kind: "hand-over", step: "review" }, owesAskedBy: "Ada", queueAskedBy: "Ada", ...over });
   const queue = fakeQueue();
   const w = world(config({ level: 4, ...MERGES }), [item("1")]);
   w.queue = queue;
@@ -4962,7 +4965,7 @@ test("a person's Merge queue pick hands over only the revision the reviewer appr
   saveJobs(v.store, { [refKey(ref("1"))]: picked() });
   await v.run();
   assert.deepEqual(other.enqueued, []);
-  assert.deepEqual([where(v.job("1"))?.step, v.job("1")?.queueAskedBy, where(v.job("1"))?.owes, v.job("1")?.head], ["review", undefined, undefined, "4".repeat(40)]);
+  assert.deepEqual([stepAt(v.job("1")!), v.job("1")?.queueAskedBy, owesHandOver(v.job("1")), v.job("1")?.head], ["review", undefined, false, "4".repeat(40)]);
   assert.match(v.reasons("orchestrator.step").at(-1) ?? "", /Ada's Merge queue pick is not carried out: scopesoup\/1 is at 4444444, not at the revision the reviewer approved/);
 });
 
@@ -4981,7 +4984,7 @@ test("a person's Merge queue over a running review ends that review and hands th
   const now = new Date(w.clock.ms).toISOString();
   const moved = applyMove(jobs, key, "merge-queue", { item: w.store.get<WorkItem>(ref("1"))!, job: jobs[key], lane: "in-review", level: 4, mergeQueueOn: true, at: w.clock.ms }, "Ada", now);
   assert.ok(moved.ok);
-  assert.deepEqual([where(jobs[key])?.owes, where(jobs[key])?.sessionId], ["hand-over", "s1"]);
+  assert.deepEqual([owesHandOver(jobs[key]), sessionIdOf(jobs[key])], [true, "s1"]);
   saveJobs(w.store, jobs);
   await w.run();
   await w.run();
@@ -4993,14 +4996,14 @@ test("a triage a person picked runs at level 0, and its settling clears the ask"
   const w = world(config({ level: 0 }), [item("1"), item("2")]);
   w.store.addUsageSample(usage(0.1, 0.1));
   applyControl(w.store, "pause", new Date(T0).toISOString(), "test");
-  const ask = jobOf({ item: ref("1"), workspace: workspaceKey(ref("1")), branch: "scopesoup/1", step: "triage" as const, failures: 0, fixRounds: 0, startedAt: new Date(T0).toISOString(), triageAskedBy: "Ada" } as JobFields & Partial<Where>);
+  const ask = { item: ref("1"), workspace: workspaceKey(ref("1")), branch: "scopesoup/1", failures: 0, fixRounds: 0, startedAt: new Date(T0).toISOString(), triageAskedBy: "Ada", at: atStep("triage") };
   saveJobs(w.store, { [refKey(ref("1"))]: ask });
   await w.run();
   assert.deepEqual(w.runner.requests.map((request) => `${request.role} ${request.subject.id}`), ["triage 1"]);
   w.runner.end("1", "succeeded", TRIAGE_OK);
   await w.run();
   assert.equal(w.job("1")?.triageAskedBy, undefined);
-  assert.equal(where(w.job("1"))?.step, "implement");
+  assert.equal(stepAt(w.job("1")!), "implement");
   w.clock.ms += 60_000;
   await w.run();
   assert.equal(roles(w).length, 1, "nothing more starts on its own at level 0");
@@ -5012,13 +5015,13 @@ test("Backlog (decision 121): nothing starts there; a person's triage runs and t
   const report = await w.run();
   assert.deepEqual(report.started, []);
   assert.equal(report.idle, "Nothing was started because To do is empty (2 items wait in Backlog for a person to move them to To do).");
-  const ask = jobOf({ item: ref("1"), workspace: workspaceKey(ref("1")), branch: "scopesoup/1", step: "triage" as const, failures: 0, fixRounds: 0, startedAt: new Date(T0).toISOString(), triageAskedBy: "Ada" } as JobFields & Partial<Where>);
+  const ask = { item: ref("1"), workspace: workspaceKey(ref("1")), branch: "scopesoup/1", failures: 0, fixRounds: 0, startedAt: new Date(T0).toISOString(), triageAskedBy: "Ada", at: atStep("triage") };
   saveJobs(w.store, { [refKey(ref("1"))]: ask });
   await w.run();
   assert.deepEqual(w.runner.requests.map((request) => `${request.role} ${request.subject.id}`), ["triage 1"]);
   w.runner.end("1", "succeeded", TRIAGE_OK);
   await w.run();
-  assert.equal(where(w.job("1"))?.step, "implement");
+  assert.equal(stepAt(w.job("1")!), "implement");
   w.clock.ms += 60_000;
   const waits = await w.run();
   assert.equal(roles(w).length, 1, "nothing more starts while it is in Backlog");
@@ -5034,7 +5037,7 @@ test("Backlog read at a fetch (#243): a job no person put under way is dropped, 
   // Another machine's person moved the Items to Backlog while this machine had their jobs waiting at triage (seen in To do before).
   const w = world(config(), [item("1", { backlog: true }), item("2", { backlog: true })]);
   w.store.addUsageSample(usage(0.1, 0.1));
-  const waiting = (id: string, over: Record<string, unknown> = {}) => jobOf({ item: ref(id), workspace: workspaceKey(ref(id)), branch: `scopesoup/${id}`, step: "triage" as const, failures: 0, fixRounds: 0, startedAt: new Date(T0).toISOString(), ...over } as JobFields & Partial<Where>);
+  const waiting = (id: string, over: Record<string, unknown> = {}) => ({ item: ref(id), workspace: workspaceKey(ref(id)), branch: `scopesoup/${id}`, failures: 0, fixRounds: 0, startedAt: new Date(T0).toISOString(), at: atStep("triage"), ...over });
   saveJobs(w.store, { [refKey(ref("1"))]: waiting("1", { seenInTodo: true }), [refKey(ref("2"))]: waiting("2", { seenInTodo: true, triageAskedBy: "Ada" }) });
   await w.run();
   assert.equal(w.job("1"), undefined, "the job on 1 is given up");
@@ -5047,7 +5050,7 @@ test("Backlog (decision 121): a question another Item's triage asked about an It
   w.store.addUsageSample(usage(0.1, 0.1));
   await w.run();
   await step(w, "1", "succeeded", { ...TRIAGE_OK, aboutOthers: [{ item: "#2", questions: [ABOUT_Q] }] });
-  assert.equal(where(w.job("2"))?.parked?.as, "needs-decision");
+  assert.equal(parkedOf(w.job("2"))?.as, "needs-decision");
   assert.deepEqual(answerRewrite(w, "2", ["Metres per second"]), { rerun: true });
   w.clock.ms += 1000;
   await w.run();
@@ -5061,10 +5064,10 @@ test("Backlog (decision 121): a question another Item's triage asked about an It
 // --- Implement anyway and the implementor's model per size (decision 105) ---
 
 /** A job parked by triage's verdict and overruled by a person (src/server/moves.ts): at the implement step, with Ada's ask. */
-const overruled = (id: string, over: Record<string, unknown> = {}) => jobOf({
-  item: ref(id), workspace: workspaceKey(ref(id)), branch: `scopesoup/${id}`, step: "implement" as const, failures: 0, fixRounds: 0,
-  startedAt: new Date(T0).toISOString(), triage: { ready: false, notReadyReason: "Vague.", size: "large" as const, paths: ["src/a.ts"], hidesDecision: false }, implementAskedBy: "Ada", ...over,
-} as JobFields & Partial<Where>);
+const overruled = (id: string, over: Record<string, unknown> = {}) => ({
+  item: ref(id), workspace: workspaceKey(ref(id)), branch: `scopesoup/${id}`, failures: 0, fixRounds: 0,
+  startedAt: new Date(T0).toISOString(), triage: { ready: false, notReadyReason: "Vague.", size: "large" as const, paths: ["src/a.ts"], hidesDecision: false }, implementAskedBy: "Ada", at: atStep("implement"), ...over
+});
 
 test("Implement anyway runs the implement step below level 2, even at level 0, with triage's notes as they are; its settling clears the ask", async () => {
   for (const level of [0, 1]) {
@@ -5132,8 +5135,8 @@ test("the implementor's model by triage's size, and one step stronger after two 
   const again = await started({ ...changes, reviewSendBacks: 3, fixRounds: 3, implementModel: "sonnet" });
   assert.deepEqual([again.model, /Stepped up/.test(again.line)], [undefined, false]);
   // Not the merge turn after an approval, nor a round for an approval's `should` findings: those run on the size's model.
-  assert.deepEqual([(await started({ ...changes, reviewSendBacks: 2, merge: true })).model, (await started({ review: { verdict: "approve", findings: [] }, resumeWith: "Merge.", reviewSendBacks: 2, merge: true })).model], ["haiku", "haiku"]);
-  assert.equal((await started({ ...changes, reviewSendBacks: 2, shouldRound: true })).model, "haiku");
+  assert.deepEqual([(await started({ ...changes, reviewSendBacks: 2, at: { kind: "implement", run: { is: "waiting" }, merge: true } })).model, (await started({ review: { verdict: "approve", findings: [] }, resumeWith: "Merge.", reviewSendBacks: 2, at: { kind: "implement", run: { is: "waiting" }, merge: true } })).model], ["haiku", "haiku"]);
+  assert.equal((await started({ ...changes, reviewSendBacks: 2, at: { kind: "implement", run: { is: "waiting" }, shouldRound: true } })).model, "haiku");
   // The strongest has nothing above it, and an unknown name has no order: no step-up.
   assert.doesNotMatch((await started({ ...changes, reviewSendBacks: 2, triage: { ...TRIAGE_OK, size: "large", hidesDecision: false } })).line, /Stepped up/);
   const odd = await started({ ...changes, reviewSendBacks: 2 }, { roles: { implement: { model: "sonnet", modelBySize: { small: "house-model" } } } });
@@ -5172,7 +5175,7 @@ test("a send-back by review is counted for the step-up; a merging failure is not
   await step(w, "1", "succeeded", TRIAGE_OK);
   await step(w, "1", "succeeded", IMPLEMENT_OK);
   await step(w, "1", "succeeded", REVIEW_CHANGES);
-  assert.deepEqual([where(w.job("1"))?.step, w.job("1")?.reviewSendBacks, w.job("1")?.fixRounds], ["implement", 1, 1]);
+  assert.deepEqual([stepAt(w.job("1")!), w.job("1")?.reviewSendBacks, w.job("1")?.fixRounds], ["implement", 1, 1]);
 });
 
 test("a pick that replaces the running step ends its session at once, as Stop does, and its result is not settled", async () => {
@@ -5188,7 +5191,7 @@ test("a pick that replaces the running step ends its session at once, as Stop do
   const jobs = loadJobs(w.store);
   const key = refKey(ref("1"));
   Object.assign(jobs[key]!, { head: HEAD, reviewAskedBy: "Ada", interrupt: { by: "Ada", at: new Date(T0).toISOString(), to: "in-review" } });
-  setWhere(jobs[key]!, { step: "review" });
+  moveStep(jobs[key]!, "review");
   saveJobs(w.store, jobs);
   await w.run();
   assert.match(w.runner.stops[0] ?? "", /^Stopped: Ada picked In review for 1 on the board: the implement session s2 is ended now/);
@@ -5222,7 +5225,7 @@ test("another change to the job while its session starts (an answer, not a pick)
   w.runner.start = start;
   assert.deepEqual(roles(w), ["triage", "implement"]);
   assert.deepEqual(w.runner.stops, []);
-  assert.equal(where(w.job("1"))?.sessionId, "s2");
+  assert.equal(sessionIdOf(w.job("1")), "s2");
   assert.deepEqual(w.job("1")?.fence, { paths: ["src/b.ts"] });
 });
 
@@ -5290,16 +5293,16 @@ test("an escalated hand-over whose branch head is still the base is no merge: th
   w.closesItself = true;
   w.store.addUsageSample(usage(0.1, 0.1));
   const key = refKey(ref("1"));
-  const parked = (over: Record<string, unknown>) => jobOf({
-    item: ref("1"), workspace: workspaceKey(ref("1")), branch: "scopesoup/1", step: "implement" as const, failures: 0, fixRounds: 0, startedAt: new Date(T0).toISOString(),
-    parked: { as: "escalated", reason: "Could not read whether main contains it.", at: new Date(T0).toISOString(), retry: "hand-over" }, ...over,
-  } as JobFields & Partial<Where>);
+  const parked = (over: Partial<Job>): Job => ({
+    item: ref("1"), workspace: workspaceKey(ref("1")), branch: "scopesoup/1", failures: 0, fixRounds: 0, startedAt: new Date(T0).toISOString(), ...over,
+    at: { kind: "parked", step: "implement", parked: { as: "escalated", reason: "Could not read whether main contains it.", at: new Date(T0).toISOString(), retry: "hand-over" } },
+  });
   w.runner.main = MAIN_START;
   w.runner.headSha = MAIN_START;
   saveJobs(w.store, { [key]: parked({ base: MAIN_START }) });
   await w.run();
   assert.equal(w.closes.length, 0);
-  assert.equal(where(w.job("1"))?.parked?.as, "escalated");
+  assert.equal(parkedOf(w.job("1"))?.as, "escalated");
   // With a commit over the base that main holds now, a person merged it: done.
   w.runner.headSha = HEAD;
   w.runner.main = MAIN_MERGED;

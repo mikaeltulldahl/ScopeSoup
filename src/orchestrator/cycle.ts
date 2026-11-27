@@ -15,7 +15,7 @@ import { persistenceLimits } from "../config/persistence.ts";
 import type { Context } from "./context.ts";
 import { ACTOR, errorText } from "./context.ts";
 import type { AskedText, Decision, ItemLinkAnswer, Job, JobParked, JobStep, ParkedAs, ReviewAnswer, TakenDecision, TriageAnswer, Finding } from "./jobs.ts";
-import { ASK_PERSON, answerIn, askedInLog, jobQuestions, nextPark, parkSet, asImplement, asReview, asTriage, formatFindings, hasMarkup, recoverFields, keepsRecommendations, picks, questionsSettled, releaseIn, parkedRewrite, changedRewrite, sameText, jobOf, stepAt, parkedOf, mergedOf, mergeApproved, shouldRoundOf, parkJob, editParked, release, nextStep, moveStep, endSession, wait, oweHandOver, handOverTaken, markMerged, dropMerge, dropShouldRound, setRecheck, toTriage } from "./jobs.ts";
+import { ASK_PERSON, answerIn, askedInLog, jobQuestions, nextPark, parkSet, asImplement, asReview, asTriage, formatFindings, hasMarkup, recoverFields, keepsRecommendations, picks, questionsSettled, releaseIn, parkedRewrite, changedRewrite, sameText, atStep, stepAt, parkedOf, mergedOf, mergeApproved, shouldRoundOf, parkJob, editParked, release, nextStep, moveStep, endSession, wait, oweHandOver, handOverTaken, markMerged, dropMerge, dropShouldRound, setRecheck, toTriage } from "./jobs.ts";
 import { providerFor } from "./providers/index.ts";
 import type { Actions, ClaimResult, SessionResultRecord } from "./ports.ts";
 import { CLAIM_EXPIRY_MINUTES } from "./ports.ts";
@@ -1764,7 +1764,7 @@ export async function writeAboutOthers(ctx: Context): Promise<void> {
     const rewrite = changedRewrite([...entries].reverse().find((each) => each.rewrite)?.rewrite, item.body, item.verification) || original;
     // A job parked before gave back its workspace then; one between steps holds it still.
     const holds = existing !== undefined && !parkedOf(existing);
-    const job: Job = existing ?? jobOf({ item: item.ref, workspace: workspaceKey(item.ref), branch: workBranch(item.ref), failures: 0, fixRounds: 0, startedAt: ctx.at, othersAsked: true, step: "triage" });
+    const job: Job = existing ?? { item: item.ref, workspace: workspaceKey(item.ref), branch: workBranch(item.ref), failures: 0, fixRounds: 0, startedAt: ctx.at, othersAsked: true, at: atStep("triage") };
     // Work paused on it keeps its branch, its implementor's session and the findings it is to be told; what it was about to do
     // next waits until the triage has run again with the answers.
     toTriage(job);

@@ -20,8 +20,8 @@ import { setRolesForTest } from "../store/control.ts";
 import { conflictQuestion, GO_ON_WITH_BOTH, itemTextHash } from "../core/answerReuse.ts";
 import { addAnswer } from "../store/answers.ts";
 import type { Actions, AgentRunner, SessionRequest } from "./ports.ts";
-import { adoptWritten, loadJobs, saveJobs, setWhere, where, jobOf } from "./jobs.ts";
-import type { Job, Where } from "./jobs.ts";
+import { adoptWritten, loadJobs, saveJobs, recheckOf, stepAt, atStep, markMerged } from "./jobs.ts";
+import type { Job } from "./jobs.ts";
 import { realGit } from "./process.ts";
 import { triagedNow, triagedText, staleWithoutGit, usablePaths } from "./recheck.ts";
 import { sessionResultKey } from "./runner.ts";
@@ -147,7 +147,7 @@ async function triaged(w: World, id: string): Promise<void> {
   assert.equal(w.requests.at(-1)?.role, "triage");
   w.end(id, "succeeded", TRIAGE_OK);
   await w.run();
-  assert.equal(where(w.job(id))?.step, "implement");
+  assert.equal(stepAt(w.job(id)!), "implement");
   assert.ok(w.job(id)?.triaged, "what the triage saw is kept");
 }
 
@@ -194,7 +194,7 @@ describe("a waiting Item's triage again", { concurrency: 8 }, () => {
     w.clock.ms += 1000;
     await w.run();
     assert.equal(w.requests.at(-1)?.role, "implement");
-    assert.equal(where(w.job("1"))?.recheck, undefined);
+    assert.equal(recheckOf(w.job("1")), undefined);
   });
 
   test("an edited text has the triage again, shown the text it read before", async () => {
@@ -239,11 +239,11 @@ describe("a waiting Item's triage again", { concurrency: 8 }, () => {
     const w = world(config({ level: 2 }), [item("1"), item("2", { state: "done" })]);
     const text = triagedText(item("1"));
     const jobs = loadJobs(w.store);
-    jobs[refKey(ref("1"))] = jobOf({
-      item: ref("1"), workspace: "w1", branch: "scopesoup/1", step: "implement", failures: 0, fixRounds: 0, startedAt: new Date(T0).toISOString(),
+    jobs[refKey(ref("1"))] = {
+      item: ref("1"), workspace: "w1", branch: "scopesoup/1", failures: 0, fixRounds: 0, startedAt: new Date(T0).toISOString(),
       triage: { ready: true, size: "small", paths: [], hidesDecision: false, rewrite: "Do 1." },
-      triaged: { at: new Date(T0).toISOString(), ...text, blockers: [refKey(ref("2"))] },
-    });
+      triaged: { at: new Date(T0).toISOString(), ...text, blockers: [refKey(ref("2"))] }, at: atStep("implement")
+    };
     w.store.tx(() => saveJobs(w.store, jobs));
     await w.run();
     const next = w.requests.at(-1)!;
@@ -277,11 +277,11 @@ describe("a waiting Item's triage again", { concurrency: 8 }, () => {
 describe("what counts as a change", () => {
   test("a description Scope Soup wrote from the accepted rewrite is no edit; another text is", () => {
     const work = item("1");
-    const job: Job = jobOf({
-      item: ref("1"), workspace: "w", branch: "scopesoup/1", step: "implement", failures: 0, fixRounds: 0, startedAt: new Date(T0).toISOString(),
+    const job: Job = {
+      item: ref("1"), workspace: "w", branch: "scopesoup/1", failures: 0, fixRounds: 0, startedAt: new Date(T0).toISOString(),
       triage: { ready: true, size: "small", paths: [], hidesDecision: false, rewrite: "Do 1 well." },
-      triaged: adoptWritten({ at: new Date(T0).toISOString(), ...triagedText(work), blockers: [] }, ["Do 1 well."]),
-    });
+      triaged: adoptWritten({ at: new Date(T0).toISOString(), ...triagedText(work), blockers: [] }, ["Do 1 well."]), at: atStep("implement")
+    };
     assert.deepEqual(staleWithoutGit(job, work, [work]).reasons, []);
     assert.deepEqual(staleWithoutGit(job, item("1", { body: "Do 1 well." }), []).reasons, []);
     assert.deepEqual(staleWithoutGit(job, item("1", { body: "Do 1 badly." }), []).reasons, ["its text was edited"]);
@@ -289,7 +289,7 @@ describe("what counts as a change", () => {
   });
 
   test("a triage from earlier has no record of what it saw: nothing counts, not its age either", () => {
-    const job: Job = jobOf({ item: ref("1"), workspace: "w", branch: "scopesoup/1", step: "implement", failures: 0, fixRounds: 0, startedAt: new Date(T0).toISOString(), triage: { ready: true, size: "small", paths: [], hidesDecision: false, rewrite: "" } });
+    const job: Job = { item: ref("1"), workspace: "w", branch: "scopesoup/1", failures: 0, fixRounds: 0, startedAt: new Date(T0).toISOString(), triage: { ready: true, size: "small", paths: [], hidesDecision: false, rewrite: "" }, at: atStep("implement") };
     assert.deepEqual(staleWithoutGit(job, item("1", { body: "Changed." }), []).reasons, []);
   });
 
@@ -298,7 +298,7 @@ describe("what counts as a change", () => {
     const other = item("2");
     const triaged = triagedNow(triagedText(work), work, [work, other, item("3", { state: "done" })], new Date(T0).toISOString(), MAIN_A, [{ type: "related", item: "#2" }, { type: "related", item: "3" }, { type: "related", item: "#9" }]);
     assert.deepEqual(triaged.linked, [refKey(ref("2"))]);
-    const job: Job = jobOf({ item: ref("1"), workspace: "w", branch: "scopesoup/1", step: "implement", failures: 0, fixRounds: 0, startedAt: new Date(T0).toISOString(), triage: { ready: true, size: "small", paths: [], hidesDecision: false, rewrite: "Do 1." }, triaged });
+    const job: Job = { item: ref("1"), workspace: "w", branch: "scopesoup/1", failures: 0, fixRounds: 0, startedAt: new Date(T0).toISOString(), triage: { ready: true, size: "small", paths: [], hidesDecision: false, rewrite: "Do 1." }, triaged, at: atStep("implement") };
     assert.deepEqual(staleWithoutGit(job, work, [work, other]).reasons, []);
     assert.deepEqual(staleWithoutGit(job, work, [work, item("2", { state: "abandoned" })]).reasons, ["an Item it is linked to is closed (2)"]);
   });
@@ -310,12 +310,12 @@ describe("what counts as a change", () => {
 
 describe("triage again within its share (#217)", { concurrency: 4 }, () => {
   /** A triaged Item waiting at its implement step in To do (or Backlog), its triage taken at `at` and naming `paths`. */
-  function waitingAt(id: string, at: number, over: Partial<Job & Where> = {}): Job {
-    return jobOf({
-      item: ref(id), workspace: `w${id}`, branch: `scopesoup/${id}`, step: "implement", failures: 0, fixRounds: 0, startedAt: new Date(at).toISOString(), seenInTodo: true,
+  function waitingAt(id: string, at: number): Job {
+    return {
+      item: ref(id), workspace: `w${id}`, branch: `scopesoup/${id}`, failures: 0, fixRounds: 0, startedAt: new Date(at).toISOString(), seenInTodo: true,
       triage: { ready: true, size: "small", paths: [], hidesDecision: false, rewrite: `Do ${id}.` },
-      triaged: { at: new Date(at).toISOString(), ...triagedText(item(id)), blockers: [] }, ...over,
-    });
+      triaged: { at: new Date(at).toISOString(), ...triagedText(item(id)), blockers: [] }, at: atStep("implement"),
+    };
   }
   /** Sessions that ran in the last week: what the share is measured against (each counts its role's expected use). */
   function ran(w: World, n: number): void {
@@ -481,11 +481,11 @@ describe("pacing of triages with a big backlog", { concurrency: 4 }, () => {
 describe("Items that change the same files", { concurrency: 4 }, () => {
   /** A triaged Item about to start its implement step, its triage naming `paths`. */
   function waitingJob(id: string, paths: string[]): Job {
-    return jobOf({
-      item: ref(id), workspace: `w${id}`, branch: `scopesoup/${id}`, step: "implement", failures: 0, fixRounds: 0, startedAt: new Date(T0).toISOString(),
+    return {
+      item: ref(id), workspace: `w${id}`, branch: `scopesoup/${id}`, failures: 0, fixRounds: 0, startedAt: new Date(T0).toISOString(),
       triage: { ready: true, size: "small", paths, hidesDecision: false, rewrite: `Do ${id}.` },
-      triaged: { at: new Date(T0).toISOString(), ...triagedText(item(id)), blockers: [] },
-    });
+      triaged: { at: new Date(T0).toISOString(), ...triagedText(item(id)), blockers: [] }, at: atStep("implement")
+    };
   }
 
   test("two Items with overlapping paths do not run at once; one without overlap, or without paths, starts instead", async () => {
@@ -514,14 +514,14 @@ describe("Items that change the same files", { concurrency: 4 }, () => {
     await w.run();
     w.clock.ms += 1000;
     await w.run();
-    assert.equal(where(w.job(first))?.step, "review");
+    assert.equal(stepAt(w.job(first)!), "review");
     assert.equal(w.requests.filter((request) => request.subject.id === other).length, 0);
   });
 
   test("an Item in review holds back one whose paths overlap", async () => {
     const w = world(config({ level: 3 }), [item("1"), item("2")]);
     const jobs = loadJobs(w.store);
-    jobs[refKey(ref("1"))] = jobOf({ ...waitingJob("1", ["src/a.ts"]), step: "review", head: "3".repeat(40) });
+    jobs[refKey(ref("1"))] = { ...waitingJob("1", ["src/a.ts"]), head: "3".repeat(40), at: atStep("review") };
     jobs[refKey(ref("2"))] = waitingJob("2", ["src/a.ts", "docs/RUNNING.md"]);
     w.store.tx(() => saveJobs(w.store, jobs));
     await w.run();
@@ -534,14 +534,14 @@ describe("Items that change the same files", { concurrency: 4 }, () => {
     const w = world(config({ level: 4, remoteUrl: "git@git.example.invalid:team/project.git", checkCommand: ["node", "check.js"] }), [item("1"), item("2")]);
     const jobs = loadJobs(w.store);
     const at = new Date(T0).toISOString();
-    jobs[refKey(ref("1"))] = jobOf({ ...waitingJob("1", ["src/a.ts"]), head: "3".repeat(40), queued: "3".repeat(40), parked: { as: "queued", reason: "In the merge queue.", at } });
+    jobs[refKey(ref("1"))] = { ...waitingJob("1", ["src/a.ts"]), head: "3".repeat(40), queued: "3".repeat(40), at: { kind: "parked", step: "implement", parked: { as: "queued", reason: "In the merge queue.", at } } };
     jobs[refKey(ref("2"))] = waitingJob("2", ["src/a.ts"]);
     w.store.tx(() => saveJobs(w.store, jobs));
     await w.run();
     assert.equal(w.requests.filter((request) => request.subject.id === "2").length, 0);
     assert.deepEqual(loadSnapshot(w.store).sameFiles, [{ subject: ref("2"), waitsFor: [ref("1")] }]);
     const merged = loadJobs(w.store);
-    setWhere(merged[refKey(ref("1"))]!, { merged: "4".repeat(40) });
+    markMerged(merged[refKey(ref("1"))]!, "4".repeat(40));
     w.store.tx(() => saveJobs(w.store, merged));
     w.clock.ms += 1000;
     await w.run();
@@ -551,7 +551,7 @@ describe("Items that change the same files", { concurrency: 4 }, () => {
   test("an Item parked for a person before any change exists holds nothing back", async () => {
     const w = world(config({ level: 3 }), [item("1"), item("2")]);
     const jobs = loadJobs(w.store);
-    jobs[refKey(ref("1"))] = jobOf({ ...waitingJob("1", ["src/a.ts"]), parked: { as: "needs-decision", reason: "Old or new?", at: new Date(T0).toISOString() } });
+    jobs[refKey(ref("1"))] = { ...waitingJob("1", ["src/a.ts"]), at: { kind: "parked", step: "implement", parked: { as: "needs-decision", reason: "Old or new?", at: new Date(T0).toISOString() } } };
     jobs[refKey(ref("2"))] = waitingJob("2", ["src/a.ts"]);
     w.store.tx(() => saveJobs(w.store, jobs));
     await w.run();
@@ -566,7 +566,7 @@ describe("Items that change the same files", { concurrency: 4 }, () => {
       windows: [{ kind: "five_hour", utilization: 0.1, resetsAt: new Date(T0 + 2 * 3600_000).toISOString() }, { kind: "seven_day", utilization: 0.1, resetsAt: new Date(T0 + 3 * DAY).toISOString() }],
     });
     const jobs = loadJobs(w.store);
-    jobs[refKey(ref("1"))] = jobOf({ ...waitingJob("1", ["src/a.ts"]), step: "review", head: "3".repeat(40) });
+    jobs[refKey(ref("1"))] = { ...waitingJob("1", ["src/a.ts"]), head: "3".repeat(40), at: atStep("review") };
     const second = waitingJob("2", ["web/b.ts"]);
     jobs[refKey(ref("2"))] = { ...second, triage: { ...second.triage!, links: [{ type: "conflictsWith", item: "#1" }] } };
     w.store.tx(() => saveJobs(w.store, jobs));
@@ -583,7 +583,7 @@ describe("Items that change the same files", { concurrency: 4 }, () => {
     const w = world(config({ level: 3 }), [item("1"), item("2")]);
     const jobs = loadJobs(w.store);
     const first = waitingJob("1", ["src/a.ts"]);
-    jobs[refKey(ref("1"))] = jobOf({ ...first, step: "review", head: "3".repeat(40), triage: { ...first.triage!, links: [{ type: "conflictsWith", item: "2" }] } });
+    jobs[refKey(ref("1"))] = { ...first, head: "3".repeat(40), triage: { ...first.triage!, links: [{ type: "conflictsWith", item: "2" }] }, at: atStep("review") };
     jobs[refKey(ref("2"))] = waitingJob("2", ["web/b.ts"]);
     w.store.tx(() => saveJobs(w.store, jobs));
     await w.run();

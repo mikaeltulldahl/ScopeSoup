@@ -3,15 +3,17 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { openStore } from "../store/store.ts";
-import { answerQuestion, loadJobs, jobQuestions, releaseJob, saveJobs, setWhere, where, jobOf } from "./jobs.ts";
-import type { Job, Jobs, JobParked, Where } from "./jobs.ts";
+import { answerQuestion, loadJobs, jobQuestions, releaseJob, saveJobs, owesHandOver, parkedOf, stepAt, atStep, moveStep } from "./jobs.ts";
+import type { Job, JobAt, Jobs, JobParked, JobStep } from "./jobs.ts";
 
-function job(id: string, extra: Partial<Job & Where> = {}): Job {
-  return jobOf({
-    item: { host: "h", kind: "work", id }, workspace: "w", branch: `scopesoup/${id}`, step: "implement", failures: 0, fixRounds: 0,
-    startedAt: "2026-11-20T10:00:00Z", ...extra,
-  } as Job & Where);
+function job(id: string, extra: Partial<Job> = {}): Job {
+  return {
+    item: { host: "h", kind: "work", id }, workspace: "w", branch: `scopesoup/${id}`, failures: 0, fixRounds: 0,
+    startedAt: "2026-11-20T10:00:00Z", at: atStep("implement"), ...extra,
+  };
 }
+
+const parkedAt = (parked: JobParked, step: JobStep = "implement"): JobAt => ({ kind: "parked", step, parked });
 
 const parked: JobParked = { as: "needs-decision", reason: "asks", at: "2026-11-20T10:00:00Z" };
 const K1 = "h:work:1";
@@ -19,7 +21,7 @@ const K2 = "h:work:2";
 
 test("a release given while a tick holds its jobs is not undone by the tick's save", () => {
   const store = openStore(":memory:");
-  const seeded: Jobs = { [K1]: job("1", { parked }), [K2]: job("2", { parked }) };
+  const seeded: Jobs = { [K1]: job("1", { at: parkedAt(parked) }), [K2]: job("2", { at: parkedAt(parked) }) };
   store.tx(() => saveJobs(store, seeded));
   const tick = loadJobs(store);
   tick[K2]!.failures = 5; // the tick's own change to another job
@@ -38,7 +40,7 @@ test("a proposal accepted while a tick holds its jobs is not undone by the tick'
   const store = openStore(":memory:");
   const proposal = { id: "abc12345", reason: "too large", original: "umbrella" as const, parts: [{ title: "Part one", description: "", verification: "", goes: "child" as const }] };
   const asNeedsDecision = { ...parked, as: "needs-decision" } as unknown as JobParked;
-  store.tx(() => saveJobs(store, { [K1]: job("1", { parked: asNeedsDecision, proposal }), [K2]: job("2") }));
+  store.tx(() => saveJobs(store, { [K1]: job("1", { at: parkedAt(asNeedsDecision), proposal }), [K2]: job("2") }));
   const tick = loadJobs(store);
   tick[K2]!.fixRounds = 2;
   assert.equal(releaseJob(store, { host: "h", kind: "work", id: "1" }, "Ada", "2026-11-20T10:05:00Z", "Ada rejected the proposed restructuring."), true);
@@ -51,7 +53,7 @@ test("a proposal accepted while a tick holds its jobs is not undone by the tick'
 test("a job the tick adds or deletes is kept while the store changed another", () => {
   const store = openStore(":memory:");
   const K3 = "h:work:3";
-  store.tx(() => saveJobs(store, { [K1]: job("1", { parked }), [K2]: job("2") }));
+  store.tx(() => saveJobs(store, { [K1]: job("1", { at: parkedAt(parked) }), [K2]: job("2") }));
   const tick = loadJobs(store);
   tick[K3] = job("3"); // the tick starts an item
   delete tick[K2]; // and finishes another
@@ -71,25 +73,24 @@ test("a map that was not loaded with loadJobs is saved as it is", () => {
 
 test("a hand-over release (the job stays, owes set) survives the tick's save", () => {
   const store = openStore(":memory:");
-  store.tx(() => saveJobs(store, { [K1]: job("1", { parked: { ...parked, retry: "hand-over" } }), [K2]: job("2") }));
+  store.tx(() => saveJobs(store, { [K1]: job("1", { at: parkedAt({ ...parked, retry: "hand-over" }) }), [K2]: job("2") }));
   const tick = loadJobs(store);
-  setWhere(tick[K2]!, { step: "review" });
+  moveStep(tick[K2]!, "review");
   assert.equal(releaseJob(store, { host: "h", kind: "work", id: "1" }, "Ada", "2026-11-20T10:05:00Z", "again"), true);
   store.tx(() => saveJobs(store, tick));
   const after = loadJobs(store);
-  assert.equal(where(after[K1])!.parked, undefined);
-  assert.equal(where(after[K1])!.owes, "hand-over");
-  assert.equal(where(after[K2])!.step, "review");
+  assert.equal(parkedOf(after[K1]), undefined);
+  assert.equal(owesHandOver(after[K1]), true);
+  assert.equal(stepAt(after[K2]!), "review");
 });
 
 /** A job parked on triage's `count` decisions. */
 function asking(id: string, count: number): Job {
   const decisions = Array.from({ length: count }, (_, index) => ({ question: `Question ${index + 1}?`, options: [{ label: "a", description: "" }, { label: "b", description: "" }], recommendation: "a" }));
   return job(id, {
-    step: "triage",
-    parked: { as: "needs-decision", reason: "asks", at: "2026-11-20T10:00:00Z" },
+    at: parkedAt({ as: "needs-decision", reason: "asks", at: "2026-11-20T10:00:00Z" }, "triage"),
     triage: { ready: true, size: "small", paths: [], hidesDecision: true, decision: decisions[0], decisions, risk: "low", riskReason: "" },
-  } as Partial<Job & Where>);
+  } as Partial<Job>);
 }
 
 test("several open questions: each answer is kept, and only the last one releases the job", () => {
@@ -104,7 +105,7 @@ test("several open questions: each answer is kept, and only the last one release
   // A question has one answer: a second one is refused, and the first is kept.
   assert.deepEqual(answerQuestion(store, item, 1, "a", "Ada", "2026-11-20T10:02:00Z"), { refused: "answered" });
   assert.deepEqual(loadJobs(store)[K1]!.answered?.map((each) => [each.index, each.answer]), [[1, "b"]]);
-  assert.ok(where(loadJobs(store)[K1])!.parked);
+  assert.ok(parkedOf(loadJobs(store)[K1]));
   assert.deepEqual(answerQuestion(store, item, 0, "a", "Ada", "2026-11-20T10:03:00Z", "2026-11-20T10:00:00Z"), { released: true, open: 0 });
   assert.equal(loadJobs(store)[K1], undefined, "an Item parked at triage starts over at triage");
   const released = store.eventsAfter(0, 50).filter((event) => event.kind === "orchestrator.job_released");

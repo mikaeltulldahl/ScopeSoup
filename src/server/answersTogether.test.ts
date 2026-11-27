@@ -11,8 +11,8 @@ import { fakeIssues, ISSUES_API } from "../hosts/github/fakeIssues.ts";
 import type { Ref, WorkItem } from "../model/types.ts";
 import { refKey } from "../model/types.ts";
 import { createHostActions } from "../orchestrator/hostActions.ts";
-import type { Decision, Job, Where } from "../orchestrator/jobs.ts";
-import { loadJobs, saveJobs, where, jobOf } from "../orchestrator/jobs.ts";
+import type { Decision, Job } from "../orchestrator/jobs.ts";
+import { loadJobs, saveJobs, parkedOf, atStep } from "../orchestrator/jobs.ts";
 import { loadAnswers } from "../store/answers.ts";
 import type { Store } from "../store/store.ts";
 import { openStore } from "../store/store.ts";
@@ -53,7 +53,7 @@ after(async () => {
   store.close();
 });
 
-const jobFor = (item: Ref, over: Partial<Job & Where>): Job => (jobOf({ item, workspace: `/srv/clone-${item.id}`, branch: `scopesoup/${item.id}`, step: "triage", failures: 0, fixRounds: 0, startedAt: at, ...over }));
+const jobFor = (item: Ref, over: Partial<Job>): Job => ({ item, workspace: `/srv/clone-${item.id}`, branch: `scopesoup/${item.id}`, failures: 0, fixRounds: 0, startedAt: at, at: atStep("triage"), ...over });
 
 /** GitHub Item `id` parked on the two triage questions, posted as comments. */
 async function parkedJob(id: string): Promise<string[]> {
@@ -61,7 +61,7 @@ async function parkedJob(id: string): Promise<string[]> {
   saveJobs(store, {
     ...loadJobs(store),
     [key(id)]: jobFor(ref(id), ({
-      parked: { as: "needs-decision", reason: "Two questions.", at, questions: asked!.ids, askedAt: asked!.at },
+      at: { kind: "parked", step: "triage", parked: { as: "needs-decision", reason: "Two questions.", at, questions: asked!.ids, askedAt: asked!.at } },
       triage: { ready: true, size: "small", paths: [], hidesDecision: true, decision: DECISIONS[0]!, decisions: DECISIONS },
     })),
   });
@@ -104,7 +104,7 @@ describe("answers sent together on GitHub", () => {
     assert.deepEqual(await first.json(), { recorded: true, released: false, open: 1 });
     assert.equal(answerComments("2").length, 1);
     assert.deepEqual(store.get<WorkItem>(ref("2"))!.openQuestions?.map((each) => each.id), [ids[0]]);
-    assert.equal(where(loadJobs(store)[key("2")])?.parked?.as, "needs-decision");
+    assert.equal(parkedOf(loadJobs(store)[key("2")])?.as, "needs-decision");
     // Two answers to one question in one Send, or one already answered, are refused, and nothing is posted.
     fake.clear();
     const twice = await post("/api/answers", { ref: key("2"), parkedAt: at, answers: [{ question: 0, answer: "down" }, { question: 0, answer: "up" }] });
@@ -124,9 +124,9 @@ describe("answers sent together on GitHub", () => {
     saveJobs(store, {
       ...loadJobs(store),
       [key("3")]: jobFor(ref("3"), ({
+        at: { kind: "parked", step: "triage", parked: { as: "needs-decision", reason: "Triage, round 1.", at, rewrite: { id: rewrite!.id, questions: asked!.ids } } },
         triage: { ready: true, size: "small", paths: [], hidesDecision: true, decisions: [question], rewrite: "Show the tides in metres." },
         rewrite: { original: fake.issues.get("3")!.body ?? "", text: "Show the tides in metres.", questions: [question], round: 1 }, rewriteRounds: 1,
-        parked: { as: "needs-decision", reason: "Triage, round 1.", at, rewrite: { id: rewrite!.id, questions: asked!.ids } },
       })),
     });
     fake.clear();
@@ -150,7 +150,7 @@ describe("answers sent together in Scope Soup's store", () => {
     const item = work(id, { title: "Mend the fence" });
     store.put(item, "sync", T0);
     const k = refKey(item.ref);
-    saveJobs(store, { ...loadJobs(store), [k]: jobFor(item.ref, ({ parked: { as: "needs-decision", reason: "Two questions.", at: T0 }, triage: { ready: true, size: "small", paths: [], hidesDecision: true, decision: DECIDE[0]!, decisions: DECIDE } })) });
+    saveJobs(store, { ...loadJobs(store), [k]: jobFor(item.ref, ({ at: { kind: "parked", step: "triage", parked: { as: "needs-decision", reason: "Two questions.", at: T0 } }, triage: { ready: true, size: "small", paths: [], hidesDecision: true, decision: DECIDE[0]!, decisions: DECIDE } })) });
     return k;
   };
 

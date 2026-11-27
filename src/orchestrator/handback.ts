@@ -16,7 +16,7 @@ import { errorText } from "./context.ts";
 import { afterBuild } from "./cycle.ts";
 import type { Job } from "./jobs.ts";
 import { workBranch, workspaceKey, BRANCH_PREFIX } from "./paths.ts";
-import { jobOf, sessionIdOf } from "./jobs.ts";
+import { atStep, sessionIdOf } from "./jobs.ts";
 
 const SEEN_KEY = "orchestrator.handbacks";
 
@@ -124,14 +124,14 @@ export async function adoptHandbacks(ctx: Context, items: readonly WorkItem[], c
       continue;
     }
     ctx.forget("orchestrator.handback_waits", key);
-    const job: Job = jobOf({
+    const job: Job = {
       item: item.ref, workspace: workspaceKey(item.ref), branch: handed.branch || workBranch(item.ref),
-      step: "implement", failures: 0, fixRounds: 0, startedAt: ctx.at, head,
+      at: atStep("implement"), failures: 0, fixRounds: 0, startedAt: ctx.at, head,
       implement: {
         done: true,
         summary: `Handed back by ${handed.by}${handed.note ? `: ${handed.note}` : "."}`,
       },
-    });
+    };
     ctx.jobs[key] = job;
     seen.add(handed.key);
     pending.delete(key);
