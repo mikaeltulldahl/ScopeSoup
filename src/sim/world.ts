@@ -497,6 +497,9 @@ export class SimWorld {
     this.store = openStore(":memory:");
     this.actions = createHostActions({ host: this.host, git: async () => ({ code: 0, stdout: "", stderr: "" }), config: () => this.configNow, store: this.store });
     this.runner.live.clear();
+    // Which worktree an Item holds is kept in the store (`src/orchestrator/slots.ts`): with the store, every holding is gone, and the
+    // worktrees are free ones the next Item takes. The fake's worktrees are holdings, so they go too.
+    this.git.worktrees.clear();
     this.runner = this.makeRunner(this.runner.requests.length + 100);
     this.queue = this.makeQueue();
     this.server = this.makeServer();

@@ -153,8 +153,11 @@ export function createHostActions(deps: HostActionsDeps): Actions {
       const outcome = await write.appendLog(item, { kind: "claimed", by: SCOPESOUP, fields: { until } });
       // Other machines see the claim only once it is shared; one that is not shared protects nothing.
       if (outcome.shared === "pending") return { won: false, why: `the claim could not be shared with the other machines${outcome.problem ? ` (${outcome.problem})` : ""}` };
-      // The claim is written and shared; the fold of the log says whose it is. The earliest claim stands.
-      const holder = (await host.work?.getWork(item))?.holder;
+      // The claim is written and shared; the fold of the log says whose it is. The earliest claim stands. Read back into the store, so
+      // the next tick sees the new `until` and does not renew it again.
+      const after = await host.work?.getWork(item);
+      if (after) deps.store.put(after, "sync", new Date().toISOString());
+      const holder = after?.holder;
       if (holder && me && holder.actor.id !== me) return { won: false, why: `held by ${holder.actor.name}` };
       return { won: true };
     },
@@ -167,6 +170,8 @@ export function createHostActions(deps: HostActionsDeps): Actions {
       }
       if (!write?.appendLog) return;
       await write.appendLog(item, { kind: "released", by: SCOPESOUP, fields: { reason } });
+      // Read back, as a claim is: the store shows the claim gone at once, not only after the next sync.
+      await reread(item);
     },
 
     async answerTurn(item, kind, reason) {
@@ -221,7 +226,7 @@ export function createHostActions(deps: HostActionsDeps): Actions {
         async closeDuplicate(item: Ref, of: Ref) {
           if (!mine(item) || of.host !== item.host) return false;
           await write.editWork!(item, { state: "abandoned", duplicateOf: of });
-          await write.appendLog!(item, { kind: "edited", by: SCOPESOUP, fields: { changed: ["state", "duplicate of"], via: "a person's answer" } });
+          await write.appendLog!(item, { kind: "edited", by: SCOPESOUP, fields: { changed: ["state", "duplicate of"], state: "abandoned", via: "a person's answer" } });
           await reread(item);
           return true;
         },

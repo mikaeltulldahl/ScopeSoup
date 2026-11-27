@@ -566,12 +566,13 @@ export const RULES: Rule[] = [
   },
   {
     id: "H3",
-    why: "Timed waits end: no job waits for written text past 30 minutes and a tick, and no claim of Scope Soup's outlives 120 minutes without a session (#194, #197).",
+    why: "Timed waits end: no job waits for written text past 30 minutes and a tick, and no claim of Scope Soup's outlives 120 minutes without a session or a change in this machine's merge queue (#194, #197, #229).",
     check(o, _prev, memo) {
       return first(o.items, (i) => {
         const writing = i.job?.writing;
         if (writing && Date.parse(o.at) - Date.parse(writing.at) > 31 * 60_000 && isTick(o) && /written|its text|description/i.test(i.card?.reason ?? "")) return `${i.id} still waits for its text, written at ${writing.at}`;
-        const claimed = i.item.holder?.actor.id === OWN && i.live.length === 0 && (!i.item.holder.until || i.item.holder.until > o.at);
+        // A change waiting in this machine's merge queue is work under way here: its claim keeps other machines off it.
+        const claimed = i.item.holder?.actor.id === OWN && i.live.length === 0 && i.w.kind !== "queue" && (!i.item.holder.until || i.item.holder.until > o.at);
         const table = (memo.claims ??= {}) as Record<string, string>;
         if (!claimed) delete table[i.key];
         else table[i.key] ??= o.at;
@@ -656,8 +657,9 @@ export const RULES: Rule[] = [
   {
     id: "I4",
     why: "Merged is the host's word, not ancestry: a branch with work that did not land is never deleted.",
-    check(o) {
-      const lost = o.git.deleted.find((d) => d.unmerged && d.madeBy?.scopesoup);
+    check(o, prev) {
+      // Judged when it happens: a reopen later does not undo the person's close the deletion followed.
+      const lost = o.git.deleted.slice(prev?.git.deleted.length ?? 0).find((d) => d.unmerged && d.madeBy?.scopesoup);
       if (!lost) return null;
       const i = o.items.find((each) => each.key === lost.madeBy?.item);
       // A person closed the Item: its work is theirs to throw away.
@@ -717,11 +719,15 @@ export const RULES: Rule[] = [
   {
     id: "J3",
     why: "Nothing an agent creates lands in To do; new Items land in Backlog unless a person files them in To do (#221).",
-    check(o, prev) {
+    check(o, prev, memo) {
+      // New is new to the run: an Item read back after the store was lost was seen before.
+      const seen = (memo.seen ??= {}) as Record<string, true>;
+      const before = { ...seen };
+      for (const i of o.items) seen[i.key] = true;
       const todo = todoLane(o);
       if (!todo || !prev) return null;
       return first(o.items, (i) => {
-        if (prevOf(prev, i.key) || i.card?.lane !== todo) return null;
+        if (before[i.key] || prevOf(prev, i.key) || i.card?.lane !== todo) return null;
         const filed = o.requests.some((r) => r.status === 200 && r.path === "/api/items" && r.body.todo === true);
         return filed ? null : `${i.id} is new and landed in To do`;
       });

@@ -246,6 +246,9 @@ describe("each rule fires on a bad state built by hand", { concurrency: 1 }, () 
     const claimed = workItem("A-1", { holder: { actor: { id: "scopesoup@laptop-a", name: "scopesoup on laptop-a", bot: true }, until: "2026-11-19T10:00:00.000Z" } });
     const at = (ms: number) => obs({ at: new Date(Date.parse(AT) + ms).toISOString(), items: [item("A-1", SLOT, { item: claimed })] });
     assert.match(fires("H3", at(0), at(3 * 3600_000)) ?? "", /outlived its session/);
+    // A change waiting in this machine's merge queue is work under way: its claim stands (#229).
+    const queued = (ms: number) => obs({ at: new Date(Date.parse(AT) + ms).toISOString(), items: [item("A-1", { kind: "queue" }, { item: claimed })] });
+    assert.equal(fires("H3", queued(0), queued(3 * 3600_000)), null);
   });
   it("H4", "a person is waited for and the page offers nothing (#183)", () => {
     const o = obs({ items: [item("A-1", { kind: "person", why: "escalated" }, { served: { item: { ref: { host: "metaBranch", kind: "work", id: "A-1" }, title: "Item", state: "todo" }, lane: "backlog" } })] });
@@ -276,6 +279,8 @@ describe("each rule fires on a bad state built by hand", { concurrency: 1 }, () 
     g.branches.set("scopesoup/A-1", g.commit([g.main], ["src/a.ts"], "work", "agent"));
     g.deleteBranch("scopesoup/A-1");
     assert.match(fires("I4", obs({ git: gitObs(g) })) ?? "", /deleted with work/);
+    // Judged when it happens: a deletion seen before (after a person's close) does not fire again later, after a reopen (#229).
+    assert.equal(rule("I4").check(obs({ git: gitObs(g) }), obs({ git: gitObs(g) }), {}), null);
   });
   it("I5", "a session starts in a worktree with another Item's files", () => {
     const g = new FakeGit();
@@ -309,7 +314,10 @@ describe("each rule fires on a bad state built by hand", { concurrency: 1 }, () 
     assert.match(fires("J2", at("backlog"), by("/api/item/move", { to: "todo" })) ?? "", /no person's move/);
   });
   it("J3", "a new Item lands in To do (#221)", () => {
-    assert.match(fires("J3", obs({ lanes: LANES }), obs({ lanes: LANES, items: [item("A-1", { kind: "not-started" }, { card: card("A-1", { lane: "todo" as never }) })] })) ?? "", /landed in To do/);
+    const inTodo = obs({ lanes: LANES, items: [item("A-1", { kind: "not-started" }, { card: card("A-1", { lane: "todo" as never }) })] });
+    assert.match(fires("J3", obs({ lanes: LANES }), inTodo) ?? "", /landed in To do/);
+    // Read back after the store was lost: seen before, so not new (#229).
+    assert.equal(fires("J3", inTodo, obs({ lanes: LANES }), inTodo), null);
   });
 });
 
@@ -332,11 +340,27 @@ describe("runs the simulator shrank, failing on today's code (known.ts)", { conc
   test("F3: the second of two ticks says its idle line again", async () => {
     await failsOn("F3", { items: 6, level: 4, slots: 2, steps: 80, profile: "normal" }, [{ kind: "tick" }, { kind: "tick" }]);
   });
+});
 
-  test("I2: an Item closed while its triage runs keeps its worktree", async () => {
-    await failsOn("I2", { items: 5, level: 3, slots: 3, steps: 80, profile: "normal" }, [
+/** A run the simulator shrank once, replayed: since its fix the rule holds on it. */
+async function holdsOn(id: string, options: Omit<RunOptions, "items" | "level" | "slots"> & { items: number; level: number; slots: number }, actions: Action[]): Promise<void> {
+  const result = await play(1, options as RunOptions, actions, RULES.filter((each) => each.id === id));
+  assert.deepEqual(result.failures.filter((f) => f.rule === id).map((f) => f.message), []);
+}
+
+describe("runs the simulator shrank, held since their fix", { concurrency: 1 }, () => {
+  test("I2 and C3: an Item closed while its triage runs keeps nothing: the session is stopped, the worktree and claim go (#229)", async () => {
+    const steps: Action[] = [{ kind: "tick" }, { kind: "close", item: "A-1", state: "abandoned" }, { kind: "tick" }, { kind: "tick" }, { kind: "tick" }];
+    await holdsOn("I2", { items: 5, level: 3, slots: 3, steps: 80, profile: "normal" }, steps);
+    await holdsOn("C3", { items: 5, level: 3, slots: 3, steps: 80, profile: "normal" }, steps);
+  });
+
+  test("C3: a closed Item's open question ends with it (#229)", async () => {
+    await holdsOn("C3", { items: 4, level: 4, slots: 1, steps: 80, profile: "calm" }, [
       { kind: "tick" },
-      { kind: "close", item: "A-1", state: "abandoned" },
+      { kind: "end", item: "A-1", v: 209723 },
+      { kind: "tick" },
+      { kind: "close", item: "A-1", state: "done" },
       { kind: "tick" },
       { kind: "tick" },
       { kind: "tick" },

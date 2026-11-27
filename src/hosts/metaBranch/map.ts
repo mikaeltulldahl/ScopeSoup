@@ -191,6 +191,8 @@ export function toWork(scope: MetaScope, read: ReadItem, openChildren: number): 
       return { at: entry.at, by: { ...entry.by }, kind: entry.kind, fields };
     });
   }
+  // A closed Item asks nothing: closing it ended its open questions (the log's `edited` line with the state keeps them ended after a reopen).
+  if (isDone(read)) picture.openQuestions = [];
   if (picture.openQuestions.length > 0) {
     work.openQuestions = picture.openQuestions.map((line) => ({
       at: line.at, by: { ...line.by }, question: line.question, options: line.options.map((option) => (typeof option === "string" ? option : { ...option })), ...(line.recommendation ? { recommendation: line.recommendation } : {}), ...(line.context ? { context: line.context } : {}), ...(line.multiSelect ? { multiSelect: true as const } : {}),

@@ -424,3 +424,9 @@ Owner decisions of 2026-11-21 from epic GF-283, written down here with the docs 
 
 ## Open
 - How long the check takes on the target laptops, and whether a session started by Scope Soup (not from a shell) works there.
+
+## Made on 2026-11-27: closing an Item ends what it owns (#229)
+
+| # | Topic | Decision |
+|---|---|---|
+| 123 | Closing an Item ends everything it owns (#229, decisions 5 and 8 on #211) | An Item that is closed (done or abandoned) or gone from the store has its step session stopped at the next tick, the way Stop ends sessions, and the session's result is not taken, also when it ended before that tick; a person's chat turn is left alone. The job then closes in the same tick: this machine's claim is released (read back at once, so the board shows it), the worktree goes back, and the branch is deleted only when the Item is closed (a person's close, or its merge); one whose Item left the store is kept. A claim of this machine's on an Item with no job here, or one whose change merged, and no session on it, is released by the tick (the store was lost, or the release after the merge failed), and a merged job's claim is not renewed. A closed Item asks nothing: on the meta branch its open questions end with the close (the `edited` line of a close carries `state`, so they stay ended after a reopen). **Decision 8:** a close is sent on the Item it closes; the duplicate question on an Item offers closing that Item or keeping both, not closing the other one. Implementor's details; a person may overturn them. |
