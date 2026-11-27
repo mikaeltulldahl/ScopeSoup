@@ -318,6 +318,8 @@ export const DEFAULT_PORT = 4310;
 
 /** The store's list of the pick requests this machine took to carry out (decision 104). */
 const HANDLED_KEY = "pickRequests.taken";
+/** The answers of those picks that could not be pushed to the meta ref yet. */
+const UNANSWERED_KEY = "pickRequests.unanswered";
 
 const STATES: WorkState[] = ["todo", "doing", "waiting", "done", "abandoned"];
 /** A GitHub Item: `waiting` is not mapped there. */
@@ -1037,6 +1039,7 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
     const port = options.requests;
     if (!port) return 0;
     let answered = 0;
+    answered += await pushUnanswered(port);
     for (const request of port.list()) {
       if (request.for !== port.machine || stateOf(request) !== "pending" || takenRequests().includes(request.id)) continue;
       // Taken before anything is done, in the store with an event: a restart or a slow answer never runs it twice.
@@ -1057,7 +1060,10 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
         result = { ok: false, message: `it failed here: ${error instanceof Error ? error.message : String(error)}` };
       }
       const fields = result.ok ? { request: request.id, done: result.done } : { request: request.id, why: result.message };
-      const written = await port.write({ kind: result.ok ? "pick-done" : "pick-refused", by: { who: "scopesoup", agent: true }, fields }).catch((error: unknown) => ({ ok: false as const, error: error instanceof Error ? error.message : String(error) }));
+      const kind = result.ok ? "pick-done" : "pick-refused";
+      const written = await writeAnswer(port, { kind, fields });
+      // The pick is carried out and not to run again: an answer that could not be pushed is kept and pushed at the next fetch.
+      if (!written.ok) keepUnanswered([...unanswered(), { id: request.id, kind, fields }]);
       store.appendEvent({
         kind: "orchestrator.pick_request", subject: request.item, actor: "orchestrator",
         data: { request: request.id, by: request.who, from: request.from, via: "meta branch", done: result.ok, reason: result.ok ? `Carried out ${request.who}'s pick, asked from ${request.from ?? "another machine"} through the meta branch.` : `Refused ${request.who}'s pick, asked from ${request.from ?? "another machine"} through the meta branch: ${result.message}`, ...(written.ok ? {} : { notWritten: written.error }) },
@@ -1066,6 +1072,36 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
     }
     if (answered > 0) options.onRefresh?.();
     return answered;
+  }
+
+  const writeAnswer = (port: PickRequestPort, line: { kind: string; fields: Record<string, unknown> }) =>
+    port.write({ kind: line.kind, by: { who: "scopesoup", agent: true }, fields: line.fields }).catch((error: unknown) => ({ ok: false as const, error: error instanceof Error ? error.message : String(error) }));
+
+  /** The answers of carried-out picks that could not be pushed yet (the newest 500), kept in the store until they land. */
+  function unanswered(): { id: string; kind: string; fields: Record<string, unknown> }[] {
+    try {
+      const list = JSON.parse(store.getValue(UNANSWERED_KEY) ?? "[]") as unknown;
+      return Array.isArray(list) ? list.filter((each): each is { id: string; kind: string; fields: Record<string, unknown> } => typeof each?.id === "string" && typeof each.kind === "string" && typeof each.fields === "object" && each.fields !== null) : [];
+    } catch {
+      return [];
+    }
+  }
+  const keepUnanswered = (list: ReturnType<typeof unanswered>): void => store.setValue(UNANSWERED_KEY, JSON.stringify(list.slice(-500)));
+
+  /** Pushes the kept answers again; one the log already holds (this machine's) is dropped. Returns how many landed. */
+  async function pushUnanswered(port: PickRequestPort): Promise<number> {
+    const kept = unanswered();
+    if (kept.length === 0) return 0;
+    const answeredIds = new Set(port.list().filter((request) => request.answer).map((request) => request.id));
+    const left: typeof kept = [];
+    let landed = 0;
+    for (const each of kept) {
+      if (answeredIds.has(each.id)) continue;
+      if ((await writeAnswer(port, each)).ok) landed++;
+      else left.push(each);
+    }
+    keepUnanswered(left);
+    return landed;
   }
 
   /** The requests this machine took to carry out (the newest 500), kept in the store. */

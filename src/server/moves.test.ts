@@ -412,6 +412,25 @@ describe("a pick for an Item whose work runs on another machine (decision 104)",
     assert.equal(loadJobs(storeB)[key]?.dropAskedBy, undefined);
   });
 
+  test("an answer that could not be pushed is kept and pushed at the next fetch, and the pick is not carried out again", async () => {
+    saveJobs(storeB, { [key]: job() });
+    await write2("flaky", clock);
+    let failures = 2;
+    const port = memoryRequests(lines, "laptop-b", () => new Date(clock).toISOString());
+    const flaky = { ...port, write: async (line: Parameters<typeof port.write>[0]) => (failures-- > 0 ? ({ ok: false, error: "the remote kept moving" } as const) : port.write(line)) };
+    const server = createServer({ store: storeB, now: () => new Date(clock), port: 0, configFile: "scopesoup.config.json", planning: () => ({ bugLabels: [], level: 2 }), requests: flaky });
+    const answers = () => lines.filter((line) => line.includes('"pick-') && line.includes('"flaky"'));
+    assert.equal(await server.carryOutRequests(), 1);
+    assert.equal(answers().length, 0);
+    assert.equal(await server.carryOutRequests(), 0, "pushed again: still failing");
+    assert.equal(answers().length, 0);
+    assert.equal(await server.carryOutRequests(), 1, "lands");
+    assert.equal(answers().length, 1);
+    assert.equal(await server.carryOutRequests(), 0);
+    assert.equal(answers().length, 1, "one answer line");
+    assert.equal(storeB.getValue("pickRequests.taken")?.split("flaky").length, 2, "carried out once");
+  });
+
   const write2 = (id: string, at: number, by = { who: "mira", agent: false }) => memoryRequests(lines, "laptop-a", () => new Date(at).toISOString()).write({ kind: "pick", by, fields: { id, item: key, for: "laptop-b", seen: held.updatedAt, steps: [{ kind: "move", to: "todo" }] } });
   const readAnswers = () => new Map(lines.map((line) => JSON.parse(line) as Record<string, unknown>).filter((line) => line.kind === "pick-refused" || line.kind === "pick-done").map((line) => [String(line.request), line]));
 });
