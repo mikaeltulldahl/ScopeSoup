@@ -184,8 +184,8 @@ describe("each rule fires on a bad state built by hand", { concurrency: 1 }, () 
     const waiting = (over: Partial<WorkItem> = {}) => item("A-1", NOTHING, { item: workItem("A-1", over), paths: ["src/a.ts"], job: job("A-1", { step: "implement" }) });
     const first = obs({ git: gitObs(g), items: [waiting()], started: [started("A-1", "triage")] });
     const settled = ledger({ ended: [{ step: 1, item: key("A-1"), role: "triage", session: "s-A-1", status: "succeeded", settled: true }] });
-    const again = (over: Partial<Observation> = {}) => obs({ ledger: settled, items: [waiting()], started: [started("A-1", "triage", { vars: { itemTitle: "Item A-1", itemBody: "Do it.", recheck: "It is 40 days old." } })], ...over });
-    assert.match(fires("B9", first, obs({ ledger: settled, git: gitObs(g), items: [waiting()] }), again({ git: gitObs(g), at: "2027-01-01T10:00:00.000Z" })) ?? "", /nothing it read changed/);
+    const again = (over: Partial<Observation> = {}) => obs({ action: tick, ledger: settled, items: [waiting()], started: [started("A-1", "triage", { vars: { itemTitle: "Item A-1", itemBody: "Do it.", recheck: "It is 40 days old." } })], ...over });
+    assert.match(fires("B9", first, obs({ action: tick, ledger: settled, git: gitObs(g), items: [waiting()] }), again({ git: gitObs(g), at: "2027-01-01T10:00:00.000Z" })) ?? "", /nothing it read changed/);
     // Its text edited, a commit on main on the paths it named: new input.
     assert.equal(fires("B9", first, again({ git: gitObs(g), items: [waiting({ title: "Item A-1, edited" })] })), null);
     const moved = new FakeGit();

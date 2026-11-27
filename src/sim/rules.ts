@@ -330,15 +330,18 @@ export const RULES: Rule[] = [
       type Read = { text: string; blockers: string[]; open: string[]; main: string; paths: string[]; at: string };
       const pending = (memo.pending ??= {}) as Record<string, { item: string; read: Read }>;
       const triaged = (memo.triaged ??= {}) as Record<string, Read>;
-      for (const [session, each] of Object.entries(pending)) {
-        const end = o.ledger.ended.find((e) => e.session === session);
-        if (!end) continue;
-        if (end.settled) triaged[each.item] = each.read;
-        delete pending[session];
-      }
       const closedNow = new Set(o.items.filter(isClosed).map((i) => i.key));
       const refOf = (b: { host: string; kind: string; id: string }): string => `${b.host}:${b.kind}:${b.id}`;
       const linkedOf = (i: ItemObs): string[] => (i.job?.triage?.links ?? []).map((l) => `${i.item.ref.host}:work:${l.item.replace(/^#/, "")}`);
+      for (const [session, each] of Object.entries(pending)) {
+        const end = o.ledger.ended.find((e) => e.session === session);
+        // Read at the tick that takes its result.
+        if (!end || !isTick(o)) continue;
+        // Settled: the Items its answer linked to, open now, count too (the answer is read once it is taken).
+        const i = o.items.find((x) => x.key === each.item);
+        if (end.settled) triaged[each.item] = { ...each.read, open: [...new Set([...each.read.open, ...(i ? linkedOf(i) : []).filter((k) => !closedNow.has(k))])] };
+        delete pending[session];
+      }
       const readOf = (i: ItemObs): Read => ({
         text: JSON.stringify([i.item.title, i.item.body ?? "", i.item.verification ?? ""]), blockers: i.item.blockedBy.map(refOf).sort(),
         open: [...i.item.blockedBy.map(refOf), ...linkedOf(i)].filter((k) => !closedNow.has(k)), main: o.git.main, paths: i.paths, at: o.at,
@@ -351,8 +354,10 @@ export const RULES: Rule[] = [
         const before = triaged[s.item];
         if (again && before && prevOf(prev, s.item)?.job?.triageAskedBy === undefined) {
           const now = readOf(i);
+          // The paths it named: its answer's, which the job holds until the triage taken again answers.
+          const paths = [...new Set([...before.paths, ...(prevOf(prev, s.item)?.paths ?? []), ...now.paths])];
           const changed = now.text !== before.text || JSON.stringify(now.blockers) !== JSON.stringify(before.blockers)
-            || before.open.some((k) => closedNow.has(k)) || (before.paths.length > 0 && o.git.touching(before.main, o.git.main, before.paths) > 0);
+            || before.open.some((k) => closedNow.has(k)) || (paths.length > 0 && o.git.touching(before.main, o.git.main, paths) > 0);
           if (!changed) return `${i.id}'s triage was taken again with nothing it read changed since its triage of ${before.at}`;
         }
         pending[s.session] = { item: s.item, read: readOf(i) };
