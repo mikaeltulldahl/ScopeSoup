@@ -159,6 +159,9 @@ export function createHostActions(deps: HostActionsDeps): Actions {
       if (after) deps.store.put(after, "sync", new Date().toISOString());
       const holder = after?.holder;
       if (holder && me && holder.actor.id !== me) return { won: false, why: `held by ${holder.actor.name}` };
+      // Nobody holds it after the write: the line did not take. A claim written in the same second as an earlier identical one (a
+      // release and a claim again within one tick) is that line again, which the fold drops (#243). The next tick claims again.
+      if (!holder && me) return { won: false, why: "the claim did not take (written in the same second as an identical line); it is claimed again next time" };
       return { won: true };
     },
     async release(item, reason) {

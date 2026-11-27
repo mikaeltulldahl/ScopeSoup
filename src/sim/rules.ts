@@ -571,8 +571,11 @@ export const RULES: Rule[] = [
       return first(o.items, (i) => {
         const writing = i.job?.writing;
         if (writing && Date.parse(o.at) - Date.parse(writing.at) > 31 * 60_000 && isTick(o) && /written|its text|description/i.test(i.card?.reason ?? "")) return `${i.id} still waits for its text, written at ${writing.at}`;
-        // A change waiting in this machine's merge queue is work under way here: its claim keeps other machines off it.
-        const claimed = i.item.holder?.actor.id === OWN && i.live.length === 0 && i.w.kind !== "queue" && (!i.item.holder.until || i.item.holder.until > o.at);
+        // A change waiting in this machine's merge queue is work under way here: its claim keeps other machines off it. So is a job
+        // whose next step waits to start: its claim lasts as long as the job (#243). A parked or merged job holds nothing.
+        const job = i.job;
+        const underWay = !!job && job.merged === undefined && (!job.parked || job.parked.as === "queued" || job.parked.as === "handed-over");
+        const claimed = i.item.holder?.actor.id === OWN && i.live.length === 0 && i.w.kind !== "queue" && !underWay && (!i.item.holder.until || i.item.holder.until > o.at);
         const table = (memo.claims ??= {}) as Record<string, string>;
         if (!claimed) delete table[i.key];
         else table[i.key] ??= o.at;
@@ -720,8 +723,12 @@ export const RULES: Rule[] = [
     check(o, prev) {
       if (!todoLane(o) || !prev) return null;
       return first(o.started, (s) => {
-        if (prevOf(prev, s.item)?.card?.lane !== "backlog") return null;
         const id = s.item.split(":").pop();
+        // In Backlog before the step, or read in Backlog during it (a claim reads the Item from the host before the start, #243) with
+        // no person's move to Backlog in this step.
+        const now = o.items.find((each) => each.key === s.item)?.item;
+        const readInBacklog = now?.backlog === true && !o.requests.some((r) => r.item === id && r.body.lane === "backlog");
+        if (prevOf(prev, s.item)?.card?.lane !== "backlog" && !readInBacklog) return null;
         const asked = s.role === "triage" && o.ledger.requests.some((r) => r.status === 200 && r.item === id && r.path === "/api/item/move" && r.body.to === "triage");
         return asked ? null : `a ${s.role} session started on ${id}, which was in Backlog`;
       });
