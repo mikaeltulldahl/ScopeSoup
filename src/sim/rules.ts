@@ -164,7 +164,8 @@ export const RULES: Rule[] = [
     why: "The status line says why nothing runs: idle with no session means no Item waits only for a slot.",
     check(o) {
       if (!o.tick || o.tick.started.length > 0 || o.liveCount > 0 || !o.tick.idle || o.remote.down) return null;
-      const slot = o.items.find((i) => i.w.kind === "start" && i.w.cause === "slot");
+      // An Item whose claim did not take is said by name in the idle line: the status line says why (#243).
+      const slot = o.items.find((i) => i.w.kind === "start" && i.w.cause === "slot" && !o.tick!.idle!.includes(`${i.id} is not started here`));
       return slot ? `the tick says "${o.tick.idle.slice(0, 80)}", yet ${slot.id} waits only for a slot` : null;
     },
   },

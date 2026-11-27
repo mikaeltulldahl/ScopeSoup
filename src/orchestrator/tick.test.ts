@@ -4935,11 +4935,11 @@ test("Backlog (decision 121): nothing starts there; a person's triage runs and t
 });
 
 test("Backlog read at a fetch (#243): a job no person put under way is dropped, not started; a person's triage there stays", async () => {
-  // Another machine's person moved the Items to Backlog while this machine had their jobs waiting at triage.
+  // Another machine's person moved the Items to Backlog while this machine had their jobs waiting at triage (seen in To do before).
   const w = world(config(), [item("1", { backlog: true }), item("2", { backlog: true })]);
   w.store.addUsageSample(usage(0.1, 0.1));
   const waiting = (id: string, over: Record<string, unknown> = {}) => ({ item: ref(id), workspace: workspaceKey(ref(id)), branch: `scopesoup/${id}`, step: "triage" as const, failures: 0, fixRounds: 0, startedAt: new Date(T0).toISOString(), ...over });
-  saveJobs(w.store, { [refKey(ref("1"))]: waiting("1"), [refKey(ref("2"))]: waiting("2", { triageAskedBy: "Ada" }) });
+  saveJobs(w.store, { [refKey(ref("1"))]: waiting("1", { seenInTodo: true }), [refKey(ref("2"))]: waiting("2", { seenInTodo: true, triageAskedBy: "Ada" }) });
   await w.run();
   assert.equal(w.job("1"), undefined, "the job on 1 is given up");
   assert.match(w.reasons("orchestrator.job_dropped")[0] ?? "", /^1 is in Backlog \(moved there on another machine\)/);

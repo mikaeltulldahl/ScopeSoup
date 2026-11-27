@@ -166,7 +166,8 @@ export function createHostActions(deps: HostActionsDeps): Actions {
         if (holder && me && holder.actor.id !== me) return { won: false, why: `held by ${holder.actor.name}` };
         if (holder || !me) return { won: true };
       }
-      return { won: false, why: "the claim did not take (an identical line is in the log already); it is claimed again next time" };
+      // Still nobody: a release is ordered after this machine's claim (its clock is behind the releaser's). It is claimed again later.
+      return { won: false, why: "the claim did not take (the log shows nobody holding it after the write: a release later than this machine's clock); it is claimed again next time" };
     },
     async release(item, reason) {
       if (!mine(item)) return;

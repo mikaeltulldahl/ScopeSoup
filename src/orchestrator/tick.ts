@@ -229,26 +229,22 @@ async function sweep(ctx: Context, subject?: string): Promise<void> {
 }
 
 /**
- * A job that may go on with its Item in Backlog (decision 121): a person's Triage pick there and what follows from it, and work a person
- * put under way, which never stalls there (Implement anyway, a revision, something to resume: the board moved the Item to To do, and
- * the store may not have read that yet).
+ * A job that may go on with its Item in Backlog (decision 121): one never seen in To do here (a person's Triage pick in Backlog and
+ * what follows, or work a person put under way whose move to To do the store has not read yet), or a person's Triage pick.
  */
 function mayWorkInBacklog(job: Job): boolean {
-  if (job.triageAskedBy !== undefined || job.pickedInBacklog) return true;
-  // A triage cut off and resumed is no work a person put under way: in Backlog it is not run (#243).
-  return job.step !== "triage" && (job.implementAskedBy !== undefined || job.head !== undefined || !!job.resume || job.resumeWith !== undefined);
+  return !job.seenInTodo || job.triageAskedBy !== undefined;
 }
 
 /**
- * The job is on an Item in Backlog that it may not work on (`mayWorkInBacklog`). A change queued or handed over, or merged, is left
- * alone. Notes a person's Triage pick on the job, and forgets it once the Item is in To do.
+ * The job is on an Item in Backlog that it may not work on (`mayWorkInBacklog`): seen in To do before, so another machine's person
+ * moved it there. A change queued or handed over, or merged, is left alone. Notes when the Item is seen in To do.
  */
 function readInBacklog(job: Job, item: WorkItem): boolean {
   if (!item.backlog) {
-    delete job.pickedInBacklog;
+    job.seenInTodo = true;
     return false;
   }
-  if (job.triageAskedBy !== undefined) job.pickedInBacklog = true;
   if (mayWorkInBacklog(job) || job.merged !== undefined) return false;
   return job.parked?.as !== "queued" && job.parked?.as !== "handed-over";
 }
@@ -944,7 +940,7 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
 
     const job: Job = entry.job ?? {
       item: entry.item.ref, workspace: workspaceKey(entry.item.ref), branch: workBranch(entry.item.ref),
-      step, failures: 0, fixRounds: 0, startedAt: at,
+      step, failures: 0, fixRounds: 0, startedAt: at, ...(entry.item.backlog ? {} : { seenInTodo: true as const }),
       ...(skipped ? { triage: { ready: true, size: skipped.size, paths: [], hidesDecision: false } } : {}),
     };
     // A unit of each resource the step needs, before its workspace and claim. Without one the item waits and the next may start.
@@ -1008,7 +1004,7 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
         const read = store.get<WorkItem>(entry.item.ref);
         const gone = !read ? "it is no longer in the store"
           : read.state === "done" || read.state === "abandoned" ? `it is ${read.state}`
-          : read.backlog && !mayWorkInBacklog(job) ? "it is in Backlog (moved there on another machine)"
+          : read.backlog && (!entry.job || !mayWorkInBacklog(job)) ? "it is in Backlog (moved there on another machine)"
           // New here, and another machine's work on it waits for a person's answer (its claim went back when it parked).
           : !entry.job && read.needsDecision ? "it waits for a decision by a person"
           : null;
