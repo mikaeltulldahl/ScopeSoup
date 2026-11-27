@@ -15,7 +15,7 @@ import { persistenceLimits } from "../config/persistence.ts";
 import type { Context } from "./context.ts";
 import { ACTOR, errorText } from "./context.ts";
 import type { AskedText, Decision, ItemLinkAnswer, Job, ParkedAs, ReviewAnswer, TakenDecision, TriageAnswer } from "./jobs.ts";
-import { ASK_PERSON, parkSet, asImplement, asReview, asTriage, formatFindings, hasMarkup, recoverFields, keepsRecommendations, picks, questionsSettled, releaseIn, parkedRewrite, changedRewrite, sameText } from "./jobs.ts";
+import { ASK_PERSON, answerIn, askedInLog, jobQuestions, parkSet, asImplement, asReview, asTriage, formatFindings, hasMarkup, recoverFields, keepsRecommendations, picks, questionsSettled, releaseIn, parkedRewrite, changedRewrite, sameText } from "./jobs.ts";
 import { providerFor } from "./providers/index.ts";
 import type { Actions, ClaimResult, SessionResultRecord } from "./ports.ts";
 import { CLAIM_EXPIRY_MINUTES } from "./ports.ts";
@@ -337,6 +337,40 @@ export async function followRewrite(ctx: Context, job: Job, item: WorkItem): Pro
   job.failures = 0;
   ctx.commit("orchestrator.rewrite_answered", `Answered on ${job.item.host} otherwise than recommended in round ${rewrite.round} of the triage (${changed.map((each) => `${each.question.question} Answered: ${each.answer}`).join(" ")}); the triage runs again with the answers.`, key, { round: rewrite.round });
   if (settle) await ctx.act("remove the needs-decision label", key, () => settle(job.item));
+  return true;
+}
+
+/**
+ * A parked job whose questions in the Item's log (meta branch) were answered on another machine's board, read at a fetch (#248): settled
+ * as the same answers on this machine's board settle it (`answerAll` in the server). Each of several questions is kept in the job as
+ * its answer comes (`answerIn`), and the last releases it; one question, a not-ready, an escalation or the line of a triage rewrite
+ * (whose other boards show only that line) is released by its answer (`releaseIn`). Answers given on this board settled the job
+ * already. True when the job was released.
+ */
+export function followLog(ctx: Context, job: Job, item: WorkItem): boolean {
+  const asked = askedInLog(job, item);
+  if (!asked) return false;
+  const key = refKey(job.item);
+  const several = jobQuestions(job);
+  if (several.length > 0) {
+    for (const each of asked) {
+      const index = several.findIndex((decision) => decision.question.trim() === each.question.trim());
+      if (!each.answer || index < 0 || (job.answered ?? []).some((given) => given.index === index)) continue;
+      const done = answerIn(ctx.jobs, key, index, each.answer.text, each.answer.by, ctx.at);
+      if ("refused" in done) continue;
+      const reason = `${done.reason.replace(/^A person/, each.answer.by)} (on another machine's board, read from the item's log)`;
+      if (done.was) {
+        ctx.commit("orchestrator.job_released", reason, key, { was: done.was });
+        return true;
+      }
+      ctx.commit("orchestrator.question_answered", reason, key, { index, open: done.open });
+    }
+  }
+  if (asked.some((each) => each.open)) return false;
+  const said = asked.flatMap((each) => (each.answer ? [`${each.answer.by} answered: ${each.answer.text}`] : []));
+  const was = releaseIn(ctx.jobs, key, said.length > 0 ? asked.find((each) => each.answer)!.answer!.by : ACTOR);
+  if (!was) return false;
+  ctx.commit("orchestrator.job_released", said.length > 0 ? `${said.join(" | ")} (on another machine's board, read from the item's log)` : `The question${asked.length > 1 ? "s" : ""} ${job.item.id} parked on ${asked.length > 1 ? "are" : "is"} no longer open in its log.`, key, { was });
   return true;
 }
 

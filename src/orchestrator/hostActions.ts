@@ -148,8 +148,14 @@ export function createHostActions(deps: HostActionsDeps): Actions {
       if (!write?.appendLog) return { won: true };
       const me = host.info.machine ? `${SCOPESOUP.who}@${host.info.machine}` : undefined;
       // Look before writing: a claim written over another machine's live claim would only be ordered by the two clocks.
-      const before = (await host.work?.getWork(item))?.holder;
-      if (before && me && before.actor.id !== me && holdStands(before, Date.parse(at))) return { won: false, why: `held by ${before.actor.name}` };
+      const read = await host.work?.getWork(item);
+      const before = read?.holder;
+      if (before && me && before.actor.id !== me && holdStands(before, Date.parse(at))) {
+        // Read into the store, as a claim that lost after its write is: this machine shows who holds it now (a person's claim made on
+        // another machine, #256), not a wait for a slot that the next tick tries to fill again.
+        deps.store.put(read!, "sync", new Date().toISOString());
+        return { won: false, why: `held by ${before.actor.name}` };
+      }
       // Nobody holds it after the write: the line did not take. A claim written in the same second as an earlier identical one (a
       // release and a claim again within one tick) is that line again, which the fold drops (#243). It is written once more with an
       // `until` one second later, which makes it a line of its own.

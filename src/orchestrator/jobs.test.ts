@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { asImplement, asReview, asTriage, changedRewrite, hasMarkup, recoverFields, sameText, withoutVerification } from "./jobs.ts";
+import type { LogRecord, OpenQuestion } from "../model/types.ts";
+import type { Job } from "./jobs.ts";
+import { asImplement, askedInLog, asReview, asTriage, changedRewrite, hasMarkup, recoverFields, sameText, withoutVerification } from "./jobs.ts";
 
 test("a stored answer that carries the removed tests or untested fields is still read", () => {
   const implement = asImplement({ done: true, summary: "s", risk: "low", riskReason: "r", tests: "Added a test for parsing." });
@@ -146,4 +148,39 @@ test("a triage's rewrite that changes only whitespace, or only appends the Verif
   assert.equal(withoutVerification("Show tides.\nVerification: something else.", verification), "Show tides.\nVerification: something else.");
   assert.equal(changedRewrite("Show tides.\nVerification: The table shows metres.", "Show tides.\nVerification: The table shows metres.", verification), "");
   assert.equal(changedRewrite("Show tides.", "Show tides.\nVerification: The table shows metres.", verification), "Show tides.");
+});
+
+// #248: a parked job reads the answers its questions got in the Item's log, from any machine's board.
+const ASKED_AT = "2026-11-18T10:00:00.000Z";
+const B = { who: "scopesoup", machine: "laptop-b", agent: true };
+const decisions = ["Should it do part 1?", "Should it do part 2?"].map((question) => ({ question, options: ["yes", "no"], recommendation: "yes" }));
+const parkedJob = (several: boolean): Job => ({
+  item: { host: "metaBranch", kind: "work", id: "A-1" }, workspace: "w", branch: "scopesoup/A-1", step: "triage", failures: 0, fixRounds: 0, startedAt: ASKED_AT, parks: 2,
+  triage: { ready: true, size: "small", paths: [], hidesDecision: true, decision: decisions[0]!, ...(several ? { decisions } : {}) },
+  parked: { as: "needs-decision", reason: several ? "Triage found 2 decisions" : decisions[0]!.question, at: ASKED_AT },
+});
+const question = (text: string, set: string, at = ASKED_AT): LogRecord => ({ at, by: B, kind: "question", fields: { question: text, parked: "needs-decision", set } });
+const answer = (text: string, fields: Record<string, unknown>): LogRecord => ({ at: "2026-11-18T10:00:30.000Z", by: { who: "Ada", machine: "laptop-a", agent: false }, kind: "answer", fields: { answer: text, ...fields } });
+const open = (line: LogRecord): OpenQuestion => ({ at: line.at, by: line.by, question: line.fields.question as string, options: [] });
+
+test("a parked job's questions in the log: open until an answer names them, by its time or its set", () => {
+  const set = `2@${ASKED_AT}`;
+  const one = question(decisions[0]!.question, set);
+  assert.deepEqual(askedInLog(parkedJob(false), { log: [one], openQuestions: [open(one)] }), [{ question: decisions[0]!.question, open: true }]);
+  const named = answer("yes", { to: ASKED_AT, toBy: B, toQuestion: decisions[0]!.question });
+  assert.deepEqual(askedInLog(parkedJob(false), { log: [one, named], openQuestions: [] }), [{ question: decisions[0]!.question, open: false, answer: { text: "yes", by: "Ada" } }]);
+  const bySet = answer("no", { toSet: set });
+  assert.deepEqual(askedInLog(parkedJob(false), { log: [one, bySet], openQuestions: [] })?.[0]?.answer, { text: "no", by: "Ada" });
+});
+
+test("of several questions each is read on its own; another park's lines and other questions do not count", () => {
+  const set = `2@${ASKED_AT}`;
+  const [first, second] = decisions.map((each) => question(each.question, set));
+  const asked = askedInLog(parkedJob(true), { log: [first!, second!, answer("no", { to: ASKED_AT, toQuestion: decisions[1]!.question })], openQuestions: [open(first!)] });
+  assert.deepEqual(asked, [{ question: decisions[0]!.question, open: true }, { question: decisions[1]!.question, open: false, answer: { text: "no", by: "Ada" } }]);
+  // An earlier park with the same set (a job made again) that asked something else is not this park's.
+  assert.equal(askedInLog(parkedJob(false), { log: [question("Something else?", set), answer("yes", { toSet: set })], openQuestions: [] }), null);
+  // Nothing in the log (a GitHub Item, or a post tried again): nothing to read.
+  assert.equal(askedInLog(parkedJob(false), { openQuestions: [] }), null);
+  assert.equal(askedInLog({ ...parkedJob(false), parked: { ...parkedJob(false).parked!, retry: "post" } }, { log: [first!], openQuestions: [] }), null);
 });
