@@ -78,6 +78,27 @@ export function withShown(lanes: readonly LaneView[], shown: readonly Shown[]): 
   return result;
 }
 
+/**
+ * What a person is told when the server took a move (it answered 200) but the Item's page still puts it in another lane than the
+ * one dropped on: the card goes back where it is, and the toast says so instead of leaving it looking moved. Undefined when it
+ * is where it was dropped, or the lane is one the page does not name the same way (the merge queue's).
+ */
+export function stuckNote(label: string, wanted: string, actual: string, names: (lane: string) => string): string | undefined {
+  if (laneState(wanted) === "merge-queue" || wanted === actual) return undefined;
+  return `${label} is still in ${names(actual)}, not ${names(wanted)}: the server took the move, but the Item's page does not put it there.`;
+}
+
+/**
+ * The one toast of cards moved together (#235): who moved and where, then which stayed and why ("#84, #85 → To do · above #52 ·
+ * #44 stayed: not offered here"); when none moved, a note that says so (a lone card that stayed has its own sentence, `lone`).
+ */
+export function groupToast(moved: readonly string[], stays: readonly { label: string; why: string; text: string }[], laneName: string, where: string): string {
+  const stayed = stays.map((stay) => `${stay.label} stayed: ${stay.why}`).join("; ");
+  if (moved.length === 0) return stays.length === 1 ? stays[0]!.text : `None moved to ${laneName}. ${stayed}.`;
+  const who = moved.length <= 3 ? moved.join(", ") : `${moved.length} cards`;
+  return `${who} → ${laneName}${where ? ` · ${where}` : ""}${stayed ? ` · ${stayed}` : ""}`;
+}
+
 /** The toast's words for a move to a place: "A-2 → above A-5", "A-2 → last in To do". */
 export function placeText(before: string | null, laneLabel: string): string {
   return before === null ? `last in ${laneLabel}` : `above ${before}`;

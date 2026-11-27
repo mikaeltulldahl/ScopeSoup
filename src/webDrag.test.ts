@@ -4,7 +4,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { CardView, LaneView } from "./core/views.ts";
-import { beforeKey, dropVerdict, insertionIndex, keyMove, keyMoves, laneState, placeText, rangeKeys, selectedInOrder, withShown } from "../web/src/drag.ts";
+import { beforeKey, dropVerdict, insertionIndex, keyMove, groupToast, keyMoves, laneState, placeText, stuckNote, rangeKeys, selectedInOrder, withShown } from "../web/src/drag.ts";
 import type { MenuPage } from "../web/src/stateMenu.ts";
 import { currentState, stateOptions } from "../web/src/stateMenu.ts";
 import { THEMES } from "../web/src/theme.ts";
@@ -136,4 +136,24 @@ test("multi-select: queued back to front, each above the one after it, the cards
   const lanes = [lane("backlog", [card("x", "backlog"), card("y", "backlog"), card("z", "backlog")]), lane("todo", [card("a", "todo", 1), card("b", "todo", 2)])];
   const chained = withShown(lanes, [{ key: "z", lane: "todo", before: "b" }, { key: "y", lane: "todo", before: "z" }, { key: "x", lane: "todo", before: "y" }]);
   assert.deepEqual(chained[1]!.cards.map((one) => one.key), ["a", "x", "y", "z", "b"]);
+});
+
+test("multi-select: one toast says who moved, where, and which stayed and why", () => {
+  const stay = { label: "#44", why: "pick its blocker on its page", text: "#44 can't go to To do: pick its blocker on its page." };
+  // Some move, some stay.
+  assert.equal(groupToast(["#84", "#85"], [stay], "To do", "above #52"), "#84, #85 → To do · above #52 · #44 stayed: pick its blocker on its page");
+  assert.equal(groupToast(["#84", "#85"], [stay, { ...stay, label: "#47", why: "not offered here" }], "In progress", ""), "#84, #85 → In progress · #44 stayed: pick its blocker on its page; #47 stayed: not offered here");
+  // Many moved are counted; all moved has no stay part.
+  assert.equal(groupToast(["#1", "#2", "#3", "#4"], [], "To do", "last in To do"), "4 cards → To do · last in To do");
+  // None moved: a lone card keeps its own sentence.
+  assert.equal(groupToast([], [stay], "To do", ""), stay.text);
+  assert.equal(groupToast([], [stay, { ...stay, label: "#47", why: "x" }], "To do", ""), "None moved to To do. #44 stayed: pick its blocker on its page; #47 stayed: x.");
+});
+
+test("drag: a move the server took but the Item's page does not show is said, not left looking moved", () => {
+  const names = (lane: string) => ({ "in-review": "In review", todo: "To do" })[lane] ?? lane;
+  assert.equal(stuckNote("#63", "todo", "in-review", names), "#63 is still in In review, not To do: the server took the move, but the Item's page does not put it there.");
+  assert.equal(stuckNote("#63", "todo", "todo", names), undefined);
+  // The merge queue's lane is drawn from two lanes: not compared.
+  assert.equal(stuckNote("#63", "merge-queue", "queued", names), undefined);
 });

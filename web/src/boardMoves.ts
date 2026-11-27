@@ -8,7 +8,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import type { CardView, ItemPage, LaneView } from "./api.ts";
 import { fetchItem } from "./api.ts";
 import type { Verdict } from "./drag.ts";
-import { beforeKey, dropVerdict, inOrder, insertionIndex, keyMoves, ORDERED_LANES, placeText, rangeKeys, selectedInOrder } from "./drag.ts";
+import { beforeKey, dropVerdict, groupToast, inOrder, insertionIndex, keyMoves, ORDERED_LANES, placeText, rangeKeys, selectedInOrder } from "./drag.ts";
 import type { GroupMove } from "./drag.ts";
 import { laneLabel } from "./format.ts";
 import { MERGE_LANE } from "./mergeLane.ts";
@@ -124,9 +124,6 @@ function makeMove(judged: Judged, lanes: readonly LaneView[], key: string, lane:
   queueChange(planned.change);
 }
 
-/** Cards named in a toast: the labels when there are few. */
-const names = (labels: readonly string[]): string => (labels.length <= 3 ? labels.join(", ") : `${labels.length} cards`);
-
 /**
  * Moves the selected cards together to `lane` (#235), in their order: each is judged on its own, so one the lane does not take
  * stays where it is and the toast says which and why. The moves share one toast and one Undo.
@@ -146,17 +143,15 @@ function moveGroup(judges: readonly (readonly [string, Promise<Judged>])[], lane
       if ("stay" in planned) stays.push(planned.stay);
       else moves.push(planned);
     });
+    const ordered = ORDERED_LANES.includes(lane) && before !== undefined;
+    const labelOf = (other: string | null): string => lanes.flatMap((each) => each.cards).find((card) => card.key === other)?.label ?? String(other);
     const laneName = lane === MERGE_LANE ? words().mergeLane : laneLabel(lane);
-    const stayed = stays.map((stay) => `${stay.label} stayed: ${stay.why}`).join("; ");
+    const text = groupToast(moves.map((move) => move.label), stays, laneName, ordered ? placeText(before === null ? null : labelOf(before!), laneName) : "");
     if (moves.length === 0) {
-      if (stays.length > 0) showNotice(stays.length === 1 ? stays[0]!.text : `None moved to ${laneName}. ${stayed}.`);
+      if (stays.length > 0) showNotice(text);
       return;
     }
     if (moves.length === 1 && stays.length === 0) return queueChange(moves[0]!.change);
-    const ordered = ORDERED_LANES.includes(lane) && before !== undefined;
-    const labelOf = (other: string | null): string => lanes.flatMap((each) => each.cards).find((card) => card.key === other)?.label ?? String(other);
-    const where = ordered ? ` · ${placeText(before === null ? null : labelOf(before!), laneName)}` : "";
-    const text = `${names(moves.map((move) => move.label))} → ${laneName}${where}${stayed ? ` · ${stayed}` : ""}`;
     // Queued back to front. In a lane with an order each card goes right above the one after it (the last above `before`), so
     // the cards keep their order even when `before` is out of their group's reach and the server lands the first at the edge;
     // in a lane without an order each goes to the top, so the last queued ends up first.

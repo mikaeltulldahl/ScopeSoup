@@ -3,8 +3,10 @@
 // request per pick, which carries the board's person as every request does).
 
 import { useEffect, useState } from "preact/hooks";
-import { postPlace, postStep, reloadViews } from "./api.ts";
+import { fetchItem, postPlace, postStep, reloadViews } from "./api.ts";
 import type { Shown } from "./drag.ts";
+import { stuckNote } from "./drag.ts";
+import { laneLabel } from "./format.ts";
 import type { Pending, StateKey, Step } from "./stateMenu.ts";
 import { addPending, cancelPending, duePending } from "./stateMenu.ts";
 import { words } from "./theme.ts";
@@ -42,8 +44,20 @@ let sending: Promise<void> = Promise.resolve();
 
 async function send(change: Change): Promise<void> {
   try {
-    if (change.steps.length > 0) await postStep("/api/item/pick", body(change));
-    if (change.place && change.shown) {
+    let stuck: string | undefined;
+    if (change.steps.length > 0) {
+      const status = await postStep("/api/item/pick", body(change));
+      // A pick the server took (200, not a request for another machine) must show: the card is where it was dropped, or we say it is not.
+      if (status === 200 && change.shown) {
+        const page = await fetchItem(change.itemKey).catch(() => undefined);
+        stuck = page?.lane ? stuckNote(page.item.label, change.shown.lane, page.lane, laneLabel) : undefined;
+        if (stuck) {
+          notice = stuck;
+          tell();
+        }
+      }
+    }
+    if (change.place && change.shown && !stuck) {
       const said = await postPlace(change.itemKey, change.shown.before ?? null, change.shown.lane);
       if (said) {
         notice = said;
