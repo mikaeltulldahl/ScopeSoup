@@ -13,7 +13,7 @@ import { openStore } from "../store/store.ts";
 import { createSync } from "../sync/index.ts";
 import type { ScopeSoupServer } from "./server.ts";
 import { createServer } from "./server.ts";
-import { loadJobs, saveJobs, atStep } from "../orchestrator/jobs.ts";
+import { loadJobs, saveJobs, atStep, pickedFor } from "../orchestrator/jobs.ts";
 
 let repo: TestRepo;
 let host: MetaBranchHost;
@@ -155,7 +155,7 @@ test("Abandoned picked over a running session marks its job for the tick to end 
   saveJobs(store, { [ref]: { item: page.item.ref, workspace: "w", branch: "scopesoup/x", failures: 0, fixRounds: 0, startedAt: "2026-11-18T09:00:00Z", at: atStep("implement", { is: "running", session: "s9" }) } });
   const picked = await post("/api/item/pick", { ref, seen: page.item.updatedAt, steps: [{ kind: "state", state: "abandoned" }] });
   assert.equal(picked.status, 200, JSON.stringify(picked.body));
-  assert.deepEqual([loadJobs(store)[ref]?.interrupt?.by, loadJobs(store)[ref]?.interrupt?.to], ["Ada", "abandoned"]);
+  assert.deepEqual([loadJobs(store)[ref]?.pick?.by, loadJobs(store)[ref]?.pick?.to, typeof loadJobs(store)[ref]?.pick?.ending], ["Ada", "abandoned", "string"]);
   assert.match(String((store.eventsOfKinds(["person.moved"], 5)[0]?.data as { reason?: string }).reason), /the implementor's session is ended now/);
 });
 
@@ -172,7 +172,7 @@ test("Backlog and To do (decision 121): a new Item is in Backlog, Create in To d
   saveJobs(store, { [ref]: { item: page.item.ref, workspace: "w", branch: "scopesoup/x", failures: 0, fixRounds: 0, startedAt: "2026-11-18T09:00:00Z", at: atStep("triage") } });
   const moved = await post("/api/item/pick", { ref, seen: page.item.updatedAt, steps: [{ kind: "move", to: "todo" }, { kind: "lane", lane: "backlog" }] }, undefined, agentsBase);
   assert.equal(moved.status, 200, JSON.stringify(moved.body));
-  assert.equal(loadJobs(store)[ref]?.dropAskedBy, "Ada");
+  assert.equal(pickedFor(loadJobs(store)[ref], "todo"), "Ada");
   assert.equal((await pageOf(ref)).lane, "backlog");
   // The lane edit alone drops a job too.
   const other = backlog.body.ref as string;
@@ -180,13 +180,13 @@ test("Backlog and To do (decision 121): a new Item is in Backlog, Create in To d
   saveJobs(store, { ...loadJobs(store), [other]: { item: otherPage.item.ref, workspace: "w2", branch: "scopesoup/y", failures: 0, fixRounds: 0, startedAt: "2026-11-18T09:00:00Z", at: atStep("triage") } });
   assert.equal((await post("/api/item/edit", { ref: other, lane: "todo" }, undefined, agentsBase)).status, 200);
   assert.equal((await post("/api/item/edit", { ref: other, lane: "backlog" }, undefined, agentsBase)).status, 200);
-  assert.equal(loadJobs(store)[other]?.dropAskedBy, "Ada");
+  assert.equal(pickedFor(loadJobs(store)[other], "todo"), "Ada");
 
   // Implement anyway on a Backlog Item: work under way, so it moves to To do.
   saveJobs(store, { [other]: { item: otherPage.item.ref, workspace: "w2", branch: "scopesoup/y", failures: 0, fixRounds: 0, startedAt: "2026-11-18T09:00:00Z", at: { kind: "parked", step: "triage", parked: { as: "not-ready", reason: "Triage: not ready.", at: "2026-11-18T09:00:00Z", verdict: true } } } });
   const anyway = await post("/api/item/move", { ref: other, to: "implement" }, undefined, agentsBase);
   assert.equal(anyway.status, 200, JSON.stringify(anyway.body));
-  assert.equal(loadJobs(store)[other]?.implementAskedBy, "Ada");
+  assert.equal(pickedFor(loadJobs(store)[other], "implement"), "Ada");
   assert.equal((await pageOf(other)).lane, "todo");
   assert.match(String((store.eventsOfKinds(["person.moved"], 5)[0]?.data as { reason?: string }).reason), /moved from Backlog to To do: Ada's Implement anyway/);
 });

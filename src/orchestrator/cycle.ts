@@ -15,7 +15,7 @@ import { persistenceLimits } from "../config/persistence.ts";
 import type { Context } from "./context.ts";
 import { ACTOR, errorText } from "./context.ts";
 import type { AskedText, Decision, ItemLinkAnswer, Job, JobParked, JobStep, ParkedAs, ReviewAnswer, TakenDecision, TriageAnswer, Finding } from "./jobs.ts";
-import { ASK_PERSON, answerIn, askedInLog, jobQuestions, nextPark, parkSet, asImplement, asReview, asTriage, formatFindings, hasMarkup, recoverFields, keepsRecommendations, picks, questionsSettled, releaseIn, parkedRewrite, changedRewrite, sameText, atStep, stepAt, parkedOf, mergeApproved, shouldRoundOf, parkJob, editParked, release, nextStep, endSession, wait, oweHandOver, handOverTaken, markMerged, toTriage, dropMark } from "./jobs.ts";
+import { ASK_PERSON, answerIn, askedInLog, jobQuestions, nextPark, parkSet, asImplement, asReview, asTriage, formatFindings, hasMarkup, recoverFields, keepsRecommendations, picks, questionsSettled, releaseIn, parkedRewrite, changedRewrite, sameText, atStep, stepAt, parkedOf, mergeApproved, shouldRoundOf, parkJob, editParked, release, nextStep, endSession, wait, oweHandOver, handOverTaken, markMerged, toTriage, dropMark, pickDone, pickedFor } from "./jobs.ts";
 import { providerFor } from "./providers/index.ts";
 import type { Actions, ClaimResult, SessionResultRecord } from "./ports.ts";
 import { CLAIM_EXPIRY_MINUTES } from "./ports.ts";
@@ -70,10 +70,7 @@ export async function park(ctx: Context, job: Job, as: ParkedAs, reason: string,
   parkJob(job, { as, reason, at: ctx.at, ...(retry ? { retry } : {}), ...(marks.byStep ? { byStep: true } : {}), ...(marks.verdict ? { verdict: true } : {}) });
   job.parks = nextPark(job, ctx.deps.store.get<WorkItem>(job.item)?.log);
   // A person's ask was for the step that ended here (decision 104).
-  delete job.triageAskedBy;
-  delete job.reviewAskedBy;
-  delete job.queueAskedBy;
-  delete job.implementAskedBy;
+  pickDone(job, "triage", "in-review", "merge-queue", "implement");
   // Answers to an earlier set of questions do not count for this parked Item.
   delete job.answered;
   ctx.commit(PARK_EVENT[as], reason, key, { step: stepAt(job) });
@@ -632,17 +629,17 @@ async function handOver(ctx: Context, job: Job, item: WorkItem | null, askedBy?:
   if (await reviewedOnMain(ctx, job)) return;
   // A person's Merge queue pick was checked against the job as it was then: only the revision the reviewer approved goes to the
   // queue. A session may have committed since (one the pick ended), so the branch's head is read again (decision 104).
-  if (job.queueAskedBy !== undefined) {
+  const queuePick = pickedFor(job, "merge-queue");
+  if (queuePick !== undefined) {
     const head = await headOf(ctx, job);
     const approved = job.review?.verdict === "approve" && !job.review.findings.some((finding) => finding.severity === "must");
+    pickDone(job, "merge-queue");
     if (!approved || head === null || head !== job.reviewedHead) {
-      const asker = job.queueAskedBy;
-      delete job.queueAskedBy;
+      const asker = queuePick;
       if (head !== null) job.head = head;
       const what = head === null ? `${job.branch} could not be read` : !approved ? "its review did not approve it" : `${job.branch} is at ${head.slice(0, 7)}, not at the revision the reviewer approved (${job.reviewedHead?.slice(0, 7) ?? "none"})`;
       return next(ctx, job, "review", `${asker}'s Merge queue pick is not carried out: ${what}. Next: review.`);
     }
-    delete job.queueAskedBy;
   }
   const { runner } = ctx.deps;
   const empty = await emptyBranch(ctx, job);
@@ -885,8 +882,7 @@ export async function sendBack(ctx: Context, job: Job, finding: string, what: st
   // The change goes back to its implementor: no hand-over is owed until a new revision is reviewed. A person's pick of the merge
   // queue was for the revision it sent back; what comes next goes as the level says.
   handOverTaken(job);
-  delete job.queueAskedBy;
-  delete job.reviewAskedBy;
+  pickDone(job, "merge-queue", "in-review");
   job.fixRounds++;
   job.review = { verdict: "changes", findings: [{ severity: "must", text: finding }] };
   backToImplementor(ctx, job, `Merging failed: ${finding}\nFix it and commit.`, `${what}; nothing was pushed. Next: the implementor fixes it, round ${job.fixRounds} of ${max}.`);
@@ -1065,7 +1061,7 @@ async function settleStep(ctx: Context, job: Job, session: Session | null, recor
 
   if (stepAt(job) === "triage") {
     // A person's Triage pick (decision 104) was for this step.
-    delete job.triageAskedBy;
+    pickDone(job, "triage");
     const answer = asTriage(record.output);
     if (!answer) return failed(ctx, job, `The triage answer does not have the expected shape, has tool-call markup inside a string, or gives no reason for "not ready" or no question for "needs decision". The answer was: ${JSON.stringify(record.output ?? null).slice(0, 4000)}`);
     job.triage = answer;
@@ -1101,7 +1097,7 @@ async function settleStep(ctx: Context, job: Job, session: Session | null, recor
     if (session.agentSessionId) job.agentSession = session.agentSessionId;
     if (!answer) return failed(ctx, job, "The implementer's answer does not have the expected shape, or has tool-call markup inside a string.");
     // A person's Implement anyway (overruling triage) was for this step; what comes next goes as the level says.
-    delete job.implementAskedBy;
+    pickDone(job, "implement");
     job.implement = answer;
     // Done is the usual end here (it merged, and the host closed the Item). Closed as a duplicate while it worked: what it asked the
     // Item it duplicates goes with it, as a triage's would; drafts and questions about other Items stay.
@@ -1168,7 +1164,7 @@ async function settleStep(ctx: Context, job: Job, session: Session | null, recor
   if (stepAt(job) === "review") {
     dropMark(job, "shouldRound");
     // A person's In review pick (decision 104) was for this step; what comes next goes as the level says.
-    delete job.reviewAskedBy;
+    pickDone(job, "in-review");
     const answer = asReview(record.output);
     if (!answer) return failed(ctx, job, "The reviewer's answer does not have the expected shape, or has tool-call markup inside a string.");
     job.review = answer;
@@ -1623,7 +1619,7 @@ export async function afterRewrite(ctx: Context, job: Job): Promise<void> {
     // In Backlog nothing runs (decision 121): the job goes, and the answers wait in the store for the triage that runs once a person
     // moves the Item to To do.
     const work = ctx.deps.store.get<WorkItem>(job.item);
-    if (work?.backlog && !job.triageAskedBy) {
+    if (work?.backlog && pickedFor(job, "triage") === undefined) {
       delete ctx.jobs[refKey(job.item)];
       ctx.commit("orchestrator.job_closed", `A person settled what ${rewrite.askedBy.join(" and ")} asked about ${job.item.id}, which is in Backlog: nothing runs on it until a person moves it to To do, and its triage then has the answers.`, refKey(job.item));
       return;
@@ -1696,10 +1692,11 @@ export async function retryHandOver(ctx: Context, job: Job, item: WorkItem | nul
     ctx.commit("orchestrator.job_closed", `The branch ${job.branch} can no longer be read (${errorText(error)}); the item starts over.`, refKey(job.item));
     return;
   }
-  const asker = job.owesAskedBy;
+  // A person's Try again, or the Merge queue pick that owed it (which the hand-over carries out).
+  const asker = pickedFor(job, "hand-over") ?? pickedFor(job, "merge-queue");
   const who = asker ? `as ${asker} asked` : "by the tick itself: nobody asked";
   ctx.commit("orchestrator.handover_retry", `Trying the hand-over of ${job.branch} again, ${who}.`, refKey(job.item), { by: asker ?? "tick" });
-  delete job.owesAskedBy;
+  pickDone(job, "hand-over");
   await handOver(ctx, job, item, asker);
 }
 

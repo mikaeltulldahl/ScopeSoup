@@ -8,7 +8,11 @@
 import type { ItemObs, Observation } from "./observe.ts";
 import type { W } from "./waits.ts";
 import { implementBegun, isBusy, newWork, personHolds, stageLane, wText } from "./waits.ts";
-import { parkedOf, sessionIdOf, stepAt, waitingOf, writingOf } from "../orchestrator/jobs.ts";
+import { parkedOf, pickedFor, sessionIdOf, stepAt, STEP_PICK, waitingOf, writingOf } from "../orchestrator/jobs.ts";
+import type { Job, JobStep } from "../orchestrator/jobs.ts";
+
+/** The person who picked the step `role` runs (Triage, In review, Implement anyway), if the job carries that pick. */
+const stepPicked = (job: Job | undefined, role: string): string | undefined => (role in STEP_PICK ? pickedFor(job, STEP_PICK[role as JobStep]) : undefined);
 
 export interface Rule {
   id: string;
@@ -182,7 +186,7 @@ export const RULES: Rule[] = [
         // A session that ended is settled by the tick first, and what follows may start in the same tick.
         if (w.kind === "session" && w.settling) return null;
         // A person's pick ended the running session (decision 104): once it is gone the picked step may start in the same tick.
-        if (w.kind === "session" && before.job?.interrupt) return null;
+        if (w.kind === "session" && before.job?.pick?.ending) return null;
         // A blocker whose session the tick settled first may have closed in the same tick.
         if (w.kind === "blocker" && w.on.every((k) => { const b = o.items.find((each) => each.key === k); return !b || isClosed(b); })) return null;
         // A triage whose Item's text changed under it is stopped and started again (decision 6).
@@ -327,10 +331,10 @@ export const RULES: Rule[] = [
         const last = o.ledger.ended.filter((e) => e.item === s.item && e.role === s.role).at(-1);
         const beforeSettled = before !== undefined && o.ledger.ended.some((e) => e.session === before && e.settled);
         // An Item with no job on this machine, or one a person's move drops, starts anew (as does one whose claim went to another machine), and a job with a failure counted is retried: an implementor's "done" with no commit is settled in the ledger but a failure to the tick.
-        const dropped = prev !== undefined && prev.items.some((i) => i.key === s.item && (i.job === undefined || i.job.dropAskedBy !== undefined || i.job.failures > 0));
+        const dropped = prev !== undefined && prev.items.some((i) => i.key === s.item && (i.job === undefined || pickedFor(i.job, "todo") !== undefined || i.job.failures > 0));
         // A person who picks the step again (Review on a change reviewed before, decision 104) gives it new input: their ask (#268).
         const asked = prev?.items.find((i) => i.key === s.item)?.job;
-        const picked = (s.role === "review" && asked?.reviewAskedBy) || (s.role === "triage" && asked?.triageAskedBy) || (s.role === "implement" && asked?.implementAskedBy);
+        const picked = stepPicked(asked, s.role);
         if (before && beforeSettled && last?.settled && !dropped && !picked) return `a ${s.role} session started again on ${s.item.split(":").pop()} with the same input as session ${before}, after it succeeded`;
         seen[key] = s.session;
       }
@@ -548,7 +552,7 @@ export const RULES: Rule[] = [
       return first(o.started, (s) => {
         if (s.role !== "implement") return null;
         const before = prevOf(prev, s.item);
-        if (!before?.job || implementBegun(before.job) || before.job.implementAskedBy) return null;
+        if (!before?.job || implementBegun(before.job) || pickedFor(before.job, "implement")) return null;
         const paths = before.paths;
         // Busy before the tick and still busy after it: a session that ended in this tick and merged its change is over, and the start
         // that follows in the same tick is rightly let go.
@@ -566,7 +570,7 @@ export const RULES: Rule[] = [
       const level: Record<string, number> = { triage: 1, implement: 2, review: 3 };
       return first(o.started, (s) => {
         const job = prevOf(prev, s.item)?.job;
-        const picked = (s.role === "triage" && job?.triageAskedBy) || (s.role === "review" && job?.reviewAskedBy) || (s.role === "implement" && job?.implementAskedBy);
+        const picked = stepPicked(job, s.role);
         if (prev.switches[s.role] !== "started" && (!picked || prev.level >= level[s.role]!)) return `a ${s.role} session started on ${s.item.split(":").pop()} while that switch was ${prev.switches[s.role]}`;
         if (!picked && level[s.role]! > prev.level) return `a ${s.role} session started on ${s.item.split(":").pop()} at level ${prev.level}`;
         return null;
@@ -590,9 +594,9 @@ export const RULES: Rule[] = [
       const waiting = Math.min(prev.waiting, o.waiting);
       return first(o.started, (s) => {
         const before = prevOf(prev, s.item);
-        const job = before?.job && !before.job.dropAskedBy ? before.job : undefined;
+        const job = before?.job && !pickedFor(before.job, "todo") ? before.job : undefined;
         if (s.role === "triage" && !job && waiting >= prev.caps.triage) return `a new triage started on ${s.item.split(":").pop()} while ${waiting} things waited for a person (the cap on new triage is ${prev.caps.triage})`;
-        const fresh = s.role === "implement" && (!job || (newWork(job) && !job.implementAskedBy));
+        const fresh = s.role === "implement" && (!job || (newWork(job) && !pickedFor(job, "implement")));
         if (fresh && waiting >= prev.caps.work) return `new work started on ${s.item.split(":").pop()} while ${waiting} things waited for a person (the cap on new work is ${prev.caps.work})`;
         return null;
       });
@@ -810,9 +814,9 @@ export const RULES: Rule[] = [
         // A wait that ends by itself at a tick (questions that could not be posted are posted again, #230) is not the restart's.
         memo.reposts = prev.items.filter((i) => parkedOf(i.job)?.retry === "post").map((i) => i.key);
         // A job a person dropped (back to To do, or Backlog) while its session ran is dropped by the first tick, restart or not (#243).
-        memo.dropped = prev.items.filter((i) => i.job?.dropAskedBy !== undefined).map((i) => i.key);
-        // A step a person picked over the running session (Triage, Review: `interrupt`) is the step that comes next, restart or not (#268).
-        memo.picked = Object.fromEntries(prev.items.filter((i) => i.job?.interrupt !== undefined).map((i) => [i.key, stepAt(i.job!)]));
+        memo.dropped = prev.items.filter((i) => pickedFor(i.job, "todo") !== undefined).map((i) => i.key);
+        // A step a person picked over the running session (Triage, Review: its `ending`) is the step that comes next, restart or not (#268).
+        memo.picked = Object.fromEntries(prev.items.filter((i) => i.job?.pick?.ending !== undefined).map((i) => [i.key, stepAt(i.job!)]));
         return null;
       }
       const before = memo.before as Record<string, W> | undefined;

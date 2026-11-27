@@ -3,7 +3,7 @@
 
 import type { Ask, From, Phase, Pick, Run } from "../core/phase.ts";
 import type { Job, JobParked, JobStep, StepRun } from "./jobs.ts";
-import { stepAt } from "./jobs.ts";
+import { STEP_PICK, stepAt } from "./jobs.ts";
 
 export function phaseOf(job: Job): Phase {
   const at = job.at;
@@ -45,13 +45,14 @@ function parkedPhase(job: Job, step: JobStep, parked: JobParked): Phase {
   }
 }
 
-/** The person's pick the job carries out, if any: a drop first, then the pick of the step it is at, then the queue. */
+/** The person's pick the job carries out, if any: a drop, the pick of the step it is at, or the queue. */
 export function pickOf(job: Job): Pick | undefined {
-  if (job.dropAskedBy !== undefined) return { by: job.dropAskedBy, to: "drop" };
+  const picked = job.pick;
+  if (!picked) return undefined;
   const step = stepAt(job);
-  const own = step === "triage" ? job.triageAskedBy : step === "implement" ? job.implementAskedBy : job.reviewAskedBy;
-  if (own !== undefined) return { by: own, to: step };
-  if (job.queueAskedBy !== undefined) return { by: job.queueAskedBy, to: "queue" };
+  if (picked.to === "todo") return { by: picked.by, to: "drop" };
+  if (picked.to === STEP_PICK[step]) return { by: picked.by, to: step };
+  if (picked.to === "merge-queue") return { by: picked.by, to: "queue" };
   return undefined;
 }
 

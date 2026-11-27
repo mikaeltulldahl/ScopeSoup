@@ -63,9 +63,9 @@ describe("phaseOf: where the job is, read as one phase", { concurrency: 4 }, () 
 
 describe("pickOf", () => {
   it("a drop first, then the pick of the step it is at, then the queue", () => {
-    assert.deepEqual(pickOf(job(atStep("triage"), { dropAskedBy: "p", triageAskedBy: "q" })), { by: "p", to: "drop" });
-    assert.deepEqual(pickOf(job(atStep("triage"), { triageAskedBy: "q" })), { by: "q", to: "triage" });
-    assert.equal(pickOf(job(atStep("implement"), { triageAskedBy: "q" })), undefined);
-    assert.deepEqual(pickOf(job(atStep("review"), { queueAskedBy: "r" })), { by: "r", to: "queue" });
+    assert.deepEqual(pickOf(job(atStep("triage"), { pick: { by: "p", to: "todo" as const } })), { by: "p", to: "drop" });
+    assert.deepEqual(pickOf(job(atStep("triage"), { pick: { by: "q", to: "triage" as const } })), { by: "q", to: "triage" });
+    assert.equal(pickOf(job(atStep("implement"), { pick: { by: "q", to: "triage" as const } })), undefined);
+    assert.deepEqual(pickOf(job(atStep("review"), { pick: { by: "r", to: "merge-queue" as const } })), { by: "r", to: "queue" });
   });
 });

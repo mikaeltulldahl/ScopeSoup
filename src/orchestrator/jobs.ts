@@ -246,8 +246,6 @@ export interface Job {
   base?: string;
   /** Where main was once this round's implement session started (its branch cut): a head new in main since then was merged by it. */
   roundBase?: string;
-  /** A person asked for the owed hand-over (Try again); unset when the tick repeats it by itself. Cleared once logged. */
-  owesAskedBy?: string;
   triage?: TriageAnswer;
   /** How many times a recorded answer was reused for a question an implementer or fixer asked again (capped, so a step cannot loop). */
   reusedAnswers?: number;
@@ -275,10 +273,8 @@ export interface Job {
   review?: ReviewAnswer;
   /** The branch head `review` was given on, so an approval counts only for that revision (a person's "Merge queue" on the board). */
   reviewedHead?: string;
-  /** A person put the Item back in To do on the board: the tick drops the job once no session runs, and gives back its claim and workspace. */
-  dropAskedBy?: string;
-  /** A person picked Triage on the board: this triage runs whatever the level (decision 104). Cleared when it is settled. */
-  triageAskedBy?: string;
+  /** A person's pick on the board that the job carries out, at most one: read with `pickedFor`, changed only by the moves below. */
+  pick?: JobPick;
   /**
    * The tick has seen this job's Item in To do. Read in Backlog after that, another machine's person moved it there, and the job is
    * given up as a move to Backlog here gives it up (#243). A job never seen in To do (a person's Triage pick in Backlog and what
@@ -290,27 +286,10 @@ export interface Job {
    * triage does not run again with the answers (decision 121): the tick closes it, and the answers wait for the triage after a move to To do.
    */
   othersAsked?: true;
-  /** A person picked In review on the board: this review step runs whatever the level (decision 104). Cleared when it is settled. */
-  reviewAskedBy?: string;
-  /**
-   * A person overruled triage's not-ready verdict with Implement anyway: this implement step runs whatever the level, with triage's
-   * notes as they are (no triage again first). Cleared when the step settles.
-   */
-  implementAskedBy?: string;
   /** How many times review sent the change back with `changes` (not merging failures): the step-up of the implementor's model reads it. */
   reviewSendBacks?: number;
   /** The model the last implement session started on, so a step-up is said once, when the model changes (decision 105). */
   implementModel?: string;
-  /**
-   * A person picked Merge queue on the board (level 4): the hand-over first reads the branch's head again, and gives the change to
-   * the queue only at the revision the reviewer approved (decision 104). Cleared by the hand-over.
-   */
-  queueAskedBy?: string;
-  /**
-   * A person's pick replaced the step that runs (decision 104): the tick ends the Item's session at once, the way Stop does, and
-   * does not settle its result; then the job goes on as the pick left it. `to` is the pick (a move, or "abandoned").
-   */
-  interrupt?: { by: string; at: string; to: string };
   /**
    * The progress guards' memory. `must` and `findings`: the `must` findings of the last review round that asked for changes
    * (their count and `findingKey`s), cleared by an approval. `mergeQueue`: the last merging failure's key (`failureKey`).
@@ -342,6 +321,28 @@ export interface Job {
   /** What the newest triage saw, so a waiting Item whose triage is out of date gets one again (`staleTriage`). */
   triaged?: Triaged;
   startedAt: string;
+}
+
+/**
+ * What a person picked (decision 104): a move on the board, Abandoned, or Try again on a failed hand-over (`hand-over`).
+ * - `triage`, `in-review`, `implement` (Implement anyway): that step runs whatever the level; settled with the step, or by a park.
+ * - `merge-queue`: the hand-over reads the branch's head again and gives the change to the queue only at the revision the reviewer
+ *   approved; taken by the hand-over.
+ * - `hand-over`: the owed hand-over is made as this person asked (said in its event); taken by the hand-over.
+ * - `todo`: the tick drops the job once no session runs, and gives back its claim and workspace.
+ * - `abandoned`: nothing beyond ending the session that ran.
+ */
+export type PickTo = "triage" | "implement" | "in-review" | "merge-queue" | "hand-over" | "todo" | "abandoned";
+
+/**
+ * A person's pick the job carries out. One at a time: a later pick replaces it. `ending`: when it was picked while a step session ran
+ * (or one picked before it still is to be ended), the moment of that pick: the tick ends the session at once, the way Stop does, and
+ * does not settle its result; then the job goes on as the pick left it.
+ */
+export interface JobPick {
+  by: string;
+  to: PickTo;
+  ending?: string;
 }
 
 /** An Item's text as a triage read it: its hash (`itemTextHash`) and the text, each part clipped. */
@@ -485,6 +486,36 @@ export function writingOf(job: Job | null | undefined): TextWritten | undefined 
   const at = job?.at;
   if (!at || at.kind === "merged") return undefined;
   return at.kind === "parked" || at.kind === "hand-over" ? at.writing : at.run.writing;
+}
+
+/** The person whose pick of `to` the job carries out, if that is its pick. */
+export function pickedFor(job: Job | null | undefined, to: PickTo): string | undefined {
+  return job?.pick?.to === to ? job.pick.by : undefined;
+}
+
+/** The pick that runs `step` whatever the level (Triage, Implement anyway, In review). */
+export const STEP_PICK: Record<JobStep, PickTo> = { triage: "triage", implement: "implement", review: "in-review" };
+
+/**
+ * A person picks `to`. It replaces the pick before; a session that pick was to end is still ended, and `ending` (the moment, when a
+ * step session runs now) says this pick ends one.
+ */
+export function pick(job: Job, by: string, to: PickTo, ending?: string): void {
+  const ends = ending ?? job.pick?.ending;
+  job.pick = { by, to, ...(ends ? { ending: ends } : {}) };
+}
+
+/** The pick is carried out, or no longer stands, if it is one of `tos`: the job has no pick then. */
+export function pickDone(job: Job, ...tos: PickTo[]): void {
+  if (job.pick && tos.includes(job.pick.to)) delete job.pick;
+}
+
+/** The session the pick was to end is over (or given up on): what is left of the pick is its move; Abandoned has none. */
+export function endingOver(job: Job): void {
+  if (!job.pick?.ending) return;
+  const { ending: _ending, ...rest } = job.pick;
+  if (rest.to === "abandoned") delete job.pick;
+  else job.pick = rest;
 }
 
 // Moving a job. Each move builds the case it goes to from the one it is in, so what a case keeps is said here and nowhere else. A move
@@ -799,7 +830,7 @@ export function changedMeanwhile(store: Store, jobs: Jobs, key: string, starting
   const stored = readStored(store)[key];
   const text = baselines.get(jobs)?.get(key);
   const was = folded ? starting : text === undefined ? undefined : (JSON.parse(text) as Job);
-  if (!stored || !was || stored.interrupt !== undefined || stored.dropAskedBy !== undefined || stored.at.kind !== was.at.kind || stepAt(stored) !== stepAt(was)) return "picked";
+  if (!stored || !was || stored.pick?.ending !== undefined || stored.pick?.to === "todo" || stored.at.kind !== was.at.kind || stepAt(stored) !== stepAt(was)) return "picked";
   return JSON.stringify(parkedOf(stored)) === JSON.stringify(parkedOf(was)) ? "changed" : "picked";
 }
 
@@ -888,7 +919,8 @@ export function releaseIn(jobs: Jobs, key: string, actor: string, startOver = fa
   if (was.retry === "hand-over") {
     // The work is done and reviewed: keep it, and let the next tick repeat only the hand-over.
     release(job, "hand-over");
-    job.owesAskedBy = actor;
+    // A pick that waits (a drop) is not replaced: it comes first.
+    if (!job.pick) pick(job, actor, "hand-over");
   } else if (!startOver && resumesStep(job)) {
     // The step that asked runs again, as a new attempt of the same round.
     release(job);

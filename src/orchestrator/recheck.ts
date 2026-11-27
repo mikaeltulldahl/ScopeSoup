@@ -14,7 +14,7 @@ import { watchMain } from "./mainGuard.ts";
 import type { Triaged, TriagedText, Job, Recheck, TriageAnswer } from "./jobs.ts";
 import { plural } from "../model/plural.ts";
 import { pastFloor, staleness, stalest } from "../core/retriage.ts";
-import { stepAt, toTriage } from "./jobs.ts";
+import { pickedFor, stepAt, toTriage } from "./jobs.ts";
 
 /** The most commits a triage that runs again is shown; it is told how many there were in all. */
 export const MAX_COMMITS = 20;
@@ -155,7 +155,7 @@ const MAX_PROBED = 8;
  */
 export async function retriageCandidate<T extends { item: WorkItem; job: Job }>(ctx: Context, waiting: readonly T[], items: readonly WorkItem[]): Promise<{ entry: T; recheck: Recheck } | null> {
   const triagedAt = (job: Job): string => job.triaged?.at ?? job.startedAt;
-  const open = waiting.filter((each) => !each.item.backlog && awaitsImplement(each.job) && each.job.implementAskedBy === undefined && pastFloor(triagedAt(each.job), ctx.at))
+  const open = waiting.filter((each) => !each.item.backlog && awaitsImplement(each.job) && pickedFor(each.job, "implement") === undefined && pastFloor(triagedAt(each.job), ctx.at))
     .sort((a, b) => Date.parse(triagedAt(a.job)) - Date.parse(triagedAt(b.job)));
   if (open.length === 0) return null;
   // Main once for the pass, only when some candidate named paths whose commits can be listed.
