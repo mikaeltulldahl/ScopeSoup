@@ -526,6 +526,32 @@ async function holdsOn(id: string, options: Shrunk, actions: Action[]): Promise<
 }
 
 describe("runs the simulator shrank, held since their fix", { concurrency: 1 }, () => {
+  // Fixed (#268): a move back to To do drops a hand-over the job owed, so its wait is the drop's.
+  test("A1: an escalated hand-over answered, then put back in To do: no hand-over is waited for", async () => {
+    await holdsOn("A1", {items: 9, level: 2, slots: 3, steps: 600, profile: "normal", ageing: true}, [
+      {kind: "close", item: "A-5", state: "done"},
+      {kind: "close", item: "A-2", state: "abandoned"},
+      {kind: "tick"},
+      {kind: "end", item: "A-3", v: 455629},
+      {kind: "close", item: "A-1", state: "abandoned"},
+      {kind: "level", to: 1},
+      {kind: "tick"},
+      {kind: "end", item: "A-7", v: 920581},
+      {kind: "tick"},
+      {kind: "end", item: "A-4", v: 10737},
+      {kind: "end", item: "A-8", v: 728507},
+      {kind: "tick"},
+      {kind: "answer", item: "A-8", v: 731861},
+      {kind: "tick"},
+      {kind: "move", item: "A-8", v: 140223},
+      {kind: "tick"},
+      {kind: "end", item: "A-8", v: 299078},
+      {kind: "tick"},
+      {kind: "answer", item: "A-8", v: 640417},
+      {kind: "move", item: "A-8", v: 118405},
+    ]);
+  });
+
   // Fixed (#268): a person's triage in Backlog that waits for the text a proposed rewrite's Accept wrote: the card says so.
   test("A1: Triage picked in Backlog, then a proposed rewrite accepted whose read-back is lost: the card waits for the text", async () => {
     await holdsOn("A1", {items: 5, level: 3, slots: 2, steps: 600, profile: "normal", ageing: true}, [

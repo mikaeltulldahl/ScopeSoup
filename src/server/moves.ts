@@ -201,8 +201,9 @@ export function applyMove(jobs: Jobs, key: string, move: Move, input: MoveInput,
   if (move === "todo") {
     // The tick drops it: only it can give back this machine's claim on the host and the workspace (`dropAsked` in the tick).
     job.dropAskedBy = by;
-    // What it was parked on is answered in its log with the move: it waits for nothing but the drop.
-    setWhere(job, { parked: undefined });
+    // What it was parked on is answered in its log with the move, and a hand-over it owed is not made: it waits for nothing but the drop
+    // (#268: an owed hand-over left the product's wait saying hand-over while the tick drops the job).
+    setWhere(job, { parked: undefined, owes: undefined });
     return { ok: true, reason: `${by} put ${id} back in To do: the work under way is dropped (the branch stays) and the agents start it again from triage.${ends}` };
   }
   // A hand-over is undone here (a reviewed change handed to a person, or one whose hand-over failed), or the step that runs is

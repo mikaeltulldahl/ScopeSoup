@@ -116,6 +116,10 @@ describe("the rules", () => {
     assert.equal(applyMove(drop, key, "todo", input(), "Ada", T0).ok, true);
     assert.equal(drop[key]?.dropAskedBy, "Ada");
     assert.equal(moveWhys(input({ job: drop[key] })).todo!.why, "back to To do already");
+    // A hand-over it owed is not made: the job waits only for the drop (#268).
+    const owed = { [key]: job({ head: "abc", step: "implement", owes: "hand-over" }) };
+    assert.equal(applyMove(owed, key, "todo", input({ job: owed[key] }), "Ada", T0).ok, true);
+    assert.deepEqual([owed[key]!.dropAskedBy, where(owed[key])!.owes], ["Ada", undefined]);
   });
 
   test("a move that replaces the step that runs marks the job for the tick to end that session; In review and Merge queue are marked as a person's", () => {
