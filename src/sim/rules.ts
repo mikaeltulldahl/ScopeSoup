@@ -621,9 +621,12 @@ export const RULES: Rule[] = [
       const wrote = (e: { kind: string }): boolean => !e.kind.startsWith("work.") && !e.kind.startsWith("change.") && e.kind !== "session.updated" && !SAID_KINDS.has(e.kind);
       // A tick that ran with the host down could not write what it wanted (a claim, a close): the next one, with the host back, does.
       if (prev.events.some(wrote) || prev.remote.down) return null;
-      const loud = o.events.find((e) => wrote(e) || e.kind.startsWith("change."));
+      // A start whose claim read the Item from the host found it closed or in Backlog on another machine (#243): that read is the
+      // input, and the next tick gives the job up.
+      const readAtClaim = new Set(prev.events.filter((e) => e.kind === "orchestrator.claim_lost").map((e) => e.subject));
+      const loud = o.events.find((e) => (wrote(e) || e.kind.startsWith("change.")) && !readAtClaim.has(e.subject));
       if (loud) return `a tick right after a tick wrote ${loud.kind}${loud.subject ? ` about ${loud.subject.split(":").pop()}` : ""}`;
-      const changed = o.items.find((i) => JSON.stringify(i.job ?? null) !== JSON.stringify(prevOf(prev, i.key)?.job ?? null));
+      const changed = o.items.find((i) => !readAtClaim.has(i.key) && JSON.stringify(i.job ?? null) !== JSON.stringify(prevOf(prev, i.key)?.job ?? null));
       return changed ? `a tick right after a tick changed ${changed.id}'s job` : null;
     },
   },
