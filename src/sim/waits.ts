@@ -74,7 +74,9 @@ export function waitsFor(input: WaitInput): W {
     return { kind: "person", why: "answer", n: Math.max(0, asked - answered) };
   }
   const blockers = [...item.blockedBy.map((ref) => `${ref.host}:${ref.kind}:${ref.id}`), ...input.ownBlockers].filter((key) => input.open.has(key));
-  if (blockers.length > 0) return { kind: "blocker", on: [...new Set(blockers)] };
+  // A person's Triage pick runs on a blocked Item too (decision 104): they asked for a look at it as it is, blockers and all (#243, A4).
+  const pickedTriage = role === "triage" && job?.triageAskedBy !== undefined;
+  if (blockers.length > 0 && !pickedTriage) return { kind: "blocker", on: [...new Set(blockers)] };
   // A job a person put back (To do, Backlog) is dropped by the next tick: nothing of it waits.
   if (!job || job.dropAskedBy) return { kind: "not-started" };
   const start = (cause: StartCause): W => ({ kind: "start", role, cause });

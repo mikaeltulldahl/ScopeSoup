@@ -4395,7 +4395,7 @@ test("while a person's chat turn runs on an item, the cycle starts nothing on it
 test("a chat turn a person starts while the tick prepares the item's step keeps the item: the step is not started", async () => {
   const w = world(config({ level: 2 }), [item("1", { state: "doing" })]);
   w.store.addUsageSample(usage(0.1, 0.1));
-  const due = { item: ref("1"), workspace: workspaceKey(ref("1")), branch: "scopesoup/1", step: "implement" as const, failures: 0, fixRounds: 1, agentSession: "agent-1", resumeWith: "Fix it.", startedAt: new Date(T0).toISOString() };
+  const due = { item: ref("1"), workspace: workspaceKey(ref("1")), branch: "scopesoup/1", step: "implement" as const, failures: 0, fixRounds: 1, agentSession: "agent-1", resumeWith: "Fix it.", startedAt: new Date(T0).toISOString(), seenInTodo: true as const };
   w.store.tx(() => saveJobs(w.store, { [refKey(ref("1"))]: due }));
   // Not busy when the tick picks the item; a person's turn starts while the tick awaits the workspace, before its start.
   let talking = false;
@@ -4713,8 +4713,8 @@ test("a cross-Item rewrite with no question is proposed on that Item and leaves 
   w.store.tx(() => {
     const jobs = loadJobs(w.store);
     // Approved and to be merged, waiting for its merge turn; and one in a backoff wait after a failed attempt.
-    jobs[refKey(ref("2"))] = { item: ref("2"), workspace: workspaceKey(ref("2")), branch: "scopesoup/2", step: "implement", failures: 0, fixRounds: 1, startedAt: at, merge: true, notBefore: later, agentSession: "agent-2" };
-    jobs[refKey(ref("3"))] = { item: ref("3"), workspace: workspaceKey(ref("3")), branch: "scopesoup/3", step: "implement", failures: 1, fixRounds: 0, startedAt: at, notBefore: later };
+    jobs[refKey(ref("2"))] = { item: ref("2"), workspace: workspaceKey(ref("2")), branch: "scopesoup/2", step: "implement", failures: 0, fixRounds: 1, startedAt: at, merge: true, notBefore: later, agentSession: "agent-2", seenInTodo: true };
+    jobs[refKey(ref("3"))] = { item: ref("3"), workspace: workspaceKey(ref("3")), branch: "scopesoup/3", step: "implement", failures: 1, fixRounds: 0, startedAt: at, notBefore: later, seenInTodo: true };
     saveJobs(w.store, jobs);
   });
   const before = { two: structuredClone(w.job("2")), three: structuredClone(w.job("3")) };
@@ -5060,6 +5060,18 @@ test("Backlog (decision 121): nothing starts there; a person's triage runs and t
   w.clock.ms += 60_000;
   await w.run();
   assert.deepEqual(roles(w), ["triage", "implement"]);
+});
+
+test("Backlog read at a fetch (#243): a job no person put under way is dropped, not started; a person's triage there stays", async () => {
+  // Another machine's person moved the Items to Backlog while this machine had their jobs waiting at triage (seen in To do before).
+  const w = world(config(), [item("1", { backlog: true }), item("2", { backlog: true })]);
+  w.store.addUsageSample(usage(0.1, 0.1));
+  const waiting = (id: string, over: Record<string, unknown> = {}) => ({ item: ref(id), workspace: workspaceKey(ref(id)), branch: `scopesoup/${id}`, step: "triage" as const, failures: 0, fixRounds: 0, startedAt: new Date(T0).toISOString(), ...over });
+  saveJobs(w.store, { [refKey(ref("1"))]: waiting("1", { seenInTodo: true }), [refKey(ref("2"))]: waiting("2", { seenInTodo: true, triageAskedBy: "Ada" }) });
+  await w.run();
+  assert.equal(w.job("1"), undefined, "the job on 1 is given up");
+  assert.match(w.reasons("orchestrator.job_dropped")[0] ?? "", /^1 is in Backlog \(moved there on another machine\)/);
+  assert.deepEqual(w.runner.requests.map((request) => `${request.role} ${request.subject.id}`), ["triage 2"], "only the person's triage runs");
 });
 
 // --- Implement anyway and the implementor's model per size (decision 105) ---

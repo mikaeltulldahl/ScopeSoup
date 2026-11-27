@@ -128,8 +128,9 @@ export interface Actions {
   /** The actor id Scope Soup's claims are written as on this host (`scopesoup@laptop-a`), when claims are shared between machines. */
   claimant?: string;
   /**
-   * Scope Soup claims the items it starts, with a fixed expiry (`CLAIM_EXPIRY_MINUTES`), and releases them when they are parked: on a
-   * shared meta branch with writes on, and on GitHub with writes and claim comments. There is no switch.
+   * Scope Soup claims the items it starts, with a fixed expiry (`CLAIM_EXPIRY_MINUTES`) renewed for as long as the job is here, and
+   * releases them when the job closes or is dropped (#243): on a shared meta branch with writes on, and on GitHub with writes and claim
+   * comments. There is no switch.
    */
   claims?: true;
   release(item: Ref, reason: string): Promise<void>;
@@ -223,6 +224,9 @@ export interface Actions {
 
 /** `won`: this machine holds the item. Otherwise `why` says who does, or why the claim did not stand. */
 export type ClaimResult = { won: true } | { won: false; why: string };
+
+/** How long a claim Scope Soup writes lasts; it is renewed once less than half is left. Fixed: there is no setting. */
+export const CLAIM_EXPIRY_MINUTES = 120;
 
 export const dryActions: Actions = {
   async claim() {

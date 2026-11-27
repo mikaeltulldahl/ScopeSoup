@@ -7,13 +7,6 @@ import type { Known } from "./known.ts";
 
 export const KNOWN_MULTI: Record<string, Known> = {
   // Seen in the long run only (seed in the long run).
-  A4: { seed: 4, long: true, what: "an Item its own triage blocked is triaged again while still blocked, after another machine changed it (unsure: may be a re-triage on new input, rightly)" },
-  J1: { seed: 6, long: true, what: "an Item a person moved to Backlog on another machine is triaged from Backlog by the machine whose job it had: that job is not dropped when the lane arrives by fetch" },
-  M3: { seed: 5, long: true, what: "a re-triage runs without a claim (the implement claim released first), so another machine claims the Item and triages it at the same time" },
-  // Since #238 the words of a timed wait are read after a tick only, and the normal run's seeds no longer show it.
-  A1: { seed: 11, long: true, what: "two machines hold a job for one Item: a card on one machine shows the other machine's open question while its own job waits for a timer (the two-jobs problem of M3; #243)" },
+  A1: { seed: 36, long: true, what: "Scope Soup's own blockers are kept per store: an Item one machine's triage blocked stays blocked in that store (W) after the blocker left the host's record, while another machine works on it and the board shows its lane (pre-existing on main; the two-jobs cause of #243 is gone)" },
   A3: { seed: 1, long: true, what: "a job parked on a question that is not open on the host, across machines (#248)" },
-  I4: { seed: 3, long: true, what: "an Item's branch with work not on main is deleted, across machines (#248)" },
-  B4: { seed: 38, long: true, what: "a question about an Item stays asked after that Item is closed, across machines (#248)" },
-  M8: { seed: 6, long: true, what: "a machine acts on a move's answer (\"Put back in To do\") that no person sent on it, across machines; fails on main too, not #238's (#248)" },
 };

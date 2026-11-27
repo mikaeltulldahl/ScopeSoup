@@ -105,11 +105,28 @@ export const MULTI_RULES: MultiRule[] = [
   },
   {
     id: "M3",
-    why: "One holder: an Item never has sessions running on two machines at once.",
+    why: "One holder: an Item never has sessions running on two machines at once, unless one machine's claim ran out unrenewed (it was offline or did not tick) and another rightly took the Item after it.",
     check(o) {
       const where = new Map<string, Set<string>>();
       for (const m of o.machines) for (const key of m.live) (where.get(key) ?? where.set(key, new Set()).get(key)!).add(m.name);
-      for (const [key, names] of where) if (names.size > 1) return `${idOf(key)} has sessions running on ${[...names].join(" and ")} at once`;
+      for (const [key, names] of where) {
+        if (names.size < 2) continue;
+        // Each machine's last claim on the meta remote. A machine whose claim ran out before another machine's newer claim was
+        // written lost the Item rightly (claims lapse); it stops its session once it reads that (`renewClaims`).
+        const last = new Map<string, { at: number; until: number }>();
+        for (const line of (o.remote.get(idOf(key))?.log ?? "").split("\n")) {
+          if (!line.trim()) continue;
+          const entry = JSON.parse(line) as { at: string; kind: string; until?: string; by: { machine?: string; agent?: boolean } };
+          if (entry.kind !== "claimed" || !entry.by.agent || !entry.by.machine || !entry.until) continue;
+          last.set(entry.by.machine, { at: Date.parse(entry.at), until: Date.parse(entry.until) });
+        }
+        const lapsed = (name: string): boolean => {
+          const mine = last.get(name);
+          return !!mine && [...names].some((other) => other !== name && (last.get(other)?.at ?? -Infinity) >= mine.until);
+        };
+        const holding = [...names].filter((name) => !lapsed(name));
+        if (holding.length > 1 || holding.length === 0) return `${idOf(key)} has sessions running on ${[...names].join(" and ")} at once`;
+      }
       return null;
     },
   },
@@ -208,7 +225,8 @@ export const MULTI_RULES: MultiRule[] = [
     why: "Decisions are surfaced, not made, across machines: every answer a machine acts on was sent by a person on some machine.",
     check(o) {
       const sent = new Set(o.machines.flatMap((m) => m.ledger.answers.map((a) => a.text)));
-      const asked = new Set(o.machines.flatMap((m) => m.ledger.requests.filter((r) => r.status === 200 && r.item).map((r) => r.item)));
+      // A person's request on any board: carried out there (200), or a pick asked of the machine where the work runs (202).
+      const asked = new Set(o.machines.flatMap((m) => m.ledger.requests.filter((r) => (r.status === 200 || r.status === 202) && r.item).map((r) => r.item)));
       for (const m of o.machines) {
         const made = m.answers.find((a) => !sent.has(a.answer) && !/scopesoup/i.test(a.by) && !asked.has(a.subject.id));
         if (made) return `${m.name} acts on an answer "${made.answer.slice(0, 60)}" by ${made.by} on ${made.subject.id} that no person sent`;

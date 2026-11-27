@@ -135,6 +135,9 @@ export const RULES: Rule[] = [
         // A triage whose Item's text changed under it is stopped and started again (decision 6).
         if (w.kind === "session" && w.role === "triage" && s.role === "triage") return null;
         if (w.kind === "start" && w.cause === "timer") return null;
+        // Another machine's claim as this store last read it: the start's claim reads the host, and won when that claim was let go
+        // meanwhile (#243). The Item is this machine's now.
+        if (w.kind === "start" && w.cause === "claim" && o.items.find((each) => each.key === s.item)?.item.holder?.actor.id === (o.machine ? `scopesoup@${o.machine}` : OWN)) return null;
         // The tick settles finished sessions first, which can end a same-files wait within the same tick.
         if (w.kind === "start" && w.cause === "same-files") return null;
         // A re-triage may run at any moment on an Item that waits at implement (decision 9).
@@ -163,7 +166,8 @@ export const RULES: Rule[] = [
     why: "The status line says why nothing runs: idle with no session means no Item waits only for a slot.",
     check(o) {
       if (!o.tick || o.tick.started.length > 0 || o.liveCount > 0 || !o.tick.idle || o.remote.down) return null;
-      const slot = o.items.find((i) => i.w.kind === "start" && i.w.cause === "slot");
+      // An Item whose claim did not take is said by name in the idle line: the status line says why (#243).
+      const slot = o.items.find((i) => i.w.kind === "start" && i.w.cause === "slot" && !o.tick!.idle!.includes(`${i.id} is not started here`));
       return slot ? `the tick says "${o.tick.idle.slice(0, 80)}", yet ${slot.id} waits only for a slot` : null;
     },
   },
@@ -178,7 +182,7 @@ export const RULES: Rule[] = [
       const lost = o.ledger.answers.find((a) => a.step > ((memo.lostAt as number | undefined) ?? -1) && !known.has(`${a.item}|${a.text}`));
       if (lost) return `the answer "${lost.text}" on ${lost.item.split(":").pop()} (step ${lost.step}) is not in the store's answers`;
       const given = new Map<string, number>();
-      // With several machines an answer given on another board is an answer here too (decision 130).
+      // With several machines an answer given on another board is an answer here too (decision 131).
       for (const a of [...o.ledger.answers, ...(o.answersElsewhere ?? [])]) given.set(`${a.item}|${a.text}`, (given.get(`${a.item}|${a.text}`) ?? 0) + 1);
       const had = new Map<string, number>();
       for (const a of o.answers) {
@@ -342,7 +346,9 @@ export const RULES: Rule[] = [
     why: "A closed Item leaves nothing behind within 2 ticks: no job, no open question, no live session (decision 5), no claim of Scope Soup's.",
     check(o, _prev, memo) {
       return first(o.items, (i) => {
-        const left = [i.job ? "a job" : "", (i.host?.openQuestions ?? []).length > 0 ? "an open question" : "", i.live.length > 0 ? "a live session" : "", i.item.holder?.actor.id === OWN ? "Scope Soup's claim" : ""].filter(Boolean);
+        // An open question on an Item the host shows open again (reopened on another machine, not read here yet) is that Item's.
+        const reopened = !!i.host && i.host.state !== "done" && i.host.state !== "abandoned";
+        const left = [i.job ? "a job" : "", (i.host?.openQuestions ?? []).length > 0 && !reopened ? "an open question" : "", i.live.length > 0 ? "a live session" : "", i.item.holder?.actor.id === OWN ? "Scope Soup's claim" : ""].filter(Boolean);
         // A tick while the host does not answer cannot give the claim back: it does not count.
         const n = ticksSince(memo, `C3|${i.key}`, isClosed(i) && left.length > 0, o, isTick(o) && !o.remote.down);
         return n > 2 ? `${i.id} is ${i.item.state} but still has ${left.join(", ")} after ${n} ticks` : null;
@@ -574,6 +580,8 @@ export const RULES: Rule[] = [
         memo.before = Object.fromEntries(prev.items.map((i) => [i.key, i.w]));
         // A wait that ends by itself at a tick (questions that could not be posted are posted again, #230) is not the restart's.
         memo.reposts = prev.items.filter((i) => i.job?.parked?.retry === "post").map((i) => i.key);
+        // A job a person dropped (back to To do, or Backlog) while its session ran is dropped by the first tick, restart or not (#243).
+        memo.dropped = prev.items.filter((i) => i.job?.dropAskedBy !== undefined).map((i) => i.key);
         return null;
       }
       const before = memo.before as Record<string, W> | undefined;
@@ -589,6 +597,7 @@ export const RULES: Rule[] = [
         if (!w) return null;
         if (w.kind === "session" && w.settling) return null;
         if (((memo.reposts as string[] | undefined) ?? []).includes(i.key)) return null;
+        if (((memo.dropped as string[] | undefined) ?? []).includes(i.key) && i.w.kind === "not-started") return null;
         // Questions other Items' agents asked about it wait until no session runs on it and nobody holds it: once that ends they are
         // written, whatever ended it.
         // Or the restarts in a row reached the attempts' limit, and a person is asked (a crash at every start must end).
@@ -651,8 +660,12 @@ export const RULES: Rule[] = [
       return first(o.items, (i) => {
         const writing = i.job?.writing;
         if (writing && Date.parse(o.at) - Date.parse(writing.at) > 31 * 60_000 && isTick(o) && /written|its text|description/i.test(i.card?.reason ?? "")) return `${i.id} still waits for its text, written at ${writing.at}`;
-        // A change waiting in this machine's merge queue is work under way here: its claim keeps other machines off it.
-        const claimed = i.item.holder?.actor.id === OWN && i.live.length === 0 && i.w.kind !== "queue" && (!i.item.holder.until || i.item.holder.until > o.at);
+        // A change waiting in this machine's merge queue is work under way here: its claim keeps other machines off it. So is any job
+        // here, waiting to start its next step or parked for a person: its claim lasts as long as the job (#243). A merged one holds
+        // nothing.
+        const job = i.job;
+        const underWay = !!job && job.merged === undefined;
+        const claimed = i.item.holder?.actor.id === OWN && i.live.length === 0 && i.w.kind !== "queue" && !underWay && (!i.item.holder.until || i.item.holder.until > o.at);
         const table = (memo.claims ??= {}) as Record<string, string>;
         if (!claimed) delete table[i.key];
         else table[i.key] ??= o.at;
@@ -800,8 +813,12 @@ export const RULES: Rule[] = [
     check(o, prev) {
       if (!todoLane(o) || !prev) return null;
       return first(o.started, (s) => {
-        if (prevOf(prev, s.item)?.card?.lane !== "backlog") return null;
         const id = s.item.split(":").pop();
+        // In Backlog before the step, or read in Backlog during it (a claim reads the Item from the host before the start, #243) with
+        // no person's move to Backlog in this step.
+        const now = o.items.find((each) => each.key === s.item)?.item;
+        const readInBacklog = now?.backlog === true && !o.requests.some((r) => r.item === id && r.body.lane === "backlog");
+        if (prevOf(prev, s.item)?.card?.lane !== "backlog" && !readInBacklog) return null;
         const asked = s.role === "triage" && o.ledger.requests.some((r) => r.status === 200 && r.item === id && r.path === "/api/item/move" && r.body.to === "triage");
         return asked ? null : `a ${s.role} session started on ${id}, which was in Backlog`;
       });

@@ -23,6 +23,7 @@ import { inertTags, LINKED_TYPES, linkedText } from "../core/linked.ts";
 import { linkedItem } from "./aboutOthers.ts";
 import type { Context, TickDeps } from "./context.ts";
 import type { ClaimResult } from "./ports.ts";
+import { CLAIM_EXPIRY_MINUTES } from "./ports.ts";
 import { createLog, errorText } from "./context.ts";
 import { afterRewrite, backToImplement, emptyBranch, followRewrite, followQuestions, keptBranch, overturnsBack, park, queueOffBelowLevel4, retryHandOver, retryPost, reviewOffAtLevel2, settle, withdrawSettledDuplicates, writeAboutOthers } from "./cycle.ts";
 import { loadOwnBlockers, withOwnBlockers } from "../store/blockers.ts";
@@ -76,8 +77,7 @@ const DECIDED = "Decided by a person (these settle the matter; do not ask again)
 /** A person deleted these questions on the host: "don't ask that". */
 const DELETED = "Questions a person deleted on the host (do not ask them again; decide these points with your own judgement):";
 
-/** How long a claim Scope Soup writes lasts; it is renewed once less than half is left. Fixed: there is no setting. */
-export const CLAIM_EXPIRY_MINUTES = 120;
+export { CLAIM_EXPIRY_MINUTES };
 
 /** The share of each usage window kept for people's own use: the usage stop, for the tick and for a chat turn. */
 export function usageReserve(config: ProjectConfig): Record<UsageWindowKind, number> {
@@ -187,7 +187,7 @@ function stopForClosed(ctx: Context, key: string, job: Job, item: WorkItem | nul
 }
 
 /**
- * A claim of this machine's on an Item with no job here that holds one (none, a parked one, or one whose change merged) and no session
+ * A claim of this machine's on an Item with no job here that holds one (none, or one whose change merged) and no session
  * of Scope Soup's on it holds the Item for nothing: its job closed (the Item was closed), the store was lost with the job in it, or a
  * release failed (the host did not answer). A claim that ran out counts too: the host shows it until it is let go. It is released, as
  * the job would have, again on each tick until that works.
@@ -201,12 +201,10 @@ async function releaseClaimsHeldForNothing(ctx: Context, items: readonly WorkIte
     const item = store.get<WorkItem>(listed.ref) ?? listed;
     const key = refKey(item.ref);
     const holder = item.holder;
-    // The jobs that hold a claim: a session runs, or a change is queued or handed over and has not merged; one waiting to start its
-    // next step keeps its claim until it runs out (`renewClaims` does not renew it). A parked one (its release failed) or a merged one
-    // holds nothing: what is left is a person's answer, or closing the Item.
+    // Every job holds its claim for as long as it is here (#243): a session runs, its next step waits to start, it is parked for a
+    // person, or its change is queued or handed over. A merged one holds nothing: what is left is closing the Item.
     const job = ctx.jobs[key];
-    const expired = !!holder?.until && Date.parse(holder.until) <= Date.parse(ctx.at);
-    const holds = !!job && job.merged === undefined && (job.parked ? job.parked.as === "queued" || job.parked.as === "handed-over" : !!job.sessionId || !expired);
+    const holds = !!job && job.merged === undefined;
     if (!holder || holder.actor.id !== actions.claimant || holds || live.has(key)) continue;
     const reason = `${item.ref.id} has no work under way here${item.state === "done" || item.state === "abandoned" ? ` (it is ${item.state})` : ""}: this machine's claim on it goes back.`;
     try {
@@ -230,20 +228,46 @@ async function sweep(ctx: Context, subject?: string): Promise<void> {
   }
 }
 
-/** Drops a job a person put back in To do: its claim on the host (when this machine holds it) and its workspace go back. */
+/**
+ * A job that may go on with its Item in Backlog (decision 121): one never seen in To do here (a person's Triage pick in Backlog and
+ * what follows, or work a person put under way whose move to To do the store has not read yet), or a person's Triage pick.
+ */
+function mayWorkInBacklog(job: Job): boolean {
+  return !job.seenInTodo || job.triageAskedBy !== undefined;
+}
+
+/**
+ * The job is on an Item in Backlog that it may not work on (`mayWorkInBacklog`): seen in To do before, so another machine's person
+ * moved it there. A change queued or handed over, or merged, is left alone. Notes when the Item is seen in To do.
+ */
+function readInBacklog(job: Job, item: WorkItem): boolean {
+  if (!item.backlog) {
+    job.seenInTodo = true;
+    return false;
+  }
+  if (mayWorkInBacklog(job) || job.merged !== undefined) return false;
+  return job.parked?.as !== "queued" && job.parked?.as !== "handed-over";
+}
+
+/**
+ * Drops a job a person put back in To do, or one on an Item read in Backlog (`readInBacklog`): its claim on the host (when this
+ * machine holds it) and its workspace go back.
+ */
 async function dropAsked(ctx: Context, jobs: Jobs, key: string, job: Job, item: WorkItem | null): Promise<void> {
   const { actions, runner } = ctx.deps;
   delete jobs[key];
-  const reason = `${job.dropAskedBy} put ${item?.ref.id ?? key} back in To do on the board: the work under way is dropped (the branch stays).`;
-  ctx.commit("orchestrator.job_dropped", reason, key, { by: job.dropAskedBy });
+  const reason = job.dropAskedBy !== undefined
+    ? `${job.dropAskedBy} put ${item?.ref.id ?? key} back in To do on the board: the work under way is dropped (the branch stays).`
+    : `${item?.ref.id ?? key} is in Backlog (moved there on another machine): the work under way here is dropped (the branch stays), and nothing runs on it until a person moves it to To do.`;
+  ctx.commit("orchestrator.job_dropped", reason, key, job.dropAskedBy !== undefined ? { by: job.dropAskedBy } : { backlog: true });
   if (actions.claims && actions.claimant && item?.holder?.actor.id === actions.claimant) await ctx.act("release the claim", key, () => actions.release(job.item, reason));
   await ctx.act("remove the worktree", key, () => runner.releaseWorkspace(job.workspace));
 }
 
 /**
  * A claim lapses `CLAIM_EXPIRY_MINUTES` after its last line, and a session may run longer than that. So an
- * item this machine holds and has work under way on (a session, or a change waiting for a person or
- * the queue) is claimed again once less than half the time is left. One line per half period, not per tick.
+ * item this machine holds and has a job on (a session, a next step waiting to start, parked for a person, or a change waiting for a
+ * person or the queue) is claimed again once less than half the time is left. One line per half period, not per tick.
  *
  * A claim that is lost (the renewal is not won, or another machine's live claim holds the Item while work runs here: two machines
  * both took it) stops this machine's work on the Item: its session is stopped and the job parked as escalated, for a person to look
@@ -266,12 +290,11 @@ async function renewClaims(ctx: Context, itemByKey: Map<string, WorkItem>): Prom
   for (const [key, job] of Object.entries(ctx.jobs)) {
     const item = itemByKey.get(key);
     if (!item || item.state === "done" || item.state === "abandoned") continue;
-    if (job.parked && job.parked.as !== "queued" && job.parked.as !== "handed-over") continue;
     // Merged: nothing is held for it any more (`releaseClaimsHeldForNothing`).
     if (job.merged !== undefined) continue;
     const holder = item.holder;
-    // Waiting to start its next step (a slot, a timer, a paused switch): the claim is not renewed and runs out; the start claims again.
-    if (!job.parked && !job.sessionId && holder?.actor.id === actions.claimant) continue;
+    // A job waiting to start its next step (a slot, a timer, a paused switch) keeps its claim too (#243): let go between steps, another
+    // machine could take the Item and work on it beside this one.
     if (holder && holder.actor.id !== actions.claimant && holder.actor.id.startsWith(`${actions.claimant.split("@")[0]}@`) && !job.parked && job.sessionId && (!holder.until || Date.parse(holder.until) > Date.parse(ctx.at))) {
       await lost(job, item, key, `${holder.actor.name} holds it`);
       continue;
@@ -569,6 +592,17 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
       await dropAsked(ctx, jobs, key, job, item);
       continue;
     }
+    // Another machine's person moved the Item to Backlog, read at a fetch or a claim (#243): the job is given up as a move to Backlog
+    // here drops it (decision 121), once its session is over (its result is not taken). A person's Triage pick there stays.
+    if (item && !over && readInBacklog(job, item)) {
+      const session = job.sessionId ? store.get<Session>({ host: "scopesoup", kind: "session", id: job.sessionId }) : undefined;
+      if (session && !OVER.includes(session.status) && !session.finishedAt) {
+        running++;
+        continue;
+      }
+      await dropAsked(ctx, jobs, key, job, item);
+      continue;
+    }
     if (job.sessionId) {
       const session = store.get<Session>({ host: "scopesoup", kind: "session", id: job.sessionId });
       if (session && !OVER.includes(session.status) && !session.finishedAt) {
@@ -742,6 +776,10 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
   const waiting: { item: WorkItem; job: Job }[] = [];
   const above: string[] = [];
   let reserved = 0;
+  // The Items with their blockers as the tick reads them (the host's and Scope Soup's own), for the steps of jobs under way.
+  const withBlockers = withOwnBlockers(store.list<WorkItem>("work"), loadOwnBlockers(store));
+  const blockedNow = new Map(withBlockers.map((each) => [refKey(each.ref), each.blockedBy]));
+  const openWork = new Set(withBlockers.filter((each) => each.state !== "done" && each.state !== "abandoned").map((each) => refKey(each.ref)));
   for (const [key, job] of Object.entries(jobs)) {
     const item = itemByKey.get(key);
     // A job that owes its hand-over has no session to start: the next tick repeats the hand-over.
@@ -766,6 +804,15 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
     if (item.backlog && job.step === "implement" && job.implementAskedBy === undefined && job.head === undefined && !job.resumeWith && !job.resume) {
       reasons.push(`${item.ref.id} ${BACKLOG_REASON} before its ${job.step} step`);
       continue;
+    }
+    // An open blocker holds the next step of work under way, as it holds a new Item (decision 3): a person may have added it, or a
+    // person's Triage pick looked at a blocked Item and found it ready. Only that pick runs on a blocked Item (#243).
+    if (!(job.step === "triage" && job.triageAskedBy !== undefined)) {
+      const open = (blockedNow.get(key) ?? []).filter((blocker) => openWork.has(refKey(blocker)));
+      if (open.length > 0) {
+        reasons.push(`${item.ref.id} is blocked by ${open.map((blocker) => blocker.id).join(", ")} before its ${job.step} step`);
+        continue;
+      }
     }
     // Level 0 starts only what a person picked.
     if (level === 0 && !personAsked(job, job.step)) continue;
@@ -905,7 +952,7 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
 
     const job: Job = entry.job ?? {
       item: entry.item.ref, workspace: workspaceKey(entry.item.ref), branch: workBranch(entry.item.ref),
-      step, failures: 0, fixRounds: 0, startedAt: at,
+      step, failures: 0, fixRounds: 0, startedAt: at, ...(entry.item.backlog ? {} : { seenInTodo: true as const }),
       ...(skipped ? { triage: { ready: true, size: skipped.size, paths: [], hidesDecision: false } } : {}),
     };
     // A unit of each resource the step needs, before its workspace and claim. Without one the item waits and the next may start.
@@ -962,6 +1009,23 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
           reasons.push(reason);
           ctx.say("orchestrator.claim_lost", `${label} does not start: ${claimed.why}.`, key);
           if (!entry.job) await ctx.act("free the workspace of an item held elsewhere", key, () => runner.releaseWorkspace(job.workspace, reason));
+          continue;
+        }
+        // The claim read the Item from the host: another machine may have closed it or moved it to Backlog since this tick's read
+        // (#243). Nothing starts; the claim goes back, and a job here is given up by the next tick.
+        const read = store.get<WorkItem>(entry.item.ref);
+        const gone = !read ? "it is no longer in the store"
+          : read.state === "done" || read.state === "abandoned" ? `it is ${read.state}`
+          : read.backlog && (!entry.job || !mayWorkInBacklog(job)) ? "it is in Backlog (moved there on another machine)"
+          // New here, and another machine's work on it waits for a person's answer (its claim went back when it parked).
+          : !entry.job && read.needsDecision ? "it waits for a decision by a person"
+          : null;
+        if (gone) {
+          const reason = `${entry.item.ref.id} is not started here: ${gone}`;
+          reasons.push(reason);
+          ctx.say("orchestrator.claim_lost", `${label} does not start: ${gone}.`, key);
+          await ctx.act("release the claim", key, () => deps.actions.release(job.item, reason));
+          if (!entry.job) await ctx.act("free the workspace of an item that does not start", key, () => runner.releaseWorkspace(job.workspace, reason));
           continue;
         }
       }

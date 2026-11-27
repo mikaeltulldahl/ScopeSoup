@@ -150,16 +150,24 @@ export function createHostActions(deps: HostActionsDeps): Actions {
       // Look before writing: a claim written over another machine's live claim would only be ordered by the two clocks.
       const before = (await host.work?.getWork(item))?.holder;
       if (before && me && before.actor.id !== me && holdStands(before, Date.parse(at))) return { won: false, why: `held by ${before.actor.name}` };
-      const outcome = await write.appendLog(item, { kind: "claimed", by: SCOPESOUP, fields: { until } });
-      // Other machines see the claim only once it is shared; one that is not shared protects nothing.
-      if (outcome.shared === "pending") return { won: false, why: `the claim could not be shared with the other machines${outcome.problem ? ` (${outcome.problem})` : ""}` };
-      // The claim is written and shared; the fold of the log says whose it is. The earliest claim stands. Read back into the store, so
-      // the next tick sees the new `until` and does not renew it again.
-      const after = await host.work?.getWork(item);
-      if (after) deps.store.put(after, "sync", new Date().toISOString());
-      const holder = after?.holder;
-      if (holder && me && holder.actor.id !== me) return { won: false, why: `held by ${holder.actor.name}` };
-      return { won: true };
+      // Nobody holds it after the write: the line did not take. A claim written in the same second as an earlier identical one (a
+      // release and a claim again within one tick) is that line again, which the fold drops (#243). It is written once more with an
+      // `until` one second later, which makes it a line of its own.
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const lasts = attempt === 0 ? until : new Date(Date.parse(until) + 1000).toISOString();
+        const outcome = await write.appendLog(item, { kind: "claimed", by: SCOPESOUP, fields: { until: lasts } });
+        // Other machines see the claim only once it is shared; one that is not shared protects nothing.
+        if (outcome.shared === "pending") return { won: false, why: `the claim could not be shared with the other machines${outcome.problem ? ` (${outcome.problem})` : ""}` };
+        // The claim is written and shared; the fold of the log says whose it is. The earliest claim stands. Read back into the store,
+        // so the next tick sees the new `until` and does not renew it again.
+        const after = await host.work?.getWork(item);
+        if (after) deps.store.put(after, "sync", new Date().toISOString());
+        const holder = after?.holder;
+        if (holder && me && holder.actor.id !== me) return { won: false, why: `held by ${holder.actor.name}` };
+        if (holder || !me) return { won: true };
+      }
+      // Still nobody: a release is ordered after this machine's claim (its clock is behind the releaser's). It is claimed again later.
+      return { won: false, why: "the claim did not take (the log shows nobody holding it after the write: a release later than this machine's clock); it is claimed again next time" };
     },
     async release(item, reason) {
       if (!mine(item)) return;
