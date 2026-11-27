@@ -232,12 +232,13 @@ export const postEdit = (ref: string, fields: ItemFields) => postJson("/api/item
  * One call of the State menu (#154), after its Undo wait: `path` with `body` as JSON, as the board's person. `keepalive` lets it
  * go out while the page unloads. Rejects with the server's reason.
  */
-export async function postStep(path: string, body: Record<string, unknown>, keepalive = false): Promise<void> {
+export async function postStep(path: string, body: Record<string, unknown>, keepalive = false): Promise<number> {
   const response = await call(path, { method: "POST", keepalive, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
   if (!response.ok) {
     const answer = (await response.json().catch(() => null)) as { error?: { message?: string } } | null;
     throw new Error(answer?.error?.message ?? `The server answered ${response.status}.`);
   }
+  return response.status;
 }
 
 /** Loads the views again at once (after a change the board made itself). */

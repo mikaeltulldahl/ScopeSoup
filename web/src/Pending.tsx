@@ -3,8 +3,10 @@
 // request per pick, which carries the board's person as every request does).
 
 import { useEffect, useState } from "preact/hooks";
-import { postPlace, postStep, reloadViews } from "./api.ts";
+import { fetchItem, postPlace, postStep, reloadViews } from "./api.ts";
 import type { Shown } from "./drag.ts";
+import { stuckNote } from "./drag.ts";
+import { laneLabel } from "./format.ts";
 import type { Pending, StateKey, Step } from "./stateMenu.ts";
 import { addPending, cancelPending, duePending } from "./stateMenu.ts";
 import { words } from "./theme.ts";
@@ -22,6 +24,8 @@ export interface Change extends Pending {
   shown?: Shown;
   /** Also place it in its lane's order, right above `shown.before` (null: last), after the steps (`/api/item/place`). */
   place?: boolean;
+  /** Moves made together (multi-select, #235) share one toast and one Undo; sent one after the other, in the order queued. */
+  group?: number;
 }
 
 let pending: Change[] = [];
@@ -35,10 +39,25 @@ const tell = () => watchers.forEach((watcher) => watcher());
 /** The pick as one request: the server runs its steps in order and checks `seen` once, before the first (`POST /api/item/pick`). */
 const body = (change: Change): Record<string, unknown> => ({ ref: change.itemKey, seen: change.seen, steps: change.steps, ...(change.blockedBy ? { blockedBy: change.blockedBy } : {}) });
 
+/** What is sending: a group's places must reach the server in order, so one send starts when the one before it is done. */
+let sending: Promise<void> = Promise.resolve();
+
 async function send(change: Change): Promise<void> {
   try {
-    if (change.steps.length > 0) await postStep("/api/item/pick", body(change));
-    if (change.place && change.shown) {
+    let stuck: string | undefined;
+    if (change.steps.length > 0) {
+      const status = await postStep("/api/item/pick", body(change));
+      // A pick the server took (200, not a request for another machine) must show: the card is where it was dropped, or we say it is not.
+      if (status === 200 && change.shown) {
+        const page = await fetchItem(change.itemKey).catch(() => undefined);
+        stuck = page?.lane ? stuckNote(page.item.label, change.shown.lane, page.lane, laneLabel) : undefined;
+        if (stuck) {
+          notice = stuck;
+          tell();
+        }
+      }
+    }
+    if (change.place && change.shown && !stuck) {
       const said = await postPlace(change.itemKey, change.shown.before ?? null, change.shown.lane);
       if (said) {
         notice = said;
@@ -61,7 +80,7 @@ function schedule(): void {
   timer = window.setTimeout(() => {
     const { due, rest } = duePending(pending, Date.now());
     pending = rest;
-    due.forEach((change) => void send(change));
+    due.forEach((change) => (sending = sending.then(() => send(change))));
     tell();
     schedule();
   }, Math.max(0, next - Date.now()));
@@ -76,8 +95,21 @@ export function queueChange(change: Omit<Change, "id" | "at">): void {
   schedule();
 }
 
+/** Puts moves made together in the wait: one toast with `text`, one Undo for all of them. */
+export function queueGroup(changes: readonly Omit<Change, "id" | "at" | "group" | "text">[], text: string): void {
+  if (changes.length === 0) return;
+  failure = null;
+  notice = null;
+  const group = nextId++;
+  const now = Date.now();
+  for (const change of changes) pending = addPending(pending, { ...change, text, group, id: nextId++ }, now);
+  tell();
+  schedule();
+}
+
 function undo(id: number): void {
-  pending = cancelPending(pending, id);
+  const group = pending.find((change) => change.id === id)?.group;
+  pending = group === undefined ? cancelPending(pending, id) : pending.filter((change) => change.group !== group);
   tell();
   schedule();
 }
@@ -135,7 +167,7 @@ export function Toasts() {
   const theme = words();
   return (
     <div class="toasts" role="status" aria-live="polite">
-      {pending.map((change) => (
+      {pending.filter((change, at) => change.group === undefined || pending.findIndex((other) => other.group === change.group) === at).map((change) => (
         <div class="toast" key={change.id}>
           <span>{change.text}</span>
           <button type="button" onClick={() => undo(change.id)}>{theme.undo}</button>

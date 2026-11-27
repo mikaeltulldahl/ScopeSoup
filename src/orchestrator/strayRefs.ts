@@ -1,4 +1,4 @@
-// An agent's leftover refs in Scope Soup's clone (decision 125, rule I2). Implementors are told to keep everything on their branch
+// An agent's leftover refs in Scope Soup's clone (decision 126, rule I2). Implementors are told to keep everything on their branch
 // (prompts/implement.md); what is left anyway is swept once its Item is closed and no job or session of this machine has it.
 //
 // A ref is an agent's only when its name says so, since the clone may be a person's own (I6):

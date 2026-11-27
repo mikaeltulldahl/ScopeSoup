@@ -4,7 +4,7 @@
 import { DraftCard } from "./DraftCard.tsx";
 import { Fragment } from "preact";
 import type { ComponentChildren } from "preact";
-import { useRef, useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 import type { BoardView, ControlPath, LaneView } from "./api.ts";
 import { BatchMini } from "./Batch.tsx";
 import { Card } from "./Card.tsx";
@@ -155,7 +155,14 @@ export function Overview({ board: loaded, busy, onSwitch }: { board: BoardView; 
   const board = moves.length > 0 ? { ...loaded, lanes: withShown(loaded.lanes, moves) } : loaded;
   const lanesRef = useRef<HTMLDivElement>(null);
   const flip = useFlip(lanesRef);
-  const drag = useCardDrag(lanesRef, board.lanes, flip);
+  // The cards selected with Ctrl and Shift+click (#235), the ones still on the board.
+  const [picked, setPicked] = useState<string[]>([]);
+  const onBoard = new Set(board.lanes.flatMap((lane) => lane.cards.map((card) => card.key)));
+  const selected = picked.filter((key) => onBoard.has(key));
+  useEffect(() => {
+    if (selected.length !== picked.length) setPicked(selected);
+  });
+  const drag = useCardDrag(lanesRef, board.lanes, flip, { keys: selected, set: setPicked });
   const [closed, setClosed] = useState(readClosed);
   const toggle = (lane: string) => {
     const next = closed.includes(lane) ? closed.filter((each) => each !== lane) : [...closed, lane];
