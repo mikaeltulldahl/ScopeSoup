@@ -23,6 +23,7 @@ import { inertTags, LINKED_TYPES, linkedText } from "../core/linked.ts";
 import { linkedItem } from "./aboutOthers.ts";
 import type { Context, TickDeps } from "./context.ts";
 import type { ClaimResult } from "./ports.ts";
+import { CLAIM_EXPIRY_MINUTES } from "./ports.ts";
 import { createLog, errorText } from "./context.ts";
 import { afterRewrite, backToImplement, emptyBranch, followRewrite, followQuestions, keptBranch, overturnsBack, park, retryHandOver, retryPost, reviewOffAtLevel2, settle, withdrawSettledDuplicates, writeAboutOthers } from "./cycle.ts";
 import { loadOwnBlockers, withOwnBlockers } from "../store/blockers.ts";
@@ -76,8 +77,7 @@ const DECIDED = "Decided by a person (these settle the matter; do not ask again)
 /** A person deleted these questions on the host: "don't ask that". */
 const DELETED = "Questions a person deleted on the host (do not ask them again; decide these points with your own judgement):";
 
-/** How long a claim Scope Soup writes lasts; it is renewed once less than half is left. Fixed: there is no setting. */
-export const CLAIM_EXPIRY_MINUTES = 120;
+export { CLAIM_EXPIRY_MINUTES };
 
 /** The share of each usage window kept for people's own use: the usage stop, for the tick and for a chat turn. */
 export function usageReserve(config: ProjectConfig): Record<UsageWindowKind, number> {
@@ -187,7 +187,7 @@ function stopForClosed(ctx: Context, key: string, job: Job, item: WorkItem | nul
 }
 
 /**
- * A claim of this machine's on an Item with no job here that holds one (none, a parked one, or one whose change merged) and no session
+ * A claim of this machine's on an Item with no job here that holds one (none, or one whose change merged) and no session
  * of Scope Soup's on it holds the Item for nothing: its job closed (the Item was closed), the store was lost with the job in it, or a
  * release failed (the host did not answer). A claim that ran out counts too: the host shows it until it is let go. It is released, as
  * the job would have, again on each tick until that works.
@@ -201,11 +201,10 @@ async function releaseClaimsHeldForNothing(ctx: Context, items: readonly WorkIte
     const item = store.get<WorkItem>(listed.ref) ?? listed;
     const key = refKey(item.ref);
     const holder = item.holder;
-    // The jobs that hold a claim, through every step (#243): one under way (a session runs, or its next step waits to start), or a
-    // change queued or handed over that has not merged. A parked one (its release failed) or a merged one holds nothing: what is left
-    // is a person's answer, or closing the Item.
+    // Every job holds its claim for as long as it is here (#243): a session runs, its next step waits to start, it is parked for a
+    // person, or its change is queued or handed over. A merged one holds nothing: what is left is closing the Item.
     const job = ctx.jobs[key];
-    const holds = !!job && job.merged === undefined && (job.parked ? job.parked.as === "queued" || job.parked.as === "handed-over" : true);
+    const holds = !!job && job.merged === undefined;
     if (!holder || holder.actor.id !== actions.claimant || holds || live.has(key)) continue;
     const reason = `${item.ref.id} has no work under way here${item.state === "done" || item.state === "abandoned" ? ` (it is ${item.state})` : ""}: this machine's claim on it goes back.`;
     try {
@@ -261,8 +260,8 @@ async function dropAsked(ctx: Context, jobs: Jobs, key: string, job: Job, item: 
 
 /**
  * A claim lapses `CLAIM_EXPIRY_MINUTES` after its last line, and a session may run longer than that. So an
- * item this machine holds and has work under way on (a session, a next step waiting to start, or a change waiting for a person or
- * the queue) is claimed again once less than half the time is left. One line per half period, not per tick.
+ * item this machine holds and has a job on (a session, a next step waiting to start, parked for a person, or a change waiting for a
+ * person or the queue) is claimed again once less than half the time is left. One line per half period, not per tick.
  *
  * A claim that is lost (the renewal is not won, or another machine's live claim holds the Item while work runs here: two machines
  * both took it) stops this machine's work on the Item: its session is stopped and the job parked as escalated, for a person to look
@@ -285,7 +284,6 @@ async function renewClaims(ctx: Context, itemByKey: Map<string, WorkItem>): Prom
   for (const [key, job] of Object.entries(ctx.jobs)) {
     const item = itemByKey.get(key);
     if (!item || item.state === "done" || item.state === "abandoned") continue;
-    if (job.parked && job.parked.as !== "queued" && job.parked.as !== "handed-over") continue;
     // Merged: nothing is held for it any more (`releaseClaimsHeldForNothing`).
     if (job.merged !== undefined) continue;
     const holder = item.holder;

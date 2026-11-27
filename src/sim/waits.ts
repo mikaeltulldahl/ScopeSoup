@@ -7,7 +7,7 @@ import { itemTextHash } from "../core/answerReuse.ts";
 
 export type Role = "triage" | "implement" | "review";
 export type PersonWait = "answer" | "rewrite" | "restructuring" | "not-ready" | "escalated" | "merge" | "holds";
-export type StartCause = "switch" | "level" | "usage" | "timer" | "text" | "same-files" | "claim" | "slot";
+export type StartCause = "backlog" | "switch" | "level" | "usage" | "timer" | "text" | "same-files" | "claim" | "slot";
 
 export type W =
   | { kind: "nothing" }
@@ -74,12 +74,15 @@ export function waitsFor(input: WaitInput): W {
     return { kind: "person", why: "answer", n: Math.max(0, asked - answered) };
   }
   const blockers = [...item.blockedBy.map((ref) => `${ref.host}:${ref.kind}:${ref.id}`), ...input.ownBlockers].filter((key) => input.open.has(key));
-  // A person's Triage pick runs on a blocked Item too (decision 104): they asked for a look at it as it is, blockers and all, and the
-  // tick holds only new Items back for blockers (#243, A4).
+  // A person's Triage pick runs on a blocked Item too (decision 104): they asked for a look at it as it is, blockers and all (#243, A4).
   const pickedTriage = role === "triage" && job?.triageAskedBy !== undefined;
   if (blockers.length > 0 && !pickedTriage) return { kind: "blocker", on: [...new Set(blockers)] };
-  if (!job) return { kind: "not-started" };
+  // A job a person put back (To do, Backlog) is dropped by the next tick: nothing of it waits.
+  if (!job || job.dropAskedBy) return { kind: "not-started" };
   const start = (cause: StartCause): W => ({ kind: "start", role, cause });
+  // In Backlog after a person's one-off triage, the implement step waits for a person to move it to To do (decision 121); work with a
+  // revision or something to resume is never held there.
+  if (item.backlog && role === "implement" && !job.implementAskedBy && !job.head && !job.resumeWith && !job.resume) return start("backlog");
   if (job.writing && job.writing.from === itemTextHash(item) && Date.parse(input.now) - Date.parse(job.writing.at) < 30 * 60_000) return start("text");
   const begun = !!(job.head || job.implement);
   if (role === "implement" && !begun) {
@@ -106,7 +109,7 @@ export function waitsFor(input: WaitInput): W {
 export function isBusy(job: Job, onMain: boolean): boolean {
   if (job.merged || onMain) return false;
   if (job.parked) return job.parked.as === "queued" || job.parked.as === "handed-over" || !!job.head || !!job.queued;
-  return job.step === "review" || (job.step === "implement" && (!!job.sessionId || !!job.head || !!job.implement || !!job.agentSession || !!job.resumeWith || job.failures > 0));
+  return job.step === "review" || (job.step === "implement" && (!!job.sessionId || !!job.head || !!job.implement || !!job.agentSession || !!job.resumeWith || !!job.resume || job.failures > 0));
 }
 
 export function wText(w: W): string {
@@ -124,10 +127,9 @@ export function wText(w: W): string {
   }
 }
 
-/** The lane a person's wait is in under decision 2 (a): the stage the work is at. */
-export function stageLane(job: Job | undefined): string {
-  if (!job) return "backlog";
-  if (job.step === "review" || job.reviewedHead) return "in-review";
-  if (job.head || job.step === "implement" && job.implement) return "in-progress";
-  return "backlog";
+/** The lane a person's wait is in under decision 2 (a): the stage the work is at; with no change yet, To do (or Backlog, #221). */
+export function stageLane(item: WorkItem, job: Job | undefined): string {
+  if (job && (job.step === "review" || job.reviewedHead)) return "in-review";
+  if (job && (job.head || (job.step === "implement" && job.implement))) return "in-progress";
+  return item.backlog ? "backlog" : "todo";
 }

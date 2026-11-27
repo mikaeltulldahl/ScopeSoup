@@ -244,7 +244,7 @@ export function proposeRewrite(ctx: Context, other: WorkItem, askedBy: string, f
 /**
  * Why questions from other Items cannot be written on this Item now, or null when they can: a session or a person's chat runs
  * on it, someone else holds it, it waits for an answer to questions of its own, or its change is in review, merged, queued or handed over.
- * This machine's own claim does not count: parking releases it.
+ * This machine's own claim does not count: its job holds it.
  */
 export function busyWhy(ctx: Context, item: WorkItem, job: Job | undefined): string | null {
   const working = workingWhy(ctx, item, job);

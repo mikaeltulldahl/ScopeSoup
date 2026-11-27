@@ -225,7 +225,8 @@ export const MULTI_RULES: MultiRule[] = [
     why: "Decisions are surfaced, not made, across machines: every answer a machine acts on was sent by a person on some machine.",
     check(o) {
       const sent = new Set(o.machines.flatMap((m) => m.ledger.answers.map((a) => a.text)));
-      const asked = new Set(o.machines.flatMap((m) => m.ledger.requests.filter((r) => r.status === 200 && r.item).map((r) => r.item)));
+      // A person's request on any board: carried out there (200), or a pick asked of the machine where the work runs (202).
+      const asked = new Set(o.machines.flatMap((m) => m.ledger.requests.filter((r) => (r.status === 200 || r.status === 202) && r.item).map((r) => r.item)));
       for (const m of o.machines) {
         const made = m.answers.find((a) => !sent.has(a.answer) && !/scopesoup/i.test(a.by) && !asked.has(a.subject.id));
         if (made) return `${m.name} acts on an answer "${made.answer.slice(0, 60)}" by ${made.by} on ${made.subject.id} that no person sent`;

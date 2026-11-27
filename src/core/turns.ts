@@ -176,75 +176,93 @@ function allPartsDoneTurn(item: WorkItem): Draft {
 /** In Backlog (decision 121): nothing starts it; a session there is a triage a person asked for. */
 function waitsInBacklogTurn(situation: Situation, ctx: TurnContext): Draft {
   const { item, session } = situation;
-  if (session) return sessionTurn(session, ctx);
+  if (session && isLive(session)) return sessionTurn(session, ctx);
+  if (session) return nextStepTurn(situation, ctx, sessionTurn(session, ctx));
   if (item.openChildren > 0) return umbrellaTurn(item);
   if ((item.children ?? 0) > 0) return allPartsDoneTurn(item);
   if (item.holder && holdStands(item.holder, ctx.now.getTime()) && !item.holder.actor.bot) return heldTurn(item, ctx);
-  return { actor: "nobody", tone: "waiting", reason: "in Backlog: waits for a person to move it to To do" };
+  const backlog: Draft = { actor: "nobody", tone: "waiting", reason: "in Backlog: waits for a person to move it to To do" };
+  // A person's one-off triage (or the triage again after their answer) runs there: its timer is said.
+  return ctx.index.jobByWork.get(refKey(item.ref))?.step === "triage" ? nextStepTurn(situation, ctx, backlog) : backlog;
 }
 
 function todoTurn(situation: Situation, ctx: TurnContext): Draft {
   const { item, session } = situation;
-  if (session) return sessionTurn(session, ctx);
+  if (session && isLive(session)) return sessionTurn(session, ctx);
   if (item.openChildren > 0) return umbrellaTurn(item);
   if ((item.children ?? 0) > 0 && item.state === "todo") return allPartsDoneTurn(item);
-  const blockers = openBlockers(item, ctx.index);
-  if (blockers.length > 0) {
-    const words = blockers.map((blocker) => `${refLabel(blocker.ref)}${blocker.needsDecision ? " (needs your decision)" : ""}`);
-    return { actor: "nobody", tone: "blocked", reason: `blocked by ${list(words)}` };
-  }
   if (item.state === "waiting") return { actor: "nobody", tone: "blocked", reason: `waiting on the host (status "${item.hostState}")` };
-  // Triaged, and its paths overlap those of a busy Item, or it may conflict with one: it waits for that one, not for a slot.
-  // This outranks an agent's hold (Scope Soup's own leftover from its triage); a person's hold is still their turn.
-  const sameFiles = ctx.index.snapshot.sameFiles?.find((each) => refKey(each.subject) === refKey(item.ref));
-  const personHeld = item.holder && !item.holder.actor.bot;
-  // A held item is not waiting for a free slot here: a person works on it, or another machine's agent does.
-  if (item.holder && holdStands(item.holder, ctx.now.getTime()) && (personHeld || !sameFiles)) return heldTurn(item, ctx);
-  if (sameFiles) return { actor: "nobody", tone: "waiting", reason: sameFilesWords(sameFiles.waitsFor, sameFiles.mayConflict) };
   if (ctx.index.snapshot.paused) return { actor: "nobody", tone: "blocked", reason: "ready, but agents are paused (press Resume all)" };
   if (ctx.index.snapshot.usage?.status === "rejected") return { actor: "nobody", tone: "blocked", reason: `ready, but the usage limit is reached${resetWords(ctx)}` };
   // Its next step is the triage and triage is paused: it waits for that switch, not for a slot. (A stated size skips the triage from level 2.)
-  const triageNext = ctx.notTriaged?.has(refKey(item.ref)) && !((ctx.index.snapshot.level ?? 0) >= 2 && clearWithoutTriage(item));
+  // With a job, its step says it.
+  const step = ctx.index.jobByWork.get(refKey(item.ref))?.step;
+  const triageNext = step ? step === "triage" : ctx.notTriaged?.has(refKey(item.ref)) && !((ctx.index.snapshot.level ?? 0) >= 2 && clearWithoutTriage(item));
   if (triageNext && ctx.index.snapshot.triage !== "started") return { actor: "nobody", tone: "blocked", reason: "ready, but triage is paused (Resume on To do)" };
   // Its next step is the implement (it is triaged, or needs no triage), and no implementor takes it now: implementors are
   // paused, or the level is below 2. The status line says which; the card says only "ready".
   if (!triageNext && (ctx.index.snapshot.implement !== "started" || (ctx.index.snapshot.level ?? 2) < 2)) return { actor: "nobody", tone: "waiting", reason: "ready" };
-  return { actor: "agent", tone: "waiting", reason: "ready; waiting for a free agent slot" };
+  return nextStepTurn(situation, ctx, { actor: "agent", tone: "waiting", reason: "ready; waiting for a free agent slot" });
+}
+
+/**
+ * The last three causes of decision 3, after the lane's own switch, level and usage words: the retry timer, a claim by an agent (another
+ * machine's, or Scope Soup's own left over), then `slot`, the words for a free agent slot.
+ */
+function nextStepTurn(situation: Situation, ctx: TurnContext, slot: Draft): Draft {
+  const { item, session } = situation;
+  const job = ctx.index.jobByWork.get(refKey(item.ref));
+  const timer = job?.timer && Date.parse(job.timer.until) > ctx.now.getTime() ? job.timer : undefined;
+  if (job && timer) {
+    const left = durationWords(Date.parse(timer.until) - ctx.now.getTime());
+    if (session?.status === "limit") return { actor: "nobody", tone: "waiting", since: session.lastEventAt ?? session.startedAt, reason: `the ${session.role} session stopped at the usage limit; it resumes in ${left}` };
+    if (timer.failures) return { actor: "agent", tone: "blocked", reason: `the ${job.step} step failed ${timer.failures === 1 ? "once" : `${timer.failures} times`}; it tries again in ${left}` };
+    return { actor: "agent", tone: "waiting", reason: `its ${job.step} step starts in ${left}` };
+  }
+  if (session?.status === "limit") return sessionTurn(session, ctx);
+  if (item.holder && item.holder.actor.bot && holdStands(item.holder, ctx.now.getTime())) return heldTurn(item, ctx);
+  return slot;
 }
 
 function progressTurn(situation: Situation, ctx: TurnContext): Draft {
   const { item, change, batch, member, session } = situation;
   if (batch && member?.state === "culprit") {
     if (session && isLive(session)) return { ...sessionTurn(session, ctx), reason: `it broke ${batchName(batch.ref)}; ${sessionTurn(session, ctx).reason}` };
-    return { actor: "agent", tone: "blocked", since: batch.finishedAt, reason: `it broke ${batchName(batch.ref)} and was taken out; waiting for an implementor session` };
+    return nextStepTurn(situation, ctx, { actor: "agent", tone: "blocked", since: batch.finishedAt, reason: `it broke ${batchName(batch.ref)} and was taken out; waiting for an implementor session` });
   }
+  if (session && isLive(session)) return sessionTurn(session, ctx);
+  if (change) return nextStepTurn(situation, ctx, { actor: "agent", tone: "waiting", since: change.updatedAt, reason: "its pull request is not marked ready for review and no session is running; waiting for a free agent slot" });
+  // The change is not read from the host yet (the meta branch before its next sync): the job says which step is next.
+  const job = ctx.index.jobByWork.get(refKey(item.ref));
+  if (job) return nextStepTurn(situation, ctx, { actor: "agent", tone: "waiting", reason: `its ${job.step} step waits for a free agent slot` });
   if (session) return sessionTurn(session, ctx);
-  if (change) return { actor: "agent", tone: "waiting", since: change.updatedAt, reason: "its pull request is not marked ready for review and no session is running; waiting for a free agent slot" };
   if (item.holder) return heldTurn(item, ctx);
   return { actor: "agent", tone: "blocked", reason: "marked in progress on the host, but nobody holds it and no session is running" };
 }
 
 function reviewTurn(situation: Situation, change: Change, ctx: TurnContext): Draft {
   const { session } = situation;
-  if (session) return sessionTurn(session, ctx);
+  if (session && isLive(session)) return sessionTurn(session, ctx);
   // A pull request that is not an item branch and was not handed back is not Scope Soup's to review.
   if (change.branch !== undefined && !change.branch.startsWith(ITEM_BRANCH_PREFIX) && !(change.labels ?? []).includes(HANDBACK_LABEL)) {
     return { actor: "nobody", tone: "waiting", since: change.updatedAt, reason: `open pull request by ${change.author?.name ?? "someone"}; Scope Soup does not review it` };
   }
+  // Approved below level 4, where there is no merge queue: its implementor or a person merges it.
+  const level = ctx.index.snapshot.level;
+  if (situation.approved && level !== undefined && level < 4) return nextStepTurn(situation, ctx, queueTurn(situation, change, ctx));
   const verdicts = currentVerdicts(change);
   const failed = verdicts.filter((verdict) => verdict.value === "fail");
-  if (failed.some((verdict) => verdict.dimension === "ci")) return { actor: "agent", tone: "blocked", since: change.updatedAt, reason: "the checks failed on the current revision; waiting for an implementor session" };
+  if (failed.some((verdict) => verdict.dimension === "ci")) return nextStepTurn(situation, ctx, { actor: "agent", tone: "blocked", since: change.updatedAt, reason: "the checks failed on the current revision; waiting for an implementor session" });
   if (failed.length > 0) {
-    return { actor: "agent", tone: "blocked", since: change.updatedAt, reason: `the ${list(failed.map((verdict) => verdict.dimension))} verdict is a fail; waiting for an implementor session` };
+    return nextStepTurn(situation, ctx, { actor: "agent", tone: "blocked", since: change.updatedAt, reason: `the ${list(failed.map((verdict) => verdict.dimension))} verdict is a fail; waiting for an implementor session` });
   }
   if (change.verdicts.some((verdict) => verdict.stale && verdict.dimension === "review")) {
-    return { actor: "agent", tone: "waiting", since: change.updatedAt, reason: "it has a new revision since the last review; waiting for a reviewer session" };
+    return nextStepTurn(situation, ctx, { actor: "agent", tone: "waiting", since: change.updatedAt, reason: "it has a new revision since the last review; waiting for a reviewer session" });
   }
-  const level = ctx.index.snapshot.level;
   // Below level 3 nobody reviews, and the review switch is not shown: the change waits for its implementor to merge it.
-  if (level !== undefined && level < 3) return belowReviewTurn(change, level, ctx);
-  const paused = ctx.index.snapshot.review !== "started" ? ", and review is paused (Resume on In review)" : "";
-  return { actor: "agent", tone: paused ? "blocked" : "waiting", since: change.updatedAt, reason: `waiting for a reviewer session${paused}` };
+  if (level !== undefined && level < 3) return nextStepTurn(situation, ctx, belowReviewTurn(change, level, ctx));
+  if (ctx.index.snapshot.review !== "started") return { actor: "agent", tone: "blocked", since: change.updatedAt, reason: "waiting for a reviewer session, and review is paused (Resume on In review)" };
+  return nextStepTurn(situation, ctx, { actor: "agent", tone: "waiting", since: change.updatedAt, reason: "waiting for a reviewer session" });
 }
 
 /** A change not merged below level 3, where nobody reviews: at level 2 its implementor merges it; below that nothing is built or merged. */
@@ -321,13 +339,23 @@ function parkedTurn(parked: Parked, situation: Situation): Draft {
 }
 
 
+/**
+ * The card's reason. Where several causes hold, the first wins (decision 3): a person's hold; a running session; parked for a person;
+ * blocker; the written text; same files or conflict; then the lane's own words for its switch, level and usage, and `nextStepTurn` for the
+ * retry timer, a claim and the slot.
+ */
 function draft(situation: Situation, ctx: TurnContext): Draft {
-  const { item, lane, change } = situation;
+  const { item, lane, change, session } = situation;
   if (lane === null) return { actor: "nobody", tone: "done", reason: item.duplicateOf ? `duplicate of ${refLabel(item.duplicateOf)}` : "abandoned" };
   if (lane === "done") {
     return { actor: "nobody", tone: "done", reason: item.state === "done" ? "done" : "its change is merged; waiting for the host to close the item" };
   }
-  const parked = ctx.index.parkedByWork.get(refKey(item.ref));
+  const key = refKey(item.ref);
+  // The host's own state holds it back (its file cannot be read, a status Scope Soup does not know), before anything else.
+  if (item.state === "waiting" && (lane === "todo" || lane === "blocked") && !(session && isLive(session))) return { actor: "nobody", tone: "blocked", reason: `waiting on the host (status "${item.hostState}")` };
+  if (item.holder && !item.holder.actor.bot) return heldTurn(item, ctx);
+  if (session && isLive(session)) return lane === "in-progress" ? progressTurn(situation, ctx) : sessionTurn(session, ctx);
+  const parked = ctx.index.parkedByWork.get(key);
   // An item split into sub-items is an umbrella: a "too large, split it" verdict is spent.
   if (parked?.as === "not-ready" && (lane === "todo" || lane === "backlog") && item.state === "todo") {
     if (item.openChildren > 0) return umbrellaTurn(item);
@@ -340,6 +368,18 @@ function draft(situation: Situation, ctx: TurnContext): Draft {
   const proposed = (lane === "backlog" || lane === "todo" || lane === "blocked") && !situation.session ? ctx.index.snapshot.proposedRewrites?.find((each) => refKey(each.subject) === refKey(item.ref)) : undefined;
   if (proposed) return { actor: "anyone", tone: "yours", since: proposed.at, waits: "a rewrite to accept", reason: `Accept, edit or reject the rewrite of the description by ${proposed.askedBy}` };
   if (lane === "backlog") return waitsInBacklogTurn(situation, ctx);
+  const blockers = openBlockers(item, ctx.index);
+  if (blockers.length > 0 && (lane === "blocked" || lane === "todo")) {
+    const words = blockers.map((blocker) => `${refLabel(blocker.ref)}${blocker.needsDecision ? " (needs your decision)" : ""}`);
+    return { actor: "nobody", tone: "blocked", reason: `blocked by ${list(words)}` };
+  }
+  const job = ctx.index.jobByWork.get(key);
+  if (job?.text && Date.parse(job.text) > ctx.now.getTime()) {
+    return { actor: "nobody", tone: "waiting", reason: `waits until the description written at a person's Accept is read back from ${item.ref.host} (at most ${durationWords(Date.parse(job.text) - ctx.now.getTime())} more)` };
+  }
+  // Triaged, and its paths overlap those of a busy Item, or it may conflict with one: it waits for that one, not for a slot.
+  const sameFiles = ctx.index.snapshot.sameFiles?.find((each) => refKey(each.subject) === key);
+  if (sameFiles) return { actor: "nobody", tone: "waiting", reason: sameFilesWords(sameFiles.waitsFor, sameFiles.mayConflict) };
   if (lane === "todo" || lane === "blocked") return todoTurn(situation, ctx);
   if (lane === "in-progress" || !change) return progressTurn(situation, ctx);
   if (lane === "in-review") return reviewTurn(situation, change, ctx);
