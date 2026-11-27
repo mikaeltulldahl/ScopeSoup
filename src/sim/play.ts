@@ -131,7 +131,7 @@ export function draw(world: SimWorld, rnd: Rng, options: RunOptions): Action {
 }
 
 /** The fair tail, one round: release a person's holds, end each session, answer each ask, merge what was handed over, tick. */
-function fairRound(world: SimWorld, round: number): Action[] {
+export function fairRound(world: SimWorld, round: number): Action[] {
   const out: Action[] = [];
   const jobs = world.jobs();
   for (const item of world.items()) {
