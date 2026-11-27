@@ -2049,7 +2049,8 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
     }
     try {
       const done = await write!.editWork!(current.ref, patch);
-      const logged = write!.appendLog ? await write!.appendLog(done.work, { kind: "edited", by: by(), fields: { changed } }) : done;
+      // A close names the state it set: the Item's log then ends its open questions (`foldLog`).
+      const logged = write!.appendLog ? await write!.appendLog(done.work, { kind: "edited", by: by(), fields: { changed, ...(patch.state ? { state: patch.state } : {}) } }) : done;
       return written(response, logged);
     } catch (error) {
       return sendError(response, 400, "WRITE_REFUSED", error instanceof Error ? error.message : String(error));

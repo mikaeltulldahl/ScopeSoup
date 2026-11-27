@@ -938,9 +938,8 @@ function RewritePanel({ page, rewrite, reload, primary }: { page: ItemPage; rewr
   const [text, setText] = useState(rewrite.text);
   const [labelText, setLabelText] = useState(labelChangeText(rewrite.labels));
   const { busy, error, send } = useSend();
-  // A stopping answer (hold for a conflict, close as a duplicate), or closing the other Item as a duplicate, keeps the rewrite too:
-  // it does not change the description.
-  const keepsAnswer = (answer: string, index: number) => [rewrite.questions[index]!.stopsOn, rewrite.questions[index]!.closesOther].some((label) => label !== undefined && answer.trim() === label.trim());
+  // A stopping answer (hold for a conflict, close this Item as a duplicate) keeps the rewrite too: it does not change the description.
+  const keepsAnswer = (answer: string, index: number) => { const label = rewrite.questions[index]!.stopsOn; return label !== undefined && answer.trim() === label.trim(); };
   const keeps = answers.every((answer, index) => answer.trim() === recommended[index]!.trim() || keepsAnswer(answer, index));
   const filled = answers.every((answer) => answer.trim() !== "");
   // A stopping answer that is not the recommendation: a hold for a conflict, which makes the Item wait in Blocked.

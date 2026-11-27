@@ -40,7 +40,7 @@ test("on the meta branch a duplicate is closed there: abandoned, naming the othe
   const closed = await host.work!.getWork(ref("A-2"));
   assert.deepEqual([closed?.state, closed?.duplicateOf?.id], ["abandoned", "A-1"]);
   assert.match(repo.git(["show", "refs/scopesoup/meta:items/A-2/item.md"]), /^duplicateOf: A-1$/m);
-  assert.deepEqual(closed?.log?.at(-1)?.fields, { changed: ["state", "duplicate of"], via: "a person's answer" });
+  assert.deepEqual(closed?.log?.at(-1)?.fields, { changed: ["state", "duplicate of"], state: "abandoned", via: "a person's answer" });
   // Into the store at once, so the next tick sees it abandoned.
   assert.equal(store.get<WorkItem>(ref("A-2"))?.duplicateOf?.id, "A-1");
   // Another host's Item is not closed here.

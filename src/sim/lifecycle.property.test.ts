@@ -66,9 +66,10 @@ it("random runs keep the lifecycle rules, apart from the known failures, and rea
     assert.ok(totals.accepted > 0 && totals.rejected > 0, "no rewrite was both accepted and rejected");
     assert.ok(totals.restarts > 0, "no restart");
     assert.ok(totals.closed > 0, "no close by a person");
-    const wanted = ["not-started", "session", "nothing", "queue", "blocker", "person(answer)", "person(rewrite)", "person(not-ready)", "person(holds)", "start(slot)", "start(timer)", "start(same-files)", "start(switch)", "start(level)", "start(usage)"];
-    // Seen in the long run only: the normal run's few seeds do not reach an escalation.
-    if (LONG) wanted.push("person(escalated)");
+    const wanted = ["not-started", "session", "nothing", "queue", "person(answer)", "person(rewrite)", "person(not-ready)", "person(holds)", "start(slot)", "start(timer)", "start(same-files)", "start(switch)", "start(level)", "start(usage)"];
+    // Seen in the long run only: the normal run's few seeds do not reach an escalation, and reach a blocked Item only by chance (a
+    // blockedBy link from a triage that settles while the other Item is open; since #229 none of the 8 seeds does).
+    if (LONG) wanted.push("person(escalated)", "blocker");
     for (const w of wanted) {
       assert.ok(waits.has(w), `no Item ever waited as ${w}`);
     }
