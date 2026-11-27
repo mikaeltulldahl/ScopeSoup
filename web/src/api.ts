@@ -249,6 +249,17 @@ export async function postVote(ref: string, direction: "up" | "down"): Promise<v
   listeners.forEach((listener) => listener());
 }
 
+/**
+ * Places the Item right above `before` (null: last) in its lane's order, To do or Backlog (#222); `lane` names the lane when it has
+ * just moved there. Resolves with the server's note when it kept the Item at the edge of its group instead.
+ */
+export async function postPlace(ref: string, before: string | null, lane: string): Promise<string | undefined> {
+  const response = await call("/api/item/place", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ref, before, lane }) });
+  const answer = (await response.json().catch(() => null)) as { note?: string; error?: { message?: string } } | null;
+  if (!response.ok) throw new Error(answer?.error?.message ?? `The server answered ${response.status}.`);
+  return answer?.note;
+}
+
 /** Lets go of a person's hold on the Item, as the board's picked person (anyone may; the log names both). */
 export const postRelease = (id: string) => postJson("/api/item/release", { id });
 /** The board's person takes the Item; Scope Soup leaves it alone. */

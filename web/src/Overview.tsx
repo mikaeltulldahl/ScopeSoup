@@ -4,10 +4,14 @@
 import { DraftCard } from "./DraftCard.tsx";
 import { Fragment } from "preact";
 import type { ComponentChildren } from "preact";
-import { useState } from "preact/hooks";
+import { useRef, useState } from "preact/hooks";
 import type { BoardView, ControlPath, LaneView } from "./api.ts";
 import { BatchMini } from "./Batch.tsx";
 import { Card } from "./Card.tsx";
+import type { LaneDrag } from "./boardMoves.ts";
+import { laneDrag, shownCards, useCardDrag, useFlip } from "./boardMoves.ts";
+import { withShown } from "./drag.ts";
+import { usePendingMoves } from "./Pending.tsx";
 import { laneIcon, laneLabel } from "./format.ts";
 import { MERGE_LANE, mergeLane, queueShown } from "./mergeLane.ts";
 import { itemNoun, words } from "./theme.ts";
@@ -36,12 +40,13 @@ interface LaneControl {
 }
 
 /** One lane's frame: the title row with the count and the switch, then the body. */
-function LaneFrame({ id, title, count, closed, toggle, control, children }: { id: string; title: string; count: number; closed: boolean; toggle: () => void; control: LaneControl; children: ComponentChildren }) {
+function LaneFrame({ id, title, count, closed, toggle, control, drag, children }: { id: string; title: string; count: number; closed: boolean; toggle: () => void; control: LaneControl; drag?: LaneDrag; children: ComponentChildren }) {
   const { own, states } = control;
   const ownState = own ? states[own] : null;
   const paused = ownState !== null && ownState !== "started";
+  const dropping = drag?.refused !== undefined ? " drop-refused" : drag?.takes ? " drop-takes" : "";
   return (
-    <section class={`lane lane-${id}${closed ? " lane-closed" : ""}${paused ? " lane-paused" : ""}`}>
+    <section class={`lane lane-${id}${closed ? " lane-closed" : ""}${paused ? " lane-paused" : ""}${dropping}`} data-lane={id}>
       {/* The switch sits on the title row, after the count: a lane without one has no extra row, so the columns line up. */}
       <h2>
         <button type="button" class="lane-toggle" aria-expanded={!closed} onClick={toggle}>
@@ -70,44 +75,54 @@ function LaneFrame({ id, title, count, closed, toggle, control, children }: { id
         )}
       </h2>
       <div class="lane-body">
-        {count === 0 && <p class="empty">{words().emptyLane}</p>}
+        {drag?.refused !== undefined && <p class="drop-why" role="status">Can't go here: {drag.refused}</p>}
+        {count === 0 && drag?.gapAt === undefined && <p class="empty">{words().emptyLane}</p>}
         {children}
       </div>
     </section>
   );
 }
 
-function Lane({ lane, closed, toggle, control }: { lane: LaneView; closed: boolean; toggle: () => void; control: LaneControl }) {
+/** Where a dragged card would land: a gap as tall as the card. */
+const Gap = ({ height }: { height: number }) => <div class="drop-gap" style={{ height: `${height}px` }} aria-hidden="true" />;
+
+function Lane({ lane, closed, toggle, control, drag }: { lane: LaneView; closed: boolean; toggle: () => void; control: LaneControl; drag?: LaneDrag }) {
   // From level 1 To do's last cards are the Items not triaged yet, below a divider.
   const below = lane.notTriaged ?? 0;
   const divideAt = lane.notTriaged === undefined ? -1 : lane.cards.length - below;
+  const cards = shownCards(lane.cards, drag);
+  // The divider goes above the first card not triaged yet that is drawn (a carried one is not).
+  const firstBelow = divideAt < 0 ? undefined : lane.cards.slice(divideAt).find((card) => cards.includes(card))?.key;
   return (
-    <LaneFrame id={lane.lane} title={`${laneIcon(lane.lane)}${laneLabel(lane.lane)}`} count={lane.total} closed={closed} toggle={toggle} control={control}>
-      {lane.cards.map((card, position) => (
+    <LaneFrame id={lane.lane} title={`${laneIcon(lane.lane)}${laneLabel(lane.lane)}`} count={lane.total} closed={closed} toggle={toggle} control={control} drag={drag}>
+      {cards.map((card, position) => (
         <Fragment key={card.key}>
-          {position === divideAt && <Divider title="Their triages run in this order: oldest first, a higher priority ahead" words="Not triaged yet" count={below} />}
+          {position === drag?.gapAt && <Gap height={drag.height} />}
+          {card.key === firstBelow && <Divider title="Their triages run in this order: oldest first, a higher priority ahead" words="Not triaged yet" count={below} />}
           <Card card={card} />
         </Fragment>
       ))}
+      {drag?.gapAt !== undefined && drag.gapAt >= cards.length && <Gap height={drag.height} />}
       {lane.total > lane.cards.length && <p class="empty">and {lane.total - lane.cards.length} older</p>}
     </LaneFrame>
   );
 }
 
 /** Queued and Checking as one lane: the batch under test on top, then the changes waiting, in queue order. */
-function MergeQueueLane({ board, closed, toggle, control }: { board: BoardView; closed: boolean; toggle: () => void; control: LaneControl }) {
+function MergeQueueLane({ board, closed, toggle, control, drag }: { board: BoardView; closed: boolean; toggle: () => void; control: LaneControl; drag?: LaneDrag }) {
   const find = (key: string) => board.lanes.find((lane) => lane.lane === key);
   const { batches, waiting, count } = mergeLane(find("queued"), find("checking"), board.queue);
   const theme = words();
   return (
-    <LaneFrame id={MERGE_LANE} title={`${theme.mergeLaneIcon ? `${theme.mergeLaneIcon} ` : ""}${theme.mergeLane}`} count={count} closed={closed} toggle={toggle} control={control}>
+    <LaneFrame id={MERGE_LANE} title={`${theme.mergeLaneIcon ? `${theme.mergeLaneIcon} ` : ""}${theme.mergeLane}`} count={count} closed={closed} toggle={toggle} control={control} drag={drag}>
       {batches.map((batch) => (
         <BatchMini key={batch.key} batch={batch} />
       ))}
       {waiting.length > 0 && <Divider title="Waiting for a batch, in queue order: the first goes into the next one" words="Waiting" count={waiting.length} />}
-      {waiting.map((card) => (
+      {shownCards(waiting, drag).map((card) => (
         <Card key={card.key} card={card} />
       ))}
+      {drag?.gapAt !== undefined && <Gap height={drag.height} />}
     </LaneFrame>
   );
 }
@@ -133,8 +148,14 @@ function NoTriage({ count }: { count: number }) {
   );
 }
 
-export function Overview({ board, busy, onSwitch }: { board: BoardView; busy: boolean; onSwitch: (path: ControlPath) => void }) {
+export function Overview({ board: loaded, busy, onSwitch }: { board: BoardView; busy: boolean; onSwitch: (path: ControlPath) => void }) {
   const theme = useTheme();
+  // A move waiting in its Undo wait shows already (#222): the card is in its new lane and place until it is sent or undone.
+  const moves = usePendingMoves();
+  const board = moves.length > 0 ? { ...loaded, lanes: withShown(loaded.lanes, moves) } : loaded;
+  const lanesRef = useRef<HTMLDivElement>(null);
+  const flip = useFlip(lanesRef);
+  const drag = useCardDrag(lanesRef, board.lanes, flip);
   const [closed, setClosed] = useState(readClosed);
   const toggle = (lane: string) => {
     const next = closed.includes(lane) ? closed.filter((each) => each !== lane) : [...closed, lane];
@@ -186,13 +207,13 @@ export function Overview({ board, busy, onSwitch }: { board: BoardView; busy: bo
           </div>
         )}
       </section>
-      <div class="lanes">
+      <div class="lanes" ref={lanesRef}>
         {board.lanes.map((lane) =>
           lane.lane === "checking" ? null : lane.lane === "queued" ? (
             !queueShown(board.status.level, mergeLane(lane, board.lanes.find((each) => each.lane === "checking"), board.queue).count) ? null :
-            <MergeQueueLane key={MERGE_LANE} board={board} closed={closed.includes(MERGE_LANE)} toggle={() => toggle(MERGE_LANE)} control={control(MERGE_LANE)} />
+            <MergeQueueLane key={MERGE_LANE} board={board} closed={closed.includes(MERGE_LANE)} toggle={() => toggle(MERGE_LANE)} control={control(MERGE_LANE)} drag={laneDrag(drag, MERGE_LANE)} />
           ) : (
-            <Lane key={lane.lane} lane={lane} closed={closed.includes(lane.lane)} toggle={() => toggle(lane.lane)} control={control(lane.lane)} />
+            <Lane key={lane.lane} lane={lane} closed={closed.includes(lane.lane)} toggle={() => toggle(lane.lane)} control={control(lane.lane)} drag={laneDrag(drag, lane.lane)} />
           ),
         )}
       </div>

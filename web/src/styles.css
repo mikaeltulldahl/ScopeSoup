@@ -780,3 +780,16 @@ button.decision-choice:hover:not(:disabled) { background: var(--accent-soft); fi
 .model-sizes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
 .model-size { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .model-size select { width: 100%; min-width: 0; }
+
+/* --- Moving cards (#222): the card being dragged, the gap where it lands, a lane that takes it or not --- */
+.lanes [data-card] { touch-action: manipulation; }
+.card-ghost { position: fixed; z-index: 90; margin: 0; pointer-events: none; box-shadow: 0 10px 28px rgba(0, 0, 0, 0.28); border-color: var(--accent); rotate: 1.5deg; cursor: grabbing; }
+body.card-dragging, body.card-dragging * { cursor: grabbing !important; user-select: none; -webkit-user-select: none; }
+.drop-gap { border: 1.5px dashed var(--accent); border-radius: var(--radius); background: var(--sunken); }
+.lane.drop-takes .lane-body { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: var(--radius); }
+.lane.drop-refused .lane-body { outline: 2px dashed var(--blocked); outline-offset: 3px; border-radius: var(--radius); }
+body.card-dragging .lane.drop-refused, body.card-dragging .lane.drop-refused * { cursor: not-allowed !important; }
+.drop-why { margin: 0; padding: 6px 8px; border-radius: var(--radius); background: var(--blocked); color: #fff; font-size: 0.85rem; }
+@media (prefers-reduced-motion: reduce) {
+  .card-ghost { rotate: none; }
+}
