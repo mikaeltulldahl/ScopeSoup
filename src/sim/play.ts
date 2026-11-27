@@ -180,7 +180,7 @@ export async function play(seed: number, options: RunOptions, given?: Action[], 
       }
       if (!message) continue;
       failures.push({ rule: rule.id, step: o.step, message });
-      reports.set(rule.id, report(seed, o, rule.id, message, recent));
+      reports.set(rule.id, report(seed, o, rule.id, message, recent, options.long === true));
     }
   };
   const run = async (action: Action): Promise<void> => {
@@ -238,13 +238,13 @@ export function actionText(action: Action): string {
   }
 }
 
-function report(seed: number, o: Observation, rule: string, message: string, recent: string[]): string {
+function report(seed: number, o: Observation, rule: string, message: string, recent: string[], long: boolean): string {
   return [
     `seed ${seed}, step ${o.step}, rule ${rule}: ${message}`,
     `step ${o.step}: ${actionText(o.action)}`,
     `last steps: ${recent.join(" · ")}`,
     `Items: ${o.items.map((i) => `${i.id} W=${wText(i.w)} lane=${i.card?.lane ?? "-"}`).join(" · ")}`,
-    `replay: SCOPESOUP_SIM_SEED=${seed} node --test src/sim/lifecycle.property.test.ts`,
+    `replay: ${long ? "SCOPESOUP_LONG=1 " : ""}SCOPESOUP_SIM_SEED=${seed} node --test src/sim/lifecycle.property.test.ts`,
   ].join("\n");
 }
 

@@ -114,7 +114,7 @@ export const RULES: Rule[] = [
         // The tick settles finished sessions first, which can end a same-files wait within the same tick.
         if (w.kind === "start" && w.cause === "same-files") return null;
         // A re-triage may run at any moment on an Item that waits at implement (decision 9).
-        if (s.role === "triage" && w.kind === "start" && w.role === "implement" && w.cause !== "switch" && w.cause !== "level") return null;
+        if (s.role === "triage" && w.kind === "start" && w.role === "implement" && prev.switches.triage === "started") return null;
         if (w.kind === "person" && w.why !== "holds") return null; // a pick or an answer may carry it on
         return `${s.role} started on ${before.id} while W was ${wText(w)}`;
       });
