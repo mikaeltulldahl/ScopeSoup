@@ -7,6 +7,9 @@ import type { Job, Jobs } from "./jobs.ts";
 import type { NamedFiles } from "../core/sameFiles.ts";
 import { mayConflictWith, sameFilesAs } from "../core/sameFiles.ts";
 import { awaitsImplement } from "./recheck.ts";
+import type { Phase } from "../core/phase.ts";
+import { sessionOf } from "../core/phase.ts";
+import { phaseOf } from "./phase.ts";
 
 export interface Readiness {
   ready: WorkItem[];
@@ -94,14 +97,31 @@ export function planOrder(items: WorkItem[], changes: Change[], jobs: Jobs, now:
  */
 export function busyItems(jobs: Jobs): NamedFiles[] {
   return Object.values(jobs).flatMap((job) => {
-    if (job.merged !== undefined) return [];
-    const busy = job.parked
-      ? job.parked.as === "queued" || job.parked.as === "handed-over" || job.head !== undefined || job.queued !== undefined || (job.parked.byStep === true && job.step === "implement")
-      : job.step === "review" || (job.step === "implement" && (job.sessionId !== undefined || !awaitsImplement(job)));
-    if (!busy) return [];
+    if (!isBusy(job, phaseOf(job))) return [];
     const paths = (job.triage?.paths ?? []).filter((path) => path.trim());
     return [{ item: job.item, paths, ...(job.triage?.links?.length ? { links: job.triage.links } : {}) }];
   });
+}
+
+function isBusy(job: Job, phase: Phase): boolean {
+  switch (phase.at) {
+    case "merged":
+    case "triage":
+      return false;
+    case "review":
+    case "hand-over":
+    case "queued":
+    case "with-person":
+      return true;
+    case "implement":
+      return phase.run.is === "running" || !awaitsImplement(job);
+    // Parked for a person: busy once a change exists, or once the implement step itself began and asked.
+    case "asked":
+    case "stuck":
+      return job.head !== undefined || job.queued !== undefined || phase.from === "implement";
+    case "not-ready":
+      return job.head !== undefined || job.queued !== undefined;
+  }
 }
 
 /** What a job waits for before its first implement step: busy Items that change the same files, and busy ones linked to it with `conflictsWith`. */
@@ -117,7 +137,7 @@ export interface SameFilesWait {
  * start implementing, or that waits for none.
  */
 export function sameFilesWait(job: Job, busy: readonly NamedFiles[], answers: readonly RecordedAnswer[]): SameFilesWait | null {
-  if (job.sessionId !== undefined || !awaitsImplement(job)) return null;
+  if (sessionOf(phaseOf(job)) !== undefined || !awaitsImplement(job)) return null;
   const self: NamedFiles = { item: job.item, paths: (job.triage?.paths ?? []).filter((path) => path.trim()), ...(job.triage?.links ? { links: job.triage.links } : {}) };
   const waitsFor = sameFilesAs(self, busy);
   const mayConflict = mayConflictWith(self, busy, answers).filter((ref) => !waitsFor.some((each) => refKey(each) === refKey(ref)));

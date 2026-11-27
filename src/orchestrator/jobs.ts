@@ -8,6 +8,8 @@ import { asLabelChange } from "../model/labels.ts";
 import type { Store } from "../store/store.ts";
 import { itemTextHash } from "../core/answerReuse.ts";
 import type { ProposedDraft } from "./drafts.ts";
+import { resumesStep as phaseResumes } from "../core/phase.ts";
+import { phaseOf } from "./phase.ts";
 import { asDrafts } from "./drafts.ts";
 
 export type JobStep = "triage" | "implement" | "review";
@@ -514,10 +516,7 @@ export function saveJobs(store: Store, jobs: Jobs): void {
  * rest of any other step start the item over instead.
  */
 export function resumesStep(job: Job): boolean {
-  const parked = job.parked;
-  // A post that is retried is still the step's own parked state.
-  if (!parked || !parked.byStep || parked.retry === "hand-over" || job.proposal) return false;
-  return (parked.as === "needs-decision" || parked.as === "escalated") && job.step === "implement";
+  return phaseResumes(phaseOf(job));
 }
 
 /**
@@ -586,10 +585,10 @@ export function questionsSettled(job: Job, item: Pick<WorkItem, "openQuestions" 
  * question, which is answered and released as before, and for anything that is not a triage decision.
  */
 export function jobQuestions(job: Job): Decision[] {
-  // A rewrite's questions are answered together with the rewrite (`POST /api/rewrite`), not one by one.
-  if (job.parked?.as !== "needs-decision" || job.step !== "triage" || job.proposal || job.decision || job.rewrite) return [];
-  const all = (job.triage?.decisions ?? []).filter((decision) => decision.question.trim());
-  return all.length > 1 ? all : [];
+  // A rewrite's questions are answered together with the rewrite (`POST /api/rewrite`), not one by one; questions not posted yet not at all.
+  const phase = phaseOf(job);
+  if (phase.at !== "asked" || phase.ask.is !== "questions" || phase.posting) return [];
+  return (job.triage?.decisions ?? []).filter((decision) => decision.question.trim());
 }
 
 /** Why an answer to one of several questions is refused: no such set (any more), the parked state is not the one the page read, or the question already has an answer. */
@@ -701,7 +700,8 @@ export type RewriteRefusal = "no-rewrite" | "parked-changed" | "answers";
 
 /** The rewrite this job is parked on, unsettled. */
 export function parkedRewrite(job: Job | undefined): Rewrite | undefined {
-  return job?.parked?.as === "needs-decision" && job.step === "triage" && job.rewrite && !job.rewrite.settled ? job.rewrite : undefined;
+  const phase = job ? phaseOf(job) : undefined;
+  return phase?.at === "asked" && phase.ask.is === "rewrite" && phase.from === "triage" && !phase.posting ? job!.rewrite : undefined;
 }
 
 /** Whether `answers` (one per question, in order) may be given to the rewrite parked on this job now; null when they may. */
@@ -787,8 +787,7 @@ export function nextPark(job: Job, log: readonly LogRecord[] | undefined): numbe
   return most + 1;
 }
 
-/** How long a job waits at most for the description Scope Soup wrote to be read back from the host (`Job.writing`). */
-export const WRITING_WAIT_MS = 30 * 60_000;
+export { WRITING_WAIT_MS } from "../core/waits.ts";
 
 /**
  * Scope Soup wrote `bodies` (one text, in the forms it may have been written in) on the host as the Item's description, at `at`: while

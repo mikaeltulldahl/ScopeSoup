@@ -50,6 +50,8 @@ import { setupPromptLine } from "./setup.ts";
 import { pacer, runningByRole, usageBudget, waitingCaps, waitingForPerson, writePacing } from "./pacing.ts";
 import { waitingCapWait } from "../core/waitingCaps.ts";
 import { plural } from "../model/plural.ts";
+import { firstImplement } from "../core/phase.ts";
+import { phaseOf } from "./phase.ts";
 
 export type { TickDeps } from "./context.ts";
 
@@ -1091,7 +1093,7 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
 
     // Don't outrun the person (decision 133): new triage, and new work (a first implement step), wait while too much waits for a person.
     // Work under way, its fix rounds, the steps an answer resumes and a person's own pick go on; the next entry may start.
-    const newKind = personAsked(entry.job, step) ? null : !entry.job ? (step === "triage" ? "triage" : "work") : step === "implement" && firstImplement(entry.job) ? "work" : null;
+    const newKind = personAsked(entry.job, step) ? null : !entry.job ? (step === "triage" ? "triage" : "work") : step === "implement" && firstImplement(phaseOf(entry.job)) ? "work" : null;
     const capWait = newKind ? waitingCapWait(newKind, waitingNow, caps) : null;
     if (capWait) {
       capWaits.add(capWait);
@@ -1292,7 +1294,3 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
   return finish();
 }
 
-/** The implement step has not begun: no change, no session of it, nothing to resume and no attempt yet. Its start is new work (decision 133). */
-export function firstImplement(job: Job): boolean {
-  return job.step === "implement" && job.head === undefined && !job.implement && job.agentSession === undefined && job.resumeWith === undefined && !job.resume && job.failures === 0 && !job.merge;
-}

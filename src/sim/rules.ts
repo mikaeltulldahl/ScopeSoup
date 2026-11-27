@@ -70,6 +70,22 @@ function answersElsewhere(item: ItemObs["item"], machine: string | undefined): s
     .map((line) => `${line.at} ${String(line.fields.answer)}`);
 }
 
+/**
+ * Where the product's own W (`src/core/waits.ts`, read from the job's phase) differs from the checker's, given the same world. A live
+ * session the job does not name (one a pick is ending) is the checker's alone; an owed hand-over the product calls its own role.
+ */
+function productDiffers(i: ItemObs): string | null {
+  const p = i.product;
+  const c = i.w;
+  if (!p || c.kind === "session") return null;
+  const said = (): string => `${i.id}: the product's waitsFor says ${p.kind === "start" ? `start(${p.role}, ${p.cause})` : p.kind === "person" ? `person(${p.why}${p.n !== undefined ? ` ${p.n}` : ""})` : p.kind}, the checker's W is ${wText(c)}`;
+  if (p.kind !== c.kind) return said();
+  if (p.kind === "start" && c.kind === "start") return p.cause === c.cause || (p.role === "hand-over" && p.cause === "next") ? null : said();
+  if (p.kind === "person" && c.kind === "person") return p.why === c.why && (p.n ?? 1) === (c.n ?? 1) ? null : said();
+  if (p.kind === "blocker" && c.kind === "blocker") return [...p.on].sort().join() === [...c.on].sort().join() ? null : said();
+  return null;
+}
+
 // A triage runs in To do, or in Backlog when a person asked for one there (#221).
 const roleLane = (role: string, item: ItemObs["item"]): string => (role === "triage" ? (item.backlog ? "backlog" : "todo") : role === "implement" ? "in-progress" : "in-review");
 
@@ -77,10 +93,13 @@ export const RULES: Rule[] = [
   // --- A. One truth ---
   {
     id: "A1",
-    why: "Views follow W: the card's lane and actor are the ones W gives (#185, #198, #207, #194).",
+    why: "Views follow W: the product's own W is the checker's, and the card's lane and actor are the ones W gives (#185, #198, #207, #194).",
     check(o, prev, memo) {
       const rebuild = toRebuild(o, prev, memo);
       return first(o.items, (i) => {
+        // One W: the one the product's views and tick read agrees with the checker's.
+        const differs = productDiffers(i);
+        if (differs) return differs;
         const card = i.card;
         const lane = card?.lane;
         if ((lane === "queued" || lane === "checking") && !(rebuild[i.key] && !i.job)) {
