@@ -53,17 +53,18 @@ export const sameAnswer = (answer: RecordedAnswer): string => `${refKey(answer.s
 /**
  * Every answer Scope Soup acts on (answer reuse, prompts, the Item page), oldest first: the ones kept here; the ones in each
  * meta-branch Item's log, which every machine reads on every sync, so an answer given on another machine's board counts here too
- * (an answer kept here and in the log is one answer); and on GitHub the answer comments read into each Item.
+ * (an answer kept here and in the log is one answer, each kept one standing for one of the log's); and on GitHub the answer comments read into each Item.
  */
 export function knownAnswers(store: Store): RecordedAnswer[] {
   const kept = loadAnswers(store);
   const works = store.list<WorkItem>("work");
-  const had = new Set(kept.map(sameAnswer));
+  // Each answer kept here is one of the log's: the same answer given twice (to two asks of one question) is two in both.
+  const had = new Map<string, number>();
+  for (const answer of kept) had.set(sameAnswer(answer), (had.get(sameAnswer(answer)) ?? 0) + 1);
   const fromLogs = works.flatMap((item) => (item.log ? answersFromLog(item) : [])).filter((answer) => {
-    const key = sameAnswer(answer);
-    if (had.has(key)) return false;
-    had.add(key);
-    return true;
+    const left = had.get(sameAnswer(answer)) ?? 0;
+    if (left > 0) had.set(sameAnswer(answer), left - 1);
+    return left === 0;
   });
   const onHost = works.filter((item) => item.ref.host === GITHUB_HOST).flatMap((item) => item.answers ?? []);
   if (fromLogs.length === 0 && onHost.length === 0) return kept;

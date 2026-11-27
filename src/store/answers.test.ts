@@ -3,7 +3,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { LogRecord, WorkItem } from "../model/types.ts";
-import { answersFromLog } from "./answers.ts";
+import { addAnswer, answersFromLog, knownAnswers } from "./answers.ts";
+import { openStore } from "./store.ts";
 
 const PERSON = { who: "Ada", agent: false };
 const BOT = { who: "scopesoup", agent: true };
@@ -32,4 +33,18 @@ test("a line with answers stands for each of them (a triage rewrite's answers an
     { at: AT, by: PERSON, kind: "answer", fields: { answer: "Accepted the triage's rewrite, keeping the recommendations: yes.", answers: [{ question: "Part 20?", answer: "yes" }, { question: "Triage rewrite, round 1", answer: "Accepted." }] } },
     { at: AT, by: BOT, kind: "answer", fields: { answer: "Not a person's." } },
   ]), [["yes", "Part 20?"], ["Accepted.", "Triage rewrite, round 1"]]);
+});
+
+test("an answer kept here and in the log is one; the same answer given to two asks of one question is two everywhere", () => {
+  const log: LogRecord[] = [
+    { at: AT, by: PERSON, kind: "answer", fields: { answer: "yes", toSet: "1@a", question: "Part 20?" } },
+    { at: "2026-11-18T11:00:00.000Z", by: { ...PERSON, machine: "laptop-b" }, kind: "answer", fields: { answer: "yes", toSet: "2@b", question: "Part 20?" } },
+  ];
+  const here = openStore(":memory:");
+  const there = openStore(":memory:");
+  for (const store of [here, there]) store.put(item(log), "sync", AT);
+  // This machine gave the first; the other machine's board the second.
+  addAnswer(here, { subject: item([]).ref, answer: "yes", question: "Part 20?", by: "Ada", at: "2026-11-18T09:59:59.500Z" });
+  assert.equal(knownAnswers(here).length, 2);
+  assert.equal(knownAnswers(there).length, 2);
 });
