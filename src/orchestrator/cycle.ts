@@ -79,7 +79,7 @@ export async function park(ctx: Context, job: Job, as: ParkedAs, reason: string,
   delete job.notBefore;
   delete job.resume;
   ctx.commit(PARK_EVENT[as], reason, key, { step: job.step });
-  const { actions, runner } = ctx.deps;
+  const { runner } = ctx.deps;
   if (ask) await tellPeople(ctx, job, as, reason, ask, retry);
   // The claim stays while the job does (#243): let go here, another machine took the Item and worked on it beside this parked job.
   // It goes back when the job closes or is dropped.
