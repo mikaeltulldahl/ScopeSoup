@@ -522,6 +522,36 @@ async function holdsOn(id: string, options: Shrunk, actions: Action[]): Promise<
 }
 
 describe("runs the simulator shrank, held since their fix", { concurrency: 1 }, () => {
+  // The checker's W fixed (#268): a session that ended and is not settled yet keeps its own role, not the step a person's pick set.
+  test("F1: Triage picked over a running implement session, which then ends: W stays the implement session until the tick", async () => {
+    await holdsOn("F1", {items: 8, level: 2, slots: 2, steps: 600, profile: "normal", ageing: true}, [
+      {kind: "claim", item: "A-2"},
+      {kind: "close", item: "A-1", state: "done"},
+      {kind: "close", item: "A-4", state: "done"},
+      {kind: "close", item: "A-3", state: "done"},
+      {kind: "close", item: "A-6", state: "abandoned"},
+      {kind: "tick"},
+      {kind: "end", item: "A-7", v: 35970},
+      {kind: "new-item", v: 556275},
+      {kind: "tick"},
+      {kind: "move", item: "A-8", v: 561826},
+      {kind: "tick"},
+      {kind: "claim", item: "A-9"},
+      {kind: "release", item: "A-9"},
+      {kind: "move", item: "A-8", v: 428887, keen: true},
+      {kind: "tick"},
+      {kind: "end", item: "A-9", v: 894786},
+      {kind: "tick"},
+      {kind: "answer", item: "A-9", v: 630237},
+      {kind: "tick"},
+      {kind: "clock", ms: 10800000},
+      {kind: "tick"},
+      {kind: "move", item: "A-9", v: 785856},
+      {kind: "end", item: "A-9", v: 9},
+      {kind: "lane", item: "A-10", to: "todo"},
+    ]);
+  });
+
   // Fixed (#268): an answer to the park names it, also when the store still reads an earlier park's question.
   test("A3: a rewrite accepted whose read-back is lost, parked not ready, then answered: the not-ready question closes", async () => {
     await holdsOn("A3", {items: 9, level: 4, slots: 3, steps: 600, profile: "normal", ageing: true}, [

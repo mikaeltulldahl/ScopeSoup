@@ -175,8 +175,10 @@ export async function observe(world: SimWorld, seed: number, action: Action, pre
     const key = refKey(item.ref);
     const job = jobs[key];
     const mine = live.filter((each) => refKey(each.session.subject) === key).map((each) => ({ id: each.session.ref.id, role: each.session.role as Role }));
+    const ended = where(job)?.sessionId;
+    const settlingRole = ended && mine.length === 0 ? (world.store.get<Session>({ host: "scopesoup", kind: "session", id: ended })?.role as Role | undefined) : undefined;
     const w = waitsFor({
-      item, job, live: mine.map((each) => each.role), settling: !!where(job)?.sessionId && mine.length === 0, open, ownBlockers: (own[key] ?? []).map(refKey), switches, level: world.configNow.level, usageReserve, now: at,
+      item, job, live: mine.map((each) => each.role), settling: !!ended && mine.length === 0, ...(settlingRole ? { settlingRole } : {}), open, ownBlockers: (own[key] ?? []).map(refKey), switches, level: world.configNow.level, usageReserve, now: at,
       workCapped: waiting >= caps.work, paceHolds: live.length === 0 && kickBlocked, liveCount: live.length, slots: world.configNow.settings.maxParallelSessions.value, busy: busy.filter((each) => each.key !== key), claimant,
     });
     const blockers = [...new Set([...item.blockedBy.map(refKey), ...(own[key] ?? []).map(refKey)])].filter((each) => open.has(each));

@@ -26,6 +26,8 @@ export interface WaitInput {
   live: Role[];
   /** The job names a session that is over and the tick has not settled yet. */
   settling?: boolean;
+  /** That session's role, which may differ from the job's step: a person's pick over it changed the step (#268). */
+  settlingRole?: Role;
   /** Open items by ref key, for blockers. */
   open: ReadonlyMap<string, WorkItem>;
   /** Scope Soup's own blockers of the item (ref keys). */
@@ -66,7 +68,7 @@ export function waitsFor(input: WaitInput): W {
   const role = (at?.step ?? "triage") as Role;
   if (input.live.length > 0) return { kind: "session", role: input.live[input.live.length - 1]! };
   // A session that ended and that the tick has not read yet is still the step's session.
-  if (input.settling) return { kind: "session", role, settling: true };
+  if (input.settling) return { kind: "session", role: input.settlingRole ?? role, settling: true };
   const parked = at?.parked;
   if (job && at && parked) {
     if (parked.as === "queued") return { kind: "queue" };
