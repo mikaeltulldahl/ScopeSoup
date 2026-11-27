@@ -124,7 +124,7 @@ export function draw(world: SimWorld, rnd: Rng, options: RunOptions): Action {
       return { kind: "inside-tick", inner };
     }
     default:
-      return rnd.chance(0.1) ? { kind: "tick" } : { kind: "tick" };
+      return { kind: "tick" };
   }
 }
 
