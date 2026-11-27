@@ -515,6 +515,19 @@ async function holdsOn(id: string, options: Shrunk, actions: Action[]): Promise<
 }
 
 describe("runs the simulator shrank, held since their fix", { concurrency: 1 }, () => {
+  // Fixed (#268): a step Scope Soup's lost store would rebuild from the log is not rebuilt for an Item a person moved to Backlog.
+  test("J1: the store lost after a move to Backlog, and the Item still claimed: no triage starts there", async () => {
+    await holdsOn("J1", {items: 3, level: 4, slots: 2, steps: 600, profile: "calm", ageing: true}, [
+      {kind: "tick"},
+      {kind: "end", item: "A-2", v: 64492},
+      {kind: "tick"},
+      {kind: "lane", item: "A-2", to: "backlog"},
+      {kind: "lose-store"},
+      {kind: "switch", to: "resume"},
+      {kind: "tick"},
+    ]);
+  });
+
   // Fixed (#223): a move's words, written by the park's set before the store read its questions back, answer every question of the set.
   test("A3: a move answers both questions of a park the store has not read back", async () => {
     await holdsOn("A3", {items: 6, level: 2, slots: 2, steps: 600, profile: "rough"}, [

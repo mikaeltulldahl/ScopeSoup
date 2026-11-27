@@ -234,6 +234,9 @@ export function recoverFromLogs(ctx: Context, items: readonly WorkItem[]): void 
     if (!item.log && !onHost) continue;
     const job = onHost ? jobFromHost(item) : jobFromLog(item);
     if (!job) continue;
+    // Backlog is no work (decision 121): a step that would start again there is not rebuilt, as a move to Backlog drops it (the
+    // move's drop may have been lost with the store). What waits for a person there still waits.
+    if (item.backlog && !where(job).parked) continue;
     ctx.jobs[key] = job;
     const at = where(job);
     const said = at.parked ? `parked as "${at.parked.as}": ${at.parked.reason}` : at.owes ? "reviewed and not merged: the hand-over is done again" : `the ${at.step} step starts again`;
