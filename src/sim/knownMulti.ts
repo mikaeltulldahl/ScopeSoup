@@ -17,4 +17,5 @@ export const KNOWN_MULTI: Record<string, Known> = {
   A3: { seed: 1, long: true, what: "a job parked on a question that is not open on the host, across machines (#248)" },
   I4: { seed: 3, long: true, what: "an Item's branch with work not on main is deleted, across machines (#248)" },
   B4: { seed: 38, long: true, what: "a question about an Item stays asked after that Item is closed, across machines (#248)" },
+  M8: { seed: 6, long: true, what: "a machine acts on a move's answer (\"Put back in To do\") that no person sent on it, across machines; fails on main too, not #238's (#248)" },
 };

@@ -261,11 +261,13 @@ export const RULES: Rule[] = [
         const input = JSON.stringify([s.request.vars.itemTitle, s.request.vars.itemBody, s.request.message ?? "", s.request.vars.recheck ?? "", s.request.vars.history ?? "", s.request.resume ?? "", o.git.branches.get(s.request.branch) ?? "", o.git.main]);
         const key = `${s.item}|${s.role}|${input}`;
         const before = seen[key];
-        // A retry after a failure (or a cut-off session resumed) is not a repeat.
+        // A retry after a failure (or a cut-off session resumed) is not a repeat, and neither is a start after the session with this
+        // input ended with no result of its own: a restart left it with no process (it is started again, not counted, #238).
         const last = o.ledger.ended.filter((e) => e.item === s.item && e.role === s.role).at(-1);
+        const beforeSettled = before !== undefined && o.ledger.ended.some((e) => e.session === before && e.settled);
         // An Item with no job on this machine, or one a person's move drops, starts anew (as does one whose claim went to another machine), and a job with a failure counted is retried: an implementor's "done" with no commit is settled in the ledger but a failure to the tick.
         const dropped = prev !== undefined && prev.items.some((i) => i.key === s.item && (i.job === undefined || i.job.dropAskedBy !== undefined || i.job.failures > 0));
-        if (before && last?.settled && !dropped) return `a ${s.role} session started again on ${s.item.split(":").pop()} with the same input as session ${before}, after it succeeded`;
+        if (before && beforeSettled && last?.settled && !dropped) return `a ${s.role} session started again on ${s.item.split(":").pop()} with the same input as session ${before}, after it succeeded`;
         seen[key] = s.session;
       }
       for (const [key, n] of o.ledger.asksInFair) if (n > 3) return `under Fair, ${key.split(":").pop()} was asked ${n} times`;
