@@ -44,10 +44,20 @@ export interface Owned {
 /** The pool of paths sessions and people touch, small so that overlaps happen. */
 export const PATHS = ["src/a.ts", "src/b.ts", "src/c.ts", "src/d.ts", "docs/e.md", "test/f.ts"];
 
-export class FakeGit {
+/**
+ * What the clones of one project share: the commits (a sha names one commit everywhere), the remote's main and how it moved. One
+ * clone makes its own; the multiplayer simulator (`multi.ts`) gives each machine's clone the same one.
+ */
+export class GitOrigin {
   commits = new Map<string, Commit>();
-  /** The remote's main. */
-  main: string;
+  main = "";
+  mainMoves: { sha: string; how: string; item?: string }[] = [];
+  count = 0;
+}
+
+export class FakeGit {
+  origin: GitOrigin;
+  commits: Map<string, Commit>;
   branches = new Map<string, string>();
   remoteBranches = new Map<string, string>();
   tags = new Map<string, string>();
@@ -57,11 +67,22 @@ export class FakeGit {
   /** Refs deleted, with who asked: the footprint rules read it. */
   deleted: { ref: string; madeBy?: Owned; unmerged: boolean }[] = [];
   /** How each commit got onto main: "session told", "session untold", "queue", "person". */
-  mainMoves: { sha: string; how: string; item?: string }[] = [];
-  private count = 0;
+  mainMoves: { sha: string; how: string; item?: string }[];
 
-  constructor() {
-    this.main = this.commit([], ["README.md"], "start", "person");
+  /** The remote's main. */
+  get main(): string {
+    return this.origin.main;
+  }
+
+  set main(sha: string) {
+    this.origin.main = sha;
+  }
+
+  constructor(origin?: GitOrigin) {
+    this.origin = origin ?? new GitOrigin();
+    this.commits = this.origin.commits;
+    this.mainMoves = this.origin.mainMoves;
+    if (this.origin.main === "") this.main = this.commit([], ["README.md"], "start", "person");
     // Things Scope Soup did not make, which it must never touch (I6).
     this.branches.set("feature/by-hand", this.main);
     this.owners.set("refs/heads/feature/by-hand", { scopesoup: false });
@@ -71,8 +92,8 @@ export class FakeGit {
   }
 
   sha(): string {
-    this.count++;
-    return this.count.toString(16).padStart(40, "0");
+    this.origin.count++;
+    return this.origin.count.toString(16).padStart(40, "0");
   }
 
   commit(parents: string[], paths: string[], subject: string, by: string): string {
