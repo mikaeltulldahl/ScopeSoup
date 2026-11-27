@@ -7,7 +7,7 @@ import { itemTextHash } from "../core/answerReuse.ts";
 
 export type Role = "triage" | "implement" | "review";
 export type PersonWait = "answer" | "rewrite" | "restructuring" | "not-ready" | "escalated" | "merge" | "holds";
-export type StartCause = "backlog" | "switch" | "level" | "usage" | "timer" | "text" | "same-files" | "claim" | "slot";
+export type StartCause = "backlog" | "switch" | "level" | "usage" | "timer" | "text" | "same-files" | "claim" | "cap" | "slot";
 
 export type W =
   | { kind: "nothing" }
@@ -32,6 +32,8 @@ export interface WaitInput {
   switches: Record<Role, string>;
   level: number;
   usageReserve: boolean;
+  /** As many things wait for a person as the cap on new work, or more (decision 133). */
+  workCapped?: boolean;
   now: string;
   /** Live sessions in all, and the limit. */
   liveCount: number;
@@ -99,6 +101,8 @@ export function waitsFor(input: WaitInput): W {
   if (job.notBefore && job.notBefore > input.now) return start("timer");
   const holder = item.holder;
   if (holder && holder.actor.bot === true && holder.actor.id !== input.claimant && (!holder.until || holder.until > input.now)) return start("claim");
+  // New work waits while too much waits for a person; a person's pick does not (decision 133).
+  if (input.workCapped && newWork(job) && !job.implementAskedBy) return start("cap");
   return start("slot");
 }
 
@@ -132,4 +136,9 @@ export function stageLane(item: WorkItem, job: Job | undefined): string {
   if (job && (job.step === "review" || job.reviewedHead)) return "in-review";
   if (job && (job.head || (job.step === "implement" && job.implement))) return "in-progress";
   return item.backlog ? "backlog" : "todo";
+}
+
+/** The implement step is new work: it has not begun (no change, no session of it, nothing to resume, no attempt yet). */
+export function newWork(job: Job): boolean {
+  return job.step === "implement" && !job.head && !job.implement && !job.agentSession && job.resumeWith === undefined && !job.resume && job.failures === 0 && !job.merge;
 }

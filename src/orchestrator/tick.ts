@@ -68,6 +68,10 @@ export interface TickReport {
   queued: number;
   /** No agent role is started (paused, or stopped by Stop): no session starts. Running ones may still finish (Pause). */
   paused?: boolean;
+  /** The pace held the next start (decision 133): why. */
+  paced?: string;
+  /** New triage or new work waited for what waits for a person (decision 133): the words, once each. */
+  capped?: string[];
 }
 
 const OVER: readonly Session["status"][] = ["succeeded", "failed", "cancelled", "limit"];
@@ -787,7 +791,7 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
   // The roles paused (or stopped) at this level, and how many steps wait for each: named first in the idle reason.
   const off: SessionRole[] = [];
   const waitsFor: Record<SessionRole, number> = { triage: 0, implement: 0, review: 0 };
-  // The pace and what waits for a person (decision 132): read once per tick, kept for the Usage tab when the tick ends.
+  // The pace and what waits for a person (decision 133): read once per tick, kept for the Usage tab when the tick ends.
   const pace = pacer(store, config, at);
   const waitingNow = waitingForPerson(store, store.list<WorkItem>("work"), jobs);
   const caps = waitingCaps(config);
@@ -797,6 +801,7 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
     const fit = pace.fits(ceiling);
     writePacing(store, { at, running: runningByRole(store), ceiling, cap: fit.count, why: fit.reason, waiting: waitingNow, caps, waits: [...capWaits] });
     reasons.push(...capWaits);
+    if (capWaits.size > 0) report.capped = [...capWaits];
     // A blocker this tick closed (the store has it at once) frees what waited for it in this tick.
     noteBlockersChanged(ctx, seq0);
     report.running = running;
@@ -944,7 +949,7 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
 
   // 4. The budget. Paid extra usage stops what is running too.
   const budget = (role: SessionRole): UsageCheckDecision =>
-    // From level 1 the stop at the reserve is always on (nothing is dispatched at level 0).
+    // From level 1 the stop at the budget is always on (nothing is dispatched at level 0).
     usageDecision(store, config, role, at, running);
   // Paid extra usage is Claude's: it stops what runs on any provider.
   const first = decide({ sample: store.latestUsageSample(), now: at, budget: usageBudget(config), runningSessions: running });
@@ -991,11 +996,12 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
       if (decision.resumeAt && (!report.wakeAt || decision.resumeAt < report.wakeAt)) report.wakeAt = decision.resumeAt;
       break;
     }
-    // The pace (decision 132): one more session only while the windows stay under their pace lines by its end. Work under way is
+    // The pace (decision 133): one more session only while the windows stay under their pace lines by its end. Work under way is
     // first in line, so a refusal holds what comes after it too. The line rises with time: a later tick may start it.
     const paced = pace.check(step);
     if (!paced.allow) {
       reasons.push(`no more sessions start for now: ${paced.reason}`);
+      report.paced = paced.reason;
       break;
     }
 
@@ -1026,7 +1032,7 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
       }
     }
 
-    // Don't outrun the person (decision 132): new triage, and new work (a first implement step), wait while too much waits for a person.
+    // Don't outrun the person (decision 133): new triage, and new work (a first implement step), wait while too much waits for a person.
     // Work under way, its fix rounds, the steps an answer resumes and a person's own pick go on; the next entry may start.
     const newKind = personAsked(entry.job, step) ? null : !entry.job ? (step === "triage" ? "triage" : "work") : step === "implement" && firstImplement(entry.job) ? "work" : null;
     const capWait = newKind ? waitingCapWait(newKind, waitingNow, caps) : null;
@@ -1209,7 +1215,7 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
   return finish();
 }
 
-/** The implement step has not begun: no change, no session of it, nothing to resume and no attempt yet. Its start is new work (decision 132). */
+/** The implement step has not begun: no change, no session of it, nothing to resume and no attempt yet. Its start is new work (decision 133). */
 export function firstImplement(job: Job): boolean {
   return job.step === "implement" && job.head === undefined && !job.implement && job.agentSession === undefined && job.resumeWith === undefined && !job.resume && job.failures === 0 && !job.merge;
 }

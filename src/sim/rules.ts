@@ -7,7 +7,7 @@
 
 import type { ItemObs, Observation } from "./observe.ts";
 import type { W } from "./waits.ts";
-import { isBusy, personHolds, stageLane, wText } from "./waits.ts";
+import { isBusy, newWork, personHolds, stageLane, wText } from "./waits.ts";
 
 export interface Rule {
   id: string;
@@ -167,8 +167,9 @@ export const RULES: Rule[] = [
         // Another machine's claim as this store last read it: the start's claim reads the host, and won when that claim was let go
         // meanwhile (#243). The Item is this machine's now.
         if (w.kind === "start" && w.cause === "claim" && o.items.find((each) => each.key === s.item)?.item.holder?.actor.id === (o.machine ? `scopesoup@${o.machine}` : OWN)) return null;
-        // The tick settles finished sessions first, which can end a same-files wait within the same tick.
-        if (w.kind === "start" && w.cause === "same-files") return null;
+        // The tick settles finished sessions first, which can end a same-files wait within the same tick, or settle an answer that
+        // brings what waits for a person under the cap (decision 133).
+        if (w.kind === "start" && (w.cause === "same-files" || w.cause === "cap")) return null;
         // A re-triage may run at any moment on an Item that waits at implement (decision 9).
         if (s.role === "triage" && w.kind === "start" && w.role === "implement" && prev.switches.triage === "started") return null;
         if (w.kind === "person" && w.why !== "holds") return null; // a pick or an answer may carry it on
@@ -441,6 +442,33 @@ export const RULES: Rule[] = [
     why: "No session starts while usage is inside the reserve.",
     check(o, prev) {
       return prev?.usageReserve && o.started.length > 0 ? `a ${o.started[0]!.role} session started while usage was in the reserve` : null;
+    },
+  },
+  {
+    id: "D9",
+    why: "Don't outrun the person (decision 133): no new triage starts while as many things wait for a person as the triage cap, no new work (a first implement step) while as many as the work cap; a person's pick is not held.",
+    check(o, prev) {
+      if (!prev || !isTick(o)) return null;
+      // What waited before the tick and after it: the tick settles first (an answer lowers it, a park raises it), so only a count that
+      // held on both sides is sure to be the one its dispatch saw.
+      const waiting = Math.min(prev.waiting, o.waiting);
+      return first(o.started, (s) => {
+        const before = prevOf(prev, s.item);
+        const job = before?.job && !before.job.dropAskedBy ? before.job : undefined;
+        if (s.role === "triage" && !job && waiting >= prev.caps.triage) return `a new triage started on ${s.item.split(":").pop()} while ${waiting} things waited for a person (the cap on new triage is ${prev.caps.triage})`;
+        const fresh = s.role === "implement" && (!job || (newWork(job) && !job.implementAskedBy));
+        if (fresh && waiting >= prev.caps.work) return `new work started on ${s.item.split(":").pop()} while ${waiting} things waited for a person (the cap on new work is ${prev.caps.work})`;
+        return null;
+      });
+    },
+  },
+  {
+    id: "D10",
+    why: "Pace by the pace line (decision 133): while a window is over its line even at the end of the longest session, at most the kick starts, one session while nothing ran.",
+    check(o, prev) {
+      if (!prev || !isTick(o) || !prev.overPace) return null;
+      const allowed = prev.liveCount === 0 ? 1 : 0;
+      return o.started.length > allowed ? `${o.started.length} session(s) started while a usage window was over its pace line, with ${prev.liveCount} running before` : null;
     },
   },
   {
@@ -752,7 +780,7 @@ export const RULES: Rule[] = [
   },
   {
     id: "H5",
-    why: "One Item never holds up another: an Item waiting only for a slot starts in the next tick when one is free.",
+    why: "One Item never holds up another: an Item waiting only for a slot starts in the next tick when one is free (and the pace allows one more).",
     check(o, prev) {
       if (!isTick(o) || !prev || !o.tick) return null;
       const free = prev.slots - prev.liveCount - o.started.length;
@@ -761,6 +789,8 @@ export const RULES: Rule[] = [
       const overlaps = (i: ItemObs): boolean => o.started.some((s) => s.role === "implement" && (prevOf(prev, s.item)?.paths ?? []).some((p) => i.paths.includes(p)));
       // The host did not answer: claims cannot be written, so nothing may start.
       if (prev.remote.down || o.remote.down) return null;
+      // The pace held the next start (decision 133): the room was the window's, not the slot's. D10 checks the pace from outside.
+      if (o.tick.paced) return null;
       const waiting = prev.items.find((i) => i.w.kind === "start" && i.w.cause === "slot" && !overlaps(i) && !o.started.some((s) => s.item === i.key) && (() => { const now = o.items.find((each) => each.key === i.key)?.w; return now?.kind === "start" && now.cause === "slot"; })());
       return waiting ? `${waiting.id} waited only for a slot, a slot was free, and the tick did not start it (now ${wText(o.items.find((each) => each.key === waiting.key)!.w)})` : null;
     },

@@ -1,11 +1,11 @@
 // Changes the configuration file from the board. Only the safe fields may change: the level,
-// parallel sessions, the usage reserve, the age of a triage and the three models; the setup of a fresh clone; and, saved with level 4 only,
+// the most sessions at once, the usage budgets, the waiting caps, the age of a triage and the three models; the setup of a fresh clone; and, saved with level 4 only,
 // the check command and the remote's URL that level needs; the limited resources; singleplayer or multiplayer; a Jira host's filter and components. Everything else is
 // file-only, with its defaults.
 // A change is merged into the file as it is on disk, validated as a whole, and written atomically. A file of an older
 // format is migrated first, so a save always writes the current format, with `version`.
 // A project setting (the level, the check, the setup, the models, the age of a triage) is in the shared
-// settings on the meta ref and is saved as one commit there, which takes effect at once; parallel sessions, the usage reserve
+// settings on the meta ref and is saved as one commit there, which takes effect at once; the most sessions at once, the usage budgets
 // and the remote's URL are this machine's, saved into its private file.
 
 import { readFileSync } from "node:fs";

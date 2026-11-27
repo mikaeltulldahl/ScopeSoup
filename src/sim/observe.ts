@@ -3,7 +3,7 @@
 
 import { buildBoard } from "../core/board.ts";
 import type { CardView } from "../core/views.ts";
-import type { RecordedAnswer, ScopeSoupEvent, Session, WorkItem } from "../model/types.ts";
+import type { RecordedAnswer, ScopeSoupEvent, Session, UsageSample, UsageWindowKind, WorkItem } from "../model/types.ts";
 import { refKey } from "../model/types.ts";
 import type { Job } from "../orchestrator/jobs.ts";
 import type { SessionRequest } from "../orchestrator/ports.ts";
@@ -68,6 +68,15 @@ export interface Observation {
   slots: number;
   switches: Record<Role | "mergeQueue", string>;
   usageReserve: boolean;
+  /**
+   * Some window's use is over its pace line even at the end of the longest session (the session timeout from now): no session may
+   * start then but by the kick, one while nothing runs (decision 133).
+   */
+  overPace: boolean;
+  /** What waits for a person, counted by the checker: Items parked for one (not in the queue's hands) or with decisions to look at, and drafts. */
+  waiting: number;
+  /** The waiting caps the configuration holds. */
+  caps: { triage: number; work: number };
   fair: boolean;
   items: ItemObs[];
   sessions: Session[];
@@ -125,6 +134,14 @@ export async function observe(world: SimWorld, seed: number, action: Action, pre
   };
   const sample = store.latestUsageSample();
   const usageReserve = (sample?.windows ?? []).some((window) => (window.utilization ?? 0) >= 0.9);
+  const settings = world.configNow.settings;
+  const overPace = overThePace(sample, Date.parse(at), { five_hour: settings.budgetFiveHour.value, seven_day: settings.budgetSevenDay.value }, settings.sessionTimeoutMinutes.value * 60_000);
+  const caps = { triage: settings.waitingCapTriage.value, work: settings.waitingCapWork.value };
+  const waiting = items.filter((item) => !closedState(item)).filter((item) => {
+    const job = jobs[refKey(item.ref)];
+    const asks = job ? !!job.parked && job.parked.as !== "queued" : item.needsDecision === true;
+    return asks || (item.assumptions ?? []).some((each) => !each.settled);
+  }).length + store.list<{ decided?: unknown }>("draft").filter((draft) => !draft.decided).length;
   const live = [...world.runner.live.values()];
   const onMain = (head: string | undefined): boolean => !!head && world.git.contains(head, world.git.main) === true;
   // The paths an Item's work is known by: what its triage named (#187 compares these; what the branch changes is not looked at).
@@ -139,7 +156,7 @@ export async function observe(world: SimWorld, seed: number, action: Action, pre
     const mine = live.filter((each) => refKey(each.session.subject) === key).map((each) => ({ id: each.session.ref.id, role: each.session.role as Role }));
     const w = waitsFor({
       item, job, live: mine.map((each) => each.role), settling: !!job?.sessionId && mine.length === 0, open, ownBlockers: (own[key] ?? []).map(refKey), switches, level: world.configNow.level, usageReserve, now: at,
-      liveCount: live.length, slots: world.configNow.settings.maxParallelSessions.value, busy: busy.filter((each) => each.key !== key), claimant,
+      workCapped: waiting >= caps.work, liveCount: live.length, slots: world.configNow.settings.maxParallelSessions.value, busy: busy.filter((each) => each.key !== key), claimant,
     });
     // The served page is read for an Item that waits for a person, at ticks only (it is the costly part of a step).
     // It is read again only when W changed since the step before.
@@ -161,7 +178,7 @@ export async function observe(world: SimWorld, seed: number, action: Action, pre
   });
   const requestsBefore = previous ? previous.ledger.requests.filter((r) => r.step < world.step).length : 0;
   return {
-    seed, machine: world.machine, step: world.step, action, at, level: world.configNow.level, slots: world.configNow.settings.maxParallelSessions.value, switches, usageReserve, fair: world.fair,
+    seed, machine: world.machine, step: world.step, action, at, level: world.configNow.level, slots: world.configNow.settings.maxParallelSessions.value, switches, usageReserve, overPace, waiting, caps, fair: world.fair,
     items: itemObs, sessions: store.list<Session>("session"), started, liveCount: live.length, events, lastSeq,
     ...(first ? { firstEvent: JSON.stringify(first) } : {}),
     answers: knownAnswers(store), tick: action.kind === "tick" || action.kind === "inside-tick" ? world.lastTick : null, tickError: world.tickError,
@@ -191,4 +208,18 @@ export function uniqueLeftovers(git: FakeGit): Set<string> {
   }
   for (const entry of git.stash) if (entry.scopesoup && !git.stashSafe(entry, entry.branch)) out.add(`stash:${entry.sha}`);
   return out;
+}
+
+/**
+ * The checker's own pace (decision 133): a live window whose use is over the line from 0 at its start to its budget at its reset, at
+ * the latest moment a session started now could end (the session timeout from now, at most the reset).
+ */
+export function overThePace(sample: UsageSample | null, now: number, budget: Record<UsageWindowKind, number>, longestMs: number): boolean {
+  const length: Record<UsageWindowKind, number> = { five_hour: 5 * 3600_000, seven_day: 7 * 24 * 3600_000 };
+  return (sample?.windows ?? []).some((window) => {
+    const reset = Date.parse(window.resetsAt);
+    if (window.utilization === undefined || !(reset > now)) return false;
+    const end = Math.min(reset, now + longestMs);
+    return window.utilization > (budget[window.kind] * (end - (reset - length[window.kind]))) / length[window.kind];
+  });
 }

@@ -1,4 +1,4 @@
-// Don't outrun the person (decision 132): what waits for a person caps new work. Pure.
+// Don't outrun the person (decision 133): what waits for a person caps new work. Pure.
 //
 // Everything that waits for a person counts: an Item parked for a person (questions, a rewrite, a restructuring, not ready, escalated,
 // a change handed over to merge), on this machine or read from another, an Item with decisions to look at, and each Item draft. An

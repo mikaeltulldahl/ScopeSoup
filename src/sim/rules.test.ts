@@ -51,7 +51,7 @@ function item(id: string, w: W, over: Partial<ItemObs> = {}): ItemObs {
 function obs(over: Partial<Observation> = {}): Observation {
   return {
     seed: 1, step: 1, action: { kind: "sync" }, at: AT, level: 3, slots: 2, switches: { triage: "started", implement: "started", review: "started", mergeQueue: "started" },
-    usageReserve: false, fair: false, items: [], sessions: [], started: [], liveCount: 0, events: [], lastSeq: 0, answers: [], tick: null, tickError: null,
+    usageReserve: false, overPace: false, waiting: 0, caps: { triage: 2, work: 5 }, fair: false, items: [], sessions: [], started: [], liveCount: 0, events: [], lastSeq: 0, answers: [], tick: null, tickError: null,
     git: gitObs(), ledger: ledger(), requests: [], remote: { refusedRewrites: 0, down: false, items: 0 }, lanes: ["blocked", "backlog", "in-progress", "in-review", "queued", "checking", "done"],
     queued: [], fairTicks: 0, ...over,
   };
@@ -212,6 +212,21 @@ describe("each rule fires on a bad state built by hand", { concurrency: 1 }, () 
   });
   it("D5", "a session starts while usage is in the reserve", () => {
     assert.match(fires("D5", obs({ usageReserve: true }), obs({ started: [started("A-1", "triage")] })) ?? "", /reserve/);
+  });
+  it("D9", "a new triage or a first implement step starts while too much waits for a person", () => {
+    const full = obs({ waiting: 2 });
+    assert.match(fires("D9", full, obs({ action: tick, waiting: 2, started: [started("A-1", "triage")] })) ?? "", /new triage started on A-1 while 2 things waited/);
+    // Work under way goes on: a triage of an Item that has a job (a recheck) is not new.
+    const under = obs({ waiting: 5, items: [item("A-1", SLOT, { job: job("A-1", { step: "implement" }) }), item("A-2", SLOT, { job: job("A-2", { step: "implement", head: "abc" }) })] });
+    assert.equal(fires("D9", under, obs({ action: tick, waiting: 5, started: [started("A-1", "triage"), started("A-2", "implement")] })), null);
+    assert.match(fires("D9", under, obs({ action: tick, waiting: 5, started: [started("A-1", "implement")] })) ?? "", /new work started on A-1 while 5 things waited/);
+    // An answer settled in the tick brought it under the cap.
+    assert.equal(fires("D9", full, obs({ action: tick, waiting: 1, started: [started("A-1", "triage")] })), null);
+  });
+  it("D10", "more than the kick starts while a window is over its pace line", () => {
+    assert.match(fires("D10", obs({ overPace: true, liveCount: 1 }), obs({ action: tick, started: [started("A-1", "triage")] })) ?? "", /over its pace line, with 1 running/);
+    assert.equal(fires("D10", obs({ overPace: true, liveCount: 0 }), obs({ action: tick, started: [started("A-1", "triage")] })), null);
+    assert.match(fires("D10", obs({ overPace: true, liveCount: 0 }), obs({ action: tick, started: [started("A-1", "triage"), started("A-2", "triage")] })) ?? "", /2 session/);
   });
   it("D6", "a step that keeps failing is never put down", () => {
     assert.match(fires("D6", obs({ items: [item("A-1", SLOT, { job: job("A-1", { failures: 9 }) })] })) ?? "", /failed 9 times/);

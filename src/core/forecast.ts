@@ -94,7 +94,7 @@ export function forecastWindow(samples: readonly UsageSample[], kind: UsageWindo
   return { outcome: "used_up", at: when.toISOString(), words: `used up about ${clock(when, now)}` };
 }
 
-// --- Pacing (decision 132): a session starts only while the window's use stays at or under its pace line. ---
+// --- Pacing (decision 133): a session starts only while the window's use stays at or under its pace line. ---
 
 const PACE_WINDOW_MS: Record<UsageWindowKind, number> = { five_hour: 5 * 3600_000, seven_day: 7 * 24 * 3600_000 };
 const PACE_NAMES: Record<UsageWindowKind, string> = { five_hour: "5-hour window", seven_day: "weekly window" };

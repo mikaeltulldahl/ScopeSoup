@@ -457,7 +457,7 @@ export interface BarSpan {
 export interface UsageBar {
   /** The used part split by who used it, in the order of the keys given, from 0; always ends at the (capped) level used. */
   used: (BarSpan & { key: UsagePlotKey })[];
-  /** From what is used to the level expected at the reset; `warn` is the part past the reserve limit. Empty when nothing more is expected. */
+  /** From what is used to the level expected at the reset; `warn` is the part past the budget. Empty when nothing more is expected. */
   forecast: (BarSpan & { warn: boolean })[];
   /** The reserve, from the limit to the end: the part Scope Soup keeps for people. Absent without a limit or with none kept. */
   reserve?: BarSpan;
@@ -466,7 +466,7 @@ export interface UsageBar {
 /**
  * The "Now" bar of a usage window as segments: the used part split by role (`parts` as the plot's last point gives them; scaled to
  * `utilization`, and what they leave out counts as "earlier"), then the forecast up to `expected` (how full it should be at the
- * reset), in warning past `limit` (1 minus the reserve), and the reserve from `limit` to the end.
+ * reset), in warning past `limit` (the budget, at most 1), and what is past the budget from `limit` to the end.
  */
 export function usageBar(parts: Partial<Record<UsagePlotKey, number>>, utilization: number, keys: readonly UsagePlotKey[], limit: number | undefined, expected: number | undefined): UsageBar {
   const level = Math.min(1, Math.max(0, utilization));

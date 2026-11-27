@@ -1,4 +1,4 @@
-// Pacing and the waiting caps at dispatch (decision 132): reads the sessions, the readings and what waits for a person from the store,
+// Pacing and the waiting caps at dispatch (decision 133): reads the sessions, the readings and what waits for a person from the store,
 // and asks core (`core/forecast.ts`, `core/waitingCaps.ts`) whether one more session may start. What it decided is kept for the Usage
 // tab (`KEYS.pacing`).
 
@@ -98,7 +98,7 @@ export function pacer(store: Store, config: ProjectConfig, at: string): Pacer {
   };
 }
 
-/** How many things wait for a person (decision 132): Items parked for one here or read as such from another machine, Items with decisions to look at, drafts. */
+/** How many things wait for a person (decision 133): Items parked for one here or read as such from another machine, Items with decisions to look at, drafts. */
 export function waitingForPerson(store: Store, items: readonly WorkItem[], jobs: Jobs): number {
   const open = items.filter((item) => item.state !== "done" && item.state !== "abandoned");
   return countWaiting(open.map((item) => {

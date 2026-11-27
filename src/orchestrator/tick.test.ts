@@ -5330,7 +5330,7 @@ test("GitHub: a handed-over change a person merged is left to the host to close"
   assert.equal(w.closes.length, 0);
 });
 
-// --- Pacing and the waiting caps (decision 132) ---
+// --- Pacing and the waiting caps (decision 133) ---
 
 const CEILING_4 = { maxParallelSessions: { value: 4, reason: "test" } };
 

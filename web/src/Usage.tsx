@@ -105,7 +105,7 @@ function Legend() {
 
 const ROLE_WORDS = { triage: "triage", implement: "implementing", review: "review" } as const;
 
-/** What runs now by role, the cap in use and why, and why new starts wait (decision 132), as the last tick left it. */
+/** What runs now by role, the cap in use and why, and why new starts wait (decision 133), as the last tick left it. */
 function PacingNow({ pacing }: { pacing: PacingView }) {
   const running = (Object.keys(ROLE_WORDS) as (keyof typeof ROLE_WORDS)[]).filter((role) => pacing.running[role] > 0).map((role) => `${pacing.running[role]} ${ROLE_WORDS[role]}`);
   const total = pacing.running.triage + pacing.running.implement + pacing.running.review;

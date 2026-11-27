@@ -95,7 +95,7 @@ test("a week of readings: the weekly forecast continues the rate of the last day
   assert.ok(Math.abs((forecast?.atReset ?? 0) - 0.29) < 0.002, String(forecast?.atReset));
 });
 
-// --- Pacing (decision 132) ---
+// --- Pacing (decision 133) ---
 
 const MIN = 60_000;
 const nowMs = now.getTime();

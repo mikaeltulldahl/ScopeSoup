@@ -756,7 +756,7 @@ export interface UsageView {
   withTokens: number;
   /** One per provider some role runs on that counts a monthly allowance instead of reporting windows; absent when none does. */
   allowances?: AllowanceView[];
-  /** What the orchestrator's last tick decided about how many run at once and why (decision 132); absent before the first tick. */
+  /** What the orchestrator's last tick decided about how many run at once and why (decision 133); absent before the first tick. */
   pacing?: PacingView;
 }
 

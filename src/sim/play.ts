@@ -91,7 +91,7 @@ export function draw(world: SimWorld, rnd: Rng, options: RunOptions): Action {
     if (roll < 12) return items.length < (options.long ? 14 : 8) ? { kind: "new-item", v: v() } : { kind: "edit", item: id, v: v() };
     if (roll < 14) return { kind: "switch", to: rnd.pick(["pause", "resume", "resume", "stop"] as const)! };
     if (roll < 15) return { kind: "level", to: rnd.pick([1, 2, 3, 4, 4, 3])! };
-    return { kind: "slots", to: 1 + rnd.int(3) };
+    return rnd.chance(0.75) ? { kind: "slots", to: 1 + rnd.int(3) } : { kind: "caps", triage: 1 + rnd.int(2), work: 1 + rnd.int(3) };
   };
   switch (kind) {
     case "end":
@@ -109,7 +109,10 @@ export function draw(world: SimWorld, rnd: Rng, options: RunOptions): Action {
       if (roll === 0) return { kind: "main-commit", v: v() };
       if (roll === 1) return { kind: "host-down", steps: 1 + rnd.int(3) };
       if (roll === 2) return { kind: "foreign-claim", item: rnd.pick(open.map((i) => i.ref.id)) ?? "A-1" };
-      if (roll === 3) return { kind: "usage", reserve: rnd.chance(0.4) };
+      if (roll === 3) {
+        const which = rnd.int(10);
+        return which < 4 ? { kind: "usage", reserve: true } : which < 7 ? { kind: "usage", reserve: false, pace: true } : { kind: "usage", reserve: false };
+      }
       if (roll === 4 && world.queue.waiting.size > 0) return { kind: "queue", item: rnd.pick([...world.queue.waiting.keys()])!.split(":").pop()!, merge: rnd.chance(0.7) };
       const handed = Object.values(jobs).filter((j) => j.parked?.as === "handed-over" || j.parked?.as === "escalated").map((j) => j.item.id);
       if (roll === 5 && handed.length > 0) return { kind: "person-merge", item: rnd.pick(handed)! };
@@ -172,6 +175,9 @@ export async function play(seed: number, options: RunOptions, given?: Action[], 
   const recent: string[] = [];
   const check = (o: Observation, only?: string): void => {
     for (const each of o.items) waits.add(each.w.kind === "person" ? `person(${each.w.why})` : each.w.kind === "start" ? `start(${each.w.cause})` : each.w.kind);
+    // What decision 133 holds back, so the runs show they reach it: the pace holding a start, and new triage waiting at its cap.
+    if (o.tick?.paced) waits.add("tick(paced)");
+    for (const capped of o.tick?.capped ?? []) waits.add(capped.startsWith("new triage") ? "tick(triage-capped)" : "tick(work-capped)");
     for (const rule of rules) {
       if (reports.has(rule.id) || (only && rule.id !== only)) continue;
       let message: string | null;
