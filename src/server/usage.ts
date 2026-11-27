@@ -99,7 +99,7 @@ export function buildUsageView(store: Store, snapshot: Snapshot, span: { span: s
       const reset = Date.parse(reading.resetsAt) <= to;
       const utilization = reset ? 0 : reading.utilization;
       view.current = { utilization, resetsAt: reading.resetsAt, at: latest.at, ...(reset ? { reset: true as const } : {}), ...(forecast ? { forecast } : {}) };
-      view.forecastLine = forecastLine(to, utilization, Date.parse(reading.resetsAt), forecast);
+      view.forecastLine = reset ? [] : forecastLine(Date.parse(latest.at), utilization, Date.parse(reading.resetsAt), forecast);
     }
     return view;
   });

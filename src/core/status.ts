@@ -23,7 +23,7 @@ function runnerView(runner: RunnerState, index: Index, now: Date): RunnerView {
   return view;
 }
 
-/** What the usage forecast plans with: the planned sessions, the pause, and whether work is ready. Undefined without a plan. */
+/** What the usage forecast plans with: the pause, and whether work is ready. Undefined without a plan. */
 export function forecastLoad(index: Index): ForecastLoad | undefined {
   const { snapshot } = index;
   if (snapshot.plannedSessions === undefined) return undefined;
@@ -33,7 +33,7 @@ export function forecastLoad(index: Index): ForecastLoad | undefined {
       const lane = laneOf(item, index);
       return lane === "backlog" || lane === "in-progress";
     });
-  return { sessions: snapshot.sessions, planned: snapshot.plannedSessions, paused: snapshot.paused, workReady };
+  return { paused: snapshot.paused, workReady };
 }
 
 export function buildStatusLine(index: Index, queue: QueueView, now: Date): StatusLine {

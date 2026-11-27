@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { UsageSample } from "../model/types.ts";
 import { at, ref, T0 } from "./testing.ts";
-import { attributeUsage, expectedAtReset, forecastLine, snapReserve, paceAt, paceLines, resetMarks, stackPlot, timeTicks, usageBar, usageParts, usagePlot, WINDOW_MS } from "./usage.ts";
+import { forecastWindow } from "./forecast.ts";
+import { attributeUsage, expectedAtReset, forecastLine, snapReserve, paceAt, paceInView, paceLines, resetMarks, stackPlot, timeTicks, usageBar, usageParts, usagePlot, WINDOW_MS } from "./usage.ts";
 import type { UsageSession } from "./usage.ts";
 
 const t = (minutes: number) => Date.parse(at(minutes));
@@ -221,6 +222,41 @@ test("paceLines for the 5-hour window and a level outside 0 to 1", () => {
   assert.equal(paceAt(b!, reset - 2.5 * 3600_000), 0.5);
   assert.equal(paceLines([reset], WINDOW_MS.five_hour, -1)[0]!.level, 0);
   assert.deepEqual(paceLines([], WINDOW_MS.five_hour, 0.5), []);
+});
+
+test("paceInView: the weekly window's pace line shows when its reset is past the plot's edge", () => {
+  const from = Date.parse("2026-01-01T00:00:00Z");
+  const edge = Date.parse("2026-01-08T00:00:00Z") + 3.5 * 24 * 3600_000;
+  // A reset passed in the span, and the coming one 5 days after the plot's edge's "now".
+  const passed = "2026-01-03T00:00:00Z";
+  const coming = Date.parse("2026-01-13T00:00:00Z");
+  assert.equal(resetMarks([passed, coming], from, edge).length, 1);
+  const pace = paceInView([passed, coming], from, edge, WINDOW_MS.seven_day, 0.7);
+  assert.deepEqual(pace.map((segment) => segment.to), [Date.parse(passed), coming]);
+  // A window that starts after the edge is not in view; one that ended before the span is not either.
+  assert.deepEqual(paceInView([coming + WINDOW_MS.seven_day], from, edge, WINDOW_MS.seven_day, 0.7), []);
+  assert.deepEqual(paceInView(["2025-12-20T00:00:00Z"], from, edge, WINDOW_MS.seven_day, 0.7), []);
+});
+
+test("a week of readings: the weekly forecast line continues the slope the plot shows over the last day", () => {
+  // Hourly readings since the weekly reset, rising faster in the last day; a session ran in each of those hours' first half.
+  const hour = 60;
+  const week = (minutes: number, utilization: number): UsageSample => ({ at: at(minutes), windows: [{ kind: "seven_day", utilization, resetsAt: at(36 * hour) }] });
+  const samples: UsageSample[] = [];
+  for (let minutes = -132 * hour; minutes <= 0; minutes += hour) {
+    const level = minutes <= -24 * hour ? 0.02 * ((minutes + 132 * hour) / (108 * hour)) : 0.02 + 0.24 * ((minutes + 24 * hour) / (24 * hour));
+    samples.push(week(minutes, Math.round(level * 10_000) / 10_000));
+  }
+  const sessions = Array.from({ length: 24 }, (_, index) => run(index + 1, "implement", -24 * hour + index * hour, -24 * hour + index * hour + 30));
+  const now = new Date(t(0));
+  const forecast = forecastWindow(samples, "seven_day", now, { paused: false, workReady: true }) ?? undefined;
+  const line = forecastLine(t(0), 0.26, t(36 * hour), forecast);
+  const plotted = usagePlot(samples, sessions, "seven_day", { from: t(-7 * 24 * hour), to: t(0), steps: 132 });
+  const level = (point: (typeof plotted.points)[number]) => Object.values(point.parts).reduce((sum, value) => sum + (value ?? 0), 0);
+  const dayAgo = plotted.points.find((point) => point.at === at(-24 * hour))!;
+  const plotSlope = (level(plotted.points.at(-1)!) - level(dayAgo)) / (24 * 3600_000);
+  const lineSlope = (line[1]!.value - line[0]!.value) / (Date.parse(line[1]!.at) - Date.parse(line[0]!.at));
+  assert.ok(Math.abs(lineSlope - plotSlope) / plotSlope < 0.01, `forecast ${lineSlope} against plot ${plotSlope}`);
 });
 
 test("usageBar: the used part is split by role, the forecast follows it and turns to warning past the limit", () => {

@@ -66,7 +66,7 @@ export interface Snapshot {
   mergeQueue: MergeQueueState;
   /** The project's level; absent with no project configuration (board only). */
   level?: number;
-  /** Sessions planned at once (maxParallelSessions), for the forecast. Absent: raw rate. */
+  /** Sessions planned at once (maxParallelSessions). Absent (no configuration): the forecast does not look at the pause or idle. */
   plannedSessions?: number;
   sync: SyncState;
   /** Absent in singleplayer and before the first round. */
