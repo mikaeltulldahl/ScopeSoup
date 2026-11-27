@@ -36,7 +36,7 @@ test("a merged newest revision makes the item done, whatever its header says", (
   assert.equal(changes[0]?.state, "merged");
 });
 
-test("an Item with `lane: backlog` is in Backlog only while its state is todo (decision 120)", () => {
+test("an Item with `lane: backlog` is in Backlog only while its state is todo (decision 121)", () => {
   const backlog = (id: string, state: string) => `---
 id: ${id}
 title: Item ${id}

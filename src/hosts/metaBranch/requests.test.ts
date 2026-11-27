@@ -32,7 +32,7 @@ test("only a person's pick of one move or Abandoned is a request; only Scope Sou
   assert.equal(requestState(read[1]!, Date.parse("2026-11-25T10:03:00Z")), "refused");
 });
 
-test("Backlog for work on another machine is one request of two steps, the work dropped then the lane (decision 120)", () => {
+test("Backlog for work on another machine is one request of two steps, the work dropped then the lane (decision 121)", () => {
   const [request] = readRequests(jsonl(pick("b1", { steps: [{ kind: "move", to: "todo" }, { kind: "lane", lane: "backlog" }] })));
   assert.deepEqual(request?.steps, [{ kind: "move", to: "todo" }, { kind: "lane", lane: "backlog" }]);
   assert.deepEqual(readRequests(jsonl(pick("b2", { steps: [{ kind: "lane", lane: "backlog" }, { kind: "move", to: "todo" }] }))), []);

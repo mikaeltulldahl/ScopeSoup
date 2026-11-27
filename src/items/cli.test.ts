@@ -92,7 +92,7 @@ describe("cli", { concurrency: 4 }, () => {
 test("without the server: file, claim, and hand back reads the pushed branch's tip from the remote", async () => {
   const { dir, origin } = project();
   const c = cli(dir, { ...metaEnv(dir), CLAUDECODE: "1" });
-  // Only a person on the board files straight into To do (decision 120): the item commands, which agents may run, have no --todo.
+  // Only a person on the board files straight into To do (decision 121): the item commands, which agents may run, have no --todo.
   assert.notEqual(await c.run("new", "--title", "Straight to To do", "--todo"), 0);
   assert.equal(await c.run("new", "--title", "Cache the tide table", "--priority", "major"), 0, c.err.join("\n"));
   assert.match(c.out.at(-1)!, /Filed A-1/);

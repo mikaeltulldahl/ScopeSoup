@@ -281,7 +281,7 @@ export function seedDemo(store: Store, now: Date, dir?: string): void {
   };
 
   store.tx(() => {
-    // Backlog (decision 120): ideas nobody has chosen yet. No agent triages or starts them until a person moves them to To do.
+    // Backlog (decision 121): ideas nobody has chosen yet. No agent triages or starts them until a person moves them to To do.
     item(84, "Coastline map that works without a connection", { backlog: true, priority: "major", body: "Ship a small vector map of the coast with the app, so the harbour picker works offline." });
     item(85, "Tide graph in landscape", { backlog: true, body: "Turning the phone shows the day's tide curve across the whole screen." });
     item(86, "A home-screen widget with the next high tide", { backlog: true });
@@ -704,7 +704,7 @@ export function demoItemsHost(store: Store, now: () => Date = () => new Date()):
       let item: WorkItem = {
         ...work(id, { title: input.title, updatedAt: at, labels: input.labels ?? [], blockedBy: input.blockedBy ?? [] }),
         ...(input.body ? { body: input.body } : {}), ...(input.verification ? { verification: input.verification } : {}), ...(input.priority ? { priority: input.priority } : {}),
-        // New Items land in Backlog (decision 120).
+        // New Items land in Backlog (decision 121).
         ...(input.lane === "todo" ? {} : { backlog: true as const }),
       };
       for (const line of input.log ?? []) item = fold(item, line, at);

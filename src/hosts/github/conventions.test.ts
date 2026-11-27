@@ -81,7 +81,7 @@ test("claims: only the token's own claim markers count; the lowest live one wins
   assert.deepEqual(liveClaims(thread.claims, Date.parse("2026-11-10T09:30:00Z")).map((each) => each.id), [4]);
 });
 
-test("an agent's live claim makes a Backlog Item doing, and it is no longer in Backlog (decision 120: Backlog is only state todo)", () => {
+test("an agent's live claim makes a Backlog Item doing, and it is no longer in Backlog (decision 121: Backlog is only state todo)", () => {
   const item = { ref: { host: "github", kind: "work" as const, id: "7" }, title: "Tide graph", state: "todo" as const, hostState: "open", labels: [], blockedBy: [], openChildren: 0, updatedAt: "2026-11-27T10:00:00Z", backlog: true as const };
   const thread = { openQuestions: [], answers: [], rewrites: [], log: null, waiting: null, merged: null, claims: [{ id: 1, machine: "laptop-a", until: "2099-01-01T00:00:00Z", released: false }], assumptions: [] };
   const after = applyThread({ ...item }, thread, () => false, Date.parse("2026-11-27T10:00:00Z"));

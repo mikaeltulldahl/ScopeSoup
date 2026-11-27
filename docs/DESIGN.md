@@ -30,6 +30,7 @@ What Scope Soup is: a server program with a web GUI that runs a software project
 | `src/hosts/<name>` | One adapter per host | `model`, `ports` |
 | `src/orchestrator` | The tick loop, the agent runner, the usage check | everything above |
 | `src/server` | HTTP, SSE, the status endpoint | everything above |
+| `src/sim` | The lifecycle simulator: the real tick, store, sync and server against fakes, with the rules checked after every step (decision 120) | everything above |
 | `web` | The board (Preact), built with Vite | only the server's HTTP API |
 
 The rule that matters most: `model`, `core`, `queue` and `store` never import a host. A test checks it (`src/core/boundaries.test.ts`).
@@ -120,7 +121,7 @@ What the header accepts, and nothing more (it is not YAML):
 - Each line is `key: value`. A key is a letter followed by letters and digits. The value is the rest of the line after the first `:`, trimmed, taken literally: no quoting, no escapes, no values over several lines. Blank lines and lines starting with `#` are ignored.
 - `title` and `state` are required. `state` is one of `todo`, `doing`, `waiting`, `done`, `abandoned`.
 - `labels` and `blockedBy` are lists: comma-separated, each entry trimmed, empty entries dropped; one pair of enclosing `[` `]` is allowed.
-- `id` is optional and, when present, must equal the directory name. `parent` is an id. `duplicateOf` is an id: an `abandoned` item closed as that one's duplicate (ignored on any other state, and dropped by an edit that reopens it). `verification` is one line. `priority` is `blocker`, `critical`, `major` or `minor` (none counts as `major`; `src/model/priority.ts`). `lane: backlog` puts an open `todo` item in Backlog, where no agent starts it (decision 120); no `lane` line, or `lane: todo`, is To do. New items are written with it, and an edit that moves the item off `todo` drops it.
+- `id` is optional and, when present, must equal the directory name. `parent` is an id. `duplicateOf` is an id: an `abandoned` item closed as that one's duplicate (ignored on any other state, and dropped by an edit that reopens it). `verification` is one line. `priority` is `blocker`, `critical`, `major` or `minor` (none counts as `major`; `src/model/priority.ts`). `lane: backlog` puts an open `todo` item in Backlog, where no agent starts it (decision 121); no `lane` line, or `lane: todo`, is To do. New items are written with it, and an edit that moves the item off `todo` drops it.
 - An empty `parent:`, `risk:` or `priority:` is accepted and means none. The closing `---` must be exactly three dashes with nothing after them (no trailing spaces); the opening one the same.
 - Other keys are kept in file order (a writer puts them back) and otherwise ignored.
 - Any other line, a key given twice, or a value that does not fit its field makes the item malformed. A malformed item is still listed, with state `waiting`, the title `<id>: item.md cannot be read` and `hostState` `malformed: <the problems>`, so a person sees it and agents leave it alone. It never breaks the read of other items. An item with a log but no `item.md` is malformed the same way.
@@ -375,6 +376,7 @@ Rules every change to Scope Soup keeps. A reviewer reads them here, with the res
 - Server actions on jobs go through one store transaction, and every state change writes its event in that same transaction.
 - A fake refuses what the real port refuses. A test double of the queue, a host or the store must reject the same inputs the real one rejects, or a test on it proves nothing.
 - A change of what Scope Soup writes to a host is a person's to decide before it is merged.
+- A bug in the Item lifecycle is a gap in the simulator's rules (`src/sim/rules.ts`): a rule that fails on it comes first, then the fix.
 
 ## Further design
 

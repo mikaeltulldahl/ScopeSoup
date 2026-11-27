@@ -82,7 +82,7 @@ describe("the hold buttons over HTTP", { concurrency: 1 }, () => {
     const taken = await call(base, "/api/item/claim", "Ada", { id: "A-1" });
     assert.equal(taken.status, 200, JSON.stringify(taken.body));
     assert.match(String(taken.body.message), /Ada holds A-1 "Paint the fence"\. Scope Soup will not start it\. It moved from Backlog to To do\./);
-    // The claim, then the move out of Backlog (decision 120).
+    // The claim, then the move out of Backlog (decision 121).
     const lines = (await host.work.getWork(item("A-1")))!.log!.slice(-2);
     assert.deepEqual(lines.map((line) => [line.kind, line.by.who, line.by.agent]), [["claimed", "Ada", false], ["edited", "Ada", false]]);
     // The holder hands back or releases, and sees the Item's branch with the commands; another person sees why Claim is not for

@@ -71,7 +71,7 @@ test("metaBranch: file, claim, list, hand back and release, as lines in the item
   const revision = after.log!.find((line) => line.kind === "revision")!;
   assert.deepEqual({ ...revision.fields }, { sha: SHA, branch: "scopesoup/A-1", handback: true, note: "tests included" });
   assert.equal(revision.by.agent, false);
-  // The claim moved it from Backlog to To do (decision 120): the `edited` line.
+  // The claim moved it from Backlog to To do (decision 121): the `edited` line.
   assert.deepEqual(after.log!.map((line) => line.kind), ["created", "claimed", "edited", "revision", "released"]);
   assert.equal(after.backlog, undefined);
 
@@ -302,7 +302,7 @@ test("github: new creates an issue; claim assigns the token's user; release unas
   assert.match(filed.message, /GitHub has no priority field/);
   assert.deepEqual(api.calls.find((call) => call.method === "POST" && call.path === "/repos/o/r/issues")!.body, { title: "Tune the buoy lights", body: "Dim at dusk." });
 
-  // In Backlog (no scopesoup:todo label): the claim moves it to To do (decision 120).
+  // In Backlog (no scopesoup:todo label): the claim moves it to To do (decision 121).
   assert.match((await claimItem(backend, "#2")).message, /ada holds 2 .*It moved from Backlog to To do\./);
   assert.deepEqual(api.calls.find((call) => call.method === "POST" && call.path === "/repos/o/r/issues/2/labels")!.body, { labels: ["scopesoup:todo"] });
   assert.deepEqual(api.calls.find((call) => call.path === "/repos/o/r/issues/2/assignees")!.body, { assignees: ["ada"] });

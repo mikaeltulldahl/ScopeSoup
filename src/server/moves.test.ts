@@ -349,7 +349,7 @@ describe("a pick for an Item whose work runs on another machine (decision 104)",
     assert.equal((await pageA()).remote?.request?.state, "done");
   });
 
-  test("Backlog is one request, the work dropped then the lane, and nothing changes here (decision 120)", async () => {
+  test("Backlog is one request, the work dropped then the lane, and nothing changes here (decision 121)", async () => {
     saveJobs(storeB, { [key]: job({ sessionId: "s1" }) });
     const before = await pageA();
     const count = lines.length;

@@ -144,7 +144,7 @@ export interface NewWork {
   body?: string;
   /** Default `todo`. */
   state?: WorkState;
-  /** Backlog or To do (decision 120). Default Backlog: only a person's pick puts a new Item straight in To do. */
+  /** Backlog or To do (decision 121). Default Backlog: only a person's pick puts a new Item straight in To do. */
   lane?: ItemLane;
   labels?: string[];
   parent?: Ref;
@@ -164,7 +164,7 @@ export interface WorkPatch {
   title?: string;
   body?: string;
   state?: WorkState;
-  /** Moves an open Item between Backlog and To do (decision 120). */
+  /** Moves an open Item between Backlog and To do (decision 121). */
   lane?: ItemLane;
   labels?: string[];
   parent?: Ref | null;

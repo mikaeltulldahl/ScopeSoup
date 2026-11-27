@@ -34,7 +34,7 @@ for (const deployment of ["cloud", "datacenter"] as const) {
       assert.equal(item?.priority, "critical");
     });
 
-    test("Backlog and To do (decision 120): a new issue goes to the Backlog status, To do on a person's pick; an edit moves it", async () => {
+    test("Backlog and To do (decision 121): a new issue goes to the Backlog status, To do on a person's pick; an edit moves it", async () => {
       const { fake, host, write } = writable(deployment);
       const backlog = await write.createWork!({ title: "Tide graph" });
       assert.equal(fake.issues.get(backlog.work.id)!.fields.status?.name, "Backlog");

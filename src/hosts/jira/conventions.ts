@@ -218,7 +218,7 @@ export function applyJiraThread(item: WorkItem, read: JiraRead, bodyKnown: (sha:
   if (claim && open) {
     if (!item.holder) item.holder = { actor: claimActor(claim.machine) as Actor, until: claim.until };
     if (item.state === "todo") item.state = "doing";
-    // Backlog is only for an Item in state todo (decision 120).
+    // Backlog is only for an Item in state todo (decision 121).
     delete item.backlog;
   }
   applyThread(item, read.thread, bodyKnown, now);

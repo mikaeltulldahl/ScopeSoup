@@ -41,7 +41,7 @@ export function readyItems(items: WorkItem[], changes: Change[], jobs: Jobs, now
     else if (item.holder && holdStands(item.holder, at)) reason = `held by ${item.holder.actor.name}`;
     else if (touched.has(key)) reason = "an open change already covers it";
     else if (merged.has(key)) reason = "its change is merged; waiting for the host to close the item";
-    // Backlog (decision 120): nothing starts it until a person moves it to To do.
+    // Backlog (decision 121): nothing starts it until a person moves it to To do.
     else if (item.backlog) reason = BACKLOG_REASON;
     else {
       const open = item.blockedBy.filter((blocker) => {

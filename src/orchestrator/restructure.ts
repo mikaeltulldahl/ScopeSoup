@@ -216,7 +216,7 @@ export function partWork(part: ProposedPart, index: number, options: { parent: R
     body,
     ...(part.goes === "child" ? { parent: options.parent } : {}),
     labels: options.label ? [options.label] : [],
-    // A part goes where its Item is (decision 120): a person accepted the split of work they had chosen, or not yet.
+    // A part goes where its Item is (decision 121): a person accepted the split of work they had chosen, or not yet.
     ...(options.lane ? { lane: options.lane } : {}),
     ...(!options.verificationInBody && verification ? { verification } : {}),
     log: [{ kind: "created", by: options.by, fields: { via: `restructuring of ${options.parent.id}` } }],

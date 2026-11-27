@@ -46,7 +46,7 @@ export const NEEDS_DECISION_LABEL = "scopesoup:needs-decision";
 export const CLAIMED_LABEL = "scopesoup:claimed";
 /** An implementor decided something itself that a person may accept or overturn. Does not block, and is not needs-decision. */
 export const ASSUMPTION_LABEL = "scopesoup:assumption";
-/** In To do (decision 120): the board sets and removes it. An open issue without it is in Backlog, where no agent starts it. */
+/** In To do (decision 121): the board sets and removes it. An open issue without it is in Backlog, where no agent starts it. */
 export const TODO_LABEL = "scopesoup:todo";
 
 export const hasLabel = (labels: string[], name: string): string | undefined => labels.find((label) => label.toLowerCase() === name.toLowerCase());

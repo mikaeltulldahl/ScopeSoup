@@ -248,7 +248,7 @@ test("every todo card takes a number in the plan, whatever its labels: there is 
   assert.ok(cards.every((card) => card.reason.startsWith("ready")));
 });
 
-test("Backlog is in the planned order too, unnumbered: nothing starts there (decision 120); To do numbers only its own", () => {
+test("Backlog is in the planned order too, unnumbered: nothing starts there (decision 121); To do numbers only its own", () => {
   const snap = snapshot({ works: [work(1, { backlog: true }), work(2), work(3, { backlog: true })] });
   const board = buildBoard(snap, now, ["demo:work:2", "demo:work:3", "demo:work:1"]);
   assert.deepEqual(board.lanes.find((lane) => lane.lane === "backlog")!.cards.map((card) => [card.label, card.position]), [["#3", undefined], ["#1", undefined]]);

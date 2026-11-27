@@ -647,7 +647,7 @@ export function applyThread(item: WorkItem, thread: Thread, bodyKnown: (sha: str
   if (claim && item.hostState === "open") {
     if (!item.holder) item.holder = { actor: claimActor(claim.machine), until: claim.until };
     if (item.state === "todo") item.state = "doing";
-    // Backlog is only for an Item in state todo (decision 120).
+    // Backlog is only for an Item in state todo (decision 121).
     delete item.backlog;
   }
   if (thread.openQuestions.length > 0) item.openQuestions = thread.openQuestions;

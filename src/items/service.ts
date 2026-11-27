@@ -178,7 +178,7 @@ export async function createItem(backend: Backend, input: NewItem): Promise<{ re
     ...(input.body?.trim() ? { body: jira ? inertText(input.body) : input.body } : {}),
     ...(input.labels && input.labels.length > 0 ? { labels: input.labels } : {}),
     ...(priority && backend.kind !== "github" ? { priority } : {}),
-    // In Backlog (decision 120), unless the person takes it as they file it: then they chose it, and it is in To do.
+    // In Backlog (decision 121), unless the person takes it as they file it: then they chose it, and it is in To do.
     lane: input.claim ? "todo" : "backlog",
     // metaBranch: the item and its first lines (`created`, and the person's `claimed`) are one commit. GitHub: the assignee is part of the create call.
     ...(backend.kind === "metaBranch"
@@ -205,7 +205,7 @@ export interface ClaimOptions {
 }
 
 /**
- * A person's claim or hand-back puts work under way, which is never in Backlog (decision 120): an Item there moves to To do, with
+ * A person's claim or hand-back puts work under way, which is never in Backlog (decision 121): an Item there moves to To do, with
  * an `edited` line on a host that keeps a log. True when it moved.
  */
 async function outOfBacklog(backend: Backend, ref: Ref, before: WorkItem): Promise<boolean> {

@@ -3186,7 +3186,7 @@ async function githubWorld() {
   const w = world(config(), [ghItem("1"), ghItem("2", { title: "Harbour list", holder: { actor: { id: "p", name: "Pat" } } })]);
   w.store.addUsageSample(usage(0.1, 0.1));
   const fake = fakeIssues("harbour/tides", [1, 2, 3]);
-  // In To do on GitHub (decision 120), so the re-read keeps them there.
+  // In To do on GitHub (decision 121), so the re-read keeps them there.
   for (const issue of fake.issues.values()) issue.labels.push({ name: "scopesoup:todo" });
   const host = createGitHubHost({ token: "t", repo: "harbour/tides", apiUrl: ISSUES_API, fetchImpl: fake.fetch, allowWrites: true });
   const real = createHostActions({ host, git: async () => ({ code: 0, stdout: "", stderr: "" }), config: () => config(), store: w.store });
@@ -3896,7 +3896,7 @@ async function questionWorld(clocked = false) {
   return { w, fake, host, deps, sync };
 }
 
-/** Issue 1's labels, without `scopesoup:todo`, which the worlds put on so the Item is in To do (decision 120). */
+/** Issue 1's labels, without `scopesoup:todo`, which the worlds put on so the Item is in To do (decision 121). */
 const labelsOn = (fake: ReturnType<typeof fakeIssues>): string[] => fake.issues.get("1")!.labels.map((label) => (typeof label === "string" ? label : label.name)).filter((name) => name !== "scopesoup:todo");
 
 test("an Item parked on two questions posts two question comments and the label; A2: and A1: replies from trusted authors release it", async () => {
@@ -4995,7 +4995,7 @@ test("a triage a person picked runs at level 0, and its settling clears the ask"
   assert.equal(roles(w).length, 1, "nothing more starts on its own at level 0");
 });
 
-test("Backlog (decision 120): nothing starts there; a person's triage runs and the Item stays; its implement step waits for To do", async () => {
+test("Backlog (decision 121): nothing starts there; a person's triage runs and the Item stays; its implement step waits for To do", async () => {
   const w = world(config(), [item("1", { backlog: true }), item("2", { backlog: true })]);
   w.store.addUsageSample(usage(0.1, 0.1));
   const report = await w.run();
@@ -5046,7 +5046,7 @@ test("Implement anyway runs the implement step below level 2, even at level 0, w
   }
 });
 
-test("Backlog (decision 120): work a person put under way never stalls there; Implement anyway, then review findings, then the second implement runs", async () => {
+test("Backlog (decision 121): work a person put under way never stalls there; Implement anyway, then review findings, then the second implement runs", async () => {
   // The board moves the Item to To do at Implement anyway; this is the safety net if that edit has not been read back yet.
   const w = world(config({ level: 3 }), [item("1", { backlog: true })]);
   w.store.addUsageSample(usage(0.1, 0.1));
@@ -5061,7 +5061,7 @@ test("Backlog (decision 120): work a person put under way never stalls there; Im
   assert.deepEqual(roles(w), ["implement", "review", "implement"]);
 });
 
-test("Backlog (decision 120): a job with a revision (a person's hand-back sent back by review) goes on to implement", async () => {
+test("Backlog (decision 121): a job with a revision (a person's hand-back sent back by review) goes on to implement", async () => {
   const w = world(config({ level: 3 }), [item("1", { backlog: true })]);
   w.store.addUsageSample(usage(0.1, 0.1));
   saveJobs(w.store, { [refKey(ref("1"))]: overruled("1", { implementAskedBy: undefined, head: "a".repeat(40), triage: { ...TRIAGE_OK, hidesDecision: false } }) });

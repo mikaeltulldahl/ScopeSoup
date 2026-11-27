@@ -27,7 +27,7 @@ export interface Actor {
 export type WorkState = "todo" | "doing" | "waiting" | "done" | "abandoned";
 
 /**
- * Where an open Item waits before work starts (decision 120): `backlog` (a person has not chosen it yet; nothing picks it up) or
+ * Where an open Item waits before work starts (decision 121): `backlog` (a person has not chosen it yet; nothing picks it up) or
  * `todo` (agents may start it). New Items land in Backlog; a person moves them to To do.
  */
 export type ItemLane = "backlog" | "todo";
@@ -58,7 +58,7 @@ export interface WorkItem {
   /** True when the item waits for a decision by a person. */
   needsDecision?: boolean;
   /**
-   * In Backlog (decision 120): a person has not moved it to To do, so no agent triages or starts it on its own. Only on an Item in
+   * In Backlog (decision 121): a person has not moved it to To do, so no agent triages or starts it on its own. Only on an Item in
    * state `todo`; absent means To do.
    */
   backlog?: true;

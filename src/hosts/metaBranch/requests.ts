@@ -73,7 +73,7 @@ function asStep(value: unknown): RequestStep | null {
   return null;
 }
 
-/** Backlog for work on another machine: the work dropped there, then the lane written there (decision 120). */
+/** Backlog for work on another machine: the work dropped there, then the lane written there (decision 121). */
 const isBacklogPick = (steps: readonly unknown[]): boolean => {
   const [drop, lane] = steps as Record<string, unknown>[];
   return steps.length === 2 && drop?.kind === "move" && drop.to === "todo" && lane?.kind === "lane" && lane.lane === "backlog";

@@ -4,7 +4,7 @@ import type { Batch, BatchMember, Change, Ref, Session, Verdict, WorkItem } from
 import { refKey } from "../model/types.ts";
 import type { Index } from "./snapshot.ts";
 
-// Backlog: what a person has not chosen yet, which no agent starts; To do: what agents may start (decision 120).
+// Backlog: what a person has not chosen yet, which no agent starts; To do: what agents may start (decision 121).
 export const LANES = ["backlog", "blocked", "todo", "in-progress", "in-review", "queued", "checking", "done"] as const;
 export type Lane = (typeof LANES)[number];
 

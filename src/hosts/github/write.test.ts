@@ -206,7 +206,7 @@ test("createWork with labels makes the label first when the repository lacks it,
   assert.deepEqual(f.calls[1]!.body, { title: "Made by an agent", labels: ["ai-generated"] });
 });
 
-test("Backlog and To do (decision 120): a new issue is in Backlog without the label; To do gives it scopesoup:todo, and an edit moves it", async () => {
+test("Backlog and To do (decision 121): a new issue is in Backlog without the label; To do gives it scopesoup:todo, and an edit moves it", async () => {
   const issue = (labels: string[]) => ({ number: 14, id: 9003, title: "Tide graph", state: "open", labels: labels.map((name) => ({ name })), assignees: [], updated_at: "2026-11-27T10:00:00Z", html_url: "u" });
   const f = fake({
     "POST /repos/harbour/tides/labels": [201, { name: "scopesoup:todo" }],

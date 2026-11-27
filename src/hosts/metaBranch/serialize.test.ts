@@ -90,7 +90,7 @@ test("item.md: fields not in canonical form are refused, not changed on the way"
   assert.equal(serializeItem("A-1", { ...base, extra: [["sprint", "7"], ["empty", ""]] }), "---\nid: A-1\ntitle: Fine\nstate: todo\nsprint: 7\nempty:\n---\n");
 });
 
-test("item.md: `lane: backlog` puts an Item in Backlog (decision 120); `todo` or no line is To do; another value is malformed", () => {
+test("item.md: `lane: backlog` puts an Item in Backlog (decision 121); `todo` or no line is To do; another value is malformed", () => {
   const text = serializeItem("A-1", canonicalItem({ title: "Tide graph", lane: "backlog" }));
   assert.equal(text, "---\nid: A-1\ntitle: Tide graph\nstate: todo\nlane: backlog\n---\n");
   assert.deepEqual(parseItem(text, "A-1"), { ok: true, fields: { title: "Tide graph", state: "todo", lane: "backlog", labels: [], blockedBy: [], body: "", extra: [] } });

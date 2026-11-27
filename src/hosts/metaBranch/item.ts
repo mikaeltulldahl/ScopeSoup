@@ -8,7 +8,7 @@ import { isItemId } from "./ids.ts";
 export interface ItemFields {
   title: string;
   state: WorkState;
-  /** `backlog`: the Item is in Backlog (decision 120). Absent: To do. */
+  /** `backlog`: the Item is in Backlog (decision 121). Absent: To do. */
   lane?: "backlog";
   labels: string[];
   parent?: string;

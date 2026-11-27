@@ -306,6 +306,8 @@ export interface ScopeSoupServer {
   carryOutRequests(): Promise<number>;
   /** Ends the event streams and stops listening. */
   stop(): Promise<void>;
+  /** Serves one request without listening, as `start` would: for the lifecycle simulator (`src/sim`). */
+  handle(request: IncomingMessage, response: ServerResponse): Promise<void>;
 }
 
 export const DEFAULT_PORT = 4310;
@@ -793,7 +795,7 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
       return result;
     });
     if (!done.ok) return sendError(response, 409, "REFUSED", `${work.ref.id}: ${done.why}.`);
-    // Implement anyway is work under way, which is never in Backlog (decision 120): the Item moves to To do.
+    // Implement anyway is work under way, which is never in Backlog (decision 121): the Item moves to To do.
     if (to === "implement" && work.backlog) {
       const moved = await inProcess(editItem, { ref, lane: "todo" });
       store.appendEvent({ kind: "person.moved", subject: ref, actor: who, data: { to: "todo", reason: moved.status < 400 ? `${work.ref.id} moved from Backlog to To do: ${who}'s Implement anyway puts work under way.` : `${work.ref.id} could not be moved from Backlog to To do for ${who}'s Implement anyway: ${moved.message ?? `the server answered ${moved.status}`}`, via: "board" } }, now().toISOString());
@@ -1833,7 +1835,7 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
         labels,
         blockedBy: blockedBy.map(itemRef),
         ...(priority ? { priority: priority as Priority } : {}),
-        // A person who takes the Item as they file it has chosen it: To do (decision 120).
+        // A person who takes the Item as they file it has chosen it: To do (decision 121).
         lane: body.todo === true || body.claim === true ? "todo" : "backlog",
       });
       return written(response, done, `Filed ${done.work.id}: ${title.trim()}${body.claim === true ? `. ${creator.who} holds it; Scope Soup will not start it` : ""}`);
@@ -1954,7 +1956,7 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
       // A closed Item keeps no lane on GitHub and Jira: the pick that reopens it writes the lane it goes to.
       if (body.lane !== (current.backlog ? "backlog" : "todo") || current.state !== "todo") (patch.lane = body.lane), changed.push("lane");
     }
-    // Backlog is no work (decision 120): a job on the Item here is dropped first, as To do drops it, or the move is refused.
+    // Backlog is no work (decision 121): a job on the Item here is dropped first, as To do drops it, or the move is refused.
     if (patch.lane === "backlog") {
       const key = refKey(current.ref);
       const lane = buildItemPage(loadSnapshot(store), key, now())?.lane ?? null;
@@ -2776,6 +2778,7 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
 
   return {
     carryOutRequests,
+    handle,
     start() {
       return new Promise((resolve, reject) => {
         const created = createHttpServer((request, response) => {

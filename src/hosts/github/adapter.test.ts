@@ -51,7 +51,7 @@ test("issues become work items; pull requests in the issues list are left out", 
     children: 3,
     updatedAt: "2026-11-10T08:00:00Z",
     body: "Body of item 11.",
-    // No `scopesoup:todo` label: in Backlog (decision 120).
+    // No `scopesoup:todo` label: in Backlog (decision 121).
     backlog: true,
   });
   assert.equal(second?.state, "doing");

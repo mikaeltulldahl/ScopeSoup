@@ -40,7 +40,7 @@ test("blocked lane: a todo item with an open blocker, including one waiting on a
   );
 });
 
-test("Backlog (decision 120): an open todo Item a person has not moved to To do, blocked or not; a triage on it keeps it there", () => {
+test("Backlog (decision 121): an open todo Item a person has not moved to To do, blocked or not; a triage on it keeps it there", () => {
   const index = buildIndex(
     snapshot({
       works: [

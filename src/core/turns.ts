@@ -173,7 +173,7 @@ function allPartsDoneTurn(item: WorkItem): Draft {
   return { actor: "anyone", tone: "yours", waits: "ready to close", reason: `Close it if nothing is left: all ${total} sub-item${total === 1 ? " is" : "s are"} done` };
 }
 
-/** In Backlog (decision 120): nothing starts it; a session there is a triage a person asked for. */
+/** In Backlog (decision 121): nothing starts it; a session there is a triage a person asked for. */
 function waitsInBacklogTurn(situation: Situation, ctx: TurnContext): Draft {
   const { item, session } = situation;
   if (session) return sessionTurn(session, ctx);

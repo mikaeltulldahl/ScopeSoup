@@ -52,7 +52,7 @@ test("metaBranch: new --claim is one commit that holds the item from its first s
   const readiness = readyItems([item], [], {}, "2026-11-20T09:05:00Z");
   assert.deepEqual(readiness.ready, []);
   assert.match(readiness.held[0]!.reason, /held by Ada on laptop-a/);
-  // Without --claim the item is nobody's and the same single commit holds `created`; it waits in Backlog (decision 120), and
+  // Without --claim the item is nobody's and the same single commit holds `created`; it waits in Backlog (decision 121), and
   // moved to To do it is ready.
   await createItem(backend, { title: "Chart the harbour" });
   assert.equal(repo.git(["rev-list", "--count", META_REF]), "2");
@@ -90,7 +90,7 @@ test("github: new --claim creates the issue with the assignee set in the create 
   const backend: Backend = { kind: "github", host: "github", who: (await host.info.whoami()).id, work: host.work, write: host.write!, now: () => new Date("2026-11-20T10:00:00Z"), mainBranch: "main" };
   const made = await createItem(backend, { title: "Tune the buoy lights", claim: true });
   assert.match(made.message, /Filed 5: .*ada holds it/);
-  // A person who takes it has chosen it: in To do (decision 120), so the label goes on in the same call.
+  // A person who takes it has chosen it: in To do (decision 121), so the label goes on in the same call.
   const creates = calls.filter((call) => call.method === "POST" && call.path.endsWith("/issues"));
   assert.equal(creates.length, 1);
   assert.deepEqual(creates[0]!.body, { title: "Tune the buoy lights", labels: ["scopesoup:todo"], assignees: ["ada"] });

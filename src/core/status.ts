@@ -76,7 +76,9 @@ export function buildStatusLine(index: Index, queue: QueueView, now: Date): Stat
           status: snapshot.usage.status,
           windows: snapshot.usage.windows.map((window) => {
             const forecast = forecastWindow(snapshot.usageHistory ?? [], window.kind, now, load);
-            return { kind: window.kind, label: window.kind === "five_hour" ? "5 h" : "week", utilization: window.utilization, resetsAt: window.resetsAt, ...(forecast ? { forecast } : {}) };
+            const reset = Date.parse(window.resetsAt) <= now.getTime();
+            const utilization = reset && window.utilization !== undefined ? 0 : window.utilization;
+            return { kind: window.kind, label: window.kind === "five_hour" ? "5 h" : "week", utilization, resetsAt: window.resetsAt, ...(reset ? { reset: true as const } : {}), ...(forecast ? { forecast } : {}) };
           }),
         }
       : null,
@@ -112,7 +114,7 @@ export function toStatusView(board: BoardView): StatusView {
     })),
     queue: board.status.queue,
     runners: board.status.runners.list.map((runner) => ({ name: runner.name, words: runner.words })),
-    usage: (board.status.usage?.windows ?? []).map((window) => ({ kind: window.kind, utilization: window.utilization, resetsAt: window.resetsAt, ...(window.forecast ? { forecast: window.forecast } : {}) })),
+    usage: (board.status.usage?.windows ?? []).map((window) => ({ kind: window.kind, utilization: window.utilization, resetsAt: window.resetsAt, ...(window.reset ? { reset: true as const } : {}), ...(window.forecast ? { forecast: window.forecast } : {}) })),
     sync: board.status.sync,
     ...(board.status.share ? { share: board.status.share } : {}),
     alerts: board.status.alerts,

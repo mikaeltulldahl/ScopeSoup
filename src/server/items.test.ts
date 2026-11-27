@@ -159,7 +159,7 @@ test("Abandoned picked over a running session marks its job for the tick to end 
   assert.match(String((store.eventsOfKinds(["person.moved"], 5)[0]?.data as { reason?: string }).reason), /the implementor's session is ended now/);
 });
 
-test("Backlog and To do (decision 120): a new Item is in Backlog, Create in To do is not; Backlog drops the work; Implement anyway moves it to To do", async () => {
+test("Backlog and To do (decision 121): a new Item is in Backlog, Create in To do is not; Backlog drops the work; Implement anyway moves it to To do", async () => {
   const backlog = await post("/api/items", { title: "Tide graph" });
   const now = await post("/api/items", { title: "Tide graph now", todo: true });
   const pageOf = (ref: unknown) => getJson<ItemPage>(`/api/item?ref=${String(ref)}`);

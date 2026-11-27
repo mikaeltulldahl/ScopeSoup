@@ -280,7 +280,7 @@ export function importBatch(issues: readonly SourceIssue[], context: BatchContex
         input: {
           title: oneLine(issue.title) || `Issue ${issue.number}`,
           state: stateOf(issue),
-          // In Backlog on GitHub (no `scopesoup:todo` label, decision 120): in Backlog here too.
+          // In Backlog on GitHub (no `scopesoup:todo` label, decision 121): in Backlog here too.
           ...(issue.open && !issue.labels.some((label) => label.toLowerCase() === TODO_LABEL) ? { lane: "backlog" as const } : {}),
           labels,
           ...(parent ? { parent } : {}),

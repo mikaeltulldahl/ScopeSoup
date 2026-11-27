@@ -46,7 +46,7 @@ test("planOrder starts with exactly what the orchestrator would pick", () => {
   assert.deepEqual(planned.slice(0, picks.length), picks);
 });
 
-test("readyItems holds a Backlog Item (decision 120) and planOrder keeps it in order among the held", () => {
+test("readyItems holds a Backlog Item (decision 121) and planOrder keeps it in order among the held", () => {
   const items = [work(1, { backlog: true, priority: "minor" }), work(2), work(3, { backlog: true, priority: "critical" })];
   const { ready, held } = readyItems(items, [], {}, T0);
   assert.deepEqual(ready.map((item) => item.ref.id), ["2"]);

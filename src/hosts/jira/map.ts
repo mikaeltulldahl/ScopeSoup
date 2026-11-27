@@ -36,7 +36,7 @@ export interface JiraScope {
   priorities: Readonly<Record<string, Priority>>;
   abandonedResolutions: readonly string[];
   blocksLink: string;
-  /** The status (category To Do) that is Backlog (decision 120): `transitions.backlog` in the config. Default "Backlog". */
+  /** The status (category To Do) that is Backlog (decision 121): `transitions.backlog` in the config. Default "Backlog". */
   backlogStatus?: string;
 }
 

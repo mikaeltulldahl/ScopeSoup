@@ -38,7 +38,7 @@ const KEY = /^[A-Za-z][A-Za-z0-9]*$/;
 export interface ItemInput {
   title: string;
   state?: WorkState;
-  /** `backlog`: in Backlog (decision 120); absent: To do. */
+  /** `backlog`: in Backlog (decision 121); absent: To do. */
   lane?: "backlog";
   labels?: string[];
   parent?: string;

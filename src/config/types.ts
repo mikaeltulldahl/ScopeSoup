@@ -197,7 +197,7 @@ export interface JiraHostConfig {
   childIssueType?: string;
   /**
    * The transition (or the status it goes to) per target; defaults "Backlog", "To Do", "In Progress", "Done", "Won't Do". `backlog`
-   * is also the status read as Backlog (decision 120): an issue in it waits for a person to move it to To do.
+   * is also the status read as Backlog (decision 121): an issue in it waits for a person to move it to To do.
    */
   transitions?: Partial<Record<"backlog" | "todo" | "doing" | "done" | "abandoned", string>>;
   /** The resolution a transition's screen gets when it asks for one; defaults "Done", "Won't Do", "Duplicate". */

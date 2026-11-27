@@ -12,7 +12,7 @@ test("each switch sits on its lane, and is hidden below the level that uses its 
   assert.deepEqual(switchesAt(3), ["triage", "implement", "review"]);
   assert.deepEqual(switchesAt(4), ["triage", "implement", "review", "mergeQueue"]);
   assert.equal(laneSwitch("todo", 4), "triage");
-  assert.equal(laneSwitch("backlog", 4), null, "nothing triages Backlog on its own (decision 120)");
+  assert.equal(laneSwitch("backlog", 4), null, "nothing triages Backlog on its own (decision 121)");
   assert.equal(laneSwitch("in-progress", 4), "implement");
   assert.equal(laneSwitch("in-review", 4), "review");
   assert.equal(laneSwitch("merge-queue", 4), "mergeQueue", "on the overview's one lane for Queued and Checking");

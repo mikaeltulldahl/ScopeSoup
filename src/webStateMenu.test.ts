@@ -143,7 +143,7 @@ test("Implement anyway is a button by triage's verdict, not a menu option: the s
   assert.equal(implementToast("A-2"), "A-2 → Implement anyway");
 });
 
-test("an Item in Backlog (decision 120): To do moves it there, Triage runs one triage and it stays", () => {
+test("an Item in Backlog (decision 121): To do moves it there, Triage runs one triage and it stays", () => {
   const menu = byKey(page({ lane: "backlog", moves: { triage: {}, "in-review": { why: "nothing to review yet" } } }));
   assert.deepEqual(menu.todo.steps, [{ kind: "lane", lane: "todo" }]);
   assert.equal(menu.backlog.why, "in Backlog already");

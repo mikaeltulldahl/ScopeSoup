@@ -191,7 +191,7 @@ function planTodo(cards: CardView[], planned: string[], unplanned: Set<string>, 
   return cards.sort((a, b) => below(a) - below(b) || at(a) - at(b) || cardOrder(a, b)).map((card) => (unplanned.has(card.key) ? card : { ...card, position: ++next }));
 }
 
-/** Backlog in the same planned order (decision 120), for a person choosing what to pull in; unnumbered, as nothing starts there. */
+/** Backlog in the same planned order (decision 121), for a person choosing what to pull in; unnumbered, as nothing starts there. */
 function planBacklog(cards: CardView[], planned: string[]): CardView[] {
   const rank = new Map(planned.map((key, position) => [key, position]));
   const at = (card: CardView): number => rank.get(card.key) ?? Number.MAX_SAFE_INTEGER;

@@ -788,7 +788,7 @@ export function createGitHubHost(config: GitHubConfig): GitHubHost {
     /** A new issue. The priority has no place on GitHub and is not kept; the caller says so. */
     async createWork(input) {
       for (const name of input.labels ?? []) await ensureLabel(name, true);
-      // New Items land in Backlog (decision 120): only a person's pick of To do gives the issue the label.
+      // New Items land in Backlog (decision 121): only a person's pick of To do gives the issue the label.
       if (input.lane === "todo") await ensureLabel(TODO_LABEL);
       const labels = [...(input.labels ?? []), ...(input.lane === "todo" ? [TODO_LABEL] : [])];
       const issue = await client.send<RestIssue>("POST", r("/issues"), {

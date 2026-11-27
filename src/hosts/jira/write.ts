@@ -315,14 +315,14 @@ export function createJiraWrite(deps: JiraWriteDeps): WritePort {
     const types = await client.get<{ statuses?: { name?: string }[] }[]>(`${api}/project/${encodeURIComponent(scope.project)}/statuses`);
     const names = new Set((types ?? []).flatMap((type) => type.statuses ?? []).map((status) => (status.name ?? "").toLowerCase()));
     if (!names.has(settings.transitions.backlog.toLowerCase())) {
-      throw new Error(`Jira project ${scope.project} has no status "${settings.transitions.backlog}", so a new Item could not wait in Backlog and agents would start it (decision 120). Add a Backlog status to the workflow, or name it in host.transitions.backlog.`);
+      throw new Error(`Jira project ${scope.project} has no status "${settings.transitions.backlog}", so a new Item could not wait in Backlog and agents would start it (decision 121). Add a Backlog status to the workflow, or name it in host.transitions.backlog.`);
     }
     backlogStatusSeen = true;
   }
 
   const write: WritePort = {
     async createWork(input) {
-      // A new Item lands in Backlog (decision 120): without that status it would be startable at once, so the create is refused.
+      // A new Item lands in Backlog (decision 121): without that status it would be startable at once, so the create is refused.
       if ((input.state ?? "todo") === "todo" && (input.lane ?? "backlog") === "backlog") await checkBacklogStatus();
       const body = input.body ?? "";
       const markdown = input.verification !== undefined ? spliceBody(body, { verification: input.verification }) : body.trim();
@@ -356,7 +356,7 @@ export function createJiraWrite(deps: JiraWriteDeps): WritePort {
       if (assignee) await client.put(`${path(work)}/assignee`, deployment === "cloud" ? { accountId: assignee } : { name: assignee });
       if (input.blockedBy && input.blockedBy.length > 0) await setBlockers(work, input.blockedBy.filter((each) => each.host === scope.host), true);
       if (input.state && input.state !== "todo" && input.state !== "waiting") await transitionTo(work, input.state, input.state === "done" ? settings.resolutions.done : input.state === "abandoned" ? settings.resolutions.abandoned : undefined);
-      // New Items land in Backlog (decision 120), To do only when a person picked it: the workflow's first status may be either.
+      // New Items land in Backlog (decision 121), To do only when a person picked it: the workflow's first status may be either.
       // The project has the Backlog status (checked above); a transition the workflow does not offer from the first status is said.
       let laneProblem: string | undefined;
       if ((input.state ?? "todo") === "todo") {
@@ -417,7 +417,7 @@ export function createJiraWrite(deps: JiraWriteDeps): WritePort {
         const resolution = patch.state === "done" ? settings.resolutions.done : patch.state === "abandoned" ? (patch.duplicateOf ? settings.resolutions.duplicate : settings.resolutions.abandoned) : undefined;
         await transitionTo(subject, patch.state, resolution);
       }
-      // Backlog and To do are two statuses of the To Do category (decision 120), moved to after the state.
+      // Backlog and To do are two statuses of the To Do category (decision 121), moved to after the state.
       if (patch.lane !== undefined && (patch.state ?? state) === "todo") {
         const now = patch.state !== undefined && patch.state !== state ? await issueOf(subject) : issue;
         const inBacklog = same(now.fields.status?.name ?? "", settings.transitions.backlog);

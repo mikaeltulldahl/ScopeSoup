@@ -49,7 +49,7 @@ export interface SourceItem {
   history: string[];
   /** GitHub's labels on the issue, for its step there. */
   hostLabels?: string[];
-  /** In Backlog where it was (decision 120): it stays there on the meta branch. */
+  /** In Backlog where it was (decision 121): it stays there on the meta branch. */
   backlog?: true;
 }
 

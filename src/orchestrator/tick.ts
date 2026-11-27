@@ -655,7 +655,7 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
       }
       continue;
     }
-    // Backlog is no work (decision 120): a person's moves take an Item with work under way to To do. Left is a person's one-off
+    // Backlog is no work (decision 121): a person's moves take an Item with work under way to To do. Left is a person's one-off
     // triage there, whose implement step waits for To do; a job that has a session, a revision or something to resume never waits.
     if (item.backlog && job.step === "implement" && job.implementAskedBy === undefined && job.head === undefined && !job.resumeWith && !job.resume) {
       reasons.push(`${item.ref.id} ${BACKLOG_REASON} before its ${job.step} step`);
@@ -701,7 +701,7 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
   const readiness = readyItems(withVotes(withOwnBlockers(store.list<WorkItem>("work"), loadOwnBlockers(store)), loadVotes(store)), others, jobs, at);
   // An item a person handed back that is not taken on yet (its branch is not here, agents are not started) is not started as new.
   const fresh = level === 0 ? [] : readiness.ready.filter((each) => !handbacksWaiting.has(refKey(each.ref))).sort(compare);
-  // Agents start only from To do (decision 120): with it empty they are idle, and the status line says so.
+  // Agents start only from To do (decision 121): with it empty they are idle, and the status line says so.
   const heldInTodo = readiness.held.filter((held) => !held.item.backlog);
   if (waiting.length + fresh.length === 0 && readiness.ready.length === 0 && heldInTodo.length === 0) {
     const inBacklog = readiness.held.length;
