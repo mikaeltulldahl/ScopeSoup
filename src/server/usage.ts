@@ -14,6 +14,7 @@ import type { Session, UsageWindowKind } from "../model/types.ts";
 import type { Store } from "../store/store.ts";
 import { allowanceSessionUse } from "../orchestrator/allowance.ts";
 import type { AllowancePlan } from "../orchestrator/allowance.ts";
+import { readPacing } from "../orchestrator/pacing.ts";
 import { providerNamed } from "../orchestrator/providers/index.ts";
 
 const HOUR = 3600_000;
@@ -67,9 +68,9 @@ function plotSteps(ms: number): number {
 
 /**
  * The Usage page: per window the newest reading with the status line's forecast (planned with the snapshot's sessions, pause
- * and planned sessions), the reserve, how full it got over the span by role, and the share each role used.
+ * and planned sessions), the budget, how full it got over the span by role, and the share each role used.
  */
-export function buildUsageView(store: Store, snapshot: Snapshot, span: { span: string; ms: number }, now: Date, reserve?: Record<UsageWindowKind, number>, plans: readonly AllowancePlan[] = []): UsageView {
+export function buildUsageView(store: Store, snapshot: Snapshot, span: { span: string; ms: number }, now: Date, budget?: Record<UsageWindowKind, number>, plans: readonly AllowancePlan[] = []): UsageView {
   const to = now.getTime();
   const from = to - span.ms;
   // Readings from before the span too, so the first step of the span has its start and the plot knows who filled the
@@ -92,7 +93,7 @@ export function buildUsageView(store: Store, snapshot: Snapshot, span: { span: s
     const plot = usagePlot(samples, usage, kind, { from, to, steps: plotSteps(span.ms) });
     const reading = latest?.windows.find((window) => window.kind === kind);
     const view: UsagePageWindow = { ...attribution, plot, forecastLine: [] };
-    if (reserve) view.reserve = reserve[kind];
+    if (budget) view.budget = budget[kind];
     if (latest && reading?.utilization !== undefined) {
       const forecast = forecastWindow(samples, kind, now, load) ?? undefined;
       // A window whose reset has passed with no newer reading has reset: nothing of Scope Soup's is in the new one.
@@ -111,5 +112,6 @@ export function buildUsageView(store: Store, snapshot: Snapshot, span: { span: s
       ...(plan.allowance !== undefined ? { allowance: plan.allowance } : {}), reserve: plan.reserve, used: use.used, byRole: use.byRole, sessions: use.sessions,
     };
   });
-  return { now: now.toISOString(), span: span.span, from: new Date(from).toISOString(), to: now.toISOString(), windows, sessions: inSpan.length, withTokens: inSpan.filter((session) => session.tokens !== undefined).length, ...(allowances.length > 0 ? { allowances } : {}) };
+  const pacing = readPacing(store);
+  return { ...(pacing ? { pacing } : {}), now: now.toISOString(), span: span.span, from: new Date(from).toISOString(), to: now.toISOString(), windows, sessions: inSpan.length, withTokens: inSpan.filter((session) => session.tokens !== undefined).length, ...(allowances.length > 0 ? { allowances } : {}) };
 }

@@ -256,6 +256,8 @@ export interface OpenQuestion {
   multiSelect?: true;
   /** Set when the question is a proposed restructuring of the item. */
   proposal?: Restructuring;
+  /** The park that asked it (a meta-branch log's `set`): an answer names it too, as two parks of one instant may ask the same text. */
+  set?: string;
 }
 
 /** An item whose text was changed on two machines: what it says now and each version put aside (`id` names it in a resolution). */

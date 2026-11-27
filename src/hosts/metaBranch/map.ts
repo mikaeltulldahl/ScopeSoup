@@ -196,7 +196,7 @@ export function toWork(scope: MetaScope, read: ReadItem, openChildren: number): 
   if (picture.openQuestions.length > 0) {
     work.openQuestions = picture.openQuestions.map((line) => ({
       at: line.at, by: { ...line.by }, question: line.question, options: line.options.map((option) => (typeof option === "string" ? option : { ...option })), ...(line.recommendation ? { recommendation: line.recommendation } : {}), ...(line.context ? { context: line.context } : {}), ...(line.multiSelect ? { multiSelect: true as const } : {}),
-      ...(line.proposal ? { proposal: { ...line.proposal } } : {}),
+      ...(line.proposal ? { proposal: { ...line.proposal } } : {}), ...(line.set ? { set: line.set } : {}),
     }));
   }
   const assumptions = assumptionsOf(picture.lines, scope);

@@ -66,7 +66,7 @@ function setup(extra: Record<string, unknown> = {}): string {
   dirs.push(dir);
   const file = join(dir, "scopesoup.config.json");
   const raw: Record<string, unknown> = {
-    version: 2,
+    version: 3,
     project: "demo",
     machineName: "laptop-a",
     repoPath: "repo",
@@ -106,10 +106,10 @@ test("a valid change is merged into each file, keeping the other fields and thei
 
 test("a change of this machine's settings only is written to its file, with no commit", async () => {
   const file = setup();
-  const result = await edit(file, { settings: { maxParallelSessions: { value: 3 }, reserveSevenDay: { value: 0.4 } } }, { ...found, by: undefined });
+  const result = await edit(file, { settings: { maxParallelSessions: { value: 3 }, budgetSevenDay: { value: 0.4 } } }, { ...found, by: undefined });
   assert.ok(result.ok && result.changed && result.shared === undefined);
   assert.equal(saves.get(file), undefined);
-  assert.deepEqual(JSON.parse(readFileSync(file, "utf8")).settings, { maxParallelSessions: { value: 3 }, reserveSevenDay: { value: 0.4 } });
+  assert.deepEqual(JSON.parse(readFileSync(file, "utf8")).settings, { maxParallelSessions: { value: 3 }, budgetSevenDay: { value: 0.4 } });
 });
 
 test("singleplayer is this machine's: written to its file with no commit, and a shared save after it is pushed nowhere", async () => {
@@ -128,7 +128,7 @@ test("singleplayer is this machine's: written to its file with no commit, and a 
 test("a save of a shared setting names a person: without one it is refused and nothing is written", async () => {
   const file = setup();
   const before = texts(file);
-  const result = await edit(file, { level: 2, settings: { reserveSevenDay: { value: 0.5 } } }, { ...found, by: undefined });
+  const result = await edit(file, { level: 2, settings: { budgetSevenDay: { value: 0.5 } } }, { ...found, by: undefined });
   assert.equal(result.ok, false);
   if (!result.ok) assert.match(result.errors[0] ?? "", /level is a project setting, shared by every machine, and a save names who made it: pick who you are/);
   assert.equal(texts(file), before);
@@ -158,7 +158,7 @@ test("compare-and-swap: a save is made on the settings as they stand, keeping an
 test("a project setting that cannot be saved changes nothing, this machine's part included", async () => {
   const file = setup();
   const before = texts(file);
-  const failing = await edit(file, { level: 1, settings: { reserveSevenDay: { value: 0.5 } } }, { ...found, shared: { read: fileSettings(sharedPath(file)).read, save: async () => ({ ok: false, refused: false, error: "the ref was moved by another writer on each of 5 tries." }) } });
+  const failing = await edit(file, { level: 1, settings: { budgetSevenDay: { value: 0.5 } } }, { ...found, shared: { read: fileSettings(sharedPath(file)).read, save: async () => ({ ok: false, refused: false, error: "the ref was moved by another writer on each of 5 tries." }) } });
   assert.equal(failing.ok, false);
   if (!failing.ok) assert.match(failing.errors[0] ?? "", /were not saved, and nothing was changed: the ref was moved/);
   const without = await editConfig(file, { level: 1 }, { ...found, shared: fileSettings(sharedPath(file)), by: "Ada" });
@@ -171,11 +171,11 @@ test("a save of a format-0 file writes it migrated, with \"version\": 1 and a co
   const file = setup();
   writeFileSync(file, JSON.stringify({ machineName: "laptop-a", repoPath: "repo", settings: { maxParallelSessions: { value: 4, reason: "Room." }, parallelSessions: { value: 2, reason: "Two builders." } } }, null, 2) + "\n");
   const old = readFileSync(file, "utf8");
-  const saved = await edit(file, { settings: { reserveSevenDay: { value: 0.2 } } }, found);
+  const saved = await edit(file, { settings: { budgetSevenDay: { value: 0.2 } } }, found);
   assert.equal(saved.ok, true);
   if (saved.ok) assert.equal(saved.config.settings.maxParallelSessions.value, 2);
   const raw = JSON.parse(readFileSync(file, "utf8")) as Record<string, any>;
-  assert.deepEqual([raw.version, raw.settings], [2, { maxParallelSessions: { value: 2, reason: "Two builders." }, reserveSevenDay: { value: 0.2 } }]);
+  assert.deepEqual([raw.version, raw.settings], [3, { maxParallelSessions: { value: 2, reason: "Two builders." }, budgetSevenDay: { value: 0.2 } }]);
   assert.equal(readFileSync(join(file, "..", "scopesoup.config.v0.json"), "utf8"), old);
   assert.deepEqual(readdirSync(join(file, "..")).sort(), ["project.json", "scopesoup.config.json", "scopesoup.config.v0.json"]);
 });
@@ -274,15 +274,15 @@ test("the next load returns a written change", async () => {
   const file = setup();
   const loader = loaderOf(file);
   assert.equal(loader.load().config?.level, 0);
-  assert.equal((await edit(file, { level: 2, settings: { reserveSevenDay: { value: 0.4 } } }, found)).ok, true);
+  assert.equal((await edit(file, { level: 2, settings: { budgetSevenDay: { value: 0.4 } } }, found)).ok, true);
   const state = loader.load();
   assert.equal(state.changed, true);
-  assert.deepEqual([state.config?.level, state.config?.settings.reserveSevenDay.value], [2, 0.4]);
+  assert.deepEqual([state.config?.level, state.config?.settings.budgetSevenDay.value], [2, 0.4]);
 });
 
 test("a key in the wrong file is refused with where it belongs, and an old file whose migration makes a project setting is refused too", async () => {
   const file = setup();
-  writeFileSync(file, JSON.stringify({ version: 2, machineName: "laptop-a", repoPath: "repo", level: 2, settings: { persistence: { value: 2 } } }, null, 2) + "\n");
+  writeFileSync(file, JSON.stringify({ version: 3, machineName: "laptop-a", repoPath: "repo", level: 2, settings: { persistence: { value: 2 } } }, null, 2) + "\n");
   let state = loaderOf(file).load();
   assert.equal(state.config, null);
   assert.match(state.error ?? "", /level is a project setting, the same on every machine: it belongs in the project's shared settings \(settings\/settings\.json on refs\/scopesoup\/meta\), saved on the Settings page, not in this machine's scopesoup\.config\.json\./);
@@ -290,7 +290,7 @@ test("a key in the wrong file is refused with where it belongs, and an old file 
   writeFileSync(file, JSON.stringify({ machineName: "laptop-a", repoPath: "repo", dryRun: false, mergeQueue: "person" }, null, 2) + "\n");
   state = loaderOf(file).load();
   assert.match(state.error ?? "", /level is a project setting/);
-  writeFileSync(file, JSON.stringify({ version: 2, machineName: "laptop-a", repoPath: "repo" }, null, 2) + "\n");
+  writeFileSync(file, JSON.stringify({ version: 3, machineName: "laptop-a", repoPath: "repo" }, null, 2) + "\n");
   writeFileSync(sharedPath(file), JSON.stringify({ project: "demo", machineName: "desk", workspacesDir: "w", settings: { maxParallelSessions: { value: 2 } }, host: { kind: "metaBranch", prefix: "A" } }, null, 2) + "\n");
   state = loaderOf(file).load();
   assert.match(state.error ?? "", /machineName is this machine's own setting: it belongs in its scopesoup\.config\.json, not in the project's shared settings \(settings\/settings\.json on refs\/scopesoup\/meta\), which every machine shares\./);
@@ -331,11 +331,11 @@ test("a level or a number is saved without a reason: the level change comes back
   const raw = both(file) as Record<string, any>;
   assert.deepEqual([raw.level, raw.settings.maxParallelSessions], [2, { value: 3 }]);
   // The same level again is no level change.
-  const same = await edit(file, { level: 2, settings: { reserveSevenDay: { value: 0.4 } } }, found);
+  const same = await edit(file, { level: 2, settings: { budgetSevenDay: { value: 0.4 } } }, found);
   assert.equal(same.ok && same.level, undefined);
   // The board takes no reason, at the top or with a number.
   assert.equal((await edit(file, { level: 3, reason: "Why not." }, found)).ok, false);
-  assert.equal((await edit(file, { settings: { reserveSevenDay: { value: 0.2, reason: "Room." } } })).ok, false);
+  assert.equal((await edit(file, { settings: { budgetSevenDay: { value: 0.2, reason: "Room." } } })).ok, false);
 });
 
 test("a level whose needs are missing is refused: level 4 without checkCommand or remoteUrl, level 1 and up without claude", async () => {

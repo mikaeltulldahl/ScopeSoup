@@ -46,7 +46,7 @@ async function solo(name: string, project: string) {
   const repo = join(dir, name);
   git(dir, "clone", "-q", origin, repo);
   const file = join(dir, `${name}.config.json`);
-  writeFileSync(file, JSON.stringify({ version: 2, machineName: name, repoPath: name, multiplayer: false, meta: { authorName: "Test Person", authorEmail: "test.person@example.invalid", prefix: "A" } }, null, 2) + "\n");
+  writeFileSync(file, JSON.stringify({ version: 3, machineName: name, repoPath: name, multiplayer: false, meta: { authorName: "Test Person", authorEmail: "test.person@example.invalid", prefix: "A" } }, null, 2) + "\n");
   const saved = await settings.save({ repoPath: repo, remote: "origin", machine: name, by: "Ada", multiplayer: false, update: () => ({ project, host: { kind: "metaBranch", write: true } }) });
   assert.ok(saved.ok);
   const store = openStore(":memory:");

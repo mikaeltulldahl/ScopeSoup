@@ -57,7 +57,9 @@ export type Action =
   | { kind: "person-refs"; v: number }
   | { kind: "host-down"; steps: number }
   | { kind: "foreign-claim"; item: string }
-  | { kind: "usage"; reserve: boolean }
+  | { kind: "usage"; reserve: boolean; pace?: true }
+  /** A person sets the caps on what waits for them (decision 133): new triage waits from `triage` things waiting, new work from `work`. */
+  | { kind: "caps"; triage: number; work: number }
   | { kind: "restart" }
   | { kind: "lose-store" }
   | { kind: "inside-tick"; inner: Action }
@@ -112,10 +114,19 @@ export interface MachineOptions {
 }
 
 
-function makeConfig(level: number, slots: number, machine = "laptop-a"): ProjectConfig {
+/** The waiting caps a run sets (decision 133); the defaults until a `caps` action. */
+export interface SimCaps {
+  triage: number;
+  work: number;
+}
+
+function makeConfig(level: number, slots: number, machine = "laptop-a", caps?: SimCaps): ProjectConfig {
   const result = validateConfig({
     project: "synthetic", machineName: machine, repoPath: "/srv/clone", level,
-    settings: { maxParallelSessions: { value: slots, reason: "simulator" } },
+    settings: {
+      maxParallelSessions: { value: slots, reason: "simulator" },
+      ...(caps ? { waitingCapTriage: { value: caps.triage, reason: "simulator" }, waitingCapWork: { value: caps.work, reason: "simulator" } } : {}),
+    },
     remoteUrl: "git@git.example.invalid:team/project.git", checkCommand: ["node", "check.js"],
   }, "/srv/scopesoup");
   if (!result.ok) throw new Error(result.errors.join("\n"));
@@ -297,9 +308,18 @@ export class SimWorld {
     return this.store.list<WorkItem>("work", "metaBranch").sort((a, b) => Number(a.ref.id.slice(2)) - Number(b.ref.id.slice(2)));
   }
 
-  usage(reserve: boolean): void {
+  /**
+   * A usage reading: in the reserve (99 %), low (10 %), or with `pace` the 5-hour window over its pace line but under its budget (70 %
+   * with 3 of 5 hours gone, the line at 48 % now and 64 % an hour on): one session may start while nothing runs (the kick), no more.
+   */
+  /** The waiting caps the configuration holds now. */
+  caps(): SimCaps {
+    return { triage: this.configNow.settings.waitingCapTriage.value, work: this.configNow.settings.waitingCapWork.value };
+  }
+
+  usage(reserve: boolean, pace = false): void {
     const at = this.now();
-    const u = reserve ? 0.99 : 0.1;
+    const u = reserve ? 0.99 : pace ? 0.7 : 0.1;
     this.store.addUsageSample({
       at, status: "allowed",
       windows: [
@@ -455,11 +475,15 @@ export class SimWorld {
         return;
       }
       case "level":
-        this.configNow = makeConfig(action.to, this.configNow.settings.maxParallelSessions.value, this.machine);
+        this.configNow = makeConfig(action.to, this.configNow.settings.maxParallelSessions.value, this.machine, this.caps());
         this.count("level");
         return;
       case "slots":
-        this.configNow = makeConfig(this.configNow.level, action.to, this.machine);
+        this.configNow = makeConfig(this.configNow.level, action.to, this.machine, this.caps());
+        return;
+      case "caps":
+        this.configNow = makeConfig(this.configNow.level, this.configNow.settings.maxParallelSessions.value, this.machine, { triage: action.triage, work: action.work });
+        this.count("caps");
         return;
       case "sync":
         return this.sync();
@@ -489,7 +513,7 @@ export class SimWorld {
         return;
       }
       case "usage":
-        this.usage(action.reserve);
+        this.usage(action.reserve, action.pace === true);
         return;
       case "restart":
         return this.restart();
@@ -533,7 +557,7 @@ export class SimWorld {
         this.usage(false);
         applyControl(this.store, "resume", this.now(), "simulator", PERSON);
         for (const role of ["triage", "implement", "review", "mergeQueue"] as const) applyControl(this.store, `${role}.start`, this.now(), "simulator", PERSON);
-        if (this.configNow.level < 2) this.configNow = makeConfig(2, this.configNow.settings.maxParallelSessions.value, this.machine);
+        if (this.configNow.level < 2) this.configNow = makeConfig(2, this.configNow.settings.maxParallelSessions.value, this.machine, this.caps());
         return;
     }
   }

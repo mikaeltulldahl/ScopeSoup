@@ -221,7 +221,7 @@ A tick loop, in this order (after Symphony's specification):
 
 1. Reconcile: check running sessions for stalls, refresh host state.
 2. Load and validate the project's configuration (private file plus the shared settings on the meta ref; `src/config/shared.ts`); a bad reload keeps the last good one.
-3. Ask the usage check whether work may start. It is a pure function over the newest usage sample (5-hour and weekly windows), the reset times and the reserve kept for people (`reserveFiveHour`, `reserveSevenDay`, applied from level 1). A session cut off by a limit is resumed after the reset.
+3. Ask the usage check whether work may start. It is a pure function over the newest usage sample (5-hour and weekly windows), the reset times and the budgets (`budgetFiveHour`, `budgetSevenDay`, applied from level 1); at dispatch the pace line and the caps on what waits for a person decide each further start (`src/orchestrator/pacing.ts`, decision 133). A session cut off by a limit is resumed after the reset.
 4. Pick ready items; dispatch into free slots, as the level allows and only while agents are started.
 
 The `level` (0 to 4) gates the tick ([`RULES.md`](RULES.md), [`RUNNING.md`](RUNNING.md), "Levels"). Each agent role has its own switch, and the merge queue has one; Scope Soup comes up with all four paused.

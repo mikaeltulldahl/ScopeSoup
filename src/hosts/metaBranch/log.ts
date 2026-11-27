@@ -235,7 +235,7 @@ export function foldLog(log: ParsedLog): LogPicture {
   picture.lines = ordered;
   const merges: MergedLine[] = [];
   // Answers that named a question not folded yet.
-  const earlyAnswers: { to: number; toBy?: LogActor; toQuestion?: string }[] = [];
+  const earlyAnswers: { to: number; toBy?: LogActor; toQuestion?: string; toSet?: string }[] = [];
   // Answers that named a set of questions not folded yet.
   const setAnswers: { set: string; toQuestion?: string }[] = [];
   // Answers without `to`, by their instant: each takes the newest open question once its instant is folded, so a question of the same
@@ -359,7 +359,7 @@ export function foldLog(log: ParsedLog): LogPicture {
         // A new set of questions from the same writer replaces the set still open (decision 1 of #211).
         if (set) picture.openQuestions = picture.openQuestions.filter((open) => !(open.set !== undefined && open.set !== set && sameActor(open.by, by)));
         // An answer naming this question may fold before it: the same instant with an earlier `by` as text, or another clock.
-        const early = earlyAnswers.findIndex((answer) => answer.to === Date.parse(at) && (answer.toBy === undefined || sameActor(by, answer.toBy)) && (answer.toQuestion === undefined || answer.toQuestion === question));
+        const early = earlyAnswers.findIndex((answer) => answer.to === Date.parse(at) && (answer.toBy === undefined || sameActor(by, answer.toBy)) && (answer.toQuestion === undefined || answer.toQuestion === question) && (answer.toSet === undefined || set === undefined || answer.toSet === set));
         if (early >= 0) {
           earlyAnswers.splice(early, 1);
           markAnswered(line);
@@ -370,7 +370,8 @@ export function foldLog(log: ParsedLog): LogPicture {
         if (answered.has(answeredKey(line) ?? "")) break;
         const bySet = set ? setAnswers.findIndex((answer) => answer.set === set && (answer.toQuestion === undefined || answer.toQuestion === question)) : -1;
         if (bySet >= 0) {
-          setAnswers.splice(bySet, 1);
+          // One without `toQuestion` stands for the whole set: each of its questions that folds after it is answered too.
+          if (setAnswers[bySet]!.toQuestion !== undefined) setAnswers.splice(bySet, 1);
           markAnswered(line);
           break;
         }
@@ -387,6 +388,13 @@ export function foldLog(log: ParsedLog): LogPicture {
         if (data.to === undefined && toSet) {
           const toQuestion = text(data.toQuestion);
           const match = (open: QuestionLine): boolean => open.set === toSet && (toQuestion === undefined || open.question === toQuestion);
+          // Without `toQuestion` it answers every question of the set (a move's words end the whole park); with it, that one.
+          if (toQuestion === undefined && picture.openQuestions.some(match)) {
+            for (const open of picture.openQuestions.filter(match)) markAnswered(open);
+            picture.openQuestions = picture.openQuestions.filter((open) => !match(open));
+            setAnswers.push({ set: toSet });
+            break;
+          }
           let index = -1;
           picture.openQuestions.forEach((open, i) => void (match(open) && (index = i)));
           if (index >= 0) picture.openQuestions.splice(index, 1);
@@ -409,7 +417,9 @@ export function foldLog(log: ParsedLog): LogPicture {
         const to = Date.parse(data.to);
         // With `toQuestion`, of several asked in the same instant only the one with that text (or, with none, the first); without, all.
         const toQuestion = text(data.toQuestion);
-        const named = (question: QuestionLine): boolean => Date.parse(question.at) === to && (toBy === undefined || sameActor(question.by, toBy));
+        // With `toSet` too, only a question of that park: two parks of one instant may ask the same text.
+        const ofSet = text(data.toSet);
+        const named = (question: QuestionLine): boolean => Date.parse(question.at) === to && (toBy === undefined || sameActor(question.by, toBy)) && (ofSet === undefined || question.set === undefined || question.set === ofSet);
         const before = picture.openQuestions.length;
         if (toQuestion === undefined) picture.openQuestions = picture.openQuestions.filter((question) => !named(question));
         else {
@@ -417,7 +427,7 @@ export function foldLog(log: ParsedLog): LogPicture {
           const found = exact >= 0 ? exact : picture.openQuestions.findIndex(named);
           if (found >= 0) picture.openQuestions.splice(found, 1);
         }
-        if (picture.openQuestions.length === before) earlyAnswers.push({ to, ...(toBy ? { toBy } : {}), ...(toQuestion ? { toQuestion } : {}) });
+        if (picture.openQuestions.length === before) earlyAnswers.push({ to, ...(toBy ? { toBy } : {}), ...(toQuestion ? { toQuestion } : {}), ...(ofSet ? { toSet: ofSet } : {}) });
         break;
       }
       case "settings":

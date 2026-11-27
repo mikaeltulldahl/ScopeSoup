@@ -43,7 +43,7 @@ test("a first save of many values is one phrase; an unknown key is spelled out",
   const first = ["project", "level", "bugLabels", "checkCommand"].map((key) => ({ key, to: 1 }));
   assert.deepEqual(settingsWords(first), ["Saved the project's settings for the first time (4 values)"]);
   assert.deepEqual(settingsWords([{ key: "someNewThing.innerPart", from: true, to: false }]), ["Some new thing inner part on → off"]);
-  assert.deepEqual(settingsWords([{ key: "settings.reserveFiveHour.reason", from: "x", to: "y" }]), ["Reserve of the 5-hour window: reason changed"]);
+  assert.deepEqual(settingsWords([{ key: "settings.budgetFiveHour.reason", from: "x", to: "y" }]), ["Budget of the 5-hour window: reason changed"]);
 });
 
 test("values are cut short and objects shown by name", () => {

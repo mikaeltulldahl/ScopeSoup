@@ -12,8 +12,8 @@ export interface UsageCheckInput {
   /** The newest sample from any session's stream; null when none was ever seen. */
   sample: UsageSample | null;
   now: string;
-  /** Share of each window kept for people's own use, 0 to 1. */
-  reserve: Record<UsageWindowKind, number>;
+  /** Each window's budget, a share of its even pace (0 to 2): no session starts once a window is at it, or full. */
+  budget: Record<UsageWindowKind, number>;
   /** Sessions running now. An unknown budget allows one probe, and only when nothing runs. */
   runningSessions: number;
 }
@@ -66,12 +66,12 @@ export function decide(input: UsageCheckInput): UsageCheckDecision {
   for (const kind of ["five_hour", "seven_day"] as const) {
     const window = live.find((candidate) => candidate.kind === kind);
     if (!window || window.utilization === undefined) continue;
-    const limit = 1 - input.reserve[kind];
+    const limit = Math.min(1, Math.max(0, input.budget[kind]));
     if (window.utilization >= limit) {
       return {
         allow: false,
         resumeAt: window.resetsAt,
-        reason: `The ${NAMES[kind]} is at ${pct(window.utilization)}; the limit with the reserve is ${pct(limit)}. Waiting until the reset at ${window.resetsAt}.`,
+        reason: `The ${NAMES[kind]} is at ${pct(window.utilization)}; ${limit < 1 ? `its budget stops new sessions at ${pct(limit)}` : "it is full"}. Waiting until the reset at ${window.resetsAt}.`,
       };
     }
   }

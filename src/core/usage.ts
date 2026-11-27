@@ -414,28 +414,32 @@ export function resetMarks(resets: readonly (string | number)[], from: number, t
 }
 
 export interface PaceSegment {
-  /** The window's start and its reset, in ms. */
+  /** The window's start and where the line ends, in ms: its reset, or where a budget above 1 reaches a full window. */
   from: number;
   to: number;
-  /** The level at the reset (0 to 1): the share Scope Soup may fill, 1 minus the reserve. */
+  /** The level where the line ends (0 to 1). */
   level: number;
 }
 
 /**
  * The pace of each window that has a reset in `resets`: a straight line from 0 at the window's start (its reset minus its
- * length) to `level` at its reset. Above the line a window is ahead of pace, below it there is room left.
+ * length) to `budget` at its reset. Above the line a window is ahead of pace, below it there is room left. A budget above 1 reaches
+ * a full window before the reset, and its line ends there (the provider's limit stops it).
  */
-export function paceLines(resets: readonly number[], windowMs: number, level: number): PaceSegment[] {
-  const clamped = Math.min(1, Math.max(0, level));
-  return resets.map((reset) => ({ from: reset - windowMs, to: reset, level: clamped }));
+export function paceLines(resets: readonly number[], windowMs: number, budget: number): PaceSegment[] {
+  const level = Math.max(0, budget);
+  return resets.map((reset) => {
+    const from = reset - windowMs;
+    return level > 1 ? { from, to: from + windowMs / level, level: 1 } : { from, to: reset, level };
+  });
 }
 
 /**
  * The pace lines a plot of [from, to] shows: one per window that is in view, the coming one (`resets` holds the passed ones
  * and the coming one) included when its reset is past `to`, where the plot cuts it.
  */
-export function paceInView(resets: readonly (string | number)[], from: number, to: number, windowMs: number, level: number): PaceSegment[] {
-  return paceLines(resetMarks(resets, from, Number.POSITIVE_INFINITY), windowMs, level).filter((segment) => segment.from < to);
+export function paceInView(resets: readonly (string | number)[], from: number, to: number, windowMs: number, budget: number): PaceSegment[] {
+  return paceLines(resetMarks(resets, from, Number.POSITIVE_INFINITY), windowMs, budget).filter((segment) => segment.from < to);
 }
 
 /** A pace line's level at a time, or undefined outside its window. */
@@ -453,7 +457,7 @@ export interface BarSpan {
 export interface UsageBar {
   /** The used part split by who used it, in the order of the keys given, from 0; always ends at the (capped) level used. */
   used: (BarSpan & { key: UsagePlotKey })[];
-  /** From what is used to the level expected at the reset; `warn` is the part past the reserve limit. Empty when nothing more is expected. */
+  /** From what is used to the level expected at the reset; `warn` is the part past the budget. Empty when nothing more is expected. */
   forecast: (BarSpan & { warn: boolean })[];
   /** The reserve, from the limit to the end: the part Scope Soup keeps for people. Absent without a limit or with none kept. */
   reserve?: BarSpan;
@@ -462,7 +466,7 @@ export interface UsageBar {
 /**
  * The "Now" bar of a usage window as segments: the used part split by role (`parts` as the plot's last point gives them; scaled to
  * `utilization`, and what they leave out counts as "earlier"), then the forecast up to `expected` (how full it should be at the
- * reset), in warning past `limit` (1 minus the reserve), and the reserve from `limit` to the end.
+ * reset), in warning past `limit` (the budget, at most 1), and what is past the budget from `limit` to the end.
  */
 export function usageBar(parts: Partial<Record<UsagePlotKey, number>>, utilization: number, keys: readonly UsagePlotKey[], limit: number | undefined, expected: number | undefined): UsageBar {
   const level = Math.min(1, Math.max(0, utilization));
@@ -497,7 +501,31 @@ export function expectedAtReset(utilization: number, forecast: { outcome: "used_
   return forecast.outcome === "used_up" ? 1 : Math.min(1, forecast.atReset ?? utilization);
 }
 
-/** A reserve share as the board sets it: from 0 to 0.9, in steps of 0.05. */
-export function snapReserve(reserve: number): number {
-  return Math.round(Math.min(0.9, Math.max(0, reserve)) * 20) / 20;
+/** A budget as the board sets it: from 0 to 2 (200 % of the window's even pace), in steps of 0.05. */
+export function snapBudget(budget: number): number {
+  return Math.round(Math.min(2, Math.max(0, budget)) * 20) / 20;
+}
+
+/**
+ * What each session used of one window, as `attributeUsage` splits it, for the sessions that ran wholly between two readings in
+ * [from, to] (a session the readings do not cover would count too little). By the session's ref key.
+ */
+export function sessionUse(samples: readonly UsageSample[], sessions: readonly UsageSession[], kind: UsageWindowKind, options: AttributeOptions): Map<string, number> {
+  const readings = readingsOf(samples, kind).filter((reading) => reading.at >= options.from && reading.at <= options.to);
+  const first = readings[0]?.at;
+  const last = readings[readings.length - 1]?.at;
+  const used = new Map<string, number>();
+  if (first === undefined || last === undefined) return used;
+  const covered = sessions.filter((session) => session.finishedAt !== undefined && Date.parse(session.startedAt) >= first && Date.parse(session.finishedAt) <= last);
+  for (const session of covered) used.set(refKey(session.ref), 0);
+  for (const change of changesOf(readings)) {
+    if (change.kind === "reset") continue;
+    const perMs = change.delta / Math.max(1, change.to - change.from);
+    splitRise(change.from, change.to, perMs, sessions, options.to, (_a, _b, _key, amount, _method, session) => {
+      if (!session) return;
+      const key = refKey(session.ref);
+      if (used.has(key)) used.set(key, used.get(key)! + amount);
+    });
+  }
+  return used;
 }

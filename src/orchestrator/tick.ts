@@ -11,7 +11,7 @@ import { KEYS } from "../store/keys.ts";
 import type { Level, ProjectConfig } from "../config/types.ts";
 import { levelName, mediaShared } from "../config/types.ts";
 import { mediaPromptText } from "../core/media.ts";
-import type { Change, LinkType, RecordedAnswer, Ref, RepoLabel, Session, SessionRole, UsageWindowKind, WorkItem } from "../model/types.ts";
+import type { Change, LinkType, RecordedAnswer, Ref, RepoLabel, Session, SessionRole, WorkItem } from "../model/types.ts";
 import { labelsPromptText } from "../model/labels.ts";
 import { refKey } from "../model/types.ts";
 import { providerFor } from "./providers/index.ts";
@@ -46,6 +46,8 @@ import { itemTextHash } from "../core/answerReuse.ts";
 import { loadSlots } from "./slots.ts";
 import { dropOverturns, readOverturns } from "./overturns.ts";
 import { setupPromptLine } from "./setup.ts";
+import { pacer, runningByRole, usageBudget, waitingCaps, waitingForPerson, writePacing } from "./pacing.ts";
+import { waitingCapWait } from "../core/waitingCaps.ts";
 import { plural } from "../model/plural.ts";
 
 export type { TickDeps } from "./context.ts";
@@ -66,6 +68,10 @@ export interface TickReport {
   queued: number;
   /** No agent role is started (paused, or stopped by Stop): no session starts. Running ones may still finish (Pause). */
   paused?: boolean;
+  /** The pace held the next start (decision 133): why. */
+  paced?: string;
+  /** New triage or new work waited for what waits for a person (decision 133): the words, once each. */
+  capped?: string[];
 }
 
 const OVER: readonly Session["status"][] = ["succeeded", "failed", "cancelled", "limit"];
@@ -79,21 +85,19 @@ const DELETED = "Questions a person deleted on the host (do not ask them again; 
 
 export { CLAIM_EXPIRY_MINUTES };
 
-/** The share of each usage window kept for people's own use: the usage stop, for the tick and for a chat turn. */
-export function usageReserve(config: ProjectConfig): Record<UsageWindowKind, number> {
-  return {
-    five_hour: config.settings.reserveFiveHour.value,
-    seven_day: config.settings.reserveSevenDay.value,
-  };
+export { usageBudget };
+
+/** The share of a monthly allowance kept for people's own use: what the weekly budget leaves of the week's even pace. */
+export function allowanceReserve(config: ProjectConfig): number {
+  return Math.max(0, 1 - usageBudget(config).seven_day);
 }
 
 /**
  * The usage check for a session of `role`: a role on a provider that counts a monthly allowance is paced by it (`allowance.ts`),
- * every other role by Claude's windows.
+ * every other role by Claude's windows (the stop at the budget; the pace is asked at dispatch, `pacing.ts`).
  */
 export function usageDecision(store: Store, config: ProjectConfig, role: SessionRole, at: string, running: number): UsageCheckDecision {
-  const reserve = usageReserve(config);
-  return allowanceDecision(store, config, role, at, reserve.seven_day) ?? decide({ sample: store.latestUsageSample(), now: at, reserve, runningSessions: running });
+  return allowanceDecision(store, config, role, at, allowanceReserve(config)) ?? decide({ sample: store.latestUsageSample(), now: at, budget: usageBudget(config), runningSessions: running });
 }
 
 /** Writes an event for each number changed since the last tick, and for a change of level. */
@@ -150,6 +154,14 @@ function interrupted(ctx: Context, key: string, job: Job, item: WorkItem | null)
     const reason = `${asked.by} picked ${PICK_WORDS[asked.to] ?? asked.to} for ${item?.ref.id ?? key} on the board: the ${session.role} session ${session.ref.id} is ended now and its result is not taken.`;
     const stopped = runner.stopFor?.(job.item, `Stopped: ${reason}`, true) ?? 0;
     if (stopped > 0) ctx.commit("orchestrator.stopped", reason, key, { by: asked.by, to: asked.to, role: session.role, session: session.ref.id });
+    // Ended at once (its process is gone): the job goes on as the pick left it in this tick, and its slot is free.
+    const after = store.get<Session>(session.ref);
+    if (!after || !isLive(after)) {
+      delete job.interrupt;
+      delete job.sessionId;
+      delete job.resume;
+      return false;
+    }
     if (Date.parse(ctx.at) - Date.parse(asked.at) <= INTERRUPT_WAIT_MS) return true;
     ctx.commit("orchestrator.interrupt_failed", `The ${session.role} session ${session.ref.id} on ${item?.ref.id ?? key} is still there ${Math.round(INTERRUPT_WAIT_MS / 60_000)} minutes after ${asked.by}'s pick ended it; the job goes on as the pick left it, and nothing starts on the Item while that session runs.`, key, { by: asked.by, session: session.ref.id });
   }
@@ -776,6 +788,14 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
   await overturnsMerged(ctx, itemByKey);
 
   await renewClaims(ctx, itemByKey);
+  // A renewal reads the Item from the host: one it found moved to Backlog on another machine is given up in this tick, as step 1b gives
+  // up one the tick read so at its start (#243), so the next tick does not do it with nothing new read.
+  for (const [key, job] of Object.entries(jobs)) {
+    const before = itemByKey.get(key);
+    const read = store.get<WorkItem>(job.item);
+    if (!before || before.backlog || !read?.backlog || job.sessionId || read.state === "done" || read.state === "abandoned") continue;
+    if (readInBacklog(job, read)) await dropAsked(ctx, jobs, key, job, read);
+  }
 
   // Level 4 merges through the merge queue: the queue is driven now that finished sessions are settled.
   if (config.level >= 4) await driveQueue(ctx, items);
@@ -787,7 +807,17 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
   // The roles paused (or stopped) at this level, and how many steps wait for each: named first in the idle reason.
   const off: SessionRole[] = [];
   const waitsFor: Record<SessionRole, number> = { triage: 0, implement: 0, review: 0 };
+  // The pace and what waits for a person (decision 133): read once per tick, kept for the Usage tab when the tick ends.
+  const pace = pacer(store, config, at);
+  const waitingNow = waitingForPerson(store, store.list<WorkItem>("work"), jobs);
+  const caps = waitingCaps(config);
+  const capWaits = new Set<string>();
   const finish = (): TickReport => {
+    const ceiling = config.settings.maxParallelSessions.value;
+    const fit = pace.fits(ceiling);
+    writePacing(store, { at, running: runningByRole(store), ceiling, cap: fit.count, why: fit.reason, waiting: waitingNow, caps, waits: [...capWaits] });
+    reasons.push(...capWaits);
+    if (capWaits.size > 0) report.capped = [...capWaits];
     // A blocker this tick closed (the store has it at once) frees what waited for it in this tick.
     noteBlockersChanged(ctx, seq0);
     report.running = running;
@@ -935,10 +965,10 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
 
   // 4. The budget. Paid extra usage stops what is running too.
   const budget = (role: SessionRole): UsageCheckDecision =>
-    // From level 1 the stop at the reserve is always on (nothing is dispatched at level 0).
+    // From level 1 the stop at the budget is always on (nothing is dispatched at level 0).
     usageDecision(store, config, role, at, running);
   // Paid extra usage is Claude's: it stops what runs on any provider.
-  const first = decide({ sample: store.latestUsageSample(), now: at, reserve: usageReserve(config), runningSessions: running });
+  const first = decide({ sample: store.latestUsageSample(), now: at, budget: usageBudget(config), runningSessions: running });
   if (first.stopRunning) {
     const stopped = running > 0 ? runner.stopAll(first.reason) : 0;
     if (stopped > 0) ctx.commit("orchestrator.budget_stop", `${first.reason} Stopped ${plural(stopped, "running session")}.`);
@@ -982,6 +1012,14 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
       if (decision.resumeAt && (!report.wakeAt || decision.resumeAt < report.wakeAt)) report.wakeAt = decision.resumeAt;
       break;
     }
+    // The pace (decision 133): one more session only while the windows stay under their pace lines by its end. Work under way is
+    // first in line, so a refusal holds what comes after it too. The line rises with time: a later tick may start it.
+    const paced = pace.check(step);
+    if (!paced.allow) {
+      reasons.push(`no more sessions start for now: ${paced.reason}`);
+      report.paced = paced.reason;
+      break;
+    }
 
     // The front of the line. A waiting Item whose implement step is next, with its triage out of date (the paths it named
     // changed on main, its text was edited, a blocker finished, or it is older than triageMaxAgeDays), has its triage again.
@@ -1010,6 +1048,15 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
       }
     }
 
+    // Don't outrun the person (decision 133): new triage, and new work (a first implement step), wait while too much waits for a person.
+    // Work under way, its fix rounds, the steps an answer resumes and a person's own pick go on; the next entry may start.
+    const newKind = personAsked(entry.job, step) ? null : !entry.job ? (step === "triage" ? "triage" : "work") : step === "implement" && firstImplement(entry.job) ? "work" : null;
+    const capWait = newKind ? waitingCapWait(newKind, waitingNow, caps) : null;
+    if (capWait) {
+      capWaits.add(capWait);
+      continue;
+    }
+
     const why = again
       ? `its triage is out of date (${again}) and is taken again before its implement step`
       : entry.job
@@ -1024,6 +1071,12 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
       step, failures: 0, fixRounds: 0, startedAt: at, ...(entry.item.backlog ? {} : { seenInTodo: true as const }),
       ...(skipped ? { triage: { ready: true, size: skipped.size, paths: [], hidesDecision: false } } : {}),
     };
+    // The ceiling as it is now, before anything is taken for the start: a person may have lowered it during this tick.
+    const ceilingFirst = Math.min(slots, deps.config.load().config?.settings.maxParallelSessions.value ?? slots);
+    if (running >= ceilingFirst) {
+      reasons.push(ceilingFirst === 1 ? "the 1 session slot is in use" : `all ${ceilingFirst} session slots are in use`);
+      break;
+    }
     // A unit of each resource the step needs, before its workspace and claim. Without one the item waits and the next may start.
     const units = deps.resources ? await deps.resources.take(key, `${step} for ${entry.item.ref.id}`, step) : { ok: true as const, env: {} };
     if (!units.ok) {
@@ -1117,6 +1170,18 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
           reasons.push(`${entry.item.ref.id} waits: a person is talking to one of its sessions`);
           continue;
         }
+        // The ceiling as it is now: a person may have lowered it while this start was prepared (the configuration is read again).
+        const ceilingNow = Math.min(slots, deps.config.load().config?.settings.maxParallelSessions.value ?? slots);
+        if (running >= ceilingNow) {
+          const reason = ceilingNow === 1 ? "the 1 session slot is in use" : `all ${ceilingNow} session slots are in use`;
+          reasons.push(reason);
+          // A new Item gives back what was taken for it; work under way keeps its claim and clone for its next step.
+          if (!entry.job) {
+            if (deps.actions.claims) await ctx.act("release the claim", key, () => deps.actions.release(job.item, `${entry.item.ref.id} is not started: ${reason}`));
+            await ctx.act("free the workspace of an item that does not start", key, () => runner.releaseWorkspace(job.workspace, `${entry.item.ref.id} is not started: ${reason}`));
+          }
+          continue;
+        }
         // A person picked a state for the Item while its start was prepared (decision 104): their pick stands, and nothing starts.
         if (entry.job && changedMeanwhile(store, jobs, key) === "picked") {
           reasons.push(`${entry.item.ref.id} waits: a person changed it while its ${step} step was prepared`);
@@ -1172,6 +1237,7 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
     delete target.resume;
     delete target.answerArrived;
     running++;
+    pace.started(step);
     report.started.push({ item: key, role: step, sessionId: session.ref.id });
     // Said once, when the model changes to the stepped-up one.
     const stepped = chosen?.steppedUp && job.implementModel !== chosen.model ? ` Stepped up to ${chosen.model} after ${chosen.steppedUp.sendBacks} send-backs by review (from ${chosen.steppedUp.from}).` : "";
@@ -1181,4 +1247,9 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
 
   if (running > 0 && report.started.length === 0) reasons.unshift(`${plural(running, "session")} ${running === 1 ? "is" : "are"} running`);
   return finish();
+}
+
+/** The implement step has not begun: no change, no session of it, nothing to resume and no attempt yet. Its start is new work (decision 133). */
+export function firstImplement(job: Job): boolean {
+  return job.step === "implement" && job.head === undefined && !job.implement && job.agentSession === undefined && job.resumeWith === undefined && !job.resume && job.failures === 0 && !job.merge;
 }

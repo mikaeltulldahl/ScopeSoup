@@ -718,8 +718,8 @@ export type CommitView =
 export interface UsagePageWindow extends UsageAttribution {
   /** The newest reading, with the status line's forecast; absent before the first reading. */
   current?: { utilization: number; resetsAt: string; at: string; reset?: true; forecast?: UsageForecast };
-  /** The share kept for people's own use: Scope Soup starts nothing once the window is at 1 minus this. Absent without a configuration. */
-  reserve?: number;
+  /** The window's budget, a share of its even pace (0 to 2): its pace line ends there at the reset, and no session starts once the window is at it. Absent without a configuration. */
+  budget?: number;
   /** How full the window got over the span, split by role. */
   plot: UsagePlot;
   /** The forecast from now to the reset; empty without one. */
@@ -756,6 +756,20 @@ export interface UsageView {
   withTokens: number;
   /** One per provider some role runs on that counts a monthly allowance instead of reporting windows; absent when none does. */
   allowances?: AllowanceView[];
+  /** What the orchestrator's last tick decided about how many run at once and why (decision 133); absent before the first tick. */
+  pacing?: PacingView;
+}
+
+/** Sessions running now by role, the cap in use and why, and what waits for a person (`orchestrator/pacing.ts`). */
+export interface PacingView {
+  at: string;
+  running: Record<SessionRole, number>;
+  ceiling: number;
+  cap: number;
+  why: string;
+  waiting: number;
+  caps: { triage: number; work: number };
+  waits: string[];
 }
 
 /** One turn of a person's chat with a session: the message, and the reply as far as it is written. */

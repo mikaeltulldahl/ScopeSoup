@@ -24,8 +24,10 @@ const NUMBERS: Record<string, [string, string]> = {
   queueMinOutcomes: ["Outcomes the merge queue waits for", ""],
   triageMaxAgeDays: ["Oldest triage still used", "days"],
   maxParallelSessions: ["Sessions at once", ""],
-  reserveFiveHour: ["Reserve of the 5-hour window", "%"],
-  reserveSevenDay: ["Reserve of the weekly window", "%"],
+  budgetFiveHour: ["Budget of the 5-hour window", "%"],
+  budgetSevenDay: ["Budget of the weekly window", "%"],
+  waitingCapTriage: ["Waiting things that stop new triage", ""],
+  waitingCapWork: ["Waiting things that stop new work", ""],
   tickSeconds: ["Time between looks", "s"],
 };
 

@@ -164,7 +164,8 @@ function snapshot(r: Repos, clone: string): Record<string, string> {
 describe("workspaces", { concurrency: 12 }, () => {
 test("two items get different clones, a third waits for one, and each item keeps its clone across its steps", async () => {
   const r = repos();
-  const config = poolConfig(r);
+  // The two escalated Items below wait for a person: the cap on new triage is raised so item 3's triage still starts (decision 133).
+  const config = poolConfig(r, { settings: { maxParallelSessions: { value: 3, reason: "test" }, waitingCapTriage: { value: 5, reason: "test" } } });
   const store = openStore(":memory:");
   const clock = { ms: T0 };
   const now = () => new Date(clock.ms).toISOString();
@@ -195,8 +196,10 @@ test("two items get different clones, a third waits for one, and each item keeps
   assert.equal(between.idle?.includes("3 waits: no clone of the pool is free (2 of 2 held by items under way)"), true, between.idle);
   assert.equal(holder("1")?.held, true);
 
-  // Implement, in the same clones.
+  // Implement, in the same clones. The fake agent's own reading is on the real clock, not the test's: a reading of the test's again, with
+  // room under both pace lines, so the pace lets both start (decision 133).
   clock.ms += 1000;
+  store.addUsageSample({ at: now(), status: "allowed", windows: [{ kind: "five_hour", utilization: 0.1, resetsAt }, { kind: "seven_day", utilization: 0.1, resetsAt }] });
   const second = await run();
   assert.deepEqual(second.started.map((entry) => `${entry.item} ${entry.role}`), [`${refKey(ref("1"))} implement`, `${refKey(ref("2"))} implement`]);
   await finish(second);

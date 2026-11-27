@@ -38,8 +38,10 @@ const SETTING_RANGES: Record<SettingName, { min: number; max: number; whole: boo
   tickSeconds: { min: 1, max: 3600, whole: true },
   stallTimeoutMinutes: { min: 1, max: 1440, whole: false },
   sessionTimeoutMinutes: { min: 1, max: 1440, whole: false },
-  reserveFiveHour: { min: 0, max: 0.9, whole: false },
-  reserveSevenDay: { min: 0, max: 0.9, whole: false },
+  budgetFiveHour: { min: 0, max: 2, whole: false },
+  budgetSevenDay: { min: 0, max: 2, whole: false },
+  waitingCapTriage: { min: 1, max: 100, whole: true },
+  waitingCapWork: { min: 1, max: 100, whole: true },
   persistence: { min: 1, max: 5, whole: true },
   retryBackoffCapSeconds: { min: 10, max: 86400, whole: true },
   checkTimeoutMinutes: { min: 1, max: 1440, whole: false },
@@ -379,6 +381,9 @@ export function validateConfig(given: unknown, baseDir: string): ConfigResult {
   const names = resources.map((each) => each.name);
   for (const [index, name] of names.entries()) if (names.indexOf(name) !== index) err(`The resource name "${name}" is used twice: each resource needs its own name, in resources and sharedResources together.`);
 
+  if (settings.waitingCapTriage.value > settings.waitingCapWork.value) {
+    err(`settings.waitingCapTriage (${settings.waitingCapTriage.value}) is larger than settings.waitingCapWork (${settings.waitingCapWork.value}): new triage must stop no later than new work, so an implementor's questions are not crowded out.`);
+  }
   if (settings.queueMinBatch.value > settings.queueMaxBatch.value) {
     err(`settings.queueMinBatch (${settings.queueMinBatch.value}) is larger than settings.queueMaxBatch (${settings.queueMaxBatch.value}).`);
   }

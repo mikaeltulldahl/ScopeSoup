@@ -51,7 +51,7 @@ function item(id: string, w: W, over: Partial<ItemObs> = {}): ItemObs {
 function obs(over: Partial<Observation> = {}): Observation {
   return {
     seed: 1, step: 1, action: { kind: "sync" }, at: AT, level: 3, slots: 2, switches: { triage: "started", implement: "started", review: "started", mergeQueue: "started" },
-    usageReserve: false, fair: false, items: [], sessions: [], started: [], liveCount: 0, events: [], lastSeq: 0, answers: [], tick: null, tickError: null,
+    usageReserve: false, overPace: false, kickBlocked: false, waiting: 0, caps: { triage: 2, work: 5 }, fair: false, items: [], sessions: [], started: [], liveCount: 0, events: [], lastSeq: 0, answers: [], tick: null, tickError: null,
     git: gitObs(), ledger: ledger(), requests: [], remote: { refusedRewrites: 0, down: false, items: 0 }, lanes: ["blocked", "backlog", "in-progress", "in-review", "queued", "checking", "done"],
     queued: [], fairTicks: 0, ...over,
   };
@@ -212,6 +212,22 @@ describe("each rule fires on a bad state built by hand", { concurrency: 1 }, () 
   });
   it("D5", "a session starts while usage is in the reserve", () => {
     assert.match(fires("D5", obs({ usageReserve: true }), obs({ started: [started("A-1", "triage")] })) ?? "", /reserve/);
+  });
+  it("D9", "a new triage or a first implement step starts while too much waits for a person", () => {
+    const full = obs({ waiting: 2 });
+    assert.match(fires("D9", full, obs({ action: tick, waiting: 2, started: [started("A-1", "triage")] })) ?? "", /new triage started on A-1 while 2 things waited/);
+    // Work under way goes on: a triage of an Item that has a job (a recheck) is not new.
+    const under = obs({ waiting: 5, items: [item("A-1", SLOT, { job: job("A-1", { step: "implement" }) }), item("A-2", SLOT, { job: job("A-2", { step: "implement", head: "abc" }) })] });
+    assert.equal(fires("D9", under, obs({ action: tick, waiting: 5, started: [started("A-1", "triage"), started("A-2", "implement")] })), null);
+    assert.match(fires("D9", under, obs({ action: tick, waiting: 5, started: [started("A-1", "implement")] })) ?? "", /new work started on A-1 while 5 things waited/);
+    // An answer settled in the tick brought it under the cap.
+    assert.equal(fires("D9", full, obs({ action: tick, waiting: 1, started: [started("A-1", "triage")] })), null);
+  });
+  it("D10", "more than the kick starts while a window is over its pace line", () => {
+    assert.match(fires("D10", obs({ overPace: true, liveCount: 1 }), obs({ action: tick, overPace: true, started: [started("A-1", "triage")] })) ?? "", /over its pace line, with 1 running/);
+    // Nothing ran: a start is the kick, allowed only in a fresh window or at or under the line now.
+    assert.equal(fires("D10", obs({ overPace: true, liveCount: 0 }), obs({ action: tick, started: [started("A-1", "triage")] })), null);
+    assert.match(fires("D10", obs({ overPace: true, kickBlocked: true, liveCount: 0 }), obs({ action: tick, kickBlocked: true, started: [started("A-1", "triage")] })) ?? "", /nothing running while a usage window was over its pace line/);
   });
   it("D6", "a step that keeps failing is never put down", () => {
     assert.match(fires("D6", obs({ items: [item("A-1", SLOT, { job: job("A-1", { failures: 9 }) })] })) ?? "", /failed 9 times/);
@@ -412,6 +428,38 @@ async function holdsOn(id: string, options: Shrunk, actions: Action[]): Promise<
 }
 
 describe("runs the simulator shrank, held since their fix", { concurrency: 1 }, () => {
+  // Fixed (#223): a move's words, written by the park's set before the store read its questions back, answer every question of the set.
+  test("A3: a move answers both questions of a park the store has not read back", async () => {
+    await holdsOn("A3", {items: 6, level: 2, slots: 2, steps: 600, profile: "rough"}, [
+      {kind: "tick"},
+      {kind: "end", item: "A-1", v: 784594},
+      {kind: "tick"},
+      {kind: "move", item: "A-1", v: 848690},
+    ]);
+  });
+
+  // Fixed (#223): the ceiling is read again right before a start, so one lowered while the tick awaits holds the next start.
+  test("D1: slots lowered inside a tick hold the next start", async () => {
+    await holdsOn("D1", {items: 9, level: 4, slots: 2, steps: 600, profile: "rough"}, [{ kind: "inside-tick", inner: { kind: "slots", to: 1 } }]);
+  });
+
+  // Fixed (#223): a job made again on an Item counts its parks on from the log, so a re-triage's park in the same instant as the one
+  // before does not get its set, and the earlier answer does not release it.
+  test("A3: a re-triage's questions are not released by the answer to the park before", async () => {
+    await holdsOn("A3", {items: 11, level: 3, slots: 2, steps: 600, profile: "calm"}, [
+      {kind: "tick"},
+      {kind: "end", item: "A-1", v: 997478},
+      {kind: "tick"},
+      {kind: "end", item: "A-3", v: 399605},
+      {kind: "tick"},
+      {kind: "answer", item: "A-3", v: 147897},
+      {kind: "tick"},
+      {kind: "end", item: "A-3", v: 70262},
+      {kind: "tick"},
+      {kind: "tick"},
+    ]);
+  });
+
   // Fixed (#255): a commit no longer forgets what was said, so a tick after a tick that started sessions says its idle line once, new,
   // and the next one says nothing (F3 now tells news from the same words again).
   test("F3: ticks in a row say a standing line once", async () => {

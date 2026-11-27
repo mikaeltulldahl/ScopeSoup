@@ -182,6 +182,9 @@ export function situate(item: WorkItem, index: Index): Situation {
   }
   if (working || found || change.draft) return { ...situation, lane: "in-progress" };
   if (session?.role === "review" && isLive(session)) return { ...situation, lane: "in-review" };
+  // A change from before and no job (its work was dropped, or a store lost): an open blocker holds it in Blocked, as it holds an Item
+  // with no change (decision 3: a blocker comes before the stage).
+  if (!job && index.snapshot.level !== undefined && item.state === "todo" && !item.needsDecision && !parkedForPerson(item.ref, index) && openBlockers(item, index).length > 0) return { ...situation, lane: "blocked" };
   // Parked for a person (a question from a fix round after review, say): it waits in review for them, not in the queue. Where Scope Soup
   // runs, an Item with no job is not in its merge queue (its work was dropped, or not taken up yet), whatever the change's verdicts.
   const queueHasIt = situation.approved && !parkedForPerson(item.ref, index) && !(index.snapshot.level !== undefined && !job);

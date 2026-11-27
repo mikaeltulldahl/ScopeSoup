@@ -134,7 +134,7 @@ export interface ServerOptions {
   /** The orchestrator's labels, which order the backlog column. Defaults to bug label "bug". */
   /** How sharing the meta ref with the remote stands (kept in memory by main.ts); absent in singleplayer. */
   shareState?: () => ShareState | undefined;
-  planning?: () => { bugLabels: string[]; plannedSessions?: number; level?: number; resources?: ResourceConfig[]; reserve?: Record<UsageWindowKind, number>; allowances?: AllowancePlan[]; pickNeeds?: () => { triage?: string; review?: string; implement?: string } };
+  planning?: () => { bugLabels: string[]; plannedSessions?: number; level?: number; resources?: ResourceConfig[]; budget?: Record<UsageWindowKind, number>; allowances?: AllowancePlan[]; pickNeeds?: () => { triage?: string; review?: string; implement?: string } };
   /** Reads the diff of an item's branch for `GET /api/diff`. Absent in board-only mode. */
   diff?: (ref: Ref) => Promise<DiffView>;
   /** Opens an Item's change, or one of its files, in the person's own diff tool for `POST /api/open-diff` (`src/orchestrator/diffTool.ts`). Absent in board-only mode. */
@@ -637,7 +637,7 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
       // The question as the store records it, when the line does not name it otherwise, so every machine reads the same answer back.
       const lines = resolved.map((each) => {
         const named = each.asked?.question ?? (set ? each.target?.question : undefined);
-        return { kind: "answer", by: by(), fields: { answer: each.text, ...(each.asked ? { to: each.asked.at, toBy: each.asked.by, toQuestion: each.asked.question } : set ? { toSet: set, ...(each.target ? { toQuestion: each.target.question } : {}) } : {}), ...(each.question && each.question !== named ? { question: each.question } : {}) } };
+        return { kind: "answer", by: by(), fields: { answer: each.text, ...(each.asked ? { to: each.asked.at, toBy: each.asked.by, toQuestion: each.asked.question, ...(each.asked.set ? { toSet: each.asked.set } : {}) } : set ? { toSet: set, ...(each.target ? { toQuestion: each.target.question } : {}) } : {}), ...(each.question && each.question !== named ? { question: each.question } : {}) } };
       });
       let written = 0;
       try {
@@ -883,6 +883,10 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
     // The questions the move answers are written first: a move the log does not take is not made, so no question stays open there for a
     // job that is gone (#230). What the move would refuse is refused before.
     const offered = moveWhys({ ...moveInput(work, lane), job: loadJobs(store)[ref] })[to];
+    // The move tried on a copy of the jobs first: one it refuses (its work runs on another machine, say) writes nothing to the log.
+    const trial = structuredClone(loadJobs(store));
+    const tried = applyMove(trial, ref, to, { ...moveInput(work, lane), job: trial[ref] }, who, at);
+    if (!tried.ok) return sendError(response, 409, "REFUSED", `${work.ref.id}: ${tried.why}.`);
     if (offered && !offered.why) {
       const problem = await answerByMove(work, MOVE_ANSWERS[to]);
       if (problem) return sendError(response, 502, "WRITE_REFUSED", `${work.ref.id} is not moved: its open question could not be answered in its log (${problem}). Try again.`);
@@ -917,11 +921,11 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
     // A question the job parked on and the store has not read back yet: an answer without `to` takes the newest open one.
     const parked = loadJobs(store)[refKey(work.ref)]?.parked;
     const unread = onLog && open.length === 0 && parked !== undefined && parked.as !== "queued" && parked.as !== "handed-over";
-    const asked: (Pick<OpenQuestion, "at" | "by" | "question"> | null)[] = unread ? [null] : open;
+    const asked: (Pick<OpenQuestion, "at" | "by" | "question" | "set"> | null)[] = unread ? [null] : open;
     const set = parked ? parkSet(loadJobs(store)[refKey(work.ref)]!) : "";
     for (const question of asked) {
       try {
-        await write!.appendLog!(work.ref, { kind: "answer", by: by(), fields: { answer: said, ...(question ? { to: question.at, toBy: question.by, toQuestion: question.question } : { toSet: set }) } });
+        await write!.appendLog!(work.ref, { kind: "answer", by: by(), fields: { answer: said, ...(question ? { to: question.at, toBy: question.by, toQuestion: question.question, ...(question?.set ? { toSet: question.set } : {}) } : { toSet: set }) } });
       } catch (error) {
         return error instanceof Error ? error.message : String(error);
       }
@@ -1284,7 +1288,7 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
       const asked = (item.openQuestions ?? []).filter((question) => !question.proposal && question.question === parkedReason).pop();
       const said = !keeps ? `Answered the triage's questions: ${answers.join(" | ")}` : `${action === "reject" ? "Rejected" : action === "edit" ? "Edited and accepted" : "Accepted"} the triage's rewrite${answers.length > 0 ? `, keeping the recommendations: ${answers.join(" | ")}` : ""}.`;
       try {
-        await write!.appendLog!(subject, { kind: "answer", by: by(), fields: { answer: said, answers: recorded(loggedDecision), ...(asked ? { to: asked.at, toBy: asked.by, toQuestion: asked.question } : { toSet: parkSet(job!) }) } });
+        await write!.appendLog!(subject, { kind: "answer", by: by(), fields: { answer: said, answers: recorded(loggedDecision), ...(asked ? { to: asked.at, toBy: asked.by, toQuestion: asked.question, ...(asked.set ? { toSet: asked.set } : {}) } : { toSet: parkSet(job!) }) } });
       } catch (error) {
         return sendError(response, 502, "WRITE_REFUSED", `The answer is not recorded: it could not be written to ${subject.id}'s log (${error instanceof Error ? error.message : String(error)}). Try again.`);
       }
@@ -2893,7 +2897,7 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
         const snapshot = loadSnapshot(store);
         const plan = options.planning?.();
         if (plan?.plannedSessions !== undefined) snapshot.plannedSessions = plan.plannedSessions;
-        return sendJson(response, 200, buildUsageView(store, snapshot, span, now(), plan?.reserve, plan?.allowances));
+        return sendJson(response, 200, buildUsageView(store, snapshot, span, now(), plan?.budget, plan?.allowances));
       }
       if (path === "/api/history") {
         if (!options.history) return sendJson(response, 200, { now: now().toISOString(), available: false, reason: "Commits show when Scope Soup runs with a project configuration; this board reads no repository." });

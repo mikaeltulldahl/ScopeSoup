@@ -19,7 +19,7 @@ function sample(windows: UsageWindow[], extra: Partial<UsageSample> = {}): Usage
   return { at: NOW, windows, status: "allowed", ...extra };
 }
 function input(over: Partial<UsageCheckInput>): UsageCheckInput {
-  return { sample: null, now: NOW, reserve: { five_hour: 0.2, seven_day: 0.2 }, runningSessions: 0, ...over };
+  return { sample: null, now: NOW, budget: { five_hour: 0.8, seven_day: 0.8 }, runningSessions: 0, ...over };
 }
 
 interface Row {
@@ -36,20 +36,20 @@ const rows: Row[] = [
   { name: "no sample, one running: wait for it", in: { runningSessions: 1 }, allow: false, reason: /waiting for a reading/ },
   { name: "well within both windows", in: { sample: sample([five(0.1), week(0.3)]) }, allow: true, reason: /Within budget/ },
   {
-    name: "5-hour window at the reserve line",
+    name: "5-hour window at its budget",
     in: { sample: sample([five(0.8), week(0.1)]) },
-    allow: false, resumeAt: FIVE_RESET, reason: /5-hour window is at 80 %.*limit.*80 %/,
+    allow: false, resumeAt: FIVE_RESET, reason: /5-hour window is at 80 %; its budget stops new sessions at 80 %/,
   },
   {
-    name: "week over the reserve line",
+    name: "week over its budget",
     in: { sample: sample([five(0.1), week(0.85)]) },
     allow: false, resumeAt: WEEK_RESET, reason: /weekly window is at 85 %/,
   },
-  // No pacing: a week used early is within budget while it is under the reserve line.
+  // The stop is not the pace (that is asked at dispatch): a week used early is within budget while it is under the budget.
   { name: "half the week gone, 60 % used", in: { sample: sample([five(0.1), week(0.6)]) }, allow: true, reason: /Within budget/ },
   {
-    name: "no reserve: only a full window stops",
-    in: { sample: sample([five(0.99), week(0.5)]), reserve: { five_hour: 0, seven_day: 0 } },
+    name: "a budget of 100 % or more: only a full window stops",
+    in: { sample: sample([five(0.99), week(0.5)]), budget: { five_hour: 1, seven_day: 1.5 } },
     allow: true, reason: /Within budget/,
   },
   { name: "allowed with no figures, nothing running: probe", in: { sample: sample([five(), week()]) }, allow: true, reason: /gave no figure.*starting one session/ },

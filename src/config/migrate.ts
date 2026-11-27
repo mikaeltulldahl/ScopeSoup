@@ -7,7 +7,7 @@ import { defaultSettings } from "./defaults.ts";
 import { levelName } from "./types.ts";
 
 /** The format this Scope Soup writes and reads. Raise it, and add a step, when an older file would no longer load as is. */
-export const CONFIG_VERSION = 2;
+export const CONFIG_VERSION = 3;
 
 /** Said when a file's `version` is newer than this Scope Soup's. */
 export const NEWER_CONFIG = "this project's config is from a newer Scope Soup; upgrade Scope Soup";
@@ -32,7 +32,7 @@ export type MigrateResult = { ok: true; from: number; raw: Obj; changes: string[
 type Step = (raw: Obj, changes: string[]) => string[];
 
 /** STEPS[n] turns format n into format n + 1. */
-const STEPS: readonly Step[] = [from0to1, from1to2];
+const STEPS: readonly Step[] = [from0to1, from1to2, from2to3];
 
 /** The file's format: 0 when it has no `version`, null when `version` is not a whole number from 0. */
 export function formatOf(raw: Obj): number | null {
@@ -55,6 +55,38 @@ export function migrateConfig(given: unknown): MigrateResult {
   delete raw.version;
   const current = { version: CONFIG_VERSION, ...raw };
   return errors.length > 0 ? { ok: false, errors, raw: current } : { ok: true, from, raw: current, changes };
+}
+
+// --- format 2 to 3 ---
+
+/** Each window's reserve and the budget that replaces it. */
+const BUDGETS: readonly [string, string][] = [["reserveFiveHour", "budgetFiveHour"], ["reserveSevenDay", "budgetSevenDay"]];
+
+/**
+ * Format 2 to 3: the reserve kept of each window became a budget, the share of the window's even pace Scope Soup may use (decision
+ * 132): `settings.budgetFiveHour` = 1 − `settings.reserveFiveHour`, and the same for the week. A reserve that is no number is dropped,
+ * and the default budget applies.
+ */
+function from2to3(raw: Obj, changes: string[]): string[] {
+  if (!isObj(raw.settings)) return [];
+  const settings = raw.settings;
+  for (const [old, name] of BUDGETS) {
+    if (!Object.hasOwn(settings, old)) continue;
+    const given = settings[old];
+    const reserve = isObj(given) && typeof given.value === "number" ? given.value : undefined;
+    const reason = isObj(given) && typeof given.reason === "string" ? given.reason : undefined;
+    const own = Object.hasOwn(settings, name);
+    const budget = reserve === undefined ? undefined : Math.round((1 - reserve) * 100) / 100;
+    // The budget takes the reserve's place, keeping the order of the other keys.
+    const entries = Object.entries(settings).flatMap(([key, value]): [string, unknown][] =>
+      key !== old ? [[key, value]] : budget === undefined || own ? [] : [[name, reason === undefined ? { value: budget } : { value: budget, reason }]]);
+    for (const key of Object.keys(settings)) delete settings[key];
+    Object.assign(settings, Object.fromEntries(entries));
+    if (own) changes.push(`settings.${old} was dropped: the file sets settings.${name}, which decides.`);
+    else if (reserve === undefined) changes.push(`settings.${old} was dropped: the usage setting is now settings.${name}, a budget, and the default (80 %) applies.`);
+    else changes.push(`settings.${old} was replaced by settings.${name}: Scope Soup paces to a budget, a share of the window's even pace; keeping ${Math.round(reserve * 100)} % is a budget of ${Math.round(budget! * 100)} %.`);
+  }
+  return [];
 }
 
 // --- format 1 to 2 ---
@@ -98,7 +130,7 @@ const RULES_0: Record<string, string> = {
   reviewer: "the level decides: from level 3 (Review) every built change is reviewed, below it none is",
   riskClasses: "there is no approval step any more: no change waits for an Approve, whatever paths it touches",
   pinnedApproval: "there is no approval step any more, so there is no approval to pin",
-  hardBudgetStop: "from level 1 the usage stop at settings.reserveFiveHour and settings.reserveSevenDay is always on; the reserves are the usage settings",
+  hardBudgetStop: "from level 1 Scope Soup paces to settings.budgetFiveHour and settings.budgetSevenDay and stops at them; the budgets are the usage settings",
   claims: "Scope Soup claims the Items it starts by itself when the host is shared with other machines, with a fixed expiry of 120 minutes",
 };
 

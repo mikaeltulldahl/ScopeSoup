@@ -3,7 +3,7 @@ import { test } from "node:test";
 import type { UsageSample } from "../model/types.ts";
 import { at, ref, T0 } from "./testing.ts";
 import { forecastWindow } from "./forecast.ts";
-import { attributeUsage, expectedAtReset, forecastLine, snapReserve, paceAt, paceInView, paceLines, resetMarks, stackPlot, timeTicks, usageBar, usageParts, usagePlot, WINDOW_MS } from "./usage.ts";
+import { attributeUsage, expectedAtReset, forecastLine, snapBudget, paceAt, sessionUse, paceInView, paceLines, resetMarks, stackPlot, timeTicks, usageBar, usageParts, usagePlot, WINDOW_MS } from "./usage.ts";
 import type { UsageSession } from "./usage.ts";
 
 const t = (minutes: number) => Date.parse(at(minutes));
@@ -214,12 +214,14 @@ test("paceLines run from 0 at the window's start to the level at its reset", () 
   assert.equal(paceAt(segment!, segment!.from - 1), undefined);
 });
 
-test("paceLines for the 5-hour window and a level outside 0 to 1", () => {
+test("paceLines for the 5-hour window and a budget outside 0 to 1: above 1 the line ends where it reaches a full window", () => {
   const reset = Date.parse("2026-01-01T15:00:00Z");
   const [a, b] = paceLines([reset - 5 * 3600_000, reset], WINDOW_MS.five_hour, 1.4);
   assert.equal(a!.from, reset - 10 * 3600_000);
   assert.equal(b!.level, 1);
-  assert.equal(paceAt(b!, reset - 2.5 * 3600_000), 0.5);
+  assert.equal(b!.to, b!.from + (5 * 3600_000) / 1.4);
+  // The slope is the budget's: half the window gone is 70 % at 140 %.
+  assert.ok(Math.abs(paceAt(b!, reset - 2.5 * 3600_000)! - 0.7) < 1e-9);
   assert.equal(paceLines([reset], WINDOW_MS.five_hour, -1)[0]!.level, 0);
   assert.deepEqual(paceLines([], WINDOW_MS.five_hour, 0.5), []);
 });
@@ -291,12 +293,12 @@ test("expectedAtReset: used up is full, lasts is the expected level", () => {
   assert.equal(expectedAtReset(0.4, { outcome: "lasts" }), 0.4);
 });
 
-test("snapReserve: from 0 to 0.9 in steps of 0.05", () => {
-  assert.equal(snapReserve(-0.2), 0);
-  assert.equal(snapReserve(0.14), 0.15);
-  assert.equal(snapReserve(0.12), 0.1);
-  assert.equal(snapReserve(0.9), 0.9);
-  assert.equal(snapReserve(1), 0.9);
+test("snapBudget: from 0 to 2 in steps of 0.05", () => {
+  assert.equal(snapBudget(-0.2), 0);
+  assert.equal(snapBudget(0.14), 0.15);
+  assert.equal(snapBudget(0.12), 0.1);
+  assert.equal(snapBudget(1.5), 1.5);
+  assert.equal(snapBudget(2.4), 2);
 });
 
 function round(value: number): number {
@@ -323,4 +325,16 @@ test("a reading after the reset time with a new one gives exactly one reset, at 
 test("a later reset time is a reset even when the reading did not fall", () => {
   const samples = [reading(0, 0.1, 300), reading(20, 0.3, 600)];
   assert.equal(attributeUsage(samples, [], "five_hour", options).resets, 1);
+});
+
+test("sessionUse: what each session used of the window, for the sessions the readings cover", () => {
+  // 0.4 over 60 min: A alone 0-30 (0.2), A and B 30-60 (0.1 each); C began before the first reading, D runs on.
+  const sessions = [run(1, "implement", 0, 60), run(2, "review", 30, 60), run(3, "triage", -10, 20), run(4, "triage", 50, undefined)];
+  const used = sessionUse([reading(0, 0), reading(60, 0.4)], sessions, "five_hour", options);
+  assert.deepEqual([...used.keys()].sort(), ["scopesoup:session:1", "scopesoup:session:2"]);
+  // C ran 0-20 beside A, D 50-60 beside A and B: they take parts too, but are not covered, so they are not listed.
+  const a = used.get("scopesoup:session:1")!;
+  const b = used.get("scopesoup:session:2")!;
+  assert.ok(a > b && b > 0, `${a} ${b}`);
+  assert.equal(sessionUse([], [run(1, "implement", 0, 60)], "five_hour", options).size, 0);
 });

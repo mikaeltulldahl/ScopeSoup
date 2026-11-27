@@ -28,7 +28,7 @@ No change waits for a person's approval. A project that wants a person to merge 
 
 ## Always on with the levels: the usage stop and claims
 
-- **The usage stop.** From level 1 Scope Soup keeps the share of the 5-hour and weekly windows that `settings.reserveFiveHour` and `settings.reserveSevenDay` name for you, one per window (default 20 % each): no session starts while less is left of either. The reserves are the usage settings.
+- **The usage stop.** From level 1 Scope Soup paces to the budgets `settings.budgetFiveHour` and `settings.budgetSevenDay`, one per window (default 80 % of each window's even pace), and no session starts once a window is at its budget (or full, for a budget above 100 %). The budgets are the usage settings (decision 133).
 - **Claims.** When the host is shared with other machines, Scope Soup claims each Item before it starts work on it, so two machines do not start the same Item: on a meta branch with writes on and a remote to share it with, a `claimed` line; on GitHub with writes on, a claim comment. A claim lasts a fixed 120 minutes and is renewed once less than half is left. On a meta branch with no remote nothing is claimed.
 
 ## The queue is the only writer of the main branch

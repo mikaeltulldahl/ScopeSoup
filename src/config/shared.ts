@@ -31,11 +31,11 @@ export const SHARED_KEYS: readonly string[] = [
   "roles", "settings", "sharedResources", "media", "review", "labels",
 ];
 /** What this machine may spend, and how often it looks: in the private file's `settings`. */
-export const PRIVATE_SETTINGS: readonly string[] = ["maxParallelSessions", "reserveFiveHour", "reserveSevenDay", "tickSeconds"];
+export const PRIVATE_SETTINGS: readonly string[] = ["maxParallelSessions", "budgetFiveHour", "budgetSevenDay", "tickSeconds"];
 /** The rule-like numbers: in the shared settings' `settings`. */
 export const SHARED_SETTINGS: readonly string[] = [
   "stallTimeoutMinutes", "sessionTimeoutMinutes", "persistence", "retryBackoffCapSeconds", "checkTimeoutMinutes", "queueMinBatch",
-  "queueMaxBatch", "queueRerunCost", "queueMinOutcomes", "triageMaxAgeDays",
+  "queueMaxBatch", "queueRerunCost", "queueMinOutcomes", "triageMaxAgeDays", "waitingCapTriage", "waitingCapWork",
 ];
 /** A meta branch host's keys that belong to one machine or person: in the private file as `meta.<key>`, never in the shared `host`. */
 export const META_KEYS: readonly string[] = ["authorName", "authorEmail", "prefix"];
