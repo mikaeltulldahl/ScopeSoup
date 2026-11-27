@@ -28,6 +28,9 @@ it("random runs keep the lifecycle rules, apart from the known failures, and rea
   const first = new Map<string, RunResult>();
   const totals = { steps: 0, merges: 0, answers: 0, restarts: 0, accepted: 0, rejected: 0, closed: 0, retriagedInShare: 0, retriagedBeforeStart: 0 };
   const waits = new Set<string>();
+  // A person's picks and rewrite accepts while the Item's work is busy (#268): how often, and on how many seeds.
+  const BUSY = ["queue-pick-over-review", "pick-over-session", "pick-over-parked", "pick-over-hand-over", "accept-over-session", "accept-over-parked", "accept-over-hand-over"] as const;
+  const busy = new Map<string, { times: number; seeds: number }>(BUSY.map((each) => [each, { times: 0, seeds: 0 }]));
   for (const seed of seeds) {
     const result = await run(seed);
     for (const failure of result.failures) if (!first.has(failure.rule)) first.set(failure.rule, result);
@@ -44,8 +47,16 @@ it("random runs keep the lifecycle rules, apart from the known failures, and rea
     // Triages Scope Soup took again on its own (#217): within the share while the Item waits in To do, or just before it starts.
     totals.retriagedInShare += result.seen.get("retriage-share") ?? 0;
     totals.retriagedBeforeStart += result.seen.get("retriage-before-start") ?? 0;
+    for (const each of BUSY) {
+      const n = result.seen.get(each) ?? 0;
+      const sum = busy.get(each)!;
+      sum.times += n;
+      if (n > 0) sum.seeds++;
+    }
   }
   t.diagnostic(`${seeds.length} seeds, ${totals.steps} steps, ${totals.merges} merges, ${totals.answers} answers, ${totals.accepted} rewrites accepted and ${totals.rejected} rejected, ${totals.closed} closes, ${totals.restarts} restarts, ${totals.retriagedInShare} triages taken again within the share and ${totals.retriagedBeforeStart} before a start`);
+  const said = (each: string): string => `${busy.get(each)!.times} (${busy.get(each)!.seeds} seeds)`;
+  t.diagnostic(`while busy: Merge queue picks over a running review ${said("queue-pick-over-review")}; picks over a session ${said("pick-over-session")}, a parked job ${said("pick-over-parked")}, an owed hand-over ${said("pick-over-hand-over")}; rewrites accepted and written over a session ${said("accept-over-session")}, a parked job ${said("accept-over-parked")}, an owed hand-over ${said("accept-over-hand-over")}`);
 
   // A rule that fails and is not known: the first failure in words, its replay, and the steps shrunk to a test to paste.
   const unknown = [...first.keys()].filter((rule) => !(rule in KNOWN));

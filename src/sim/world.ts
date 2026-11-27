@@ -44,7 +44,10 @@ export type Action =
   | { kind: "reopen"; item: string }
   | { kind: "claim"; item: string }
   | { kind: "release"; item: string }
-  | { kind: "move"; item: string; v: number }
+  /** `keen`: the person picks the review or the merge queue whenever the page offers one (#268). */
+  | { kind: "move"; item: string; v: number; keen?: true }
+  /** A person decides the rewrite of the Item's description another Item's triage proposed (decision 110). */
+  | { kind: "proposed"; item: string; v: number }
   | { kind: "lane"; item: string; to: "todo" | "backlog" }
   | { kind: "start-over"; item: string }
   | { kind: "new-item"; v: number }
@@ -230,11 +233,16 @@ export class SimWorld {
   wasDown = false;
   /** A request to make while the tick awaits the runner (the "inside a tick" step). */
   private pendingInside: Action | null = null;
+  /** One machine of several (`multi.ts`): the steps only the single-machine profile takes are left out, so its runs stay as they were. */
+  readonly shared: boolean;
+  /** The read-back the server asks for after it wrote a description does not come (a fetch that failed): the store reads the old text until a sync. */
+  private lagRead = false;
   private actions: ReturnType<typeof createHostActions>;
 
   constructor(options: WorldOptions, machine?: MachineOptions) {
     this.store = openStore(":memory:");
     this.machine = machine?.machine ?? "laptop-a";
+    this.shared = machine !== undefined;
     this.ageing = options.ageing === true;
     this.remote = machine?.remote ?? new MetaRemote();
     this.git = machine?.git ?? new FakeGit();
@@ -299,7 +307,7 @@ export class SimWorld {
       store: this.store, port: 0, now: () => new Date(this.ms), configFile: "/srv/scopesoup/scopesoup.config.json",
       items: { host: this.host.info.id, write: this.host.write!, work: this.host.work! }, machine: this.machine, ...(this.requests ? { requests: this.requests } : {}),
       planning: () => ({ bugLabels: ["bug"], plannedSessions: this.configNow.settings.maxParallelSessions.value, level: this.configNow.level }),
-      syncNow: () => this.sync(),
+      syncNow: () => (this.lagRead ? Promise.resolve() : this.sync()),
     });
   }
 
@@ -447,12 +455,21 @@ export class SimWorld {
       case "move": {
         const page = await this.page(action.item);
         const offered = Object.entries(page?.moves ?? {}).filter(([, why]) => !why?.why).map(([to]) => to);
-        const to = random(action.v).pick(offered);
+        const keen = action.keen ? offered.filter((each) => each === "merge-queue" || each === "in-review") : [];
+        const to = random(action.v).pick(keen.length > 0 ? keen : offered);
         if (!to) return this.skip();
+        const before = this.busyAs(action.item);
         const got = await this.request("POST", "/api/item/move", { ref: this.key(action.item), to }, action.item);
-        if (got.status === 200) this.count(`move-${to}`);
+        if (got.status === 200) {
+          this.count(`move-${to}`);
+          for (const as of before) this.count(`pick-over-${as}`);
+          // A person's Merge queue while a review runs on an approved head (the review fix of #211 step 3).
+          if (to === "merge-queue" && before.includes("review")) this.count("queue-pick-over-review");
+        }
         return;
       }
+      case "proposed":
+        return this.proposed(action.item, action.v);
       case "lane": {
         // Backlog and To do (#221): a person pulls an Item into To do or puts it back, the lane edit the State menu sends (Backlog
         // drops work under way first, or is refused).
@@ -675,13 +692,24 @@ export class SimWorld {
     const body = item?.body ?? "";
     const rewrite = roll < 5 ? undefined : roll === 5 ? `${body}  ` : roll < 9 ? `Rewritten: ${item?.title ?? id}, take ${r.int(3)}.` : "Rewritten: the same as before.";
     const other = r.pick(others);
+    // Whose description another Item's triage rewrites: often one whose work is busy now (#268). Single machine only.
+    const busyOthers = this.shared ? [] : others.filter((each) => this.busyAs(each).length > 0);
     const links = other && r.chance(0.15) ? [{ type: r.pick(["duplicateOf", "conflictsWith", "blockedBy"] as const)!, item: other, reason: "they overlap" }] : undefined;
-    const aboutOthers = other && r.chance(0.05) ? [{ item: other, questions: [this.question(r, 90)] }] : undefined;
+    let aboutOthers: { item: string; questions: { question: string; options: DecisionOption[]; recommendation: string }[]; rewrite?: string }[] | undefined = other && r.chance(0.05) ? [{ item: other, questions: [this.question(r, 90)] }] : undefined;
+    // Drawn here, before the proposed rewrite below, so the results drawn before it was added stay as they were.
+    const size = r.chance(0.9) ? "small" : "large";
+    // A rewrite of another Item's description with no question: proposed there for a person (decision 110). Single machine only.
+    if (!this.shared && other && !aboutOthers && r.chance(0.15)) {
+      const target = busyOthers.length > 0 && r.chance(0.6) ? r.pick(busyOthers)! : other;
+      const title = this.store.get<WorkItem>(this.ref(target))?.title ?? target;
+      aboutOthers = [{ item: target, questions: [], rewrite: `Rewritten by the triage of ${id}: ${title}, take ${r.int(3)}.` }];
+      this.count("rewrite-proposed");
+    }
     if (questions.length > 0) this.count("asked-questions");
     if (rewrite) this.count("rewrite");
     if (links) this.count(`link-${links[0]!.type}`);
     return {
-      ready, ...(ready ? {} : { notReadyReason: "It is not clear what to do." }), size: r.chance(0.9) ? "small" : "large", paths, questions,
+      ready, ...(ready ? {} : { notReadyReason: "It is not clear what to do." }), size, paths, questions,
       blockers: [], ...(rewrite !== undefined ? { rewrite } : {}), ...(links ? { links } : {}), ...(aboutOthers ? { aboutOthers } : {}),
     };
   }
@@ -735,6 +763,52 @@ export class SimWorld {
       return { output: { done: false, summary: "Need to ask.", question: this.question(r, 70) } };
     }
     return { output: { done: false, summary: "Could not finish." } };
+  }
+
+  /** What the Item's job is busy with now, for the reach counts: a session (and `review` when it is a review's), parked, an owed hand-over. */
+  private busyAs(id: string): string[] {
+    const at = where(this.jobs()[this.key(id)]);
+    const live = this.liveFor(id);
+    const out: string[] = [];
+    if (live) out.push("session", ...(this.runner.live.get(live)!.session.role === "review" ? ["review"] : []));
+    if (at?.parked) out.push("parked");
+    if (at?.owes) out.push("hand-over");
+    return out;
+  }
+
+  /** Makes a request after which, when `lag`, the server's read-back of a description it wrote does not come (single machine only). */
+  private async lagging<T>(lag: boolean, request: () => Promise<T>): Promise<T> {
+    this.lagRead = lag && !this.shared;
+    try {
+      return await request();
+    } finally {
+      this.lagRead = false;
+    }
+  }
+
+  /**
+   * The person decides a rewrite of the Item's description another Item's triage proposed, whatever its work is doing: mostly Accept,
+   * sometimes Edit or Reject. Half the time the read-back after the write does not come, so the store reads the old text until a sync.
+   */
+  async proposed(id: string, v: number): Promise<void> {
+    const page = await this.page(id);
+    const proposal = page?.proposedRewrite;
+    if (!page || !proposal) return this.skip();
+    const r = random(v);
+    const key = this.key(id);
+    const roll = this.fair ? 0 : r.int(10);
+    const action = roll < 7 ? "accept" : roll < 8 ? "edit" : "reject";
+    const text = `Edited by a person, ${v % 1000}.`;
+    const before = this.busyAs(id);
+    const lag = !this.fair && r.chance(0.5);
+    const got = await this.lagging(lag, () => this.request("POST", "/api/proposed-rewrite", { ref: key, at: proposal.at, action, ...(action === "edit" ? { text } : {}) }, id));
+    if (got.status !== 200) return;
+    this.count(`proposed-${action}`);
+    if (action === "accept") this.ledger.texts.set(key, { title: page.item.title, body: proposal.text.trim() });
+    if (action === "edit") this.ledger.texts.set(key, { title: page.item.title, body: text });
+    if (!(got.json as { written?: boolean } | null)?.written) return;
+    if (lag) this.count("read-back-lost");
+    for (const as of before) this.count(`accept-over-${as}`);
   }
 
   /** The person answers what the page asks: the recommendation half the time, another option, free text, or a stale request. */

@@ -165,6 +165,11 @@ describe("each rule fires on a bad state built by hand", { concurrency: 1 }, () 
     // The session with this input never ended with a result (a restart left it with no process): its step starts again (#238).
     const older = ledger({ ended: [{ step: 1, item: key("A-1"), role: "triage", session: "s0", status: "succeeded", settled: true }] });
     assert.equal(fires("B7", obs({ started: [started("A-1", "triage")] }), obs({ ledger: older, started: [started("A-1", "triage")] })), null);
+    // A person picked the review again on a change reviewed before: their ask is new input (#268).
+    const reviewed = ledger({ ended: [{ step: 1, item: key("A-1"), role: "review", session: "s-A-1", status: "succeeded", settled: true }] });
+    const picked = obs({ ledger: reviewed, items: [item("A-1", SLOT, { job: job("A-1", { step: "review", reviewAskedBy: "Ada" }) })] });
+    assert.equal(fires("B7", obs({ started: [started("A-1", "review")] }), picked, obs({ ledger: reviewed, started: [started("A-1", "review")] })), null);
+    assert.match(fires("B7", obs({ started: [started("A-1", "review")] }), obs({ ledger: reviewed, started: [started("A-1", "review")] })) ?? "", /same input/);
     assert.match(fires("B7", obs({ ledger: ledger({ asksInFair: new Map([[key("A-1"), 4]]) }) })) ?? "", /asked 4 times/);
     const shown = (text: string, body: string, questions: number): string | null => {
       const rewrite = { original: body.trim(), text, questions: Array.from({ length: questions }, () => ({ question: "?", options: [], recommendation: "" })), round: 1 };
@@ -216,6 +221,24 @@ describe("each rule fires on a bad state built by hand", { concurrency: 1 }, () 
     assert.equal(fires("B10", obs({ started: sessions }), obs({ events: [again] })), null);
     // Before an Item starts, a triage taken again is not counted in the share.
     assert.equal(fires("B10", obs({ events: [{ ...again, data: {} }, { ...again, data: {} }] })), null);
+  });
+  it("B11", "a step starts on the old text after a person accepted a rewrite the store has not read back, or the job forgets to wait (#268)", () => {
+    const body = { item: workItem("A-1", { body: "Do thing 1." }) };
+    const running = item("A-1", { kind: "session", role: "triage" }, { ...body, job: job("A-1", { sessionId: "s1" }) });
+    const waits = item("A-1", { kind: "session", role: "triage" }, { ...body, job: job("A-1", { sessionId: "s1", writing: { from: "h", at: AT } }) });
+    const old = obs({ items: [running] });
+    const texts = new Map([[key("A-1"), { title: "Item A-1", body: "Rewritten." }]]);
+    const accepted = (i: ItemObs) => obs({ step: 2, requests: [{ step: 2, path: "/api/proposed-rewrite", body: { action: "accept" }, status: 200, response: { written: true }, item: "A-1" }], ledger: ledger({ texts }), items: [i] });
+    const next = (text: string) => obs({ step: 3, action: tick, started: [started("A-1", "implement", { vars: { itemTitle: "Item A-1", itemBody: text } })], items: [waits] });
+    assert.match(fires("B11", old, accepted(waits), next("Do thing 1.")) ?? "", /started on the text before the one written at a person's accept at step 2/);
+    assert.equal(fires("B11", old, accepted(waits), next("Rewritten.")), null);
+    // The job running a session dropped the wait at the accept (the bug fixed in #211 step 3).
+    assert.match(fires("B11", old, accepted(running)) ?? "", /A-1's job no longer waits for the text written at a person's accept at step 2/);
+    // Read back by a sync, the old text is gone from the store: nothing is owed any more.
+    const read = obs({ step: 3, items: [item("A-1", NOTHING, { item: workItem("A-1", { body: "Rewritten." }), job: job("A-1") })] });
+    assert.equal(fires("B11", old, accepted(waits), read, next("Do thing 1.")), null);
+    // Past the 30 minutes the product waits, it goes on with the text the store has.
+    assert.equal(fires("B11", old, accepted(waits), { ...next("Do thing 1."), at: "2026-11-18T10:30:00.000Z" }), null);
   });
   it("C1", "an Item closed by an answer on another Item (#209, decision 8)", () => {
     assert.match(fires("C1", obs({ items: [item("A-2", SLOT)] }), obs({ items: [item("A-2", NOTHING, { item: workItem("A-2", { state: "abandoned" }) })] })) ?? "", /no person's close/);
@@ -366,6 +389,11 @@ describe("each rule fires on a bad state built by hand", { concurrency: 1 }, () 
     // A change waiting in this machine's merge queue is work under way: its claim stands (#229).
     const queued = (ms: number) => obs({ at: new Date(Date.parse(AT) + ms).toISOString(), items: [item("A-1", { kind: "queue" }, { item: claimed })] });
     assert.equal(fires("H3", queued(0), queued(3 * 3600_000)), null);
+    // A text wait past 30 minutes that the card still gives as the reason; a parked job keeps the wait for its next step, and its card
+    // asks the person, so that is no text wait (#268).
+    const text = (reason: string, over: Partial<Where> = {}) => obs({ action: tick, at: "2026-11-18T11:00:00.000Z", items: [item("A-1", SLOT, { job: job("A-1", { writing: { from: "h", at: AT }, ...over }), card: card("A-1", { reason }) })] });
+    assert.match(fires("H3", text("waits until the description written at a person's Accept is read back from metaBranch (at most 1 minute more)")) ?? "", /still waits for its text/);
+    assert.equal(fires("H3", text("Answer the question: a rewrite of the description waits for a person", { parked: { as: "needs-decision", reason: "r", at: AT } })), null);
   });
   it("H4", "a person is waited for and the page offers nothing (#183)", () => {
     const o = obs({ items: [item("A-1", { kind: "person", why: "escalated" }, { served: { item: { ref: { host: "metaBranch", kind: "work", id: "A-1" }, title: "Item", state: "todo" }, lane: "backlog" } })] });

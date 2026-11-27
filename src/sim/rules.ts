@@ -24,6 +24,8 @@ const SAID_KINDS = new Set(["orchestrator.idle", "orchestrator.claim_lost", "orc
 const isTick = (o: Observation): boolean => o.action.kind === "tick" || o.action.kind === "inside-tick";
 const asks = (w: W): boolean => w.kind === "person" && (w.why === "answer" || w.why === "rewrite" || w.why === "restructuring");
 const squash = (text: string): string => text.replace(/\s+/g, " ").trim();
+/** The card gives the turn to a person for a rewrite another Item's triage proposed (decision 110), ahead of the job's own wait words. */
+const proposalTurn = (reason: string | undefined): boolean => /^Accept, edit or reject the rewrite of the description by /.test(reason ?? "");
 const first = <T>(list: T[], f: (each: T) => string | null): string | null => {
   for (const each of list) {
     const found = f(each);
@@ -116,7 +118,7 @@ export const RULES: Rule[] = [
         if (i.w.kind === "nothing" && i.item.state === "done" && lane !== "done") return `${i.id} is done but in ${lane}`;
         // The words of the cause (decision 3): the two timed waits have their own. Read after a tick: between ticks the card is the
         // last tick's, while W reads git as it is now (a session's merge makes another Item no longer busy before any tick saw it, #238).
-        if (!isTick(o)) return null;
+        if (!isTick(o) || proposalTurn(card.reason)) return null;
         if (i.w.kind === "start" && i.w.cause === "text" && !/read back/.test(card.reason)) return `${i.id} waits for its written text to be read back, but the card says "${card.reason}"`;
         if (i.w.kind === "start" && i.w.cause === "timer" && !/(tries again|resumes|starts) in /.test(card.reason)) return `${i.id} waits for a timer, but the card says "${card.reason}"`;
         return null;
@@ -326,7 +328,10 @@ export const RULES: Rule[] = [
         const beforeSettled = before !== undefined && o.ledger.ended.some((e) => e.session === before && e.settled);
         // An Item with no job on this machine, or one a person's move drops, starts anew (as does one whose claim went to another machine), and a job with a failure counted is retried: an implementor's "done" with no commit is settled in the ledger but a failure to the tick.
         const dropped = prev !== undefined && prev.items.some((i) => i.key === s.item && (i.job === undefined || i.job.dropAskedBy !== undefined || i.job.failures > 0));
-        if (before && beforeSettled && last?.settled && !dropped) return `a ${s.role} session started again on ${s.item.split(":").pop()} with the same input as session ${before}, after it succeeded`;
+        // A person who picks the step again (Review on a change reviewed before, decision 104) gives it new input: their ask (#268).
+        const asked = prev?.items.find((i) => i.key === s.item)?.job;
+        const picked = (s.role === "review" && asked?.reviewAskedBy) || (s.role === "triage" && asked?.triageAskedBy) || (s.role === "implement" && asked?.implementAskedBy);
+        if (before && beforeSettled && last?.settled && !dropped && !picked) return `a ${s.role} session started again on ${s.item.split(":").pop()} with the same input as session ${before}, after it succeeded`;
         seen[key] = s.session;
       }
       for (const [key, n] of o.ledger.asksInFair) if (n > 3) return `under Fair, ${key.split(":").pop()} was asked ${n} times`;
@@ -435,6 +440,36 @@ export const RULES: Rule[] = [
       }
       for (const i of o.items) if (isClosed(i) || (i.job === undefined && i.w.kind !== "session")) delete expect[i.key];
       return null;
+    },
+  },
+  {
+    id: "B11",
+    why: "A step starts on the text a person accepted: after Scope Soup wrote a description at a person's Accept or Edit of a rewrite on an Item with a job, while the store still reads the text before it and for at most 30 minutes from the write, the job keeps waiting for it and no session on the Item starts without it, whatever the job was doing then: running a session, parked, or owing a hand-over (#211 step 3, #268).",
+    check(o, prev, memo) {
+      const owed = (memo.owed ??= {}) as Record<string, { was: string; text: string; at: string; step: number }>;
+      if (o.action.kind === "lose-store") for (const k of Object.keys(owed)) delete owed[k];
+      for (const r of o.requests) {
+        if (r.status !== 200 || !r.item) continue;
+        const k = `metaBranch:work:${r.item}`;
+        // A person's own edit since then is the text that counts (B2), read back by the edit's own sync.
+        if (r.path === "/api/item/edit") delete owed[k];
+        if (!/^\/api\/(proposed-)?rewrite$/.test(r.path) || (r.response as { written?: boolean } | null)?.written !== true) continue;
+        const before = prev?.items.find((i) => i.key === k);
+        const text = o.ledger.texts.get(k);
+        if (before?.job && text) owed[k] = { was: squash(before.item.body ?? ""), text: squash(text.body), at: o.at, step: o.step };
+      }
+      // Read back (the store has another text now), past the wait, or closed: nothing is owed any more.
+      for (const i of o.items) {
+        const w = owed[i.key];
+        if (w && (squash(i.item.body ?? "") !== w.was || Date.parse(o.at) - Date.parse(w.at) >= 30 * 60_000 || isClosed(i) || !i.job)) delete owed[i.key];
+      }
+      const lost = o.items.find((i) => owed[i.key] && !where(i.job)?.writing);
+      if (lost) return `${lost.id}'s job no longer waits for the text written at a person's accept at step ${owed[lost.key]!.step}, which the store has not read back yet`;
+      return first(o.started, (s) => {
+        const w = owed[s.item];
+        if (!w || squash(String(s.request.vars.itemBody ?? "")).includes(w.text)) return null;
+        return `a ${s.role} session on ${s.item.split(":").pop()} started on the text before the one written at a person's accept at step ${w.step}, which the store has not read back yet`;
+      });
     },
   },
   // --- C. Closed Items ---
@@ -855,7 +890,7 @@ export const RULES: Rule[] = [
     check(o, _prev, memo) {
       return first(o.items, (i) => {
         const writing = where(i.job)?.writing;
-        if (writing && Date.parse(o.at) - Date.parse(writing.at) > 31 * 60_000 && isTick(o) && /written|its text|description/i.test(i.card?.reason ?? "")) return `${i.id} still waits for its text, written at ${writing.at}`;
+        if (writing && Date.parse(o.at) - Date.parse(writing.at) > 31 * 60_000 && isTick(o) && /read back/.test(i.card?.reason ?? "")) return `${i.id} still waits for its text, written at ${writing.at}`;
         // A change waiting in this machine's merge queue is work under way here: its claim keeps other machines off it. So is any job
         // here, waiting to start its next step or parked for a person: its claim lasts as long as the job (#243). A merged one holds
         // nothing.
