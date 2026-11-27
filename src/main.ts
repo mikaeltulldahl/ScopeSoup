@@ -305,7 +305,7 @@ async function main(): Promise<void> {
       store, runner, config, actions, now: iso, resources: units, ...(mergeQueue ? { mergeQueue } : {}),
       // Merging through the merge queue (level 4): its own clone, the check command, Start/Pause merge queue.
       // With mergeQueue.ci "github" the project's CI on the writable GitHub host (remote checked above) checks each batch.
-      queue: queue = createQueueDriver({ store, config: current, git: realGit, runCheck: createCheckRunner(realProcesses), runSetup: createSetupRunner(realProcesses, process.env, () => config.load().config ?? undefined), now: iso, paused: () => !mergeQueueOn(store), stopped: () => mergeQueueStopped(store), resources: units, ...(writable?.queueCi && !ciRefused ? { ci: writable.queueCi } : {}), ...(ciRefused ? { ciRefused } : {}) }),
+      queue: queue = createQueueDriver({ store, config: current, git: realGit, runCheck: createCheckRunner(realProcesses), runSetup: createSetupRunner(realProcesses, process.env, () => config.load().config ?? undefined), now: iso, paused: () => !mergeQueueOn(store) || (config.load().config?.level ?? 4) < 4, stopped: () => mergeQueueStopped(store), resources: units, ...(writable?.queueCi && !ciRefused ? { ci: writable.queueCi } : {}), ...(ciRefused ? { ciRefused } : {}) }),
       onTick: (report) => {
         const state = config.load().config;
         awake.set(shouldStayAwake({ enabled: state?.keepAwake ?? false, level: state?.level ?? 0, paused: report.paused === true, running: report.running, queued: report.queued, waitingForTime: report.wakeAt !== undefined }));

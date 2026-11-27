@@ -75,7 +75,9 @@ export const RULES: Rule[] = [
         if (i.w.kind === "blocker" && lane !== "blocked") return `${i.id} waits for ${i.w.on.join(", ")} but is in ${lane}, not Blocked`;
         if (i.w.kind === "person" && i.w.why !== "holds" && i.w.why !== "merge" && lane !== stageLane(i.item, i.job)) return `${i.id}: W is ${wText(i.w)}, so its lane is ${stageLane(i.item, i.job)} (decision 2), but the card is in ${lane}`;
         if (i.w.kind === "nothing" && i.item.state === "done" && lane !== "done") return `${i.id} is done but in ${lane}`;
-        // The words of the cause (decision 3): the two timed waits have their own.
+        // The words of the cause (decision 3): the two timed waits have their own. Read after a tick: between ticks the card is the
+        // last tick's, while W reads git as it is now (a session's merge makes another Item no longer busy before any tick saw it, #238).
+        if (!isTick(o)) return null;
         if (i.w.kind === "start" && i.w.cause === "text" && !/read back/.test(card.reason)) return `${i.id} waits for its written text to be read back, but the card says "${card.reason}"`;
         if (i.w.kind === "start" && i.w.cause === "timer" && !/(tries again|resumes|starts) in /.test(card.reason)) return `${i.id} waits for a timer, but the card says "${card.reason}"`;
         return null;
@@ -168,13 +170,21 @@ export const RULES: Rule[] = [
   // --- B. What a person put in ---
   {
     id: "B1",
-    why: "No answer lost: an accepted answer is in the store's answers and in the prompt of every later session on the Item.",
+    why: "No answer lost or doubled: an accepted answer is in the store's answers, as many times as the person gave it, and in the prompt of every later session on the Item.",
     check(o, _prev, memo) {
       const known = new Set(o.answers.map((a) => `${a.subject.host}:${a.subject.kind}:${a.subject.id}|${a.answer}`));
       // After the store is lost, the answers given before reach the sessions through the Item's log (G3); the prompts are checked below.
       if (o.action.kind === "lose-store") memo.lostAt = o.step;
       const lost = o.ledger.answers.find((a) => a.step > ((memo.lostAt as number | undefined) ?? -1) && !known.has(`${a.item}|${a.text}`));
       if (lost) return `the answer "${lost.text}" on ${lost.item.split(":").pop()} (step ${lost.step}) is not in the store's answers`;
+      const given = new Map<string, number>();
+      for (const a of o.ledger.answers) given.set(`${a.item}|${a.text}`, (given.get(`${a.item}|${a.text}`) ?? 0) + 1);
+      const had = new Map<string, number>();
+      for (const a of o.answers) {
+        const k = `${a.subject.host}:${a.subject.kind}:${a.subject.id}|${a.answer}`;
+        had.set(k, (had.get(k) ?? 0) + 1);
+        if (given.has(k) && had.get(k)! > given.get(k)!) return `the answer "${a.answer}" on ${a.subject.id} is in the store's answers ${had.get(k)} times, but was given ${given.get(k)}`;
+      }
       return first(o.started, (s) => {
         const prompt = JSON.stringify(s.request.vars) + (s.request.message ?? "");
         const missing = o.ledger.answers.find((a) => a.item === s.item && a.step < o.step && !prompt.includes(a.text));
@@ -197,7 +207,8 @@ export const RULES: Rule[] = [
     id: "B3",
     why: "Nothing acts on a stale basis: a request made from a page that no longer holds is refused (#195, #209, #183).",
     check(o) {
-      const stale = o.requests.find((r) => r.body.parkedAt === "2026-01-01T00:00:00.000Z" && r.status >= 200 && r.status < 300);
+      // An answer the server says it had already (a retry, #238) changes nothing, so it is not acted on.
+      const stale = o.requests.find((r) => r.body.parkedAt === "2026-01-01T00:00:00.000Z" && r.status >= 200 && r.status < 300 && (r.response as { already?: boolean } | null)?.already !== true);
       return stale ? `${stale.path} on ${stale.item} was carried out with a parked state the Item never had` : null;
     },
   },
@@ -250,11 +261,13 @@ export const RULES: Rule[] = [
         const input = JSON.stringify([s.request.vars.itemTitle, s.request.vars.itemBody, s.request.message ?? "", s.request.vars.recheck ?? "", s.request.vars.history ?? "", s.request.resume ?? "", o.git.branches.get(s.request.branch) ?? "", o.git.main]);
         const key = `${s.item}|${s.role}|${input}`;
         const before = seen[key];
-        // A retry after a failure (or a cut-off session resumed) is not a repeat.
+        // A retry after a failure (or a cut-off session resumed) is not a repeat, and neither is a start after the session with this
+        // input ended with no result of its own: a restart left it with no process (it is started again, not counted, #238).
         const last = o.ledger.ended.filter((e) => e.item === s.item && e.role === s.role).at(-1);
+        const beforeSettled = before !== undefined && o.ledger.ended.some((e) => e.session === before && e.settled);
         // An Item with no job on this machine, or one a person's move drops, starts anew (as does one whose claim went to another machine), and a job with a failure counted is retried: an implementor's "done" with no commit is settled in the ledger but a failure to the tick.
         const dropped = prev !== undefined && prev.items.some((i) => i.key === s.item && (i.job === undefined || i.job.dropAskedBy !== undefined || i.job.failures > 0));
-        if (before && last?.settled && !dropped) return `a ${s.role} session started again on ${s.item.split(":").pop()} with the same input as session ${before}, after it succeeded`;
+        if (before && beforeSettled && last?.settled && !dropped) return `a ${s.role} session started again on ${s.item.split(":").pop()} with the same input as session ${before}, after it succeeded`;
         seen[key] = s.session;
       }
       for (const [key, n] of o.ledger.asksInFair) if (n > 3) return `under Fair, ${key.split(":").pop()} was asked ${n} times`;
@@ -468,12 +481,37 @@ export const RULES: Rule[] = [
     id: "E4",
     why: "Main moves only three ways: a session told to merge, the merge queue, or a person; a session that merged untold is escalated (decision 108).",
     check(o, _prev, memo) {
+      // Escalated once is handled: what a person answers to the escalation is theirs to decide.
+      const escalated = (memo.escalated ??= {}) as Record<string, true>;
       return first(o.git.mainMoves.filter((m) => m.how === "session untold"), (m) => {
+        // Judged by the machine whose implementor merged (multiplayer: another machine's session is that machine's to escalate).
+        if (!o.sessions.some((s) => s.role === "implement" && `${s.subject.host}:${s.subject.kind}:${s.subject.id}` === m.item)) return null;
         const i = o.items.find((each) => each.key === m.item);
-        const handled = !i || i.job?.parked?.as === "escalated" || isClosed(i);
+        // Escalated here, or by another machine (multiplayer): its question line in the Item's shared log says so.
+        // (or a person's answer to it there, which names the question it answers).
+        const untold = /merged .* although its instructions said to commit and stop/;
+        const logged = (i?.item.log ?? []).some((line) => (line.kind === "question" && line.fields.parked === "escalated" && untold.test(String(line.fields.question ?? ""))) || (line.kind === "answer" && untold.test(String(line.fields.toQuestion ?? ""))));
+        if (i?.job?.parked?.as === "escalated" || logged) escalated[m.sha] = true;
+        const handled = !i || escalated[m.sha] === true || isClosed(i);
         const n = ticksSince(memo, `E4|${m.sha}`, !handled, o);
         return n > 2 ? `${i!.id}'s session merged without being told to and it was not escalated` : null;
       });
+    },
+  },
+  {
+    id: "E5",
+    why: "Main gets a change once: after the merge queue merged an Item's change, nothing merges for that Item again until it is closed (#238: a level lowered while the queue's drain ran).",
+    check(o, _prev, memo) {
+      const merged = (memo.merged ??= {}) as Record<string, string>;
+      for (const i of o.items) if (isClosed(i)) delete merged[i.key];
+      const from = (memo.seen as number | undefined) ?? 0;
+      memo.seen = o.git.mainMoves.length;
+      for (const m of o.git.mainMoves.slice(from)) {
+        if (!m.item) continue;
+        if (merged[m.item]) return `${m.item.split(":").pop()}'s change went to main again (${m.how}) after the merge queue merged it (${merged[m.item]!.slice(-7)}), before the Item was closed`;
+        if (m.how === "queue") merged[m.item] = m.sha;
+      }
+      return null;
     },
   },
   // --- F. Events ---
@@ -527,12 +565,14 @@ export const RULES: Rule[] = [
   // --- G. Restart and recovery ---
   {
     id: "G1",
-    why: "Restart: every switch is paused, and after the first tick each Item's W is what it was, except that a session became a wait to start the same step.",
+    why: "Restart: every switch is paused, and after the first tick each Item's W is what it was, except that a session became a wait to start the same step (not counted as a failure), or questions that waited for the session to end were written, or the restarts in a row reached the attempts' limit and a person is asked, or questions waiting to be posted again were posted.",
     check(o, prev, memo) {
       if (o.action.kind === "restart" && prev) {
         const on = (["triage", "implement", "review"] as const).find((r) => o.switches[r] === "started");
         if (on) return `after a restart the ${on} switch is started`;
         memo.before = Object.fromEntries(prev.items.map((i) => [i.key, i.w]));
+        // A wait that ends by itself at a tick (questions that could not be posted are posted again, #230) is not the restart's.
+        memo.reposts = prev.items.filter((i) => i.job?.parked?.retry === "post").map((i) => i.key);
         return null;
       }
       const before = memo.before as Record<string, W> | undefined;
@@ -547,6 +587,12 @@ export const RULES: Rule[] = [
         const w = before[i.key];
         if (!w) return null;
         if (w.kind === "session" && w.settling) return null;
+        if (((memo.reposts as string[] | undefined) ?? []).includes(i.key)) return null;
+        // Questions other Items' agents asked about it wait until no session runs on it and nobody holds it: once that ends they are
+        // written, whatever ended it.
+        // Or the restarts in a row reached the attempts' limit, and a person is asked (a crash at every start must end).
+        const asked = o.events.some((e) => (e.kind === "orchestrator.about_other_written" || e.kind === "orchestrator.restart_limit") && e.subject === i.key);
+        if (asked) return null;
         if (w.kind === "session") return i.w.kind === "start" && i.w.role === w.role ? null : `${i.id} had a ${w.role} session before the restart and is ${wText(i.w)} after the first tick`;
         if (["person", "queue", "blocker", "nothing"].includes(w.kind) && wText(w) !== wText(i.w)) return `${i.id} was ${wText(w)} before the restart and is ${wText(i.w)} after the first tick`;
         return null;

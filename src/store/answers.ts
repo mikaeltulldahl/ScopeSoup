@@ -43,7 +43,9 @@ export function addAnswer(store: Store, answer: RecordedAnswer): void {
 /** Puts back answers read from an item's log (the store was new), with one `person.answers_restored` event. */
 export function restoreAnswers(store: Store, answers: readonly RecordedAnswer[], at: string): void {
   store.tx(() => {
-    store.setValue(KEY, JSON.stringify([...loadAnswers(store), ...answers]));
+    // In time order, so an answer given after the loss and before the read-back stays after the ones it may build on.
+    const all = [...loadAnswers(store), ...answers].map((answer, index) => ({ answer, index })).sort((a, b) => Date.parse(a.answer.at) - Date.parse(b.answer.at) || a.index - b.index);
+    store.setValue(KEY, JSON.stringify(all.map((each) => each.answer)));
     store.appendEvent({ kind: "person.answers_restored", subject: answers[0] ? refKey(answers[0].subject) : undefined, actor: "orchestrator", data: { reason: "Read back from the item's log.", count: answers.length } }, at);
   });
 }

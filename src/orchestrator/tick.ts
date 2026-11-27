@@ -24,7 +24,7 @@ import { linkedItem } from "./aboutOthers.ts";
 import type { Context, TickDeps } from "./context.ts";
 import type { ClaimResult } from "./ports.ts";
 import { createLog, errorText } from "./context.ts";
-import { afterRewrite, backToImplement, emptyBranch, followRewrite, followQuestions, keptBranch, overturnsBack, park, retryHandOver, retryPost, reviewOffAtLevel2, settle, withdrawSettledDuplicates, writeAboutOthers } from "./cycle.ts";
+import { afterRewrite, backToImplement, emptyBranch, followRewrite, followQuestions, keptBranch, overturnsBack, park, queueOffBelowLevel4, retryHandOver, retryPost, reviewOffAtLevel2, settle, withdrawSettledDuplicates, writeAboutOthers } from "./cycle.ts";
 import { loadOwnBlockers, withOwnBlockers } from "../store/blockers.ts";
 import { decide } from "./usageCheck.ts";
 import { allowanceDecision } from "./allowance.ts";
@@ -38,7 +38,7 @@ import { migrateRemovedSteps, recoverFromLogs } from "./recover.ts";
 import { watchMain } from "./mainGuard.ts";
 import { closeMerged } from "./mergedClose.ts";
 import { readSessionResult } from "./runner.ts";
-import { driveQueue } from "./queueMerge.ts";
+import { driveQueue, settleQueueBelowLevel4 } from "./queueMerge.ts";
 import { checkHoldings, readHoldings, WorkNotFound } from "./workspaces.ts";
 import { awaitsImplement, triagedText, recheckPromptText, staleTriage, startRecheck } from "./recheck.ts";
 import { itemTextHash } from "../core/answerReuse.ts";
@@ -525,6 +525,10 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
   // A person handed an item back with a branch: the cycle goes on from the review (docs/PEOPLE.md).
   const handbacksWaiting = await adoptHandbacks(ctx, items, store.list<Change>("change"));
 
+  // Below level 4 the merge queue finishes what level 4 began and lets every change go (levels 2 and 3, where the implementor merges).
+  const queueLeft = config.level >= 2 && config.level < 4 && Object.values(jobs).some((job) => job.parked?.as === "queued" && job.queued !== undefined && job.merged === undefined)
+    && (await settleQueueBelowLevel4(ctx));
+
   // 1b. Sessions that are over move their job to the next step.
   let running = 0;
   // A hand-over owed waits while its switch is paused (Pause, Stop, start-up). At level 4 that is the merge queue's: the hand-over
@@ -624,6 +628,11 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
         ctx.say("orchestrator.main_unread", `Could not tell whether ${job.branch} is merged: ${errorText(error)}`, key);
       }
     }
+    // A merged change whose Item could not be closed on the host (it did not answer): the close is tried again.
+    if (item && job.closeOwed && job.merged !== undefined && !over && !job.sessionId) {
+      await closeMerged(ctx, job, job.closeOwed.sha, job.closeOwed.batch);
+      continue;
+    }
     // Questions or a rewrite that could not be posted for a reason that can change are posted again, without waiting for a person.
     if (repost && !job.sessionId && !over && job.parked?.retry === "post") {
       await retryPost(ctx, job);
@@ -651,6 +660,9 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
     // A job at the review step at level 2 (the level was lowered while it waited for a reviewer): nobody reviews at this level, and
     // the implementor merges. Its own session is resumed to merge it, as level 2 does after a build.
     if (item && config.level === 2 && job.step === "review" && !job.sessionId && !job.parked && !job.owes && !job.reviewAskedBy) reviewOffAtLevel2(ctx, job);
+    // A change in the merge queue when the level was lowered below 4: the queue is not driven there, and the implementor merges, once
+    // nothing of the queue's is in flight for it (`settleQueueBelowLevel4`).
+    if (item && queueLeft && job.parked?.as === "queued" && job.queued !== undefined && job.merged === undefined && !job.sessionId) queueOffBelowLevel4(ctx, job);
   }
 
   // This machine's claim on an Item it has no work under way for (its job closed, or the store was lost) goes back.
@@ -953,11 +965,6 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
           continue;
         }
       }
-      // Levels 2 and 3: where main is when the work starts, so a branch head already in it is not taken for a merge.
-      if (step === "implement" && level < 4 && job.base === undefined) {
-        const main = await watchMain(ctx, job, `before the implement session for ${entry.item.ref.id}`);
-        if (main) job.base = main;
-      }
       try {
         const answers = knownAnswers(store).filter((answer) => refKey(answer.subject) === key);
         const decided = answersText(answers, key);
@@ -1013,11 +1020,19 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
       const kept = adoptStored(store, jobs, key)!;
       // What this tick added to the job before the start, and has not saved yet.
       if (job.triaging) kept.triaging = job.triaging;
-      if (job.base !== undefined) kept.base = job.base;
       target = kept;
     }
     jobs[key] = target;
     target.sessionId = session.ref.id;
+    // Where main is once the session's branch is cut (read after the start, so it holds the cut): a branch head already in it is not
+    // taken for a merge, and one new in it is (a session that merged, told or not). `roundBase` is this round's; `base` the work's first.
+    if (step === "implement") {
+      const main = await watchMain(ctx, target, `once the implement session for ${entry.item.ref.id} started`);
+      if (main) {
+        target.roundBase = main;
+        target.base ??= main;
+      } else delete target.roundBase;
+    }
     if (step === "implement" && startedAs) target.sessionStart = startedAs;
     if (step === "implement") busy = busyItems(jobs);
     delete target.notBefore;

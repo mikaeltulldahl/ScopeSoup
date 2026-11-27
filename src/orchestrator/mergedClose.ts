@@ -15,6 +15,9 @@ export async function closeMerged(ctx: Context, job: Job, sha: string, batch?: n
   if (!actions.closeMerged) return;
   let result: Awaited<ReturnType<NonNullable<typeof actions.closeMerged>>> | undefined;
   let failed = false;
+  // Owed until the host took it, so a failure (written with the job by `act`) leaves it for the tick to try again.
+  const owed = job.closeOwed !== undefined;
+  job.closeOwed = { sha, ...(batch !== undefined ? { batch } : {}) };
   await ctx.act("close the merged item on its host", key, async () => {
     try {
       result = await actions.closeMerged!(job.item, { sha, target: ctx.config.mainBranch, ...(batch !== undefined ? { batch } : {}) });
@@ -23,11 +26,13 @@ export async function closeMerged(ctx: Context, job: Job, sha: string, batch?: n
       throw error;
     }
   });
-  // The failure itself is logged by `act`; this is the standing note on the board.
+  // The failure itself is logged by `act`; this is the standing note on the board. The tick tries the close again (`closeOwed`).
   if (failed) {
-    ctx.say("orchestrator.close_failed", `${job.item.id} merged on ${ctx.config.mainBranch} as ${sha.slice(0, 7)}, but closing it on the host failed: close it on the host by hand.`, key, { sha });
+    ctx.say("orchestrator.close_failed", `${job.item.id} merged on ${ctx.config.mainBranch} as ${sha.slice(0, 7)}, but closing it on the host failed: Scope Soup tries again at each tick, or close it on the host by hand.`, key, { sha });
     return;
   }
+  delete job.closeOwed;
+  if (owed && result !== "closed") ctx.commit("orchestrator.close_retried", `${job.item.id}: the close of its merged change was tried again and the host took it.`, key, { sha });
   if (result === "closed") ctx.commit("orchestrator.item_closed", `${job.item.id} was closed on its host: it merged on ${ctx.config.mainBranch} as ${sha.slice(0, 7)}.`, key, { sha });
   // Not closed: the job stays, parked as merged, so the item is not started again.
   else if (result === "by-hand") ctx.say("orchestrator.close_by_hand", `${job.item.id} merged on ${ctx.config.mainBranch} as ${sha.slice(0, 7)}, but writes to the host are off: close it on the host by hand.`, key, { sha });

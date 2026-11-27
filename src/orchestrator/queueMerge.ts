@@ -108,6 +108,11 @@ async function apply(ctx: Context, notice: Notice): Promise<void> {
         const key = refKey(member.change);
         const job = ctx.jobs[key];
         if (!job) continue;
+        // Applied only to the job that waits in the queue with this revision: one that moved on is not marked from an old notice.
+        if (job.parked?.as !== "queued" || (job.queued !== undefined && member.head !== undefined && job.queued !== member.head)) {
+          ctx.commit("orchestrator.queue_notice_stale", `The merge queue says ${job.branch} merged as ${member.sha.slice(0, 7)} (batch ${notice.batch}), but ${key.split(":").pop()} no longer waits in the queue with that revision: the notice is not applied to it.`, key, { sha: member.sha, batch: notice.batch });
+          continue;
+        }
         job.merged = member.sha;
         ctx.commit("orchestrator.merged", `${job.branch} merged through the queue (batch ${notice.batch}): ${member.sha.slice(0, 7)} is on ${main} of ${config.remote}${notice.outside ? " (the main branch was moved to it by someone else; the queue did not test it)" : `; ${command} passed on ${(notice.tested ?? member.sha).slice(0, 7)}, the tip of the tested chain`}.`, key, { sha: member.sha, batch: notice.batch });
         await ctx.act("write the revision to the item's log", key, () => actions.appendLog(job.item, "revision", { sha: member.sha, branch: job.branch }));
@@ -215,6 +220,34 @@ export async function driveQueue(ctx: Context, items: readonly WorkItem[]): Prom
   await settleFor(ctx, run, ctx.deps.queueWaitMs ?? QUEUE_WAIT_MS);
   const still = queue.pausedWhy();
   if (still !== null && run.done) ctx.say("orchestrator.queue_paused", `The merge queue is paused: ${still} Resume it on the Queue page of the board to let it go on (the lane's Resume does not).`);
+}
+
+/**
+ * Below level 4 the queue is not driven, and a change waiting in it leaves (the implementor merges at that level). What level 4
+ * began is finished first: a drain under way in this process is served until it ends (it may still push the batch it was checking),
+ * and what the queue decided already and has not delivered is applied; nothing new is built, checked or pushed. Returns true once
+ * nothing is in flight and every change has left the queue, so the jobs parked in it may go on as the level says.
+ */
+export async function settleQueueBelowLevel4(ctx: Context): Promise<boolean> {
+  const { queue, store } = ctx.deps;
+  if (!queue) return true;
+  const running = runs.get(queue);
+  if (running) {
+    await pump(ctx, running, mergeQueueStopped(store));
+    if (!running.done) return false;
+    runs.delete(queue);
+  }
+  try {
+    await queue.deliverDecided({
+      note: (kind, reason, data) => ctx.commit(kind, reason, undefined, data),
+      deliver: (notice) => apply(ctx, notice),
+    });
+  } catch (error) {
+    ctx.say("orchestrator.queue_problem", `What the merge queue decided could not be applied: ${errorText(error)}`);
+    return false;
+  }
+  queue.reconcile(new Set());
+  return true;
 }
 
 /**

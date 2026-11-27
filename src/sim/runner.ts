@@ -70,7 +70,7 @@ export function simRunner(ctx: RunnerContext, firstId = 1): SimRunner {
       // Sessions the store calls running with no process behind them (after a restart) are over.
       for (const session of store.list<Session>("session")) {
         if (LIVE.includes(session.status) && !live.has(session.ref.id)) {
-          store.put({ ...session, status: "failed", finishedAt: now(), endReason: "no process backs it (Scope Soup restarted)" }, "orchestrator", now());
+          store.put({ ...session, status: "failed", finishedAt: now(), endReason: "no process backs it (Scope Soup restarted)", orphaned: true }, "orchestrator", now());
         }
       }
     },
