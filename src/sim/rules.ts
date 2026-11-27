@@ -863,6 +863,9 @@ export const RULES: Rule[] = [
       if (prev.remote.down || o.remote.down) return null;
       // The pace held the next start (decision 133): the room was the window's, not the slot's. D10 checks the pace from outside.
       if (o.tick.paced) return null;
+      // So did the usage check: at the budget, or one session at a time while every window of the last reading has reset (a day
+      // passing in the fake world, #217): the room was the usage check's, not the slot's.
+      if (o.tick.budgetHeld) return null;
       const waiting = prev.items.find((i) => i.w.kind === "start" && i.w.cause === "slot" && !overlaps(i) && !o.started.some((s) => s.item === i.key) && (() => { const now = o.items.find((each) => each.key === i.key)?.w; return now?.kind === "start" && now.cause === "slot"; })());
       return waiting ? `${waiting.id} waited only for a slot, a slot was free, and the tick did not start it (now ${wText(o.items.find((each) => each.key === waiting.key)!.w)})` : null;
     },

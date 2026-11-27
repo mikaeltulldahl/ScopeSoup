@@ -75,6 +75,8 @@ export interface TickReport {
   paused?: boolean;
   /** The pace held the next start (decision 133): why. */
   paced?: string;
+  /** The usage check held the next start (at the budget, or one session at a time to get a fresh reading): why. */
+  budgetHeld?: string;
   /** New triage or new work waited for what waits for a person (decision 133): the words, once each. */
   capped?: string[];
 }
@@ -1032,6 +1034,7 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
     const decision = budget(step);
     if (!decision.allow) {
       reasons.push(decision.reason);
+      report.budgetHeld = decision.reason;
       ctx.say("orchestrator.budget_wait", decision.reason, undefined, { resumeAt: decision.resumeAt });
       if (decision.resumeAt && (!report.wakeAt || decision.resumeAt < report.wakeAt)) report.wakeAt = decision.resumeAt;
       break;
