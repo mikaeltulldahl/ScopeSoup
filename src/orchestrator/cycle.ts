@@ -17,7 +17,8 @@ import { ACTOR, errorText } from "./context.ts";
 import type { AskedText, Decision, ItemLinkAnswer, Job, ParkedAs, ReviewAnswer, TakenDecision, TriageAnswer } from "./jobs.ts";
 import { ASK_PERSON, parkSet, asImplement, asReview, asTriage, formatFindings, hasMarkup, recoverFields, keepsRecommendations, picks, questionsSettled, releaseIn, parkedRewrite, changedRewrite, sameText } from "./jobs.ts";
 import { providerFor } from "./providers/index.ts";
-import type { Actions, SessionResultRecord } from "./ports.ts";
+import type { Actions, ClaimResult, SessionResultRecord } from "./ports.ts";
+import { CLAIM_EXPIRY_MINUTES } from "./ports.ts";
 import type { QuestionWrite } from "../ports/host.ts";
 import { COMMENT_LIMIT, TooLarge, WriteLater } from "../ports/host.ts";
 import { mergeQueueOn } from "../store/control.ts";
@@ -78,11 +79,10 @@ export async function park(ctx: Context, job: Job, as: ParkedAs, reason: string,
   delete job.notBefore;
   delete job.resume;
   ctx.commit(PARK_EVENT[as], reason, key, { step: job.step });
-  const { actions, runner } = ctx.deps;
+  const { runner } = ctx.deps;
   if (ask) await tellPeople(ctx, job, as, reason, ask, retry);
-  if (as !== "queued" && as !== "handed-over" && actions.claims) {
-    await ctx.act("release the claim", key, () => actions.release(job.item, reason));
-  }
+  // The claim stays while the job does (#243): let go here, another machine took the Item and worked on it beside this parked job.
+  // It goes back when the job closes or is dropped.
   await ctx.act("remove the worktree", key, () => runner.releaseWorkspace(job.workspace));
 }
 
@@ -1679,6 +1679,22 @@ export async function writeAboutOthers(ctx: Context): Promise<void> {
       ctx.say("orchestrator.about_other_wait", `Questions from ${[...new Set(entries.map((each) => each.askedBy))].join(" and ")} wait for ${item.ref.id}: ${busy}.`, key);
       continue;
     }
+    // No job here: the questions make one, which holds this machine's claim as every job does (#243). The claim reads the Item from
+    // the host first, so one another machine works on (its claim not read here yet) is not taken from it.
+    const { actions } = ctx.deps;
+    if (!existing && actions.claims) {
+      const until = new Date(Date.parse(ctx.at) + CLAIM_EXPIRY_MINUTES * 60_000).toISOString();
+      let claimed: ClaimResult;
+      try {
+        claimed = await actions.claim(item.ref, until, ctx.at);
+      } catch (error) {
+        claimed = { won: false, why: `the claim could not be written: ${errorText(error)}` };
+      }
+      if (!claimed.won) {
+        ctx.say("orchestrator.about_other_wait", `Questions from ${[...new Set(entries.map((each) => each.askedBy))].join(" and ")} wait for ${item.ref.id}: ${claimed.why}.`, key);
+        continue;
+      }
+    }
     ctx.forget("orchestrator.about_other_wait", key);
     const askedBy = [...new Set(entries.map((each) => each.askedBy))];
     const questions = entries.flatMap((each) => each.questions);
@@ -1686,7 +1702,7 @@ export async function writeAboutOthers(ctx: Context): Promise<void> {
     // Compared with the description as it is now: whitespace alone, or the Verification field appended again, is no change. Entries
     // here have questions: a rewrite alone is a proposed rewrite (`keepAboutOthers`), which leaves the job alone.
     const rewrite = changedRewrite([...entries].reverse().find((each) => each.rewrite)?.rewrite, item.body, item.verification) || original;
-    // A job parked before gave back its claim and workspace then; one between steps holds them still.
+    // A job parked before gave back its workspace then; one between steps holds it still.
     const holds = existing !== undefined && !existing.parked;
     const job: Job = existing ?? { item: item.ref, workspace: workspaceKey(item.ref), branch: workBranch(item.ref), step: "triage", failures: 0, fixRounds: 0, startedAt: ctx.at };
     // Work paused on it keeps its branch, its implementor's session and the findings it is to be told; what it was about to do

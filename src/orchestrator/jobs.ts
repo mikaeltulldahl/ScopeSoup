@@ -292,6 +292,12 @@ export interface Job {
   dropAskedBy?: string;
   /** A person picked Triage on the board: this triage runs whatever the level (decision 104). Cleared when it is settled. */
   triageAskedBy?: string;
+  /**
+   * The tick has seen this job's Item in To do. Read in Backlog after that, another machine's person moved it there, and the job is
+   * given up as a move to Backlog here gives it up (#243). A job never seen in To do (a person's Triage pick in Backlog and what
+   * follows, or work a person put under way whose move to To do the store has not read yet) goes on as decision 121 says.
+   */
+  seenInTodo?: true;
   /** A person picked In review on the board: this review step runs whatever the level (decision 104). Cleared when it is settled. */
   reviewAskedBy?: string;
   /**

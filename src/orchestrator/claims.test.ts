@@ -33,14 +33,14 @@ function origin(): TestRepo {
   return repo;
 }
 
-function laptop(remote: TestRepo, machine: string, prefix: string, start = "2026-11-18T09:00:00Z"): Laptop {
+function laptop(remote: TestRepo, machine: string, prefix: string, start = "2026-11-18T09:00:00Z", tickMs = 1000): Laptop {
   const clone = cloneTestRepo(remote);
   cleanups.push(() => clone.cleanup());
   const clock = { ms: Date.parse(start) };
   // Fetching is done on every read, so that a laptop sees what the other one wrote.
   const host = createMetaBranchHost({
     repoDir: clone.dir, ref: REF, allowWrites: true, person: { name: machine, email: `${machine}@example.invalid` }, machine, idPrefix: prefix,
-    now: () => new Date((clock.ms += 1000)).toISOString(), fetchIntervalMs: 0,
+    now: () => new Date((clock.ms += tickMs)).toISOString(), fetchIntervalMs: 0,
   });
   cleanups.push(() => void host.stop?.());
   const actions = createHostActions({ host, git: async () => ({ code: 0, stdout: "", stderr: "" }), config: () => ({}) as ProjectConfig, store: openStore(":memory:") });
@@ -104,6 +104,20 @@ test("a claim expires without a renewing line, and renewal keeps it", async () =
   // Once it has expired and nobody took it, the picker offers it again.
   const idle = readyItems(await listed(b), [], {}, new Date(b.clock.ms + 60 * 60_000).toISOString());
   assert.deepEqual(idle.ready.map((item) => item.ref.id), ["A-1"]);
+});
+
+test("a claim again in the second of its release is won: the identical line is written again a second later (#243)", async () => {
+  const remote = origin();
+  // The clock stands still: the claim, its release and the claim again are written in one second, as in one tick.
+  const a = laptop(remote, "laptop-a", "A", "2026-11-18T09:00:00Z", 0);
+  await (a.host.write?.createWork?.({ title: "Work", state: "todo", lane: "todo" }) as Promise<unknown>);
+  const until = untilFrom(a, 120);
+  assert.deepEqual(await a.actions.claim(ref("A-1"), until, at(a)), { won: true });
+  await a.actions.release(ref("A-1"), "the job was dropped");
+  assert.equal((await listed(a))[0]?.holder, undefined);
+  // The same line again would be dropped by the fold as a copy of the first: the claim must still hold the Item.
+  assert.deepEqual(await a.actions.claim(ref("A-1"), until, at(a)), { won: true });
+  assert.equal((await listed(a))[0]?.holder?.actor.id, "scopesoup@laptop-a");
 });
 
 test("a claim that cannot be shared is not won", async () => {
