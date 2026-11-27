@@ -515,6 +515,31 @@ async function holdsOn(id: string, options: Shrunk, actions: Action[]): Promise<
 }
 
 describe("runs the simulator shrank, held since their fix", { concurrency: 1 }, () => {
+  // Fixed (#268): a lost store does not hand over a change approved before the work was dropped and triaged again.
+  test("A1: approved, put back in To do, triaged blocked, then the store is lost: no hand-over is rebuilt", async () => {
+    await holdsOn("A1", {items: 7, level: 2, slots: 3, steps: 600, profile: "rough", ageing: true}, [
+      {kind: "level", to: 3},
+      {kind: "tick"},
+      {kind: "end", item: "A-2", v: 534778},
+      {kind: "tick"},
+      {kind: "clock", ms: 1860000},
+      {kind: "tick"},
+      {kind: "end", item: "A-2", v: 984367},
+      {kind: "tick"},
+      {kind: "clock", ms: 60000},
+      {kind: "tick"},
+      {kind: "end", item: "A-2", v: 752435},
+      {kind: "tick"},
+      {kind: "move", item: "A-2", v: 973302, keen: true},
+      {kind: "move", item: "A-2", v: 51184, keen: true},
+      {kind: "tick"},
+      {kind: "end", item: "A-2", v: 86247},
+      {kind: "tick"},
+      {kind: "lose-store"},
+      {kind: "tick"},
+    ]);
+  });
+
   // Fixed (#268): a step a person picked at a level below its switch runs while the agents are paused; the card says its timer.
   test("A1: Implement anyway at level 1, cut off by a restart: the card says when it starts, not that agents are paused", async () => {
     await holdsOn("A1", {items: 7, level: 3, slots: 2, steps: 600, profile: "rough", ageing: true}, [

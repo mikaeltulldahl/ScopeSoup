@@ -56,7 +56,7 @@ export function jobFromLog(item: WorkItem): Job | null {
     if (as === "needs-decision") parkOnQuestion(job, asked);
     return job;
   }
-  return resumeFromLines(job, sessions, newest, review);
+  return resumeFromLines(job, log, sessions, newest, review);
 }
 
 /**
@@ -106,7 +106,7 @@ export function jobFromHost(item: WorkItem): Job | null {
     setWhere(job, { parked: { ...where(job).parked!, questions: ids, askedAt: asked.at } });
     return job;
   }
-  return resumeFromLines(job, sessions, newest, review);
+  return resumeFromLines(job, log, sessions, newest, review);
 }
 
 /** The job's start from Scope Soup's log lines: branch, head, review rounds, and what the sessions answered as far as the cycle reads it. */
@@ -168,7 +168,7 @@ function parkOnQuestion(job: Job, asked: OpenQuestion): void {
 }
 
 /** When the store has nothing parked: the step the last session named starts again, or a reviewed change that has not merged is handed over again. */
-function resumeFromLines(job: Job, sessions: readonly LogRecord[], newest: LogRecord | undefined, review: LogRecord | undefined): Job | null {
+function resumeFromLines(job: Job, log: readonly LogRecord[], sessions: readonly LogRecord[], newest: LogRecord | undefined, review: LogRecord | undefined): Job | null {
   // 2. The last session said which step comes next: that step starts again.
   const next = str(sessions[sessions.length - 1]?.fields.next);
   if (STEPS.includes(next)) {
@@ -181,8 +181,10 @@ function resumeFromLines(job: Job, sessions: readonly LogRecord[], newest: LogRe
     return job;
   }
 
-  // 3. Reviewed and not merged: the hand-over (merging) is done again, without a session.
-  if (newest && review && review.fields.sha === newest.fields.sha && review.fields.verdict === "pass") {
+  // 3. Reviewed and not merged: the hand-over (merging) is done again, without a session. Not when a triage ran after that review:
+  // the work was dropped and started again from triage (a person's To do or Triage pick), so the old approval hands nothing over.
+  const triagedSince = review !== undefined && sessions.some((line) => line.fields.role === "triage" && log.indexOf(line) > log.indexOf(review));
+  if (newest && review && review.fields.sha === newest.fields.sha && review.fields.verdict === "pass" && !triagedSince) {
     setWhere(job, { step: "review", owes: "hand-over" });
     return job;
   }
