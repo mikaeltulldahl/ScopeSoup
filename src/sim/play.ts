@@ -113,6 +113,8 @@ export function draw(world: SimWorld, rnd: Rng, options: RunOptions): Action {
       if (roll === 4 && world.queue.waiting.size > 0) return { kind: "queue", item: rnd.pick([...world.queue.waiting.keys()])!.split(":").pop()!, merge: rnd.chance(0.7) };
       const handed = Object.values(jobs).filter((j) => j.parked?.as === "handed-over" || j.parked?.as === "escalated").map((j) => j.item.id);
       if (roll === 5 && handed.length > 0) return { kind: "person-merge", item: rnd.pick(handed)! };
+      // A person works in the clone while an Item runs: their tag, branch and stash entry are never an agent's (I6).
+      if (roll === 6 && live.length > 0) return { kind: "person-refs", v: v() };
       return { kind: "main-commit", v: v() };
     }
     case "restart":
@@ -129,7 +131,7 @@ export function draw(world: SimWorld, rnd: Rng, options: RunOptions): Action {
 }
 
 /** The fair tail, one round: release a person's holds, end each session, answer each ask, merge what was handed over, tick. */
-function fairRound(world: SimWorld, round: number): Action[] {
+export function fairRound(world: SimWorld, round: number): Action[] {
   const out: Action[] = [];
   const jobs = world.jobs();
   for (const item of world.items()) {

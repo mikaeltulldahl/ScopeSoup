@@ -1036,10 +1036,10 @@ test("triage that finds a decision, or an item that is not ready, goes to a pers
   assert.deepEqual([w.job("2")?.parked?.verdict, w.job("3")?.parked?.verdict], [true, true]);
   assert.deepEqual(w.calls, ["answerTurn 1 decision", "answerTurn 2 not-ready", "answerTurn 3 not-ready"]);
   // In the item's log: the question with its options and why the item parked, then the session, with no next step.
-  assert.equal(w.lines[0], '1 question {"question":"Round up or down?","options":["up","down"],"recommendation":"down","parked":"needs-decision"}');
+  assert.equal(w.lines[0], '1 question {"question":"Round up or down?","options":["up","down"],"recommendation":"down","parked":"needs-decision","set":"1@2026-11-18T10:00:00.000Z"}');
   assert.match(w.lines[1] ?? "", /^1 session \{"role":"triage","model":"model-of-triage","outcome":"succeeded",/);
   assert.doesNotMatch(w.lines[1] ?? "", /"next"/);
-  assert.match(w.lines[2] ?? "", /^2 question \{"question":"Triage: not ready\. No acceptance criteria\.","parked":"not-ready"\}$/);
+  assert.match(w.lines[2] ?? "", /^2 question \{"question":"Triage: not ready\. No acceptance criteria\.","parked":"not-ready","set":"1@[^"]+"\}$/);
   // The triage's verdict in words, `ready`, and the session's id, which links the step to its cost, stream and chat.
   assert.match(w.lines[1] ?? "", /"summary":"Ready, small\. 1 question for a person\.".*"sessionId":"s1".*"ready":true/);
   assert.match(w.lines[3] ?? "", /^2 session .*"summary":"Not ready, small\. No acceptance criteria\.".*"sessionId":"s2".*"ready":false/);
@@ -2854,7 +2854,7 @@ test("an implementer that stops with a question and options puts them to a perso
   assert.equal(w.reasons("orchestrator.needs_decision")[0], "Keep the old format? Options: keep | migrate. Recommended: keep.");
   assert.deepEqual(w.calls, ["answerTurn 1 decision"]);
   // The question is in the item's log with its options, as triage's is.
-  assert.equal(w.lines.find((line) => line.includes(" question ")), '1 question {"question":"Keep the old format?","options":["keep","migrate"],"recommendation":"keep","parked":"needs-decision"}');
+  assert.equal(w.lines.find((line) => line.includes(" question ")), '1 question {"question":"Keep the old format?","options":["keep","migrate"],"recommendation":"keep","parked":"needs-decision","set":"1@2026-11-18T10:00:01.000Z"}');
   // Not retried; the answer releases it and the implement step that asked runs again.
   w.clock.ms += 60_000;
   await w.run();
@@ -3015,7 +3015,7 @@ test("a triage that proposes a restructuring parks it, with a person's recorded 
   assert.equal(job?.proposal?.reason, RESTRUCTURE_REASON);
   assert.deepEqual(w.calls, ["answerTurn 1 decision"]);
   // In the log too, so a restart (or another machine) puts it back.
-  assert.match(w.lines[0] ?? "", /^1 question \{"question":"Triage proposes.*"proposal":\{"id":"[0-9a-f]{8}","reason":"Triage proposes.*","original":"umbrella","parts":\[\{"title":"Part one".*"goes":"child"\},\{.*"goes":"into","into":"2"\}\],"carried":"- Asked: Which format\?.*"\},"parked":"needs-decision"\}$/);
+  assert.match(w.lines[0] ?? "", /^1 question \{"question":"Triage proposes.*"proposal":\{"id":"[0-9a-f]{8}","reason":"Triage proposes.*","original":"umbrella","parts":\[\{"title":"Part one".*"goes":"child"\},\{.*"goes":"into","into":"2"\}\],"carried":"- Asked: Which format\?.*"\},"parked":"needs-decision","set":"1@[^"]+"\}$/);
   // The board shows it as a person's turn.
   const held = loadSnapshot(w.store).parked?.find((each) => each.subject.id === "1");
   assert.deepEqual(held?.proposal?.parts, PARTS);

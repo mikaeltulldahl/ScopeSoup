@@ -159,6 +159,8 @@ export interface QuestionLine {
   multiSelect?: true;
   /** A proposed restructuring: `original`, `parts` (and `carried`), and `reason`. */
   proposal?: { id: string; reason: string; original: OriginalFate; parts: ProposedPart[]; carried?: string };
+  /** The park that asked it: a question of another set by the same writer replaces it. */
+  set?: string;
 }
 
 /** An item's current picture, as far as its log tells it. */
@@ -221,8 +223,10 @@ function foldOrder(a: LogEntry, b: LogEntry): number {
  *   revision whose sha is already there is the same revision. `merged` counts only when its sha is
  *   the newest revision's.
  * - `question` is open until an `answer` names it by its `at` in `to` (and, when the answer has
- *   it, its writer in `toBy`), or, without `to`, until the next answer (which takes the newest
- *   open question).
+ *   it, its writer in `toBy` and its text in `toQuestion`, for several asked at once), whichever of the two folds first, or, without `to`, until the next
+ *   answer (which takes the newest question open at the end of its own instant; with `toSet`, the question of that set, by
+ *   `toQuestion` when given, whichever folds first), or until a question of
+ *   another `set` by the same writer replaces it (each park of Scope Soup's writes one set).
  */
 export function foldLog(log: ParsedLog): LogPicture {
   const picture: LogPicture = { revisions: [], reviews: [], checks: [], openQuestions: [], entries: log.entries.length, lines: [], unknown: [], malformed: [...log.malformed] };
@@ -230,8 +234,35 @@ export function foldLog(log: ParsedLog): LogPicture {
   const ordered = [...log.entries].sort(foldOrder).filter((entry) => !seen.has(entry.key) && !!seen.add(entry.key));
   picture.lines = ordered;
   const merges: MergedLine[] = [];
+  // Answers that named a question not folded yet.
+  const earlyAnswers: { to: number; toBy?: LogActor; toQuestion?: string }[] = [];
+  // Answers that named a set of questions not folded yet.
+  const setAnswers: { set: string; toQuestion?: string }[] = [];
+  // Answers without `to`, by their instant: each takes the newest open question once its instant is folded, so a question of the same
+  // instant that folds after it (an earlier `by` as text) is the one it answers.
+  const newestAnswers: number[] = [];
+  // The questions of a set that were answered: the same question of that set written again later (a retried write) stays answered.
+  const answered = new Set<string>();
+  const answeredKey = (question: { set?: string; question: string; by: LogActor }): string | null => (question.set ? JSON.stringify([question.set, question.question, question.by.who, question.by.machine ?? ""]) : null);
+  const markAnswered = (question: QuestionLine | undefined): void => {
+    const key = question ? answeredKey(question) : null;
+    if (key) answered.add(key);
+  };
+  const closesAt: number[] = [];
+  const answerNewest = (before: number): void => {
+    while (newestAnswers.length > 0 && newestAnswers[0]! < before) {
+      newestAnswers.shift();
+      markAnswered(picture.openQuestions.pop());
+    }
+    while (closesAt.length > 0 && closesAt[0]! < before) {
+      closesAt.shift();
+      for (const question of picture.openQuestions) markAnswered(question);
+      picture.openQuestions = [];
+    }
+  };
   for (const entry of ordered) {
     const { at, by, data } = entry;
+    answerNewest(Date.parse(at));
     picture.lastAt = later(picture.lastAt, at);
     const bad = (problem: string): void => void picture.malformed.push({ line: entry.line, raw: JSON.stringify(data), problem });
     const sha = text(data.sha);
@@ -240,6 +271,7 @@ export function foldLog(log: ParsedLog): LogPicture {
       bad(`a ${entry.kind} line needs \`sha\`, a full commit id (40 or 64 lower-case hex digits)`);
       return null;
     };
+    const openBefore = entry.kind === "answer" ? [...picture.openQuestions] : null;
     switch (entry.kind) {
       case "claimed": {
         if (!isLogTime(data.until)) {
@@ -311,6 +343,8 @@ export function foldLog(log: ParsedLog): LogPicture {
         const context = text(data.context);
         if (context) line.context = context;
         if (data.multiSelect === true) line.multiSelect = true;
+        const set = text(data.set);
+        if (set) line.set = set;
         const proposed = data.proposal;
         if (typeof proposed === "object" && proposed !== null && !Array.isArray(proposed)) {
           const fields = proposed as Record<string, unknown>;
@@ -322,6 +356,24 @@ export function foldLog(log: ParsedLog): LogPicture {
           // answers it any more, so it is not an open question and the item is not held by it.
           else if (reason && (text(fields.description) || text(fields.verification))) break;
         }
+        // A new set of questions from the same writer replaces the set still open (decision 1 of #211).
+        if (set) picture.openQuestions = picture.openQuestions.filter((open) => !(open.set !== undefined && open.set !== set && sameActor(open.by, by)));
+        // An answer naming this question may fold before it: the same instant with an earlier `by` as text, or another clock.
+        const early = earlyAnswers.findIndex((answer) => answer.to === Date.parse(at) && (answer.toBy === undefined || sameActor(by, answer.toBy)) && (answer.toQuestion === undefined || answer.toQuestion === question));
+        if (early >= 0) {
+          earlyAnswers.splice(early, 1);
+          markAnswered(line);
+          break;
+        }
+        // The same question of the same set written again (a write retried after it was taken): one question, open or answered.
+        if (set && picture.openQuestions.some((open) => open.set === set && open.question === question && sameActor(open.by, by))) break;
+        if (answered.has(answeredKey(line) ?? "")) break;
+        const bySet = set ? setAnswers.findIndex((answer) => answer.set === set && (answer.toQuestion === undefined || answer.toQuestion === question)) : -1;
+        if (bySet >= 0) {
+          setAnswers.splice(bySet, 1);
+          markAnswered(line);
+          break;
+        }
         picture.openQuestions.push(line);
         break;
       }
@@ -330,8 +382,19 @@ export function foldLog(log: ParsedLog): LogPicture {
           bad("an answer line needs `answer`");
           break;
         }
+        // Named by its park's `set` (and text): Scope Soup's store had not read the question back when the answer was given.
+        const toSet = text(data.toSet);
+        if (data.to === undefined && toSet) {
+          const toQuestion = text(data.toQuestion);
+          const match = (open: QuestionLine): boolean => open.set === toSet && (toQuestion === undefined || open.question === toQuestion);
+          let index = -1;
+          picture.openQuestions.forEach((open, i) => void (match(open) && (index = i)));
+          if (index >= 0) picture.openQuestions.splice(index, 1);
+          else setAnswers.push({ set: toSet, ...(toQuestion ? { toQuestion } : {}) });
+          break;
+        }
         if (data.to === undefined) {
-          picture.openQuestions.pop();
+          newestAnswers.push(Date.parse(at));
           break;
         }
         if (!isLogTime(data.to)) {
@@ -344,7 +407,17 @@ export function foldLog(log: ParsedLog): LogPicture {
           break;
         }
         const to = Date.parse(data.to);
-        picture.openQuestions = picture.openQuestions.filter((question) => !(Date.parse(question.at) === to && (toBy === undefined || sameActor(question.by, toBy))));
+        // With `toQuestion`, of several asked in the same instant only the one with that text (or, with none, the first); without, all.
+        const toQuestion = text(data.toQuestion);
+        const named = (question: QuestionLine): boolean => Date.parse(question.at) === to && (toBy === undefined || sameActor(question.by, toBy));
+        const before = picture.openQuestions.length;
+        if (toQuestion === undefined) picture.openQuestions = picture.openQuestions.filter((question) => !named(question));
+        else {
+          const exact = picture.openQuestions.findIndex((question) => named(question) && question.question === toQuestion);
+          const found = exact >= 0 ? exact : picture.openQuestions.findIndex(named);
+          if (found >= 0) picture.openQuestions.splice(found, 1);
+        }
+        if (picture.openQuestions.length === before) earlyAnswers.push({ to, ...(toBy ? { toBy } : {}), ...(toQuestion ? { toQuestion } : {}) });
         break;
       }
       case "settings":
@@ -352,8 +425,9 @@ export function foldLog(log: ParsedLog): LogPicture {
         if (!Array.isArray(data.changes)) bad("a settings line needs `changes`, a list of { key, from?, to? }");
         break;
       case "edited":
-        // Closing an Item ends what it asked: a question open when it was closed stays closed, also after a reopen.
-        if (data.state === "done" || data.state === "abandoned") picture.openQuestions = [];
+        // Closing an Item ends what it asked: a question open when it was closed stays closed, also after a reopen. At the end of the
+        // close's instant, so a question of the same instant that folds after it (an earlier `by` as text) is ended too.
+        if (data.state === "done" || data.state === "abandoned") closesAt.push(Date.parse(at));
         break;
       case "created":
       case "session":
@@ -366,7 +440,9 @@ export function foldLog(log: ParsedLog): LogPicture {
       default:
         picture.unknown.push(entry);
     }
+    if (openBefore) for (const question of openBefore) if (!picture.openQuestions.includes(question)) markAnswered(question);
   }
+  answerNewest(Infinity);
   // The change has merged when the newest revision has: an older revision's `merged` says nothing.
   const newest = picture.revisions[picture.revisions.length - 1];
   const merged = newest ? merges.filter((line) => line.sha === newest.sha).pop() : undefined;

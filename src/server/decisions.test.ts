@@ -328,8 +328,8 @@ test("an answer the item's log does not take is not recorded: the store is never
   try {
     const response = await fetch(`${url}/api/answer`, { method: "POST", headers: { "Content-Type": "application/json", "X-ScopeSoup-Person": "Ada" }, body: JSON.stringify({ ref, answer: "wood" }) });
     const body = (await response.json()) as Record<string, unknown>;
-    assert.equal(response.status, 503, JSON.stringify(body));
-    assert.equal((body.error as { code?: string } | undefined)?.code ?? body.code, "LOG_WRITE_FAILED");
+    assert.equal(response.status, 502, JSON.stringify(body));
+    assert.equal((body.error as { code?: string } | undefined)?.code ?? body.code, "WRITE_REFUSED");
   } finally {
     await down.stop();
   }

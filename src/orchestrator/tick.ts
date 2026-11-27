@@ -218,6 +218,18 @@ async function releaseClaimsHeldForNothing(ctx: Context, items: readonly WorkIte
   }
 }
 
+/** Removes, or reports, what agents of closed Items left in Scope Soup's clone; the work under way here is left alone. */
+async function sweep(ctx: Context, subject?: string): Promise<void> {
+  const { runner } = ctx.deps;
+  if (!runner.sweepLeftovers) return;
+  const live = Object.values(ctx.jobs).map((job) => ({ item: refKey(job.item), branch: job.branch }));
+  try {
+    await runner.sweepLeftovers(live);
+  } catch (error) {
+    ctx.commit("orchestrator.action_failed", `Could not clear the agents' leftover refs: ${errorText(error)}`, subject);
+  }
+}
+
 /** Drops a job a person put back in To do: its claim on the host (when this machine holds it) and its workspace go back. */
 async function dropAsked(ctx: Context, jobs: Jobs, key: string, job: Job, item: WorkItem | null): Promise<void> {
   const { actions, runner } = ctx.deps;
@@ -500,6 +512,9 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
     }
   }
 
+  // What agents of Items closed since left in Scope Soup's clone (a close whose sweep failed, or work dropped without a close).
+  await sweep(ctx);
+
   // Scope Soup's own blockers count as the host's do.
   const items = withVotes(withOwnBlockers(store.list<WorkItem>("work"), loadOwnBlockers(store)), loadVotes(store));
   const itemByKey = new Map(items.map((item) => [refKey(item.ref), item]));
@@ -631,6 +646,7 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
       if (actions.claims && actions.claimant && item?.holder?.actor.id === actions.claimant) await ctx.act("release the claim", key, () => actions.release(job.item, why));
       await ctx.act("remove the worktree", key, () => runner.releaseWorkspace(job.workspace));
       if (!kept) await ctx.act("delete the branch", key, () => runner.deleteBranch(job.branch));
+      await sweep(ctx, key);
       continue;
     }
     // A person overturned a decision while the work waits (for review, a slot, a retry, or an answer it was given): the

@@ -12,7 +12,7 @@ import { loadSnapshot } from "../server/snapshot.ts";
 import { knownAnswers } from "../store/answers.ts";
 import { loadOwnBlockers } from "../store/blockers.ts";
 import { switchState } from "../store/control.ts";
-import type { Commit, Worktree } from "./git.ts";
+import type { Commit, FakeGit, StashEntry, Worktree } from "./git.ts";
 import type { Role, W } from "./waits.ts";
 import { isBusy, waitsFor } from "./waits.ts";
 import type { Action, Ledger, PageJson, SimWorld } from "./world.ts";
@@ -38,8 +38,10 @@ export interface GitObs {
   main: string;
   branches: Map<string, string>;
   tags: Map<string, string>;
-  stash: { workspace: string; item: string; scopesoup: boolean }[];
+  stash: StashEntry[];
   worktrees: Worktree[];
+  /** Scope Soup's tags, branches (full names) and stash entries (`stash:<sha>`) that hold work on neither main nor their Item's pushed branch. */
+  unique: Set<string>;
   owners: Map<string, { item?: string; scopesoup: boolean }>;
   deleted: { ref: string; madeBy?: { item?: string; scopesoup: boolean }; unmerged: boolean }[];
   mainMoves: { sha: string; how: string; item?: string }[];
@@ -57,6 +59,8 @@ export interface StartObs {
 
 export interface Observation {
   seed: number;
+  /** The machine observed (one of several in the multiplayer profile). */
+  machine?: string;
   step: number;
   action: Action;
   at: string;
@@ -99,7 +103,8 @@ const closedState = (item: WorkItem): boolean => item.state === "done" || item.s
 export async function observe(world: SimWorld, seed: number, action: Action, previous: Observation | undefined, startedBefore: number): Promise<Observation> {
   const store = world.store;
   const at = world.now();
-  const snapshot = loadSnapshot(store);
+  // As the server's board: the project's level with the snapshot.
+  const snapshot = { ...loadSnapshot(store), level: world.configNow.level };
   const board = buildBoard(snapshot, new Date(world.ms));
   const cards = new Map<string, CardView>();
   for (const lane of board.lanes) for (const card of lane.cards) cards.set(card.key, card);
@@ -122,8 +127,9 @@ export async function observe(world: SimWorld, seed: number, action: Action, pre
   const onMain = (head: string | undefined): boolean => !!head && world.git.contains(head, world.git.main) === true;
   // The paths an Item's work is known by: what its triage named (#187 compares these; what the branch changes is not looked at).
   const pathsOf = (job: Job): string[] => [...new Set(job.triage?.paths ?? [])];
-  const busy = Object.values(jobs).filter((job) => isBusy(job, onMain(job.head)) && open.has(refKey(job.item))).map((job) => ({ key: refKey(job.item), paths: pathsOf(job), conflicts: (job.triage?.links ?? []).filter((l) => l.type === "conflictsWith").map((l) => l.item.replace(/^#/, "")) }));
-  const claimant = "scopesoup@laptop-a";
+  // A change the merge queue pushed is on main before the tick reads the queue's notice: until then it is busy, as the tick sees it.
+  const busy = Object.values(jobs).filter((job) => isBusy(job, job.parked?.as !== "queued" && onMain(job.head)) && open.has(refKey(job.item))).map((job) => ({ key: refKey(job.item), paths: pathsOf(job), conflicts: (job.triage?.links ?? []).filter((l) => l.type === "conflictsWith").map((l) => l.item.replace(/^#/, "")) }));
+  const claimant = `scopesoup@${world.machine}`;
   const itemObs: ItemObs[] = [];
   for (const item of items) {
     const key = refKey(item.ref);
@@ -153,12 +159,12 @@ export async function observe(world: SimWorld, seed: number, action: Action, pre
   });
   const requestsBefore = previous ? previous.ledger.requests.filter((r) => r.step < world.step).length : 0;
   return {
-    seed, step: world.step, action, at, level: world.configNow.level, slots: world.configNow.settings.maxParallelSessions.value, switches, usageReserve, fair: world.fair,
+    seed, machine: world.machine, step: world.step, action, at, level: world.configNow.level, slots: world.configNow.settings.maxParallelSessions.value, switches, usageReserve, fair: world.fair,
     items: itemObs, sessions: store.list<Session>("session"), started, liveCount: live.length, events, lastSeq,
     ...(first ? { firstEvent: JSON.stringify(first) } : {}),
     answers: knownAnswers(store), tick: action.kind === "tick" || action.kind === "inside-tick" ? world.lastTick : null, tickError: world.tickError,
     git: {
-      main: git.main, branches: new Map(git.branches), tags: new Map(git.tags), stash: [...git.stash], worktrees: [...git.worktrees.values()].map((t) => ({ ...t, dirty: [...t.dirty], untracked: [...t.untracked] })),
+      main: git.main, branches: new Map(git.branches), tags: new Map(git.tags), stash: git.stash.map((entry) => ({ ...entry })), unique: uniqueLeftovers(git), worktrees: [...git.worktrees.values()].map((t) => ({ ...t, dirty: [...t.dirty], untracked: [...t.untracked] })),
       owners: new Map(git.owners), deleted: [...git.deleted], mainMoves: [...git.mainMoves],
       contains: (a, d) => git.contains(a, d), commit: (sha) => git.commits.get(sha),
     },
@@ -171,4 +177,16 @@ export async function observe(world: SimWorld, seed: number, action: Action, pre
     queued: [...world.queue.waiting.keys(), ...world.queue.notices.flatMap((n) => (n.kind === "mark-merged" ? n.members.map((m) => refKey(m.change)) : n.kind === "send-back" ? [refKey(n.change)] : []))],
     fairTicks: world.fair && previous ? previous.fairTicks + (action.kind === "tick" ? 1 : 0) : 0,
   };
+}
+
+export function uniqueLeftovers(git: FakeGit): Set<string> {
+  const out = new Set<string>();
+  const branchOf = (item: string | undefined): string => `scopesoup/${item?.split(":").pop() ?? ""}`;
+  for (const [ref, madeBy] of git.owners) {
+    if (!madeBy.scopesoup) continue;
+    const sha = ref.startsWith("refs/tags/") ? git.tags.get(ref.slice(10)) : ref.startsWith("refs/heads/") ? git.branches.get(ref.slice(11)) : undefined;
+    if (sha !== undefined && !git.safe(sha, branchOf(madeBy.item))) out.add(ref);
+  }
+  for (const entry of git.stash) if (entry.scopesoup && !git.stashSafe(entry, entry.branch)) out.add(`stash:${entry.sha}`);
+  return out;
 }

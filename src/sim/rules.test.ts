@@ -9,6 +9,7 @@ import type { Job } from "../orchestrator/jobs.ts";
 import type { SessionRequest } from "../orchestrator/ports.ts";
 import { FakeGit } from "./git.ts";
 import type { GitObs, ItemObs, Observation, StartObs } from "./observe.ts";
+import { uniqueLeftovers } from "./observe.ts";
 import type { RunOptions } from "./play.ts";
 import { play } from "./play.ts";
 import type { Rule } from "./rules.ts";
@@ -21,7 +22,7 @@ const key = (id: string): string => `metaBranch:work:${id}`;
 
 function gitObs(g: FakeGit = new FakeGit()): GitObs {
   return {
-    main: g.main, branches: new Map(g.branches), tags: new Map(g.tags), stash: [...g.stash], worktrees: [...g.worktrees.values()], owners: new Map(g.owners),
+    main: g.main, branches: new Map(g.branches), tags: new Map(g.tags), stash: [...g.stash], unique: uniqueLeftovers(g), worktrees: [...g.worktrees.values()], owners: new Map(g.owners),
     deleted: [...g.deleted], mainMoves: [...g.mainMoves], contains: (a, d) => g.contains(a, d), commit: (sha) => g.commits.get(sha),
   };
 }
@@ -99,6 +100,18 @@ describe("each rule fires on a bad state built by hand", { concurrency: 1 }, () 
     const parked = obs({ items: [item("A-1", { kind: "person", why: "answer", n: 1 }, { card: card("A-1", { lane: "queued", actor: "anyone" }) })] });
     assert.match(fires("A1", parked) ?? "", /queued lane/);
     assert.equal(fires("A1", obs({ items: [item("A-1", { kind: "queue" }, { card: card("A-1", { lane: "queued", actor: "queue" }) })] })), null);
+    // A review runs on an Item whose change the store has not read yet: In review, not To do (#230).
+    assert.match(fires("A1", obs({ items: [item("A-1", { kind: "session", role: "review" }, { card: card("A-1", { lane: "todo" }) })] })) ?? "", /card is in todo/);
+    // A question at implement, with a commit: In progress (decision 2).
+    const asked = item("A-1", { kind: "person", why: "answer", n: 1 }, { job: job("A-1", { step: "implement", head: "1".repeat(40) }), card: card("A-1", { lane: "todo", actor: "anyone" }) });
+    assert.match(fires("A1", obs({ items: [asked] })) ?? "", /its lane is in-progress/);
+  });
+  it("A1", "a timed wait whose card says another cause (decision 3, #230)", () => {
+    const at = (cause: "text" | "timer", reason: string) => obs({ items: [item("A-1", { kind: "start", role: "implement", cause }, { card: card("A-1", { lane: "todo", reason }) })] });
+    assert.match(fires("A1", at("timer", "ready; waiting for a free agent slot")) ?? "", /waits for a timer/);
+    assert.equal(fires("A1", at("timer", "the implement step failed once; it tries again in 30 s")), null);
+    assert.match(fires("A1", at("text", "ready; waiting for a free agent slot")) ?? "", /read back/);
+    assert.equal(fires("A1", at("text", "waits until the description written at a person's Accept is read back from metaBranch (at most 29 min more)")), null);
   });
   it("A2", "a person's turn while a session works on it (#194)", () => {
     assert.match(fires("A2", obs({ items: [item("A-1", { kind: "session", role: "implement" }, { card: card("A-1", { lane: "in-progress", actor: "anyone" }) })] })) ?? "", /person's turn/);
@@ -201,6 +214,12 @@ describe("each rule fires on a bad state built by hand", { concurrency: 1 }, () 
   });
   it("E1", "an Item appears with no person's request", () => {
     assert.match(fires("E1", obs({ remote: { refusedRewrites: 0, down: false, items: 3 } }), obs({ remote: { refusedRewrites: 0, down: false, items: 4 } })) ?? "", /appeared/);
+    // A leftover of an agent's with nothing unique may go; a person's tag, or a leftover with unique work, may not.
+    const g = new FakeGit();
+    g.deleted.push({ ref: "refs/tags/wip-A-1", madeBy: { item: key("A-1"), scopesoup: true }, unmerged: false });
+    assert.equal(fires("E1", obs({ git: gitObs(g) })), null);
+    g.deleted.push({ ref: "refs/tags/v1.0", madeBy: { scopesoup: false }, unmerged: false });
+    assert.match(fires("E1", obs({ git: gitObs(g) })) ?? "", /v1.0 was deleted/);
   });
   it("E2", "a log line on the host was to be changed", () => {
     assert.match(fires("E2", obs({ remote: { refusedRewrites: 1, down: false, items: 0 } })) ?? "", /log line/);
@@ -277,6 +296,16 @@ describe("each rule fires on a bad state built by hand", { concurrency: 1 }, () 
     g.ensureWorktree("w-A-1", "scopesoup/A-1", key("A-1"));
     const o = obs({ action: tick, git: gitObs(g), items: [item("A-1", NOTHING, { item: workItem("A-1", { state: "done" }) })] });
     assert.match(fires("I2", o, o, o, o) ?? "", /worktree w-A-1 is still there/);
+    // A tag holding work found nowhere else may stay, once it was reported with its sha; not before.
+    const h = new FakeGit();
+    const sha = h.commit([h.main], ["src/a.ts"], "work on A-1", "agent");
+    h.tags.set("wip-A-1", sha);
+    h.owners.set("refs/tags/wip-A-1", { item: key("A-1"), scopesoup: true });
+    const closed = item("A-1", NOTHING, { item: workItem("A-1", { state: "done" }) });
+    const left = obs({ action: tick, git: gitObs(h), items: [closed] });
+    assert.match(fires("I2", left, left, left, left) ?? "", /refs\/tags\/wip-A-1/);
+    const kept = obs({ action: tick, git: gitObs(h), items: [closed], events: [{ ...event(key("A-1"), "orchestrator", "orchestrator.leftover_kept"), data: { ref: "refs/tags/wip-A-1", sha } }] });
+    assert.equal(fires("I2", kept, left, left, left), null);
   });
   it("I3", "Scope Soup's branches grow with history", () => {
     const g = new FakeGit();
@@ -299,8 +328,14 @@ describe("each rule fires on a bad state built by hand", { concurrency: 1 }, () 
   });
   it("I6", "a person's branch is gone", () => {
     const g = new FakeGit();
+    const before = obs({ git: gitObs(g) });
     g.branches.delete("feature/by-hand");
-    assert.match(fires("I6", obs({ git: gitObs(g) })) ?? "", /feature\/by-hand/);
+    assert.match(fires("I6", before, obs({ git: gitObs(g) })) ?? "", /feature\/by-hand/);
+    // A person's tag, made while an Item runs, reported as an agent's leftover.
+    const h = new FakeGit();
+    h.personRefs(1);
+    const told = { ...event(key("A-1"), "orchestrator", "orchestrator.leftover_kept"), data: { ref: "refs/tags/release-1", sha: h.main } };
+    assert.match(fires("I6", obs({ git: gitObs(h), events: [told] })) ?? "", /release-1.*reported as an agent's/);
   });
   const LANES = ["blocked", "backlog", "todo", "in-progress", "in-review", "queued", "checking", "done"];
   it("J1", "an agent starts work on an Item in Backlog (#221)", () => {
@@ -331,15 +366,30 @@ describe("each rule fires on a bad state built by hand", { concurrency: 1 }, () 
   });
 });
 
-/** A run the simulator shrank, replayed: it fails the rule on today's code. When the code is fixed, the test is turned round. */
-async function failsOn(id: string, options: Omit<RunOptions, "items" | "level" | "slots"> & { items: number; level: number; slots: number }, actions: Action[]): Promise<void> {
+type Shrunk = Omit<RunOptions, "items" | "level" | "slots"> & { items: number; level: number; slots: number };
+
+/** A run the simulator shrank, replayed: it fails the rule on today's code. When the code is fixed, the test is turned round (`holdsOn`). */
+async function failsOn(id: string, options: Shrunk, actions: Action[]): Promise<void> {
   const result = await play(1, options as RunOptions, actions, RULES.filter((each) => each.id === id));
   assert.ok(result.failures.some((f) => f.rule === id), `${id} held on the pasted steps`);
 }
 
 describe("runs the simulator shrank, failing on today's code (known.ts)", { concurrency: 1 }, () => {
-  test("A3: an answer to a not-ready triage leaves its question open on the host", async () => {
-    await failsOn("A3", { items: 6, level: 4, slots: 2, steps: 80, profile: "normal" }, [
+  test("F3: the second of two ticks says its idle line again", async () => {
+    await failsOn("F3", { items: 6, level: 4, slots: 2, steps: 80, profile: "normal" }, [{ kind: "tick" }, { kind: "tick" }]);
+  });
+});
+
+/** A run the simulator shrank once, replayed: since its fix the rule holds on it. */
+async function holdsOn(id: string, options: Shrunk, actions: Action[]): Promise<void> {
+  const result = await play(1, options as RunOptions, actions, RULES.filter((each) => each.id === id));
+  assert.deepEqual(result.failures.filter((f) => f.rule === id).map((f) => f.message), []);
+}
+
+describe("runs the simulator shrank, held since their fix", { concurrency: 1 }, () => {
+  // Fixed (#230): the answer, in the same second as the question and from a name that sorts first, folded before it.
+  test("A3: an answer to a not-ready triage closes its question on the host (#230)", async () => {
+    await holdsOn("A3", { items: 6, level: 4, slots: 2, steps: 80, profile: "normal" }, [
       { kind: "tick" },
       { kind: "end", item: "A-1", v: 781588 },
       { kind: "tick" },
@@ -347,18 +397,6 @@ describe("runs the simulator shrank, failing on today's code (known.ts)", { conc
     ]);
   });
 
-  test("F3: the second of two ticks says its idle line again", async () => {
-    await failsOn("F3", { items: 6, level: 4, slots: 2, steps: 80, profile: "normal" }, [{ kind: "tick" }, { kind: "tick" }]);
-  });
-});
-
-/** A run the simulator shrank once, replayed: since its fix the rule holds on it. */
-async function holdsOn(id: string, options: Omit<RunOptions, "items" | "level" | "slots"> & { items: number; level: number; slots: number }, actions: Action[]): Promise<void> {
-  const result = await play(1, options as RunOptions, actions, RULES.filter((each) => each.id === id));
-  assert.deepEqual(result.failures.filter((f) => f.rule === id).map((f) => f.message), []);
-}
-
-describe("runs the simulator shrank, held since their fix", { concurrency: 1 }, () => {
   test("I2 and C3: an Item closed while its triage runs keeps nothing: the session is stopped, the worktree and claim go (#229)", async () => {
     const steps: Action[] = [{ kind: "tick" }, { kind: "close", item: "A-1", state: "abandoned" }, { kind: "tick" }, { kind: "tick" }, { kind: "tick" }];
     await holdsOn("I2", { items: 5, level: 3, slots: 3, steps: 80, profile: "normal" }, steps);

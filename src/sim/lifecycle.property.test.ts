@@ -32,7 +32,9 @@ it("random runs keep the lifecycle rules, apart from the known failures, and rea
     for (const failure of result.failures) if (!first.has(failure.rule)) first.set(failure.rule, result);
     totals.steps += result.steps;
     totals.merges += result.merges;
-    totals.answers += result.seen.get("answered") ?? 0;
+    // A person's answers: to questions, and to a triage's rewrite (with its questions). Since questions close when answered (#230),
+    // the fake person no longer answers the same stale question again and again.
+    totals.answers += (result.seen.get("answered") ?? 0) + ["accept", "edit", "reject"].reduce((sum, each) => sum + (result.seen.get(`rewrite-${each}`) ?? 0), 0);
     totals.restarts += result.seen.get("restart") ?? 0;
     totals.accepted += result.seen.get("rewrite-accept") ?? 0;
     totals.rejected += result.seen.get("rewrite-reject") ?? 0;

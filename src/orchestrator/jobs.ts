@@ -205,6 +205,8 @@ export interface Job {
   failures: number;
   /** How many times review (or a failed merging) sent the change back to the implementor. */
   fixRounds: number;
+  /** How many times the job parked: each park's questions in the item's log carry it as their `set`, which replaces the set before (#230). */
+  parks?: number;
   /** The step may not start before this (a retry timer or a limit reset). */
   notBefore?: string;
   /** The agent session to continue, after a limit or a stop cut it off. */
@@ -232,6 +234,8 @@ export interface Job {
     retry?: "hand-over" | "post";
     /** With `retry: "post"`, the parked state's own reason, which it shows again once the post is through. */
     posting?: string;
+    /** With `retry: "post"`, the parked state's own kind when it was not a question set (a log line that could not be written; #230). */
+    postingAs?: ParkedAs;
     /** Parked "not-ready" by triage's verdict (not ready, or too large): a person may overrule it with Implement anyway. */
     verdict?: true;
     /** The implement step itself was parked here (a question, a refused tool, failed attempts), not the hand-over, merging or a person closing the change. Only such a parked Item is resumed by an answer. */
@@ -683,6 +687,11 @@ export function settleRewrite(store: Store, item: Ref, answers: readonly string[
   saveJobs(store, jobs);
   store.appendEvent({ kind: `orchestrator.rewrite_${settled}`, subject: key, actor, data: { reason: `A person ${settled} the triage's rewrite (round ${rewrite.round}).${said ? ` Answered: ${said}.` : ""}`, round: rewrite.round, original: rewrite.original, text: rewrite.text } }, at);
   return { settled };
+}
+
+/** The set a park's questions carry in the item's log: the park's count and moment, so a job rebuilt from the log does not reuse an old one (#230). */
+export function parkSet(job: Job): string {
+  return `${job.parks ?? 0}@${job.parked?.at ?? ""}`;
 }
 
 /** How long a job waits at most for the description Scope Soup wrote to be read back from the host (`Job.writing`). */

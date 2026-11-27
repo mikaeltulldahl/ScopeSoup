@@ -15,7 +15,7 @@ import type { QueueDriver, Notice, QueueSink } from "../orchestrator/queueDriver
 import type { TickReport } from "../orchestrator/tick.ts";
 import { tick } from "../orchestrator/tick.ts";
 import { initialState } from "../queue/state.ts";
-import type { ScopeSoupServer } from "../server/server.ts";
+import type { PickRequestPort, ScopeSoupServer } from "../server/server.ts";
 import { createServer } from "../server/server.ts";
 import { applyControl, mergeQueueOn, pauseAtStartup, setRolesForTest } from "../store/control.ts";
 import { KEYS } from "../store/keys.ts";
@@ -24,6 +24,7 @@ import { openStore } from "../store/store.ts";
 import { syncHost } from "../sync/syncHost.ts";
 import type { Host } from "../ports/host.ts";
 import { FakeGit, PATHS } from "./git.ts";
+import type { StashEntry } from "./git.ts";
 import { MetaRemote, metaHost } from "./metaHost.ts";
 import type { Rng } from "./random.ts";
 import { random } from "./random.ts";
@@ -53,6 +54,7 @@ export type Action =
   | { kind: "sync" }
   | { kind: "clock"; ms: number }
   | { kind: "main-commit"; v: number }
+  | { kind: "person-refs"; v: number }
   | { kind: "host-down"; steps: number }
   | { kind: "foreign-claim"; item: string }
   | { kind: "usage"; reserve: boolean }
@@ -99,10 +101,20 @@ export interface WorldOptions {
   slots: number;
 }
 
+/** One machine of several (the multiplayer profile, `multi.ts`): its name, its Items' id prefix, and what it shares with the others. */
+export interface MachineOptions {
+  machine: string;
+  idPrefix: string;
+  /** The meta remote as this machine reaches it (`multi.ts` gives each machine a link that can be offline on its own). */
+  remote: MetaRemote;
+  git: FakeGit;
+  requests?: PickRequestPort;
+}
 
-function makeConfig(level: number, slots: number): ProjectConfig {
+
+function makeConfig(level: number, slots: number, machine = "laptop-a"): ProjectConfig {
   const result = validateConfig({
-    project: "synthetic", machineName: "laptop-a", repoPath: "/srv/clone", level,
+    project: "synthetic", machineName: machine, repoPath: "/srv/clone", level,
     settings: { maxParallelSessions: { value: slots, reason: "simulator" } },
     remoteUrl: "git@git.example.invalid:team/project.git", checkCommand: ["node", "check.js"],
   }, "/srv/scopesoup");
@@ -179,9 +191,12 @@ export class SimWorld {
   ms = T0;
   step = 0;
   store: Store;
-  remote = new MetaRemote();
+  remote: MetaRemote;
   host: Host;
-  git = new FakeGit();
+  git: FakeGit;
+  /** This machine's name, as its claims name it (`scopesoup@<machine>`). */
+  machine: string;
+  private requests: PickRequestPort | undefined;
   runner: SimRunner;
   server: ScopeSoupServer;
   queue: SimQueue;
@@ -200,11 +215,15 @@ export class SimWorld {
   private pendingInside: Action | null = null;
   private actions: ReturnType<typeof createHostActions>;
 
-  constructor(options: WorldOptions) {
+  constructor(options: WorldOptions, machine?: MachineOptions) {
     this.store = openStore(":memory:");
-    this.configNow = makeConfig(options.level, options.slots);
+    this.machine = machine?.machine ?? "laptop-a";
+    this.remote = machine?.remote ?? new MetaRemote();
+    this.git = machine?.git ?? new FakeGit();
+    this.requests = machine?.requests;
+    this.configNow = makeConfig(options.level, options.slots, this.machine);
     this.source = { load: () => ({ config: this.configNow, changed: false }) };
-    this.host = metaHost({ remote: this.remote, machine: "laptop-a", idPrefix: "A", now: () => this.now() });
+    this.host = metaHost({ remote: this.remote, machine: this.machine, idPrefix: machine?.idPrefix ?? "A", now: () => this.now() });
     this.actions = createHostActions({ host: this.host, git: async () => ({ code: 0, stdout: "", stderr: "" }), config: () => this.configNow, store: this.store });
     this.runner = this.makeRunner(1);
     this.queue = this.makeQueue();
@@ -260,7 +279,7 @@ export class SimWorld {
   private makeServer(): ScopeSoupServer {
     return createServer({
       store: this.store, port: 0, now: () => new Date(this.ms), configFile: "/srv/scopesoup/scopesoup.config.json",
-      items: { host: this.host.info.id, write: this.host.write!, work: this.host.work! }, machine: "laptop-a",
+      items: { host: this.host.info.id, write: this.host.write!, work: this.host.work! }, machine: this.machine, ...(this.requests ? { requests: this.requests } : {}),
       planning: () => ({ bugLabels: ["bug"], plannedSessions: this.configNow.settings.maxParallelSessions.value, level: this.configNow.level }),
       syncNow: () => this.sync(),
     });
@@ -365,7 +384,8 @@ export class SimWorld {
         const r = random(action.v);
         const body = r.chance(0.2) ? `${item.body ?? ""}\n` : `Do thing ${action.item}, version ${action.v}.`;
         const got = await this.request("POST", "/api/item/edit", { ref: this.key(action.item), body }, action.item);
-        if (got.status === 200) {
+        // An edit the server found unchanged wrote nothing (with several machines, its store may be behind the remote's text).
+        if (got.status === 200 && !(got.json as { unchanged?: boolean } | null)?.unchanged) {
           this.ledger.texts.set(this.key(action.item), { title: item.title, body: body.trim() });
           this.count("edit");
         }
@@ -435,11 +455,11 @@ export class SimWorld {
         return;
       }
       case "level":
-        this.configNow = makeConfig(action.to, this.configNow.settings.maxParallelSessions.value);
+        this.configNow = makeConfig(action.to, this.configNow.settings.maxParallelSessions.value, this.machine);
         this.count("level");
         return;
       case "slots":
-        this.configNow = makeConfig(this.configNow.level, action.to);
+        this.configNow = makeConfig(this.configNow.level, action.to, this.machine);
         return;
       case "sync":
         return this.sync();
@@ -452,6 +472,10 @@ export class SimWorld {
         this.count("main-commit");
         return;
       }
+      case "person-refs":
+        this.git.personRefs(action.v);
+        this.count("person-refs");
+        return;
       case "host-down":
         this.remote.down = action.steps;
         this.count("host-down");
@@ -508,7 +532,7 @@ export class SimWorld {
         this.usage(false);
         applyControl(this.store, "resume", this.now(), "simulator", PERSON);
         for (const role of ["triage", "implement", "review", "mergeQueue"] as const) applyControl(this.store, `${role}.start`, this.now(), "simulator", PERSON);
-        if (this.configNow.level < 2) this.configNow = makeConfig(2, this.configNow.settings.maxParallelSessions.value);
+        if (this.configNow.level < 2) this.configNow = makeConfig(2, this.configNow.settings.maxParallelSessions.value, this.machine);
         return;
     }
   }
@@ -629,14 +653,19 @@ export class SimWorld {
       this.git.branches.set(branch, sha);
       return sha;
     };
-    // An agent's leftovers now and then (rule group I).
+    // An agent's leftovers now and then (rule group I). A stash entry's changes are in the commit that follows, when one does.
+    let stashed: StashEntry | undefined;
     if (!this.fair && r.chance(0.1)) {
       const tree = this.git.worktrees.get(workspace);
       const kind = r.int(5);
-      if (kind === 0) this.git.stash.push({ workspace, item: this.key(id), scopesoup: true });
+      if (kind === 0) {
+        const head = this.git.branches.get(branch) ?? this.git.main;
+        stashed = { workspace, item: this.key(id), scopesoup: true, sha: this.git.commit([head], [], `WIP on ${branch}`, "agent"), branch };
+        this.git.stash.push(stashed);
+      }
       if (kind === 1) {
-        this.git.tags.set(`wip-${id}`, this.git.branches.get(branch) ?? this.git.main);
-        this.git.owners.set(`refs/tags/wip-${id}`, { item: this.key(id), scopesoup: true });
+        this.git.tags.set(`scopesoup/${id}-wip`, this.git.branches.get(branch) ?? this.git.main);
+        this.git.owners.set(`refs/tags/scopesoup/${id}-wip`, { item: this.key(id), scopesoup: true });
       }
       if (kind === 2) {
         this.git.branches.set(`scopesoup/${id}-extra`, this.git.branches.get(branch) ?? this.git.main);
@@ -648,6 +677,7 @@ export class SimWorld {
     }
     if (roll < 12) {
       const head = commit();
+      if (stashed) stashed.same = head;
       let merged: "told" | "untold" | undefined;
       if ((told && (this.fair || r.chance(0.75))) || (!told && r.chance(0.03))) {
         this.git.mergeToMain(head, told ? "session told" : "session untold", this.key(id));
@@ -692,7 +722,10 @@ export class SimWorld {
       if (got.status === 200) {
         this.count(`rewrite-${action}`);
         const settled = (got.json as { settled?: string }).settled;
-        if (settled === "accepted") this.ledger.texts.set(key, { title: page.item.title, body: parked.rewrite.text.trim() });
+        // A rewrite that only changes whitespace from the text the page showed changes nothing (with several machines, the page may
+        // be behind the remote's text, and accepting it rightly leaves that text alone).
+        const same = parked.rewrite.text.replace(/\s+/g, " ").trim() === (page.item.body ?? "").replace(/\s+/g, " ").trim();
+        if (settled === "accepted" && !same) this.ledger.texts.set(key, { title: page.item.title, body: parked.rewrite.text.trim() });
         if (settled === "edited") this.ledger.texts.set(key, { title: page.item.title, body: text });
         answers.forEach((text) => this.ledger.answers.push({ step: this.step, item: key, text }));
       }

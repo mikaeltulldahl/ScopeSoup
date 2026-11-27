@@ -28,40 +28,56 @@ const first = <T>(list: T[], f: (each: T) => string | null): string | null => {
   }
   return null;
 };
+/**
+ * The Items whose job a lost store took and no tick has rebuilt from the Item's log yet (the first tick whose store has the Item does):
+ * until then the board reads them from the host alone.
+ */
+function toRebuild(o: Observation, prev: Observation | undefined, memo: Record<string, unknown>): Record<string, true> {
+  const rebuild = (memo.rebuild ??= {}) as Record<string, true>;
+  if (o.action.kind === "lose-store") for (const i of prev?.items ?? []) if (i.job) rebuild[i.key] = true;
+  if (isTick(o)) for (const i of o.items) delete rebuild[i.key];
+  return rebuild;
+}
+
 /** Counts ticks since a condition first held for a key; returns the count (0 on the first). Clears when it stops holding. */
-function ticksSince(memo: Record<string, unknown>, key: string, holds: boolean, o: Observation): number {
+function ticksSince(memo: Record<string, unknown>, key: string, holds: boolean, o: Observation, counts = isTick(o)): number {
   const table = (memo.since ??= {}) as Record<string, number>;
   if (!holds) {
     delete table[key];
     return 0;
   }
   if (!(key in table)) table[key] = 0;
-  else if (isTick(o)) table[key]!++;
+  else if (counts) table[key]!++;
   return table[key]!;
 }
 
-const ROLE_LANE: Record<string, string> = { triage: "backlog", implement: "in-progress", review: "in-review" };
+// A triage runs in To do, or in Backlog when a person asked for one there (#221).
+const roleLane = (role: string, item: ItemObs["item"]): string => (role === "triage" ? (item.backlog ? "backlog" : "todo") : role === "implement" ? "in-progress" : "in-review");
 
 export const RULES: Rule[] = [
   // --- A. One truth ---
   {
     id: "A1",
     why: "Views follow W: the card's lane and actor are the ones W gives (#185, #198, #207, #194).",
-    check(o) {
+    check(o, prev, memo) {
+      const rebuild = toRebuild(o, prev, memo);
       return first(o.items, (i) => {
         const card = i.card;
         const lane = card?.lane;
-        if (lane === "queued" || lane === "checking") {
+        if ((lane === "queued" || lane === "checking") && !(rebuild[i.key] && !i.job)) {
           if (i.w.kind !== "queue" && i.w.kind !== "nothing") return `${i.id} is in the ${lane} lane, but W is ${wText(i.w)}`;
         }
         if (!card) return null;
         if (i.w.kind === "session" && !i.w.settling) {
           if (card.actor !== "agent") return `${i.id}: a ${i.w.role} session runs, but the card's actor is ${card.actor}`;
-          if (lane !== ROLE_LANE[i.w.role]) return `${i.id}: a ${i.w.role} session runs, but the card is in ${lane}`;
+          if (lane !== roleLane(i.w.role, i.item)) return `${i.id}: a ${i.w.role} session runs, but the card is in ${lane}`;
         }
         if (i.w.kind === "blocker" && lane !== "blocked") return `${i.id} waits for ${i.w.on.join(", ")} but is in ${lane}, not Blocked`;
-        if (i.w.kind === "person" && i.w.why !== "holds" && i.w.why !== "merge" && lane !== stageLane(i.job)) return `${i.id}: W is ${wText(i.w)}, so its lane is ${stageLane(i.job)} (decision 2), but the card is in ${lane}`;
+        if (i.w.kind === "person" && i.w.why !== "holds" && i.w.why !== "merge" && lane !== stageLane(i.item, i.job)) return `${i.id}: W is ${wText(i.w)}, so its lane is ${stageLane(i.item, i.job)} (decision 2), but the card is in ${lane}`;
         if (i.w.kind === "nothing" && i.item.state === "done" && lane !== "done") return `${i.id} is done but in ${lane}`;
+        // The words of the cause (decision 3): the two timed waits have their own.
+        if (i.w.kind === "start" && i.w.cause === "text" && !/read back/.test(card.reason)) return `${i.id} waits for its written text to be read back, but the card says "${card.reason}"`;
+        if (i.w.kind === "start" && i.w.cause === "timer" && !/(tries again|resumes|starts) in /.test(card.reason)) return `${i.id} waits for a timer, but the card says "${card.reason}"`;
         return null;
       });
     },
@@ -82,10 +98,16 @@ export const RULES: Rule[] = [
   {
     id: "A3",
     why: "One count of what is asked: the job's open asks and the host's open question lines agree; none open unless a person is asked (#194, #209).",
-    check(o) {
+    check(o, prev, memo) {
+      const rebuild = toRebuild(o, prev, memo);
       return first(o.items, (i) => {
         if (!i.host || isClosed(i)) return null;
-        const open = (i.host.openQuestions ?? []).filter((q) => !q.proposal).length;
+        if (rebuild[i.key] && !i.job) return null;
+        // A person's hold comes first in W, but the questions the job is parked on still wait for an answer under it.
+        if (i.w.kind === "person" && i.w.why === "holds" && i.job?.parked) return null;
+        // Another machine's Scope Soup asked it: that machine's job waits for it, not this one's (the multiplayer profile).
+        const elsewhere = (q: { by: { agent?: boolean; machine?: string } }): boolean => !!q.by.agent && !!o.machine && !!q.by.machine && q.by.machine !== o.machine;
+        const open = (i.host.openQuestions ?? []).filter((q) => !q.proposal && !elsewhere(q)).length;
         const personAsk = i.w.kind === "person" && i.w.why !== "holds";
         if (personAsk && !asks(i.w) && open > 1) return `${i.id} has ${open} open question lines on the host, but W is ${wText(i.w)}, which asks one thing`;
         if (open > 0 && !personAsk && i.w.kind !== "session") return `${i.id} has ${open} open question line(s) on the host, but W is ${wText(i.w)}`;
@@ -309,7 +331,8 @@ export const RULES: Rule[] = [
     check(o, _prev, memo) {
       return first(o.items, (i) => {
         const left = [i.job ? "a job" : "", (i.host?.openQuestions ?? []).length > 0 ? "an open question" : "", i.live.length > 0 ? "a live session" : "", i.item.holder?.actor.id === OWN ? "Scope Soup's claim" : ""].filter(Boolean);
-        const n = ticksSince(memo, `C3|${i.key}`, isClosed(i) && left.length > 0, o);
+        // A tick while the host does not answer cannot give the claim back: it does not count.
+        const n = ticksSince(memo, `C3|${i.key}`, isClosed(i) && left.length > 0, o, isTick(o) && !o.remote.down);
         return n > 2 ? `${i.id} is ${i.item.state} but still has ${left.join(", ")} after ${n} ticks` : null;
       });
     },
@@ -409,12 +432,12 @@ export const RULES: Rule[] = [
   // --- E. The core rules ---
   {
     id: "E1",
-    why: "Nothing irreversible without a person: Items are only added by a person's request, and only branches under scopesoup/ are deleted.",
+    why: "Nothing irreversible without a person: Items are only added by a person's request, and only branches under scopesoup/ are deleted, besides an agent's leftovers whose commits are all on main or its Item's pushed branch (#236).",
     check(o, prev) {
       const made = o.requests.filter((r) => r.path === "/api/items" && r.status === 200).length;
       if (prev && o.remote.items > prev.remote.items + made) return `${o.remote.items - prev.remote.items - made} Item(s) appeared with no person's request`;
       if (prev && o.remote.items < prev.remote.items) return `an Item disappeared from the host`;
-      const bad = o.git.deleted.find((d) => !d.ref.startsWith("refs/heads/scopesoup/"));
+      const bad = o.git.deleted.find((d) => !d.ref.startsWith("refs/heads/scopesoup/") && !(d.madeBy?.scopesoup && d.madeBy.item && !d.unmerged));
       return bad ? `${bad.ref} was deleted` : null;
     },
   },
@@ -659,17 +682,24 @@ export const RULES: Rule[] = [
   },
   {
     id: "I2",
-    why: "Done means gone: within 2 ticks after its Item ends, what Scope Soup and its agents left for it is removed (worktree, tags, stash, extra branches).",
+    why: "Done means gone: within 2 ticks after its Item ends, what Scope Soup and its agents left for it is removed (worktree, tags, stash, extra branches), or, when it holds work found nowhere else, kept and reported on the Item with its sha (#236).",
     check(o, _prev, memo) {
+      // Reported as kept: `ref@sha`, from the events since the start.
+      const reported = (memo.leftoversKept ??= {}) as Record<string, true>;
+      for (const e of o.events) {
+        const data = (e.data ?? {}) as Record<string, unknown>;
+        if (e.kind === "orchestrator.leftover_kept") reported[`${String(data.ref)}@${String(data.sha)}`] = true;
+      }
+      const excused = (key: string, ref: string, sha: string | undefined): boolean => o.git.unique.has(key) && !!reported[`${ref}@${sha}`];
       return first(o.items, (i) => {
         const left: string[] = [];
         for (const t of o.git.worktrees) if (t.item === i.key) left.push(`worktree ${t.workspace}`);
         for (const [ref, madeBy] of o.git.owners) {
           if (madeBy.item !== i.key || !madeBy.scopesoup) continue;
-          if (ref.startsWith("refs/tags/") && o.git.tags.has(ref.slice(10))) left.push(ref);
-          if (ref.startsWith("refs/heads/") && ref !== `refs/heads/scopesoup/${i.id}` && o.git.branches.has(ref.slice(11))) left.push(ref);
+          if (ref.startsWith("refs/tags/") && o.git.tags.has(ref.slice(10)) && !excused(ref, ref, o.git.tags.get(ref.slice(10)))) left.push(ref);
+          if (ref.startsWith("refs/heads/") && ref !== `refs/heads/scopesoup/${i.id}` && o.git.branches.has(ref.slice(11)) && !excused(ref, ref, o.git.branches.get(ref.slice(11)))) left.push(ref);
         }
-        if (o.git.stash.some((s) => s.item === i.key && s.scopesoup)) left.push("a stash entry");
+        if (o.git.stash.some((s) => s.item === i.key && s.scopesoup && !excused(`stash:${s.sha}`, "refs/stash", s.sha))) left.push("a stash entry");
         const n = ticksSince(memo, `I2|${i.key}`, isClosed(i) && left.length > 0, o);
         return n > 2 ? `${i.id} is ${i.item.state} but ${left.join(", ")} is still there after ${n} ticks` : null;
       });
@@ -711,11 +741,29 @@ export const RULES: Rule[] = [
   },
   {
     id: "I6",
-    why: "Nothing outside Scope Soup's own: branches, tags and stashes Scope Soup did not create are never touched.",
-    check(o) {
-      if (!o.git.branches.has("feature/by-hand")) return "the branch feature/by-hand, a person's, is gone";
-      if (!o.git.tags.has("v1.0")) return "the tag v1.0, a person's, is gone";
-      if (!o.git.stash.some((s) => !s.scopesoup)) return "a person's stash entry is gone";
+    why: "Nothing outside Scope Soup's own: branches, tags and stashes Scope Soup did not create, also those a person makes while an Item runs, are never touched, nor reported as an agent's (#236).",
+    check(o, _prev, memo) {
+      // Every ref and stash entry of a person's seen so far.
+      const seen = (memo.persons ??= {}) as Record<string, string>;
+      for (const [ref, madeBy] of o.git.owners) {
+        if (madeBy.scopesoup || ref.startsWith("worktree:")) continue;
+        const sha = ref.startsWith("refs/tags/") ? o.git.tags.get(ref.slice(10)) : o.git.branches.get(ref.slice(11));
+        if (sha !== undefined) seen[ref] ??= sha;
+      }
+      for (const s of o.git.stash) if (!s.scopesoup) seen[`stash:${s.sha}`] ??= s.sha;
+      for (const ref of Object.keys(seen)) {
+        const there = ref.startsWith("stash:") ? o.git.stash.some((s) => `stash:${s.sha}` === ref) : ref.startsWith("refs/tags/") ? o.git.tags.has(ref.slice(10)) : o.git.branches.has(ref.slice(11));
+        if (!there) return `${ref}, a person's, is gone`;
+      }
+      const named = o.events.find((e) => {
+        if (!e.kind.startsWith("orchestrator.leftover_")) return false;
+        const data = (e.data ?? {}) as Record<string, unknown>;
+        return data.ref === "refs/stash" ? !!seen[`stash:${String(data.sha)}`] : typeof data.ref === "string" && !!seen[data.ref];
+      });
+      if (named) {
+        const data = (named.data ?? {}) as Record<string, unknown>;
+        return `${String(data.ref)} (${String(data.sha).slice(0, 7)}), a person's, was reported as an agent's leftover (${named.kind})`;
+      }
       return null;
     },
   },

@@ -430,6 +430,14 @@ export function seedDemo(store: Store, now: Date, dir?: string): void {
     // Item 36's last implementor session, kept: its page shows the session with no box to write in, as the Item is done.
     put(session("s-36", ref("work", 36), { status: "succeeded", model: "sonnet", agentSessionId: "agent-s-36", startedAt: at(-775), finishedAt: at(-760), endReason: "succeeded", attempt: 2 }));
 
+    // Where Scope Soup runs, a reviewed change waits in its merge queue as a job parked there (#230).
+    for (const each of store.list<Change>("change")) {
+      if (each.state !== "open" || !each.verdicts.some((verdict) => verdict.dimension === "review" && verdict.value === "pass")) continue;
+      for (const work of each.works) {
+        if (jobs[refKey(work)]) continue;
+        job(Number(work.id), { step: "review", head: each.revisions[each.revisions.length - 1]?.sha, parked: { as: "queued", reason: "Reviewed: it waits in the merge queue.", at: each.updatedAt } });
+      }
+    }
     saveJobs(store, jobs);
 
     // Two Item drafts wait in Your turn (decision 95): a review's should finding of item 66, and something item 63's implementor noticed.
