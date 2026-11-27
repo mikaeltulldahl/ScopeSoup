@@ -36,8 +36,8 @@ export function readyItems(items: WorkItem[], changes: Change[], jobs: Jobs, now
     const key = refKey(item.ref);
     const job = jobs[key];
     let reason: string | undefined;
-    const stands = where(job);
-    if (stands) reason = stands.parked ? `parked as "${stands.parked.as}": ${stands.parked.reason}` : `already in work (${stands.step})`;
+    const parked = parkedOf(job);
+    if (job) reason = parked ? `parked as "${parked.as}": ${parked.reason}` : `already in work (${stepAt(job)})`;
     // An umbrella is never started or triaged itself.
     else if (item.openChildren > 0) reason = `has ${plural(item.openChildren, "open child item")}`;
     else if ((item.children ?? 0) > 0) reason = "all its child items are done; waiting for a person to close it";
@@ -66,7 +66,7 @@ export const BACKLOG_REASON = "is in Backlog: it waits for a person to move it t
 export { compareItems, hasTriage } from "./score.ts";
 import { compareItems } from "./score.ts";
 import { plural } from "../model/plural.ts";
-import { where } from "./jobs.ts";
+import { parkedOf, stepAt } from "./jobs.ts";
 
 /**
  * Changes that count against readiness. On a host that keeps a log per item, an item's change has the

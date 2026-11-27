@@ -12,7 +12,7 @@ import { openStore } from "../store/store.ts";
 import type { ScopeSoupServer } from "./server.ts";
 import { createServer, isLoopback } from "./server.ts";
 import { refKey } from "../model/types.ts";
-import { loadJobs, saveJobs, where, jobOf } from "../orchestrator/jobs.ts";
+import { loadJobs, saveJobs, parkedOf, atStep } from "../orchestrator/jobs.ts";
 import { loadSnapshot } from "./snapshot.ts";
 import { buildUsageView } from "./usage.ts";
 import { decide } from "../orchestrator/usageCheck.ts";
@@ -87,9 +87,9 @@ test("loadSnapshot lists the items whose job says the change merged", () => {
   const own = openStore(":memory:");
   const merged = work(5);
   const open = work(6);
-  const job = (item: typeof merged, extra: object) => jobOf({ item: item.ref, workspace: "w", branch: `scopesoup/${item.ref.id}`, step: "triage" as const, failures: 0, fixRounds: 0, startedAt: T0, ...extra });
+  const job = (item: typeof merged, extra: object) => ({ item: item.ref, workspace: "w", branch: `scopesoup/${item.ref.id}`, failures: 0, fixRounds: 0, startedAt: T0, at: atStep("triage"), ...extra });
   saveJobs(own, {
-    [refKey(merged.ref)]: job(merged, { merged: "abc1234" }),
+    [refKey(merged.ref)]: job(merged, { at: { kind: "merged", step: "triage", sha: "abc1234" } }),
     [refKey(open.ref)]: job(open, {}),
   });
   assert.deepEqual(loadSnapshot(own).jobs?.filter((each) => each.phase.at === "merged").map((each) => each.subject), [merged.ref]);
@@ -362,11 +362,10 @@ test("POST /api/answer records the answer, picks a put-down item up again, and s
   const key = refKey(item.ref);
   const decision = { question: "Old name or new name?", options: ["Old", "New"], recommendation: "Old" };
   saveJobs(store, {
-    [key]: jobOf({
-      item: item.ref, workspace: "w3", branch: "scopesoup/3", step: "triage", failures: 0, fixRounds: 0, startedAt: T0,
-      parked: { as: "needs-decision", reason: decision.question, at: T0 },
-      triage: { ready: true, size: "small", paths: [], hidesDecision: true, decision },
-    }),
+    [key]: {
+      item: item.ref, workspace: "w3", branch: "scopesoup/3", failures: 0, fixRounds: 0, startedAt: T0,
+      triage: { ready: true, size: "small", paths: [], hidesDecision: true, decision }, at: { kind: "parked", step: "triage", parked: { as: "needs-decision", reason: decision.question, at: T0 } }
+    },
   });
   const page = (await (await fetch(`${base}/api/item?ref=${key}`)).json()) as ItemPage;
   assert.deepEqual([page.actor, page.parked?.as, page.parked?.canAnswer, page.parked?.decision?.options], ["anyone", "needs-decision", true, ["Old", "New"]]);
@@ -403,11 +402,10 @@ test("POST /api/answer with two open questions: the page lists both, the first a
     { question: "Which currency?", options: [{ label: "SEK", description: "Local." }, { label: "EUR", description: "Shared." }], recommendation: "SEK", context: "Tickets are sold in both." },
   ];
   saveJobs(store, {
-    [key]: jobOf({
-      item: item.ref, workspace: "w5", branch: "scopesoup/5", step: "triage", failures: 0, fixRounds: 0, startedAt: T0,
-      parked: { as: "needs-decision", reason: "Triage found 2 decisions for a person before the work can start.", at: T0 },
-      triage: { ready: true, size: "small", paths: [], hidesDecision: true, decision: decisions[0], decisions },
-    }),
+    [key]: {
+      item: item.ref, workspace: "w5", branch: "scopesoup/5", failures: 0, fixRounds: 0, startedAt: T0,
+      triage: { ready: true, size: "small", paths: [], hidesDecision: true, decision: decisions[0], decisions }, at: { kind: "parked", step: "triage", parked: { as: "needs-decision", reason: "Triage found 2 decisions for a person before the work can start.", at: T0 } }
+    },
   });
   const pageOf = async () => (await (await fetch(`${base}/api/item?ref=${key}`)).json()) as ItemPage;
   const page = await pageOf();
@@ -432,7 +430,7 @@ test("POST /api/answer with two open questions: the page lists both, the first a
 
   const first = await post({ ref: key, answer: "EUR", question: 1, parkedAt: page.parked?.at });
   assert.deepEqual([first.status, await first.json()], [200, { recorded: true, released: false, open: 1 }]);
-  assert.ok(where(loadJobs(store)[key])?.parked, "the item still parked");
+  assert.ok(parkedOf(loadJobs(store)[key]), "the item still parked");
   const between = await pageOf();
   assert.deepEqual(between.parked?.questions?.map((each) => each.answer), [undefined, "EUR"]);
   // A second answer to the same question is refused; the first stays.
@@ -464,11 +462,10 @@ test("POST /api/answer: an old index after a re-triage, and an index on a single
   const option = (label: string) => ({ label, description: "" });
   const decisions = ["North or south?", "Stop at the island?", "Night crossings?"].map((question) => ({ question, options: [option("Yes"), option("No")], recommendation: "Yes" }));
   const parkAt = (when: string, list: typeof decisions) => saveJobs(store, {
-    [key]: jobOf({
-      item: item.ref, workspace: "w6", branch: "scopesoup/6", step: "triage", failures: 0, fixRounds: 0, startedAt: T0,
-      parked: { as: "needs-decision", reason: "asks", at: when },
-      triage: { ready: true, size: "small", paths: [], hidesDecision: true, decision: list[0], decisions: list },
-    }),
+    [key]: {
+      item: item.ref, workspace: "w6", branch: "scopesoup/6", failures: 0, fixRounds: 0, startedAt: T0,
+      triage: { ready: true, size: "small", paths: [], hidesDecision: true, decision: list[0], decisions: list }, at: { kind: "parked", step: "triage", parked: { as: "needs-decision", reason: "asks", at: when } }
+    },
   });
   const post = (body: unknown) => fetch(`${base}/api/answer`, { method: "POST", headers: { "Content-Type": "application/json", "X-ScopeSoup-Person": "Ada" }, body: JSON.stringify(body) });
   const codeOf = async (response: Response) => [response.status, ((await response.json()) as { error?: { code: string } }).error?.code];
@@ -504,11 +501,10 @@ test("POST /api/answer: a to naming the log line of one of several questions ans
   store.put(item, "sync", T0);
   const key = refKey(item.ref);
   saveJobs(store, {
-    [key]: jobOf({
-      item: item.ref, workspace: "w7", branch: "scopesoup/7", step: "triage", failures: 0, fixRounds: 0, startedAt: T0,
-      parked: { as: "needs-decision", reason: "asks", at: T0 },
-      triage: { ready: true, size: "small", paths: [], hidesDecision: true, decision: decisions[0], decisions },
-    }),
+    [key]: {
+      item: item.ref, workspace: "w7", branch: "scopesoup/7", failures: 0, fixRounds: 0, startedAt: T0,
+      triage: { ready: true, size: "small", paths: [], hidesDecision: true, decision: decisions[0], decisions }, at: { kind: "parked", step: "triage", parked: { as: "needs-decision", reason: "asks", at: T0 } }
+    },
   });
   const post = (body: unknown) => fetch(`${base}/api/answer`, { method: "POST", headers: { "Content-Type": "application/json", "X-ScopeSoup-Person": "Ada" }, body: JSON.stringify(body) });
   // A question in the log that is not one of the several: kept, counts for none.
@@ -540,7 +536,7 @@ test("POST /api/start-over drops a job parked on an implement question, offers t
   const key = refKey(item.ref);
   const post = (body: unknown) => fetch(`${base}/api/start-over`, { method: "POST", headers: { "Content-Type": "application/json", "X-ScopeSoup-Person": "Ada" }, body: JSON.stringify(body) });
   const pageOf = async () => (await (await fetch(`${base}/api/item?ref=${key}`)).json()) as ItemPage;
-  const job = { item: item.ref, workspace: "w4", branch: "scopesoup/4", step: "implement", failures: 0, fixRounds: 3, startedAt: T0 } as const;
+  const job = { item: item.ref, workspace: "w4", branch: "scopesoup/4", failures: 0, fixRounds: 3, startedAt: T0 } as const;
 
   assert.equal((await post({})).status, 400);
   assert.equal((await post({ ref: "fake:work:999" })).status, 404);
@@ -548,25 +544,25 @@ test("POST /api/start-over drops a job parked on an implement question, offers t
   assert.equal((await post({ ref: key })).status, 409);
 
   // Steps and kinds where an answer does not resume a step get no button, and are refused.
-  saveJobs(store, { [key]: jobOf({ ...job, step: "triage", parked: { as: "needs-decision", reason: "which name?", at: T0 } }) });
+  saveJobs(store, { [key]: { ...job, at: { kind: "parked", step: "triage", parked: { as: "needs-decision", reason: "which name?", at: T0 } } } });
   assert.equal((await pageOf()).parked?.canStartOver, undefined);
   assert.equal(loadSnapshot(store).parked?.find((parked) => refKey(parked.subject) === key)?.canStartOver, undefined);
   assert.equal((await post({ ref: key })).status, 409);
-  saveJobs(store, { [key]: jobOf({ ...job, parked: { as: "needs-decision", reason: "restructure?", at: T0 }, proposal: { id: "abc12345", reason: "too large", original: "umbrella" as const, parts: [{ title: "Part one", description: "", verification: "", goes: "child" as const }] } }) });
+  saveJobs(store, { [key]: { ...job, proposal: { id: "abc12345", reason: "too large", original: "umbrella" as const, parts: [{ title: "Part one", description: "", verification: "", goes: "child" as const }] }, at: { kind: "parked", step: "implement", parked: { as: "needs-decision", reason: "restructure?", at: T0 } } } });
   assert.equal((await pageOf()).parked?.canStartOver, undefined);
   assert.equal((await post({ ref: key })).status, 409);
-  saveJobs(store, { [key]: jobOf({ ...job, parked: { as: "handed-over", reason: "The session opened a pull request.", at: T0 } }) });
+  saveJobs(store, { [key]: { ...job, at: { kind: "parked", step: "implement", parked: { as: "handed-over", reason: "The session opened a pull request.", at: T0 } } } });
   assert.equal((await pageOf()).parked?.canStartOver, undefined);
   assert.equal((await post({ ref: key })).status, 409);
   assert.ok(loadJobs(store)[key]);
 
   // An escalation the hand-over or a closed change raised (the step is still implement) does not resume the step.
-  saveJobs(store, { [key]: jobOf({ ...job, parked: { as: "escalated", reason: "The change was closed without being merged.", at: T0 } }) });
+  saveJobs(store, { [key]: { ...job, at: { kind: "parked", step: "implement", parked: { as: "escalated", reason: "The change was closed without being merged.", at: T0 } } } });
   assert.equal((await pageOf()).parked?.canStartOver, undefined);
   assert.equal((await post({ ref: key })).status, 409);
 
   // An escalation the implement step itself raised offers it, and pressing it drops the job.
-  saveJobs(store, { [key]: jobOf({ ...job, parked: { as: "escalated", reason: "git commit was refused", at: T0, byStep: true } }) });
+  saveJobs(store, { [key]: { ...job, at: { kind: "parked", step: "implement", parked: { as: "escalated", reason: "git commit was refused", at: T0, byStep: true } } } });
   assert.equal((await pageOf()).parked?.canStartOver, true);
   assert.equal(loadSnapshot(store).parked?.find((parked) => refKey(parked.subject) === key)?.canStartOver, true);
   const started = await post({ ref: key });

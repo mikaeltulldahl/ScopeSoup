@@ -15,7 +15,7 @@ import type { Job, Jobs } from "../orchestrator/jobs.ts";
 import { workBranch, workspaceKey } from "../orchestrator/paths.ts";
 import { sessionOf, stepOf, waitsForAnswer as answerAwaited } from "../core/phase.ts";
 import { phaseOf } from "../orchestrator/phase.ts";
-import { jobOf, setWhere, where, stepAt } from "../orchestrator/jobs.ts";
+import { atStep, stepAt, mergeApproved, sessionIdOf, parkedOf, release, nextStep, handOverTaken, toReview } from "../orchestrator/jobs.ts";
 
 export const MOVES = ["triage", "todo", "in-review", "merge-queue", "implement"] as const;
 export type Move = (typeof MOVES)[number];
@@ -135,7 +135,7 @@ export function moveWhys(input: MoveInput): MoveWhys {
   // The merge queue now: a reviewed change, at any level when the queue can run (decision 104). The tick hands it over as after an
   // approval. Approved on the revision the branch is at now: a newer one (a fix round after an approval) is not reviewed yet.
   const approved = job?.review?.verdict === "approve" && !job.review.findings.some((finding) => finding.severity === "must")
-    && job.head !== undefined && job.reviewedHead === job.head && (stepAt(job) === "review" || where(job).merge === true);
+    && job.head !== undefined && job.reviewedHead === job.head && (stepAt(job) === "review" || mergeApproved(job));
   // Below level 4 the merge queue is not offered at all (decision 104): it is Scope Soup's own, not a person's.
   if (level < 4) return result;
   result["merge-queue"] = why(
@@ -164,7 +164,7 @@ export function applyMove(jobs: Jobs, key: string, move: Move, input: MoveInput,
   if (!jobs[key] && move === "triage" && !input.elsewhere) {
     // Level 0, or in Backlog: no job yet. The person's pick makes one at triage, which the tick runs whatever the level (decision 104).
     const ref = input.item.ref;
-    jobs[key] = jobOf({ item: ref, workspace: workspaceKey(ref), branch: workBranch(ref), step: "triage", failures: 0, fixRounds: 0, startedAt: at, triageAskedBy: by });
+    jobs[key] = { item: ref, workspace: workspaceKey(ref), branch: workBranch(ref), at: atStep("triage"), failures: 0, fixRounds: 0, startedAt: at, triageAskedBy: by };
     return { ok: true, reason: `${by} set ${id} to triage: its triage runs next${input.item.backlog ? "; it stays in Backlog, and nothing more starts until a person moves it to To do" : ""}.` };
   }
   const job = jobs[key];
@@ -175,25 +175,26 @@ export function applyMove(jobs: Jobs, key: string, move: Move, input: MoveInput,
   const role = running ? (ROLE_WORDS[running] ?? "the agent") : "";
   const ends = running ? ` ${role.charAt(0).toUpperCase()}${role.slice(1)}'s session is ended now; its result is not taken.` : "";
   if (move === "triage") {
-    const fresh: Job = jobOf({
+    // The session that runs goes on until the tick ends it. As decision 68's triage again: the one that runs is told the answer before, as data.
+    const session = sessionIdOf(job);
+    const recheck = job.triage ? { reasons: [`${by} asked for it on the board`], previous: job.triage, previousAt: job.triaged?.at ?? job.startedAt, commits: [], commitCount: 0, finished: [] } : undefined;
+    jobs[key] = {
       item: job.item, workspace: job.workspace, branch: job.branch, failures: 0, fixRounds: 0, startedAt: at,
-      ...(job.triaged ? { triaged: job.triaged } : {}), ...interrupt, triageAskedBy: by, step: "triage", sessionId: where(job).sessionId });
-    // As decision 68's triage again: the one that runs is told the answer before, as data.
-    if (job.triage) setWhere(fresh, { recheck: { reasons: [`${by} asked for it on the board`], previous: job.triage, previousAt: job.triaged?.at ?? job.startedAt, commits: [], commitCount: 0, finished: [] } });
-    jobs[key] = fresh;
+      ...(job.triaged ? { triaged: job.triaged } : {}), ...interrupt, triageAskedBy: by,
+      at: { kind: "triage", run: session ? { is: "running", session } : { is: "waiting" }, ...(recheck ? { recheck } : {}) },
+    };
     return { ok: true, reason: `${by} set ${id} to triage: its triage is taken again, next; the one before and the work since are dropped (the branch stays).${ends}` };
   }
   if (move === "implement") {
     // Triage's verdict is overruled: the implement step runs next whatever the level, with triage's notes as they are.
-    setWhere(job, { parked: undefined, resume: undefined });
+    release(job);
+    nextStep(job, "implement");
     delete job.resumeWith;
-    setWhere(job, { notBefore: undefined });
     delete job.reviewAskedBy;
     delete job.queueAskedBy;
     job.failures = 0;
     // A fresh start of the work: no review send-backs yet, so no step-up of the implementor's model (decision 105).
     delete job.reviewSendBacks;
-    setWhere(job, { step: "implement" });
     job.implementAskedBy = by;
     return { ok: true, reason: `${by} overruled triage's verdict on ${id} (Implement anyway): its implement step starts next, with triage's notes as they are.` };
   }
@@ -203,17 +204,16 @@ export function applyMove(jobs: Jobs, key: string, move: Move, input: MoveInput,
     job.dropAskedBy = by;
     // What it was parked on is answered in its log with the move, and a hand-over it owed is not made: it waits for nothing but the drop
     // (#268: an owed hand-over left the product's wait saying hand-over while the tick drops the job).
-    setWhere(job, { parked: undefined, owes: undefined });
+    if (parkedOf(job)) release(job);
+    handOverTaken(job);
     return { ok: true, reason: `${by} put ${id} back in To do: the work under way is dropped (the branch stays) and the agents start it again from triage.${ends}` };
   }
   // A hand-over is undone here (a reviewed change handed to a person, or one whose hand-over failed), or the step that runs is
   // replaced; no answer is pending. The session id stays until the tick has ended that session.
   job.failures = 0;
-  setWhere(job, { parked: undefined, resume: undefined });
+  toReview(job, move !== "in-review");
   delete job.resumeWith;
-  setWhere(job, { notBefore: undefined, step: "review", merge: undefined });
   if (move === "in-review") {
-    setWhere(job, { owes: undefined });
     // One ask at a time: the queue is not asked for any more (decision 104).
     delete job.queueAskedBy;
     delete job.implementAskedBy;
@@ -221,7 +221,6 @@ export function applyMove(jobs: Jobs, key: string, move: Move, input: MoveInput,
     job.reviewAskedBy = by;
     return { ok: true, reason: `${by} set ${id} to review: its review step starts next.${ends}` };
   }
-  setWhere(job, { owes: "hand-over" });
   job.owesAskedBy = by;
   // Whatever the level: the hand-over goes to the merge queue (decision 104).
   job.queueAskedBy = by;

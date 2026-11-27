@@ -15,7 +15,7 @@ import { openStore } from "../store/store.ts";
 import { createSync } from "../sync/index.ts";
 import { loadAnswers } from "../store/answers.ts";
 import type { Job } from "../orchestrator/jobs.ts";
-import { loadJobs, saveJobs, where, jobOf, stepAt } from "../orchestrator/jobs.ts";
+import { loadJobs, saveJobs, stepAt, parkedOf, writingOf } from "../orchestrator/jobs.ts";
 import type { ScopeSoupServer } from "./server.ts";
 import { createServer } from "./server.ts";
 
@@ -170,7 +170,7 @@ test("a job stored with an old proposed rewrite shows no proposal, and none can 
   const at = "2026-11-18T09:00:00Z";
   kept.put({ ref: itemRef, title: "Thing", body: "Old text.", state: "todo", hostState: "open", labels: [], blockedBy: [], openChildren: 0, updatedAt: at }, "sync", at);
   const proposal = { description: "New text.", reason: "Because." } as unknown as Job["proposal"];
-  saveJobs(kept, { "fake:work:7": jobOf({ item: itemRef, workspace: "w", branch: "scopesoup/7", step: "implement", failures: 0, fixRounds: 0, startedAt: at, proposal, parked: { as: "needs-decision", reason: "A implement session proposes a new description for the item: Because.", at } }) });
+  saveJobs(kept, { "fake:work:7": { item: itemRef, workspace: "w", branch: "scopesoup/7", failures: 0, fixRounds: 0, startedAt: at, proposal, at: { kind: "parked", step: "implement", parked: { as: "needs-decision", reason: "A implement session proposes a new description for the item: Because.", at } } } });
   const plain = createServer({ store: kept, port: 0 });
   const url = (await plain.start()).url;
   try {
@@ -191,12 +191,11 @@ test("a triage's rewrite: keeping the recommendation accepts it in one action, t
   const subject = { host: "metaBranch", kind: "work" as const, id: ref.split(":").pop()! };
   const at = clock();
   const question = { question: "Metric or imperial?", options: [{ label: "Metric", description: "Metres." }, { label: "Imperial", description: "Feet." }], recommendation: "Metric" };
-  const job: Job = jobOf({
-    item: subject, workspace: "w", branch: `scopesoup/${subject.id}`, step: "triage", failures: 0, fixRounds: 0, startedAt: at,
+  const job: Job = {
+    item: subject, workspace: "w", branch: `scopesoup/${subject.id}`, failures: 0, fixRounds: 0, startedAt: at,
     triage: { ready: true, size: "small", paths: [], hidesDecision: true, decision: question, decisions: [question], rewrite: "Show the tide table in metres." },
-    rewrite: { original: "Tide table units.", text: "Show the tide table in metres.", questions: [question], round: 1 }, rewriteRounds: 1,
-    parked: { as: "needs-decision", reason: "Triage, round 1: a rewrite of the description and 1 question waits for an answer: 1. Metric or imperial?", at },
-  });
+    rewrite: { original: "Tide table units.", text: "Show the tide table in metres.", questions: [question], round: 1 }, rewriteRounds: 1, at: { kind: "parked", step: "triage", parked: { as: "needs-decision", reason: "Triage, round 1: a rewrite of the description and 1 question waits for an answer: 1. Metric or imperial?", at } }
+  };
   store.tx(() => saveJobs(store, { ...loadJobs(store), [ref]: job }));
 
   const shown = await page(ref);
@@ -226,16 +225,15 @@ test("another answer to a rewrite is recorded and sends the item back to its tri
   const subject = { host: "metaBranch", kind: "work" as const, id: ref.split(":").pop()! };
   const at = clock();
   const question = { question: "Local names?", options: [{ label: "Yes", description: "" }, { label: "No", description: "" }], recommendation: "Yes" };
-  store.tx(() => saveJobs(store, { ...loadJobs(store), [ref]: jobOf({
-    item: subject, workspace: "w", branch: `scopesoup/${subject.id}`, step: "triage", failures: 0, fixRounds: 0, startedAt: at,
-    rewrite: { original: "Harbour names.", text: "Show local harbour names.", questions: [question], round: 1 },
-    parked: { as: "needs-decision", reason: "Triage, round 1.", at },
-  }) }));
+  store.tx(() => saveJobs(store, { ...loadJobs(store), [ref]: {
+    item: subject, workspace: "w", branch: `scopesoup/${subject.id}`, failures: 0, fixRounds: 0, startedAt: at,
+    rewrite: { original: "Harbour names.", text: "Show local harbour names.", questions: [question], round: 1 }, at: { kind: "parked", step: "triage", parked: { as: "needs-decision", reason: "Triage, round 1.", at } }
+  } }));
   const answered = await post("/api/rewrite", { ref, parkedAt: at, answers: ["No, the official ones"], action: "accept" });
   assert.equal(answered.status, 200, JSON.stringify(answered.body));
   assert.equal(answered.body.rerun, true);
   const stored = loadJobs(store)[ref]!;
-  assert.deepEqual([stepAt(stored), where(stored).parked, stored.rewrite], ["triage", undefined, undefined]);
+  assert.deepEqual([stepAt(stored), parkedOf(stored), stored.rewrite], ["triage", undefined, undefined]);
   const after = await page(ref);
   assert.equal(after.item.body?.trim(), "Harbour names.");
   assert.deepEqual(after.answers.map((each) => `${each.question}: ${each.answer}`), ["Local names?: No, the official ones"]);
@@ -247,12 +245,11 @@ async function labelRewrite(title: string): Promise<{ ref: string; at: string }>
   const ref = made.body.ref as string;
   const subject = { host: "metaBranch", kind: "work" as const, id: ref.split(":").pop()! };
   const at = clock();
-  store.tx(() => saveJobs(store, { ...loadJobs(store), [ref]: jobOf({
-    item: subject, workspace: "w", branch: `scopesoup/${subject.id}`, step: "triage", failures: 0, fixRounds: 0, startedAt: at,
+  store.tx(() => saveJobs(store, { ...loadJobs(store), [ref]: {
+    item: subject, workspace: "w", branch: `scopesoup/${subject.id}`, failures: 0, fixRounds: 0, startedAt: at,
     triage: { ready: true, size: "small", paths: [], hidesDecision: false, rewrite: `${title}, in metres.` },
-    rewrite: { original: `${title}.`, text: `${title}, in metres.`, questions: [], round: 1, labels: { add: ["bug"], remove: ["question"] } }, rewriteRounds: 1,
-    parked: { as: "needs-decision", reason: "Triage, round 1: a rewrite of the description waits for a person to accept, edit or reject. Labels: +bug, −question.", at },
-  }) }));
+    rewrite: { original: `${title}.`, text: `${title}, in metres.`, questions: [], round: 1, labels: { add: ["bug"], remove: ["question"] } }, rewriteRounds: 1, at: { kind: "parked", step: "triage", parked: { as: "needs-decision", reason: "Triage, round 1: a rewrite of the description waits for a person to accept, edit or reject. Labels: +bug, −question.", at } }
+  } }));
   return { ref, at };
 }
 
@@ -271,7 +268,7 @@ test("meta branch: Accept that writes the description waits for it to be read ba
   const { ref, at } = await labelRewrite("Tide ranges");
   const accepted = await post("/api/rewrite", { ref, parkedAt: at, answers: [], action: "accept" });
   assert.equal(accepted.status, 200, JSON.stringify(accepted.body));
-  assert.ok(where(loadJobs(store)[ref])?.writing);
+  assert.ok(writingOf(loadJobs(store)[ref]));
   assert.equal(store.eventsAfter(0, 10_000).filter((event) => event.kind === "orchestrator.text_wait" && event.subject === ref).length, 1);
 
   const labelsOnly = await labelRewrite("Tide lows");
@@ -283,7 +280,7 @@ test("meta branch: Accept that writes the description waits for it to be read ba
   const settled = await post("/api/rewrite", { ref: labelsOnly.ref, parkedAt: labelsOnly.at, answers: [], action: "accept" });
   assert.equal(settled.status, 200, JSON.stringify(settled.body));
   assert.deepEqual(settled.body.labels, { added: ["bug"], removed: ["question"] });
-  assert.equal(where(loadJobs(store)[labelsOnly.ref])?.writing, undefined);
+  assert.equal(writingOf(loadJobs(store)[labelsOnly.ref]), undefined);
 });
 
 test("meta branch: Reject leaves the labels and the description unchanged", async () => {
@@ -342,10 +339,9 @@ test("an answer sent again after it was recorded is not refused, and one the Ite
   const ref = made.body.ref as string;
   const subject = { host: "metaBranch", kind: "work" as const, id: ref.split(":").pop()! };
   const at = clock();
-  const parkedJob = (when: string): Job => (jobOf({
-    item: subject, workspace: "w", branch: `scopesoup/${subject.id}`, step: "implement", failures: 0, fixRounds: 0, startedAt: at,
-    parked: { as: "escalated", reason: "Nothing to change.", at: when },
-  }));
+  const parkedJob = (when: string): Job => ({
+    item: subject, workspace: "w", branch: `scopesoup/${subject.id}`, failures: 0, fixRounds: 0, startedAt: at, at: { kind: "parked", step: "implement", parked: { as: "escalated", reason: "Nothing to change.", at: when } }
+});
   store.tx(() => saveJobs(store, { ...loadJobs(store), [ref]: parkedJob(at) }));
   const first = await post("/api/answer", { ref, answer: "Go on with tiles.", parkedAt: at });
   assert.equal(first.status, 200, JSON.stringify(first.body));
@@ -377,5 +373,5 @@ test("an answer sent again after it was recorded is not refused, and one the Ite
     await racing.stop();
   }
   assert.ok(loadAnswers(store).some((answer) => answer.subject.id === subject.id && answer.answer === "Slate after all."));
-  assert.ok(where(loadJobs(store)[ref])?.parked, "the job is left as it is");
+  assert.ok(parkedOf(loadJobs(store)[ref]), "the job is left as it is");
 });

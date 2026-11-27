@@ -11,7 +11,7 @@ import { fakeIssues, ISSUES_API } from "../hosts/github/fakeIssues.ts";
 import type { Ref, WorkItem } from "../model/types.ts";
 import { createHostActions } from "../orchestrator/hostActions.ts";
 import type { Decision, Job } from "../orchestrator/jobs.ts";
-import { loadJobs, saveJobs, where, jobOf } from "../orchestrator/jobs.ts";
+import { loadJobs, saveJobs, parkedOf } from "../orchestrator/jobs.ts";
 import { knownAnswers } from "../store/answers.ts";
 import type { Store } from "../store/store.ts";
 import { openStore } from "../store/store.ts";
@@ -54,11 +54,10 @@ after(async () => {
 async function parkedJob(id: string): Promise<Job> {
   const asked = await actions.askQuestions!(ref(id), asking);
   assert.ok(asked);
-  const job: Job = jobOf({
-    item: ref(id), workspace: `/srv/clone-${id}`, branch: `scopesoup/${id}`, step: "triage", failures: 0, fixRounds: 0, startedAt: at,
-    parked: { as: "needs-decision", reason: "Two questions.", at, questions: asked.ids, askedAt: asked.at },
-    triage: { ready: true, size: "small", paths: [], hidesDecision: true, decision: DECISIONS[0]!, decisions: DECISIONS },
-  });
+  const job: Job = {
+    item: ref(id), workspace: `/srv/clone-${id}`, branch: `scopesoup/${id}`, failures: 0, fixRounds: 0, startedAt: at,
+    triage: { ready: true, size: "small", paths: [], hidesDecision: true, decision: DECISIONS[0]!, decisions: DECISIONS }, at: { kind: "parked", step: "triage", parked: { as: "needs-decision", reason: "Two questions.", at, questions: asked.ids, askedAt: asked.at } }
+  };
   saveJobs(store, { ...loadJobs(store), [key(id)]: job });
   return job;
 }
@@ -94,7 +93,7 @@ describe("questions and answers as comments", () => {
     const posted = fake.sent.find((each) => each.call === `POST ${R}/2/comments`)!.body as { body: string };
     const marker = readMarker(posted.body)!;
     assert.equal(marker.kind, "answer");
-    assert.equal(marker.data.to, Number(where(job).parked!.questions![0]));
+    assert.equal(marker.data.to, Number(parkedOf(job)!.questions![0]));
     assert.equal(marker.data.answer, "down");
     assert.equal(marker.data.n, 1);
     assert.equal(typeof marker.data.textHash, "string");
@@ -131,7 +130,7 @@ describe("questions and answers as comments", () => {
     assert.equal(last.status, 400);
     assert.match(((await last.json()) as { error: { message: string } }).error.message, /label scopesoup:needs-decision not removed/);
     assert.equal(store.eventsAfter(0, 10_000).filter((event) => event.kind === "orchestrator.host_write_failed" && event.subject === key("3")).length, 1);
-    assert.equal(where(loadJobs(store)[key("3")])?.parked?.as, "needs-decision");
+    assert.equal(parkedOf(loadJobs(store)[key("3")])?.as, "needs-decision");
   });
 
   test("deleting the store and syncing brings back the open questions and every answer", async () => {

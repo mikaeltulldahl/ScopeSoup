@@ -4,7 +4,7 @@
 import type { Job } from "../orchestrator/jobs.ts";
 import type { WorkItem } from "../model/types.ts";
 import { itemTextHash } from "../core/answerReuse.ts";
-import { where, stepAt } from "../orchestrator/jobs.ts";
+import { mergeApproved, parkedOf, sessionIdOf, stepAt, waitingOf, writingOf } from "../orchestrator/jobs.ts";
 
 export type Role = "triage" | "implement" | "review";
 export type PersonWait = "answer" | "rewrite" | "restructuring" | "not-ready" | "escalated" | "merge" | "holds";
@@ -60,24 +60,23 @@ export function personHolds(item: WorkItem, claimant: string): boolean {
 
 export function waitsFor(input: WaitInput): W {
   const { item, job } = input;
-  const at = where(job);
-  if (closed(item) || at?.merged) return { kind: "nothing" };
+  if (closed(item) || job?.at.kind === "merged") return { kind: "nothing" };
   // Decision 3: a person's hold; a running session; parked for a person; blocker; text; same files; switch or level; usage; timer;
   // claim; slot.
   if (personHolds(item, input.claimant)) return { kind: "person", why: "holds" };
-  const role = (at?.step ?? "triage") as Role;
+  const role = (job ? stepAt(job) : "triage") as Role;
   if (input.live.length > 0) return { kind: "session", role: input.live[input.live.length - 1]! };
   // A session that ended and that the tick has not read yet is still the step's session.
   if (input.settling) return { kind: "session", role: input.settlingRole ?? role, settling: true };
-  const parked = at?.parked;
-  if (job && at && parked) {
+  const parked = parkedOf(job);
+  if (job && parked) {
     if (parked.as === "queued") return { kind: "queue" };
     if (parked.as === "handed-over") return { kind: "person", why: "merge" };
     if (parked.as === "not-ready") return { kind: "person", why: "not-ready" };
     if (parked.as === "escalated") return { kind: "person", why: "escalated" };
     if (job.proposal) return { kind: "person", why: "restructuring" };
     if (job.rewrite && !job.rewrite.settled) return { kind: "person", why: "rewrite" };
-    const asked = job.triage?.decisions?.length && at.step === "triage" ? job.triage.decisions.length : job.decision ? 1 : 1;
+    const asked = job.triage?.decisions?.length && stepAt(job) === "triage" ? job.triage.decisions.length : job.decision ? 1 : 1;
     const answered = job.answered?.length ?? 0;
     return { kind: "person", why: "answer", n: Math.max(0, asked - answered) };
   }
@@ -89,12 +88,12 @@ export function waitsFor(input: WaitInput): W {
   const pickedTriage = role === "triage" && job?.triageAskedBy !== undefined;
   if (blockers.length > 0 && !pickedTriage) return { kind: "blocker", on: [...new Set(blockers)] };
   // A job a person put back (To do, Backlog) is dropped by the next tick: nothing of it waits.
-  if (!job || !at || job.dropAskedBy) return { kind: "not-started" };
+  if (!job || job.dropAskedBy) return { kind: "not-started" };
   const start = (cause: StartCause): W => ({ kind: "start", role, cause });
   // In Backlog after a person's one-off triage, the implement step waits for a person to move it to To do (decision 121); work with a
   // revision or something to resume is never held there.
-  if (item.backlog && role === "implement" && !job.implementAskedBy && !job.head && !job.resumeWith && !at.resume) return start("backlog");
-  const writing = at.writing;
+  if (item.backlog && role === "implement" && !job.implementAskedBy && !job.head && !job.resumeWith && !waitingOf(job)?.resume) return start("backlog");
+  const writing = writingOf(job);
   if (writing && writing.from === itemTextHash(item) && Date.parse(input.now) - Date.parse(writing.at) < 30 * 60_000) return start("text");
   const begun = implementBegun(job);
   if (role === "implement" && !begun) {
@@ -109,7 +108,8 @@ export function waitsFor(input: WaitInput): W {
   if (STEP_LEVEL[role] > input.level && !picked) return start("level");
   if (input.usageReserve) return start("usage");
   if (input.paceHolds) return start("pace");
-  if (at.notBefore && at.notBefore > input.now) return start("timer");
+  const notBefore = waitingOf(job)?.notBefore;
+  if (notBefore && notBefore > input.now) return start("timer");
   const holder = item.holder;
   if (holder && holder.actor.bot === true && holder.actor.id !== input.claimant && (!holder.until || holder.until > input.now)) return start("claim");
   // New work waits while too much waits for a person; a person's pick does not (decision 133).
@@ -123,7 +123,7 @@ export function waitsFor(input: WaitInput): W {
  * the checker can catch a mistake there.
  */
 export function implementBegun(job: Job): boolean {
-  return !!(job.head || job.implement || where(job)?.resume);
+  return !!(job.head || job.implement || waitingOf(job)?.resume);
 }
 
 /**
@@ -131,10 +131,11 @@ export function implementBegun(job: Job): boolean {
  * and it is not on main.
  */
 export function isBusy(job: Job, onMain: boolean): boolean {
-  const at = where(job);
-  if (at.merged || onMain) return false;
-  if (at.parked) return at.parked.as === "queued" || at.parked.as === "handed-over" || !!job.head || !!job.queued || (at.parked.byStep === true && at.step === "implement");
-  return at.step === "review" || (at.step === "implement" && (!!at.sessionId || !!job.head || !!job.implement || !!job.agentSession || !!job.resumeWith || !!at.resume || job.failures > 0));
+  const parked = parkedOf(job);
+  const step = stepAt(job);
+  if (job.at.kind === "merged" || onMain) return false;
+  if (parked) return parked.as === "queued" || parked.as === "handed-over" || !!job.head || !!job.queued || (parked.byStep === true && step === "implement");
+  return step === "review" || (step === "implement" && (!!sessionIdOf(job) || !!job.head || !!job.implement || !!job.agentSession || !!job.resumeWith || !!waitingOf(job)?.resume || job.failures > 0));
 }
 
 export function wText(w: W): string {
@@ -161,5 +162,5 @@ export function stageLane(item: WorkItem, job: Job | undefined): string {
 
 /** The implement step is new work: it has not begun (no change, no session of it, nothing to resume, no attempt yet). */
 export function newWork(job: Job): boolean {
-  return stepAt(job) === "implement" && !job.head && !job.implement && !job.agentSession && job.resumeWith === undefined && !where(job).resume && job.failures === 0 && !where(job).merge;
+  return stepAt(job) === "implement" && !job.head && !job.implement && !job.agentSession && job.resumeWith === undefined && !waitingOf(job)?.resume && job.failures === 0 && !mergeApproved(job);
 }

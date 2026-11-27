@@ -17,7 +17,7 @@ import { closeMerged } from "./mergedClose.ts";
 import { giveLease, takeLease } from "./mergeQueueLease.ts";
 import { clearResumeRequest, recordFlakyTests, recordQueueNote, resumeRequestedBy, shortExcerpt } from "./queueHealth.ts";
 import { phaseOf } from "./phase.ts";
-import { setWhere, where } from "./jobs.ts";
+import { markMerged, parkedOf, release } from "./jobs.ts";
 
 /** Hands a reviewed change to the queue and lets the item be parked as "queued". */
 export async function handOverToQueue(ctx: Context, job: Job): Promise<void> {
@@ -110,12 +110,15 @@ async function apply(ctx: Context, notice: Notice): Promise<void> {
         const key = refKey(member.change);
         const job = ctx.jobs[key];
         if (!job) continue;
-        // Applied only to the job that waits in the queue with this revision: one that moved on is not marked from an old notice.
-        if (where(job).parked?.as !== "queued" || (job.queued !== undefined && member.head !== undefined && job.queued !== member.head)) {
+        // Applied only to the job that waits in the queue with this revision: one that moved on is not marked from an old notice. A
+        // notice delivered again (a restart before the outbox let it go) finds the job merged as it says, and is carried out again
+        // without merging it twice; one that names another commit for a merged job is stale.
+        const merged = job.at.kind === "merged" ? job.at.sha : undefined;
+        if (parkedOf(job)?.as !== "queued" || (merged !== undefined && merged !== member.sha) || (job.queued !== undefined && member.head !== undefined && job.queued !== member.head)) {
           ctx.commit("orchestrator.queue_notice_stale", `The merge queue says ${job.branch} merged as ${member.sha.slice(0, 7)} (batch ${notice.batch}), but ${key.split(":").pop()} no longer waits in the queue with that revision: the notice is not applied to it.`, key, { sha: member.sha, batch: notice.batch });
           continue;
         }
-        setWhere(job, { merged: member.sha });
+        if (merged === undefined) markMerged(job, member.sha);
         ctx.commit("orchestrator.merged", `${job.branch} merged through the queue (batch ${notice.batch}): ${member.sha.slice(0, 7)} is on ${main} of ${config.remote}${notice.outside ? " (the main branch was moved to it by someone else; the queue did not test it)" : `; ${command} passed on ${(notice.tested ?? member.sha).slice(0, 7)}, the tip of the tested chain`}.`, key, { sha: member.sha, batch: notice.batch });
         await ctx.act("write the revision to the item's log", key, () => actions.appendLog(job.item, "revision", { sha: member.sha, branch: job.branch }));
         // The check that let it merge (not when someone else moved the main branch: the queue tested nothing then).
@@ -137,7 +140,7 @@ async function apply(ctx: Context, notice: Notice): Promise<void> {
         const failing = clip(notice.reason.excerpt.trim() || (notice.reason.files.length > 0 ? `Failed in ${notice.reason.files.join(", ")}.` : "No output."), FINDING_CHARS);
         await ctx.act("write the check to the item's log", key, () => actions.appendLog(job.item, "check", { sha: notice.sha, verdict: "fail", command, findings: [failing], ...(notice.batch !== undefined ? { batch: notice.batch } : {}) }));
       }
-      setWhere(job, { parked: undefined });
+      release(job);
       // The revision the queue found red or conflicting: it is not handed over again until the implementor made a new one.
       job.sentBack = job.queued ?? notice.sha;
       delete job.queued;
@@ -198,7 +201,7 @@ export async function driveQueue(ctx: Context, items: readonly WorkItem[]): Prom
     runs.delete(queue);
   }
   const live = new Set(items.filter((item) => item.state !== "done" && item.state !== "abandoned").map(key));
-  const waiting = new Set(Object.entries(ctx.jobs).filter(([k, job]) => live.has(k) && where(job).parked?.as === "queued" && job.queued !== undefined).map(([k]) => k));
+  const waiting = new Set(Object.entries(ctx.jobs).filter(([k, job]) => live.has(k) && parkedOf(job)?.as === "queued" && job.queued !== undefined).map(([k]) => k));
   queue.reconcile(waiting);
 
   if (!mergeQueueOn(store)) return;

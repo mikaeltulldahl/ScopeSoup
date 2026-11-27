@@ -24,7 +24,7 @@ import { refKey } from "../model/types.ts";
 import type { Context } from "./context.ts";
 import { SCOPESOUP } from "./hostActions.ts";
 import type { Decision, Finding, Job, JobStep, ParkedAs } from "./jobs.ts";
-import { formatFindings, jobOf, setWhere, where } from "./jobs.ts";
+import { formatFindings, atStep, editParked, owesHandOver, parkJob, parkedOf, stepAt } from "./jobs.ts";
 import { workBranch, workspaceKey } from "./paths.ts";
 
 const SEEN_KEY = "orchestrator.logs_read";
@@ -52,7 +52,7 @@ export function jobFromLog(item: WorkItem): Job | null {
     const set = as === "needs-decision" && !asked.proposal ? questionSet(log, open, lineOf) : [];
     // Triage asked several questions (park writes one log line each): all of them wait again, in log order.
     if (set.length > 1) return parkOnDecisions(job, set);
-    setWhere(job, { parked: { as, reason: asked.question, at: asked.at, ...(line?.fields.retry === "hand-over" ? { retry: "hand-over" as const } : {}) } });
+    parkJob(job, { as, reason: asked.question, at: asked.at, ...(line?.fields.retry === "hand-over" ? { retry: "hand-over" as const } : {}) });
     if (as === "needs-decision") parkOnQuestion(job, asked);
     return job;
   }
@@ -78,7 +78,6 @@ export function jobFromHost(item: WorkItem): Job | null {
 
   if (rewrite) {
     const questions = rewrite.questions.map(decisionOf);
-    setWhere(job, { step: "triage" });
     job.triage ??= { ready: true, size: "medium", paths: [], hidesDecision: false };
     job.triage.hidesDecision = questions.length > 0;
     job.rewrite = { original: (item.body ?? "").trim(), text: rewrite.text, questions, round: rewrite.round, ...(rewrite.labels ? { labels: rewrite.labels } : {}) };
@@ -90,7 +89,7 @@ export function jobFromHost(item: WorkItem): Job | null {
     const note = rewrite.bodyKnown ? "" : " The description the rewrite read is no longer known: the current one is shown as the original.";
     const ids = rewrite.questions.flatMap((question) => (question.id ? [question.id] : []));
     const askedAt = rewrite.questions[rewrite.questions.length - 1]?.at;
-    setWhere(job, { parked: { as: "needs-decision", reason: `${said}${note}`, at: rewrite.at, rewrite: { id: rewrite.id, questions: ids, ...(askedAt ? { askedAt } : {}) } } });
+    parkJob(job, { as: "needs-decision", reason: `${said}${note}`, at: rewrite.at, rewrite: { id: rewrite.id, questions: ids, ...(askedAt ? { askedAt } : {}) } });
     return job;
   }
 
@@ -99,11 +98,11 @@ export function jobFromHost(item: WorkItem): Job | null {
     const set = asked.proposal ? [] : open.filter((question) => !question.proposal && question.question.trim() !== "");
     if (set.length > 1) parkOnDecisions(job, set);
     else {
-      setWhere(job, { parked: { as: "needs-decision", reason: asked.question, at: asked.at } });
+      parkJob(job, { as: "needs-decision", reason: asked.question, at: asked.at });
       parkOnQuestion(job, asked);
     }
     const ids = (set.length > 1 ? set : [asked]).flatMap((question) => (question.id ? [question.id] : []));
-    setWhere(job, { parked: { ...where(job).parked!, questions: ids, askedAt: asked.at } });
+    editParked(job, { ...parkedOf(job)!, questions: ids, askedAt: asked.at });
     return job;
   }
   return resumeFromLines(job, log, sessions, newest, review);
@@ -114,15 +113,15 @@ function fromLines(item: WorkItem, log: readonly LogRecord[], startedAt: string)
   const of = (kind: string): LogRecord[] => log.filter((line) => line.kind === kind);
   const revisions = of("revision");
   const newest = revisions[revisions.length - 1];
-  const job: Job = jobOf({
+  const job: Job = {
     item: item.ref,
     workspace: workspaceKey(item.ref),
     branch: str([...revisions].reverse().find((line) => str(line.fields.branch))?.fields.branch) || workBranch(item.ref),
-    step: "triage",
+    at: atStep("triage"),
     failures: 0,
     fixRounds: of("review").filter((line) => line.fields.verdict === "fail").length,
     startedAt,
-  });
+  };
   if (newest) job.head = str(newest.fields.sha);
 
   const sessions = of("session");
@@ -150,7 +149,7 @@ function fromLines(item: WorkItem, log: readonly LogRecord[], startedAt: string)
 /** Several questions wait again, in order, so the first answer does not release the item. The parked state's time is the first one's (`parkedAt`). */
 function parkOnDecisions(job: Job, set: readonly OpenQuestion[]): Job {
   const decisions: Decision[] = set.map(decisionOf);
-  setWhere(job, { parked: { as: "needs-decision", reason: `Triage found ${decisions.length} decisions for a person before the work can start: ${decisions.map((d, i) => `${i + 1}. ${d.question}`).join(" ")}`, at: set[0]!.at } });
+  parkJob(job, { as: "needs-decision", reason: `Triage found ${decisions.length} decisions for a person before the work can start: ${decisions.map((d, i) => `${i + 1}. ${d.question}`).join(" ")}`, at: set[0]!.at });
   job.triage ??= { ready: true, size: "medium", paths: [], hidesDecision: true };
   job.triage.hidesDecision = true;
   job.triage.decision = decisions[0];
@@ -174,7 +173,7 @@ function resumeFromLines(job: Job, log: readonly LogRecord[], sessions: readonly
   // 2. The last session said which step comes next: that step starts again.
   const next = str(sessions[sessions.length - 1]?.fields.next);
   if (STEPS.includes(next)) {
-    setWhere(job, { step: next as JobStep });
+    job.at = atStep(next as JobStep);
     // A review that asked for changes sent the change back to the implementor: a fresh one gets the findings.
     if (next === "implement" && sessions[sessions.length - 1]?.fields.role === "review" && job.review?.verdict === "changes" && job.review.findings.length > 0) {
       // The log's findings already carry their severity and file.
@@ -189,7 +188,7 @@ function resumeFromLines(job: Job, log: readonly LogRecord[], sessions: readonly
   // A revision line a host outage lost: the review names the revision it read (#268).
   const reviewedNewest = review !== undefined && (newest ? review.fields.sha === newest.fields.sha : str(review.fields.sha) !== "");
   if (reviewedNewest && review.fields.verdict === "pass" && !triagedSince) {
-    setWhere(job, { step: "review", owes: "hand-over" });
+    job.at = { kind: "hand-over", step: "review" };
     return job;
   }
   return null;
@@ -243,15 +242,16 @@ export function recoverFromLogs(ctx: Context, items: readonly WorkItem[]): void 
     // Backlog is no work (decision 121): a step that would start again there is not rebuilt, as a move to Backlog drops it (the
     // move's drop may have been lost with the store). What waits for a person there still waits. Said with an event, as an owed
     // hand-over of approved work is not made either (a GitHub Item whose To do label was taken off, say).
-    if (item.backlog && !where(job).parked) {
-      const what = where(job).owes ? "the hand-over of its reviewed change is not made" : `its ${where(job).step} step does not start again`;
-      ctx.commit("orchestrator.recover_skipped", `Not rebuilt from the item's ${onHost ? `comments on ${item.ref.host}` : "log"}: ${item.ref.id} is in Backlog, so ${what}. A person moves it to To do to start it again.`, key, { step: where(job).step, ...(where(job).owes ? { owes: where(job).owes } : {}) });
+    if (item.backlog && !parkedOf(job)) {
+      const owes = owesHandOver(job);
+      const what = owes ? "the hand-over of its reviewed change is not made" : `its ${stepAt(job)} step does not start again`;
+      ctx.commit("orchestrator.recover_skipped", `Not rebuilt from the item's ${onHost ? `comments on ${item.ref.host}` : "log"}: ${item.ref.id} is in Backlog, so ${what}. A person moves it to To do to start it again.`, key, { step: stepAt(job), ...(owes ? { owes: "hand-over" } : {}) });
       continue;
     }
     ctx.jobs[key] = job;
-    const at = where(job);
-    const said = at.parked ? `parked as "${at.parked.as}": ${at.parked.reason}` : at.owes ? "reviewed and not merged: the hand-over is done again" : `the ${at.step} step starts again`;
-    ctx.commit("orchestrator.recovered", `Rebuilt from the item's ${onHost ? `comments on ${item.ref.host}` : "log"}: ${said}`, key, { step: at.step });
+    const parked = parkedOf(job);
+    const said = parked ? `parked as "${parked.as}": ${parked.reason}` : owesHandOver(job) ? "reviewed and not merged: the hand-over is done again" : `the ${stepAt(job)} step starts again`;
+    ctx.commit("orchestrator.recovered", `Rebuilt from the item's ${onHost ? `comments on ${item.ref.host}` : "log"}: ${said}`, key, { step: stepAt(job) });
   }
   store.setValue(SEEN_KEY, JSON.stringify([...seen, ...fresh.map((item) => refKey(item.ref))]));
 }

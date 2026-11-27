@@ -13,7 +13,7 @@ import { refKey } from "../model/types.ts";
 import { openStore } from "../store/store.ts";
 import { personOf } from "../core/turns.ts";
 import { findHandbacks } from "./handback.ts";
-import { loadJobs, where, stepAt } from "./jobs.ts";
+import { loadJobs, stepAt } from "./jobs.ts";
 import type { Actions, AgentRunner } from "./ports.ts";
 import { tick } from "./tick.ts";
 
@@ -133,7 +133,7 @@ test("the tick takes a hand-back on: a job with the branch and head, and the rev
 test("an old file that still lists a checklist goes straight to review: the checklist stage is gone", async () => {
   const w = world([item("A-1", { log: [HANDBACK] })], [], config({ review: { checklist: ["Tests are added."] } }));
   await w.run();
-  assert.equal(where(w.job("A-1"))!.step, "review");
+  assert.equal(stepAt(w.job("A-1")!), "review");
 });
 
 test("a hand-back waits while the item is held, the branch is not here, the stop switch is on, or the level is below 2", async () => {
@@ -164,7 +164,7 @@ test("a hand-back waits while the item is held, the branch is not here, the stop
 test("an item a person holds is left alone, even with a job waiting for its next step", async () => {
   const w = world([item("A-1", { log: [HANDBACK] })]);
   await w.run();
-  assert.equal(where(w.job("A-1"))!.step, "review");
+  assert.equal(stepAt(w.job("A-1")!), "review");
   // A person takes it before the review starts.
   w.store.put(item("A-1", { log: [HANDBACK], holder: { actor: { id: "Bo@laptop-b", name: "Bo on laptop-b" } } }), "sync", T0);
   await w.run("2026-11-20T10:00:02.000Z");
