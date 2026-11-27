@@ -458,8 +458,9 @@ export class SimWorld {
       case "move": {
         const page = await this.page(action.item);
         const offered = Object.entries(page?.moves ?? {}).filter(([, why]) => !why?.why).map(([to]) => to);
-        const keen = action.keen ? offered.filter((each) => each === "merge-queue" || each === "in-review") : [];
-        const to = random(action.v).pick(keen.length > 0 ? keen : offered);
+        // A keen person picks only the review or the merge queue: with neither offered, they pick nothing.
+        const keen = action.keen ? offered.filter((each) => each === "merge-queue" || each === "in-review") : offered;
+        const to = random(action.v).pick(keen);
         if (!to) return this.skip();
         const before = this.busyAs(action.item);
         const got = await this.request("POST", "/api/item/move", { ref: this.key(action.item), to }, action.item);
@@ -467,6 +468,7 @@ export class SimWorld {
           this.count(`move-${to}`);
           for (const as of before) this.count(`pick-over-${as}`);
           // A person's Merge queue while a review runs on an approved head (the review fix of #211 step 3).
+          if (to === "merge-queue" && before.includes("session")) this.count("queue-pick-over-session");
           if (to === "merge-queue" && before.includes("review")) this.count("queue-pick-over-review");
         }
         return;

@@ -12,6 +12,7 @@ import type { Action, WorldOptions } from "./world.ts";
 import { SimWorld } from "./world.ts";
 import { where } from "../orchestrator/jobs.ts";
 import { readProposedRewrites } from "../orchestrator/aboutOthers.ts";
+import { mergeQueueOn, switchState } from "../store/control.ts";
 
 export type Profile = "calm" | "normal" | "rough";
 
@@ -91,16 +92,20 @@ export function draw(world: SimWorld, rnd: Rng, options: RunOptions): Action {
   }).map((i) => i.ref.id);
   const proposed = world.shared ? [] : Object.keys(readProposedRewrites(world.store)).map((key) => key.split(":").pop()!).filter((id) => open.some((i) => i.ref.id === id));
   const both = busy.filter((id) => proposed.includes(id));
-  // A change the reviewer approved at the head it is at, not in the merge queue nor owing its hand-over: the person asks for its review
+  // A change the reviewer approved at the head it is at, not in the merge queue and not picked for it yet: the person asks for its review
   // again, or for the merge queue, also while that review runs again (a Merge queue pick over a review on an approved head, #211 step 3).
   const approved = open.filter((i) => {
     const job = jobs[`metaBranch:work:${i.ref.id}`];
-    return job?.review?.verdict === "approve" && job.head !== undefined && job.reviewedHead === job.head && where(job).parked?.as !== "queued" && where(job).merged === undefined && where(job).owes === undefined;
+    return job?.review?.verdict === "approve" && job.head !== undefined && job.reviewedHead === job.head && where(job).parked?.as !== "queued" && where(job).merged === undefined && job.queueAskedBy === undefined;
   }).map((i) => i.ref.id);
   const reviewing = approved.filter((id) => [...world.runner.live.values()].some((l) => l.session.subject.id === id && l.session.role === "review"));
   // The person watches the board: while such a moment lasts (a proposed rewrite on a busy Item, an approved change), they act sooner.
   const hot = both.length > 0 || approved.length > 0;
-  const weights: Record<string, number> = { ...WEIGHTS[options.profile], ...(options.long ? { lose: 0.3 } : {}), ...(world.shared || !options.long ? {} : { busy: hot ? HOT : BUSY[options.profile] }) };
+  const weights: Record<string, number> = { ...WEIGHTS[options.profile], ...(options.long ? { lose: 0.3 } : {}), ...(world.shared || !options.long ? {} : { busy: reviewing.length > 0 ? 4 * HOT : hot ? HOT : BUSY[options.profile] }) };
+  // A person's Merge queue pick over a session that still runs: the tick that ends that session for it mostly comes before the session
+  // ends by itself, so the hand-over owed beside the running session is what the tick reads (#211 step 3, #268).
+  const owedOverSession = !world.shared && options.long === true && open.some((i) => where(jobs[`metaBranch:work:${i.ref.id}`])?.owes !== undefined && live.includes(i.ref.id));
+  if (owedOverSession && rnd.chance(0.8)) return { kind: "tick" };
   const kind = rnd.weighted(weights);
   const asking = open.filter((i) => where(jobs[`metaBranch:work:${i.ref.id}`])?.parked || (i.openQuestions ?? []).length > 0).map((i) => i.ref.id);
   const person = (): Action => {
@@ -151,9 +156,14 @@ export function draw(world: SimWorld, rnd: Rng, options: RunOptions): Action {
       return { kind: "main-commit", v: v() };
     }
     case "busy": {
+      // Below level 4 the merge queue is no person's pick (decision 104): now and then they raise the level while such a change waits,
+      // mostly while its review runs again.
+      if (approved.length > 0 && world.configNow.level === 3 && rnd.chance(reviewing.length > 0 ? 0.8 : 0.2)) return { kind: "level", to: 4 };
+      // Such a change waits while the agents or the merge queue are paused (a restart pauses them): the person resumes them.
+      if (approved.length > 0 && (switchState(world.store, "review") !== "started" || !mergeQueueOn(world.store)) && rnd.chance(0.6)) return { kind: "switch", to: "resume" };
       if (both.length > 0 && rnd.chance(0.7)) return { kind: "proposed", item: rnd.pick(both)!, v: v() };
       if (proposed.length > 0 && rnd.chance(0.2)) return { kind: "proposed", item: rnd.pick(proposed)!, v: v() };
-      if (reviewing.length > 0 && rnd.chance(0.7)) return { kind: "move", item: rnd.pick(reviewing)!, v: v(), keen: true };
+      if (reviewing.length > 0 && rnd.chance(0.9)) return { kind: "move", item: rnd.pick(reviewing)!, v: v(), keen: true };
       if (approved.length > 0 && rnd.chance(0.5)) return { kind: "move", item: rnd.pick(approved)!, v: v(), keen: true };
       return busy.length > 0 ? { kind: "move", item: rnd.pick(busy)!, v: v(), ...(rnd.chance(0.5) ? { keen: true as const } : {}) } : { kind: "tick" };
     }

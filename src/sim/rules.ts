@@ -416,6 +416,7 @@ export const RULES: Rule[] = [
       const expect = (memo.expect ??= {}) as Record<string, string>;
       // A person's move, start over or edit sends the Item elsewhere, rightly: what an earlier answer or pick expected is over.
       for (const r of o.requests) if (r.status === 200 && r.item && /move|start-over|edit|pick/.test(r.path)) delete expect[`metaBranch:work:${r.item}`];
+      const asked = new Set<string>();
       for (const r of o.requests) {
         if (r.status !== 200 || !r.item) continue;
         const before = prev?.items.find((i) => i.id === r.item);
@@ -423,11 +424,13 @@ export const RULES: Rule[] = [
         if (r.path.startsWith("/api/answer") && before && was?.parked?.byStep && was.step === "implement") expect[before.key] = "implement";
         // Merge queue (decision 104): the reviewed change goes to the queue; the next session, if any before that, is not a review.
         if (r.path === "/api/item/move" && r.body.to === "merge-queue" && before) expect[before.key] = "hand-over";
+        if (before) asked.add(before.key);
       }
       // The hand-over happened (queued, merged, or it failed and waits for a person): the pick is carried out.
       for (const i of o.items) if (expect[i.key] === "hand-over" && i.job && ["queued", "merged", "parked"].includes(i.job.at.kind)) delete expect[i.key];
-      // So does a pick asked on another machine's board and carried out here (decision 104), read at a fetch.
-      for (const e of o.events) if (e.kind === "person.moved" && e.subject) delete expect[e.subject];
+      // So does a pick asked on another machine's board and carried out here (decision 104), read at a fetch. Not the event of this
+      // step's own pick, which is what is expected (#268: that event cleared it at once, so B8 checked no pick).
+      for (const e of o.events) if (e.kind === "person.moved" && e.subject && !asked.has(e.subject)) delete expect[e.subject];
       // So do questions other Items' agents asked about it, written before the implementor resumed: once answered, it is triaged again
       // with the answers, and the implementor's work waits for that (#264).
       for (const e of o.events) if (e.kind === "orchestrator.about_other_written" && e.subject) delete expect[e.subject];
