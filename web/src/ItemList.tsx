@@ -40,7 +40,7 @@ const VIEWS: { name: string; query: string }[] = [
 /** The same filters in a fixed order, so two spellings of one view compare equal. */
 const canonical = (query: string): string => [...new URLSearchParams(query)].sort(([a], [b]) => a.localeCompare(b)).map(([k, v]) => `${k}=${v}`).join("&");
 
-const LANE_FILTERS = ["backlog", "blocked", "todo", "in-progress", "in-review", "queued", "checking", "done", "abandoned"];
+const LANE_FILTERS = ["backlog", "todo", "blocked", "in-progress", "in-review", "queued", "checking", "done", "abandoned"];
 const TURNS = ["anyone", "person", "agent", "queue", "runner", "nobody"];
 const PRIORITIES = ["blocker", "critical", "major", "minor"];
 

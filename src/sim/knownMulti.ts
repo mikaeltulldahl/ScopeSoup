@@ -14,4 +14,7 @@ export const KNOWN_MULTI: Record<string, Known> = {
   M3: { seed: 5, long: true, what: "a re-triage runs without a claim (the implement claim released first), so another machine claims the Item and triages it at the same time" },
   // Since #238 the words of a timed wait are read after a tick only, and the normal run's seeds no longer show it.
   A1: { seed: 11, long: true, what: "two machines hold a job for one Item: a card on one machine shows the other machine's open question while its own job waits for a timer (the two-jobs problem of M3; #243)" },
+  A3: { seed: 1, long: true, what: "a job parked on a question that is not open on the host, across machines (#248)" },
+  I4: { seed: 3, long: true, what: "an Item's branch with work not on main is deleted, across machines (#248)" },
+  B4: { seed: 38, long: true, what: "a question about an Item stays asked after that Item is closed, across machines (#248)" },
 };

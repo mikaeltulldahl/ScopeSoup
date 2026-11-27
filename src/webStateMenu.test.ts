@@ -20,8 +20,8 @@ const page = (fields: Partial<MenuPage> = {}, item: Partial<MenuPage["item"]> = 
 const byKey = (menu: MenuPage) => Object.fromEntries(stateOptions(menu, theme).map((option) => [option.key, option])) as Record<StateKey, ReturnType<typeof stateOptions>[number]>;
 
 test("the options are the board's columns plus Triage and Abandoned, in that order, in the theme's words", () => {
-  assert.deepEqual(stateOptions(page(), theme).map((option) => option.label), ["Triage", "Backlog", "Blocked", "To do", "In progress", "In review", "Merge queue", "Done", "Abandoned"]);
-  assert.deepEqual(stateOptions(page(), THEMES.graveyard.words).map((option) => option.label), ["Line-up", "Tip-offs", "Stakeout", "At large", "On the case", "Cross-examination", "Crime lab", "Laid to rest", "Cold case"]);
+  assert.deepEqual(stateOptions(page(), theme).map((option) => option.label), ["Triage", "Backlog", "To do", "Blocked", "In progress", "In review", "Merge queue", "Done", "Abandoned"]);
+  assert.deepEqual(stateOptions(page(), THEMES.graveyard.words).map((option) => option.label), ["Line-up", "Tip-offs", "At large", "Stakeout", "On the case", "Cross-examination", "Crime lab", "Laid to rest", "Cold case"]);
   assert.equal(STATE_KEYS.length, 9);
 });
 

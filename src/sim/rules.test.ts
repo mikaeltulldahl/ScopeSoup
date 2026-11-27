@@ -162,6 +162,14 @@ describe("each rule fires on a bad state built by hand", { concurrency: 1 }, () 
     const done = ledger({ ended: [{ step: 1, item: key("A-1"), role: "triage", session: "s1", status: "succeeded", settled: true }] });
     assert.match(fires("B7", obs({ started: [started("A-1", "triage")] }), obs({ ledger: done, started: [started("A-1", "triage")] })) ?? "", /same input/);
     assert.match(fires("B7", obs({ ledger: ledger({ asksInFair: new Map([[key("A-1"), 4]]) }) })) ?? "", /asked 4 times/);
+    const shown = (text: string, body: string, questions: number): string | null => {
+      const rewrite = { original: body.trim(), text, questions: Array.from({ length: questions }, () => ({ question: "?", options: [], recommendation: "" })), round: 1 };
+      const parked = job("A-1", { step: "triage", parked: { as: "needs-decision", reason: "", at: AT }, rewrite } as never);
+      return fires("B7", obs({ items: [item("A-1", { kind: "person", why: "rewrite" }, { item: workItem("A-1", { body }), job: parked })] }));
+    };
+    assert.match(shown("Do it.", "Do it.", 0) ?? "", /equals its description/);
+    assert.match(shown("Do it.  ", "Do it.", 1) ?? "", /apart from whitespace/);
+    assert.equal(shown("Do it.", "Do it.", 1), null); // the questions are asked with the description as it is
   });
   it("B8", "an answer to the implementor's question sends the Item back to triage", () => {
     const parked = obs({ items: [item("A-1", { kind: "person", why: "answer", n: 1 }, { job: job("A-1", { step: "implement", parked: { as: "needs-decision", reason: "", at: AT, byStep: true } }) })] });
@@ -193,7 +201,7 @@ describe("each rule fires on a bad state built by hand", { concurrency: 1 }, () 
       item("A-1", SLOT, { job: job("A-1", { step: "implement", triage: { ready: true, size: "small", paths: ["src/a.ts"], hidesDecision: false } }), paths: ["src/a.ts"] }),
       item("A-2", { kind: "session", role: "implement" }, { job: job("A-2", { step: "implement", sessionId: "s2" }), paths: ["src/a.ts"] }),
     ] });
-    assert.match(fires("D3", before, obs({ started: [started("A-1", "implement")] })) ?? "", /busy on the same paths/);
+    assert.match(fires("D3", before, obs({ items: before.items, started: [started("A-1", "implement")] })) ?? "", /busy on the same paths/);
   });
   it("D4", "a session starts while its switch is paused", () => {
     const paused = obs({ switches: { triage: "paused", implement: "started", review: "started", mergeQueue: "started" } });
