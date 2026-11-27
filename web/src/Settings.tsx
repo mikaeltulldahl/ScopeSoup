@@ -1,11 +1,11 @@
 // The Settings page: the level first, as five rows with what each does and needs; then parallel sessions, the
-// usage reserve (from level 1), the age after which a triage is taken again (from level 2) and the model of each role. Everything else is file-only, with its defaults.
+// usage budgets (from level 1), the caps on what waits for a person, the age after which a triage is taken again (from level 2) and the model of each role. Everything else is file-only, with its defaults.
 // Everything saves when it is changed (a text field when it is left, a slider when it rests), one save at a time, with a short
 // "Saved" or the reason beside the control (#157). Picking level 4 while the file lacks its check command or remote URL asks for
 // them right there, proposed by the server; the level is saved once they are filled in.
 // The project's settings (level, check, setup, models, the triage's age) are shared by every machine: a save is
 // one commit on the meta ref, named after the person picked at the top of the board, and in effect at once (on the other
-// machines at their next fetch). Singleplayer or multiplayer, parallel sessions, the usage reserve and the remote's URL are this
+// machines at their next fetch). Singleplayer or multiplayer, parallel sessions, the usage budgets and the remote's URL are this
 // machine's own. The page shows
 // the two as one: no key is in both.
 // The limited resources: a shared one is a project setting (`sharedResources`), the others this machine's (`resources`).
@@ -28,8 +28,15 @@ import { ConnectDialog, type DialogKind, HOST_NAMES } from "./Connect.tsx";
 
 const ONBOARDING = "https://github.com/mikaeltulldahl/scopesoup/blob/main/docs/ONBOARDING.md";
 
+/** A budget in words: a share of the window's even pace; above 100 % it outruns the window. */
+function budgetWords(budget: number): string {
+  const percent = Math.round(budget * 100);
+  if (percent > 100) return `${percent} % of the window's even pace: faster than the window lasts, so it may run out before its reset`;
+  return `${percent} % of the window's even pace; the rest is kept for you, and nothing starts once the window is at ${percent} %`;
+}
+
 /** The settings the page shows, besides the level. */
-const SETTINGS = ["maxParallelSessions", "reserveFiveHour", "reserveSevenDay", "triageMaxAgeDays"] as const;
+const SETTINGS = ["maxParallelSessions", "budgetFiveHour", "budgetSevenDay", "triageMaxAgeDays", "waitingCapTriage", "waitingCapWork"] as const;
 type SettingName = (typeof SETTINGS)[number];
 
 /** What a role set to the Copilot provider is told (`COPILOT_WARNING` in src/orchestrator/providers/copilot/command.ts; the board reads no server code). */
@@ -124,7 +131,7 @@ function draftOf(config: ProjectConfig, raw: unknown, mergeQueue: { remoteUrl?: 
   // The command as the shared file holds it, with {{ownClone}} unexpanded (the configuration in use has this machine's path in it).
   const command = (raw as { setupCommand?: unknown } | null)?.setupCommand;
   const setup = { command: Array.isArray(command) ? commandText(command as string[]) : config.setupCommand ? commandText(config.setupCommand) : "", watch: (config.setupWatch ?? []).join("\n") };
-  return { level: config.level, settings: { maxParallelSessions: setting("maxParallelSessions"), reserveFiveHour: setting("reserveFiveHour"), reserveSevenDay: setting("reserveSevenDay"), triageMaxAgeDays: setting("triageMaxAgeDays") }, roles, mergeQueue: asked, setup, resources: resourceDrafts(config), media: { push: config.media?.push ?? false, keepDays: config.media?.keepDaysAfterClose === null || config.media?.keepDaysAfterClose === undefined ? "" : String(config.media.keepDaysAfterClose), keepMode: config.media?.keepDaysAfterClose === null || config.media?.keepDaysAfterClose === undefined ? "never" : "after" }, multiplayer: config.multiplayer, shouldFindings: config.review?.shouldFindings ?? "fix", aiLabel: config.labels?.aiGenerated || "", jira: { filter: config.host?.kind === "jira" ? config.host.filter ?? "" : "", components: config.host?.kind === "jira" ? (config.host.components ?? []).join(", ") : "" } };
+  return { level: config.level, settings: { maxParallelSessions: setting("maxParallelSessions"), budgetFiveHour: setting("budgetFiveHour"), budgetSevenDay: setting("budgetSevenDay"), triageMaxAgeDays: setting("triageMaxAgeDays"), waitingCapTriage: setting("waitingCapTriage"), waitingCapWork: setting("waitingCapWork") }, roles, mergeQueue: asked, setup, resources: resourceDrafts(config), media: { push: config.media?.push ?? false, keepDays: config.media?.keepDaysAfterClose === null || config.media?.keepDaysAfterClose === undefined ? "" : String(config.media.keepDaysAfterClose), keepMode: config.media?.keepDaysAfterClose === null || config.media?.keepDaysAfterClose === undefined ? "never" : "after" }, multiplayer: config.multiplayer, shouldFindings: config.review?.shouldFindings ?? "fix", aiLabel: config.labels?.aiGenerated || "", jira: { filter: config.host?.kind === "jira" ? config.host.filter ?? "" : "", components: config.host?.kind === "jira" ? (config.host.components ?? []).join(", ") : "" } };
 }
 
 /** Component names as typed: comma separated, blanks dropped. */
@@ -401,7 +408,7 @@ export function Settings({ project, openHistory = false }: { project?: ProjectVi
         <Folders project={project} />
         <p class="muted">
           Changes save as they are made (a text field when you leave it). The project's settings (the level, the check, the setup, the models, the triage's age) are the same on every machine: they take effect at once, here and on the other machines at their next fetch, and History says who changed what.
-          {" "}Singleplayer or multiplayer, parallel sessions, the usage reserve and the remote's URL are this machine's own. Everything not on this page is set by hand.
+          {" "}Singleplayer or multiplayer, parallel sessions, the usage budgets and the remote's URL are this machine's own. Everything not on this page is set by hand.
         </p>
 
         <fieldset class="levels">
@@ -522,9 +529,9 @@ export function Settings({ project, openHistory = false }: { project?: ProjectVi
         <div class="settings-grid">
           <div class="settings-row">
             <label>
-              <b>Parallel sessions</b>
+              <b>At most, at once</b>
               <input type="range" min={1} max={Math.max(8, Number(draft.settings.maxParallelSessions))} step={1} value={draft.settings.maxParallelSessions} onInput={(event) => sliderSetting("maxParallelSessions", (event.target as HTMLInputElement).value)} />
-              <span>{draft.settings.maxParallelSessions} {Number(draft.settings.maxParallelSessions) === 1 ? "session" : "sessions"} at once, of every role (1 = efficiency, more = speed)</span>
+              <span>{draft.settings.maxParallelSessions} {Number(draft.settings.maxParallelSessions) === 1 ? "session" : "sessions"} at once, of every role: the ceiling for this machine; Scope Soup paces below it to the budgets</span>
               <Marked k="maxParallelSessions" />
             </label>
           </div>
@@ -532,21 +539,41 @@ export function Settings({ project, openHistory = false }: { project?: ProjectVi
             <>
             <div class="settings-row">
               <label>
-                <b>Reserve of the 5-hour window</b>
-                <input type="range" min={0} max={90} step={5} value={Math.round(Number(draft.settings.reserveFiveHour) * 100)} onInput={(event) => sliderSetting("reserveFiveHour", String(Number((event.target as HTMLInputElement).value) / 100))} />
-                <span>{Math.round(Number(draft.settings.reserveFiveHour) * 100)} % kept for you; Scope Soup starts nothing past it</span>
-                <Marked k="reserveFiveHour" />
+                <b>Budget of the 5-hour window</b>
+                <input type="range" min={0} max={200} step={5} value={Math.round(Number(draft.settings.budgetFiveHour) * 100)} onInput={(event) => sliderSetting("budgetFiveHour", String(Number((event.target as HTMLInputElement).value) / 100))} />
+                <span>{budgetWords(Number(draft.settings.budgetFiveHour))}</span>
+                <Marked k="budgetFiveHour" />
               </label>
             </div>
             <div class="settings-row">
               <label>
-                <b>Reserve of the weekly window</b>
-                <input type="range" min={0} max={90} step={5} value={Math.round(Number(draft.settings.reserveSevenDay) * 100)} onInput={(event) => sliderSetting("reserveSevenDay", String(Number((event.target as HTMLInputElement).value) / 100))} />
-                <span>{Math.round(Number(draft.settings.reserveSevenDay) * 100)} % kept for you; Scope Soup starts nothing past it</span>
-                <Marked k="reserveSevenDay" />
+                <b>Budget of the weekly window</b>
+                <input type="range" min={0} max={200} step={5} value={Math.round(Number(draft.settings.budgetSevenDay) * 100)} onInput={(event) => sliderSetting("budgetSevenDay", String(Number((event.target as HTMLInputElement).value) / 100))} />
+                <span>{budgetWords(Number(draft.settings.budgetSevenDay))}</span>
+                <Marked k="budgetSevenDay" />
               </label>
             </div>
             </>
+          )}
+          {draft.level >= 1 && (
+            <div class="settings-row">
+              <label>
+                <b>New triage waits from</b>
+                <input type="number" min={1} max={100} step={1} value={draft.settings.waitingCapTriage} onInput={(event) => setSetting("waitingCapTriage", (event.target as HTMLInputElement).value)} onBlur={() => setSettingNow("waitingCapTriage", draftRef.current!.settings.waitingCapTriage, 1, 100)} onKeyDown={leave} />
+                <span>things waiting for you (questions, drafts, decisions to look at): no new Item's triage starts while that many wait</span>
+                <Marked k="waitingCapTriage" />
+              </label>
+            </div>
+          )}
+          {draft.level >= 2 && (
+            <div class="settings-row">
+              <label>
+                <b>New work waits from</b>
+                <input type="number" min={1} max={100} step={1} value={draft.settings.waitingCapWork} onInput={(event) => setSetting("waitingCapWork", (event.target as HTMLInputElement).value)} onBlur={() => setSettingNow("waitingCapWork", draftRef.current!.settings.waitingCapWork, 1, 100)} onKeyDown={leave} />
+                <span>things waiting for you: no first implement step starts while that many wait; work under way and your answers' steps go on</span>
+                <Marked k="waitingCapWork" />
+              </label>
+            </div>
           )}
           {draft.level >= 2 && (
             <div class="settings-row">
