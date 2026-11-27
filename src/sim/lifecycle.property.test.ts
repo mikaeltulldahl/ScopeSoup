@@ -3,7 +3,7 @@
 // bug, unless it is on the known list (known.ts), which may only shrink.
 //
 // Seeds 1 to 8 with 80 random steps by default; 1 to 110 with 600 steps and up to 12 Items with SCOPESOUP_LONG=1 (`pnpm test:long`),
-// seeds 101 to 110 in a world where triages age, so Scope Soup triages To do Items again within its share (#217).
+// every one in a world where triages age and days pass, so Scope Soup triages To do Items again within its share (#217, #264).
 // The same seeds each time. SCOPESOUP_SIM_SEED=17 plays that seed alone; SCOPESOUP_SIM_TRACE=1 prints every step.
 
 import assert from "node:assert/strict";

@@ -3,8 +3,8 @@
 // every step and at the end. A rule that fails is a bug, unless it is known: on the single-machine list (known.ts) for a rule of
 // rules.ts, or on the multiplayer list (knownMulti.ts), which may only shrink.
 //
-// Seeds 1 to 3 with 60 random steps by default; 1 to 40 with 400 steps with SCOPESOUP_LONG=1 (`pnpm test:long`). The same seeds
-// each time. SCOPESOUP_SIM_SEED=17 plays that seed alone; SCOPESOUP_SIM_TRACE=1 prints every step.
+// Seeds 1 to 3 with 60 random steps by default; 1 to 40 with 400 steps with SCOPESOUP_LONG=1 (`pnpm test:long`), where triages age
+// and days pass on the shared clock (#264). The same seeds each time. SCOPESOUP_SIM_SEED=17 plays that seed alone; SCOPESOUP_SIM_TRACE=1 prints every step.
 
 import assert from "node:assert/strict";
 import { it } from "node:test";

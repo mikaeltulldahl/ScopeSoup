@@ -105,7 +105,10 @@ export interface Observation {
   requests: Ledger["requests"];
   /** The multiplayer profile: the answers people gave on the other machines' boards, which this machine reads from the logs (B1). */
   answersElsewhere?: Ledger["answers"];
-  remote: { refusedRewrites: number; down: boolean; items: number };
+  /** The multiplayer profile: the requests people made on the other machines' boards (a pick there is carried out here, J1). */
+  requestsElsewhere?: Ledger["requests"];
+  /** `retries`: swaps refused because another push got in first, since the start (5 in a row and a write gives up: "the remote kept moving"). */
+  remote: { refusedRewrites: number; down: boolean; items: number; retries: number };
   /** The host's Items as read at a version of the remote, so an unchanged remote is not read again; the last read while it is down. */
   hostRead?: { version: number; items: Map<string, WorkItem> };
   /** The board's lanes, in order (the Backlog and To do rules of #221 turn on when a To do lane is there). */
@@ -199,7 +202,7 @@ export async function observe(world: SimWorld, seed: number, action: Action, pre
     },
     ledger: world.ledger,
     requests: world.ledger.requests.slice(requestsBefore).filter((r) => r.step === world.step),
-    remote: { refusedRewrites: world.remote.refusedRewrites.length, down: world.remote.down > 0 || world.wasDown, items: world.remote.files.size },
+    remote: { refusedRewrites: world.remote.refusedRewrites.length, down: world.remote.down > 0 || world.wasDown, items: world.remote.files.size, retries: world.remote.retries },
     // While the host does not answer, the last read stands: Items are never removed from it, so what it had still exists (I1).
     ...(hostItems ? { hostRead: { version: world.remote.version, items: hostItems } } : previous?.hostRead ? { hostRead: previous.hostRead } : {}),
     lanes: board.lanes.map((lane) => lane.lane),

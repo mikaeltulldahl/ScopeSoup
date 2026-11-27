@@ -298,6 +298,11 @@ export interface Job {
    * follows, or work a person put under way whose move to To do the store has not read yet) goes on as decision 121 says.
    */
   seenInTodo?: true;
+  /**
+   * The job was made by questions other Items' agents asked about this Item (`writeAboutOthers`), not by a person's pick. In Backlog its
+   * triage does not run again with the answers (decision 121): the tick closes it, and the answers wait for the triage after a move to To do.
+   */
+  othersAsked?: true;
   /** A person picked In review on the board: this review step runs whatever the level (decision 104). Cleared when it is settled. */
   reviewAskedBy?: string;
   /**
