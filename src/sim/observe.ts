@@ -41,7 +41,7 @@ export interface GitObs {
   stash: { workspace: string; item: string; scopesoup: boolean }[];
   worktrees: Worktree[];
   owners: Map<string, { item?: string; scopesoup: boolean }>;
-  deleted: { ref: string; owner?: { item?: string; scopesoup: boolean }; unmerged: boolean }[];
+  deleted: { ref: string; madeBy?: { item?: string; scopesoup: boolean }; unmerged: boolean }[];
   mainMoves: { sha: string; how: string; item?: string }[];
   contains(ancestor: string, descendant: string): boolean | null;
   commit(sha: string): Commit | undefined;

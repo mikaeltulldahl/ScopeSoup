@@ -42,7 +42,7 @@ export class FakeGit {
   worktrees = new Map<string, Worktree>();
   owners = new Map<string, Owned>();
   /** Refs deleted, with who asked: the footprint rules read it. */
-  deleted: { ref: string; owner?: Owned; unmerged: boolean }[] = [];
+  deleted: { ref: string; madeBy?: Owned; unmerged: boolean }[] = [];
   /** How each commit got onto main: "session told", "session untold", "queue", "person". */
   mainMoves: { sha: string; how: string; item?: string }[] = [];
   private count = 0;
@@ -138,7 +138,7 @@ export class FakeGit {
     const sha = this.branches.get(branch);
     if (sha === undefined) return;
     const unmerged = this.contains(sha, this.main) === false;
-    this.deleted.push({ ref, ...(this.owners.get(ref) ? { owner: this.owners.get(ref)! } : {}), unmerged });
+    this.deleted.push({ ref, ...(this.owners.get(ref) ? { madeBy: this.owners.get(ref)! } : {}), unmerged });
     this.branches.delete(branch);
   }
 }

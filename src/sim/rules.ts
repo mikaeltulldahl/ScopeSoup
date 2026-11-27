@@ -611,15 +611,15 @@ export const RULES: Rule[] = [
   // --- I. Footprint ---
   {
     id: "I1",
-    why: "Everything has an owner: each branch, worktree, tag and stash Scope Soup or its agents made belongs to an Item that exists.",
+    why: "Everything belongs somewhere: each branch, worktree, tag and stash Scope Soup or its agents made belongs to an Item that exists.",
     check(o) {
       const known = new Set([...o.items.map((i) => i.key), ...(o.hostRead?.items.keys() ?? [])]);
-      for (const [ref, owner] of o.git.owners) {
-        if (!owner.scopesoup || !owner.item || known.has(owner.item)) continue;
+      for (const [ref, madeBy] of o.git.owners) {
+        if (!madeBy.scopesoup || !madeBy.item || known.has(madeBy.item)) continue;
         if (ref.startsWith("refs/heads/") && !o.git.branches.has(ref.slice(11))) continue;
         if (ref.startsWith("refs/tags/") && !o.git.tags.has(ref.slice(10))) continue;
         if (ref.startsWith("worktree:") && !o.git.worktrees.some((t) => `worktree:${t.workspace}` === ref)) continue;
-        return `${ref} belongs to ${owner.item}, which is not an Item`;
+        return `${ref} belongs to ${madeBy.item}, which is not an Item`;
       }
       return null;
     },
@@ -631,8 +631,8 @@ export const RULES: Rule[] = [
       return first(o.items, (i) => {
         const left: string[] = [];
         for (const t of o.git.worktrees) if (t.item === i.key) left.push(`worktree ${t.workspace}`);
-        for (const [ref, owner] of o.git.owners) {
-          if (owner.item !== i.key || !owner.scopesoup) continue;
+        for (const [ref, madeBy] of o.git.owners) {
+          if (madeBy.item !== i.key || !madeBy.scopesoup) continue;
           if (ref.startsWith("refs/tags/") && o.git.tags.has(ref.slice(10))) left.push(ref);
           if (ref.startsWith("refs/heads/") && ref !== `refs/heads/scopesoup/${i.id}` && o.git.branches.has(ref.slice(11))) left.push(ref);
         }
@@ -657,9 +657,9 @@ export const RULES: Rule[] = [
     id: "I4",
     why: "Merged is the host's word, not ancestry: a branch with work that did not land is never deleted.",
     check(o) {
-      const lost = o.git.deleted.find((d) => d.unmerged && d.owner?.scopesoup);
+      const lost = o.git.deleted.find((d) => d.unmerged && d.madeBy?.scopesoup);
       if (!lost) return null;
-      const i = o.items.find((each) => each.key === lost.owner?.item);
+      const i = o.items.find((each) => each.key === lost.madeBy?.item);
       // A person closed the Item: its work is theirs to throw away.
       if (i && o.ledger.closesAsked.has(i.key)) return null;
       return `${lost.ref} was deleted with work on it that is not on main`;
