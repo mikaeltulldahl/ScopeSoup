@@ -592,33 +592,72 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
     }
     const keys = resolved.map((each) => (each.index >= 0 ? `#${each.index}` : each.asked ? each.asked.at : "parked"));
     if (new Set(keys).size !== keys.length) return sendError(response, 400, "DUPLICATE_ANSWER", "Give one answer to each question.");
+    const at = now().toISOString();
+    type Outcome = { released: boolean; open?: number } | { refused: AnswerRefusal; index: number };
+    type Resolved = (typeof resolved)[number];
+    const addOne = (each: Resolved): void => {
+      const asking = each.target?.options ?? each.asked?.options ?? parked?.decision?.options;
+      addAnswer(store, { subject, answer: each.text, by: by().who, at, textHash: itemTextHash(item), ...(each.question ? { question: each.question } : {}), ...(asking && asking.length > 0 ? { options: optionTexts(asking) } : {}) });
+    };
+    // Each answer is in the store already: sent again after it was recorded (the first reply was lost), it is not refused (#238).
+    const already = (): boolean => {
+      const known = loadAnswers(store).filter((answer) => refKey(answer.subject) === ref);
+      return resolved.every((each) => known.some((answer) => answer.answer === each.text && (answer.question ?? "") === (each.question ?? "")));
+    };
+    const refuse = (refused: AnswerRefusal, index: number): void => {
+      if (already()) {
+        options.onRefresh?.();
+        return sendJson(response, 200, { recorded: true, released: false, already: true });
+      }
+      const refusals: Record<AnswerRefusal, [string, string]> = {
+        "no-questions": ["NO_OPEN_QUESTIONS", `${ref} does not wait on that question (any more): reload the item.`],
+        "parked-changed": ["PARKED_CHANGED", `${ref} parked on other questions now: reload the item.`],
+        answered: ["ALREADY_ANSWERED", `Question ${index + 1} on ${ref} has an answer already.`],
+      };
+      const [code, message] = refusals[refused];
+      sendError(response, 409, code, message);
+    };
     // In the item's log too (meta branch), naming the question, so the answer outlives the local store. One write for all of them, and
     // first, as on GitHub: an answer the log does not take is not recorded, so the job is never released while its question stays open
-    // there (#230). What the store would refuse is refused before the write.
+    // there (#230). What the store would refuse is refused before the write; what the log took is recorded (#238).
     const write = items?.write;
     let logged: WriteOutcome | undefined;
+    let taken: readonly Resolved[] = resolved;
+    let problem: string | undefined;
+    let wrote = false;
     if (write?.appendLog && subject.host === items!.host) {
       const job = loadJobs(store)[ref];
-      if (!resolved.some((each) => each.target) && parkedAt !== undefined && !(job?.parked && Date.parse(job.parked.at) === Date.parse(parkedAt))) return sendError(response, 409, "PARKED_CHANGED", `${ref} parked on other questions now: reload the item.`);
+      if (!resolved.some((each) => each.target) && parkedAt !== undefined && !(job?.parked && Date.parse(job.parked.at) === Date.parse(parkedAt))) return refuse("parked-changed", -1);
       for (const each of resolved) {
         const refused = each.target ? answerRefusal(job, each.index, parkedAt) : undefined;
-        if (refused === "answered") return sendError(response, 409, "ALREADY_ANSWERED", `Question ${each.index + 1} on ${ref} has an answer already.`);
-        if (refused === "parked-changed") return sendError(response, 409, "PARKED_CHANGED", `${ref} parked on other questions now: reload the item.`);
-        if (refused) return sendError(response, 409, "NO_OPEN_QUESTIONS", `${ref} does not wait on that question (any more): reload the item.`);
+        if (refused) return refuse(refused, each.index);
       }
       // A question the store has not read back is named by the park that asked it (`toSet`) and its text.
       const set = job?.parked ? parkSet(job) : undefined;
       const lines = resolved.map((each) => ({ kind: "answer", by: by(), fields: { answer: each.text, ...(each.asked ? { to: each.asked.at, toBy: each.asked.by, toQuestion: each.asked.question } : set ? { toSet: set, ...(each.target ? { toQuestion: each.target.question } : {}) } : {}) } }));
+      let written = 0;
       try {
-        if (lines.length > 1 && write.appendLogs) logged = await write.appendLogs(subject, lines);
-        else for (const line of lines) logged = await write.appendLog(subject, line);
+        if (lines.length > 1 && write.appendLogs) {
+          logged = await write.appendLogs(subject, lines);
+          written = lines.length;
+        } else {
+          for (const line of lines) {
+            logged = await write.appendLog(subject, line);
+            written++;
+          }
+        }
       } catch (error) {
-        options.onRefresh?.();
-        return sendError(response, 502, "WRITE_REFUSED", `The answer is not recorded: it could not be written to ${subject.id}'s log (${error instanceof Error ? error.message : String(error)}). Try again.`);
+        const said = error instanceof Error ? error.message : String(error);
+        if (written === 0) {
+          options.onRefresh?.();
+          return sendError(response, 502, "WRITE_REFUSED", `The answer is not recorded: it could not be written to ${subject.id}'s log (${said}). Try again.`);
+        }
+        // The answers the log took are recorded; the rest are not, and the reply says so.
+        problem = `Only ${written} of ${lines.length} answers could be written to the log (${said}); the others are not recorded. Send them again.`;
       }
+      taken = resolved.slice(0, written);
+      wrote = true;
     }
-    const at = now().toISOString();
-    type Outcome = { released: boolean; open?: number } | { refused: AnswerRefusal; index: number };
     let outcome: Outcome;
     try {
       outcome = store.tx((): Outcome => {
@@ -626,9 +665,8 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
         if (!resolved.some((each) => each.target) && parkedAt !== undefined && !(job?.parked && Date.parse(job.parked.at) === Date.parse(parkedAt))) return { refused: "parked-changed", index: -1 };
         let released = false;
         let left: number | undefined;
-        for (const each of resolved) {
-          const asking = each.target?.options ?? each.asked?.options ?? parked?.decision?.options;
-          addAnswer(store, { subject, answer: each.text, by: by().who, at, textHash: itemTextHash(item), ...(each.question ? { question: each.question } : {}), ...(asking && asking.length > 0 ? { options: optionTexts(asking) } : {}) });
+        for (const each of taken) {
+          addOne(each);
           if (several.length > 0) {
             if (!each.target) {
               left ??= several.filter((one) => one.answer === undefined).length;
@@ -652,19 +690,17 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
       outcome = { refused: error.refused, index: error.index };
     }
     if ("refused" in outcome) {
-      const refusals: Record<AnswerRefusal, [string, string]> = {
-        "no-questions": ["NO_OPEN_QUESTIONS", `${ref} does not wait on that question (any more): reload the item.`],
-        "parked-changed": ["PARKED_CHANGED", `${ref} parked on other questions now: reload the item.`],
-        answered: ["ALREADY_ANSWERED", `Question ${outcome.index + 1} on ${ref} has an answer already.`],
-      };
-      const [code, message] = refusals[outcome.refused];
-      return sendError(response, 409, code, message);
+      if (!wrote) return refuse(outcome.refused, outcome.index);
+      // The log has them already (the Item changed while they were written): they are recorded as answers, and the job is left as it is.
+      store.tx(() => taken.forEach(addOne));
+      await options.syncNow?.();
+      return sendJson(response, 200, { recorded: true, released: false, logged: true, stale: outcome.refused, ...(problem ? { problem } : {}) });
     }
     const released = outcome.released;
     const left = outcome.open !== undefined ? { open: outcome.open } : {};
-    if (logged) {
+    if (wrote) {
       await options.syncNow?.();
-      return sendJson(response, 200, { recorded: true, released, ...left, logged: true, shared: logged.shared });
+      return sendJson(response, 200, { recorded: true, released, ...left, logged: true, shared: logged?.shared, ...(problem ? { problem } : {}) });
     }
     options.onRefresh?.();
     return sendJson(response, 200, { recorded: true, released, ...left });

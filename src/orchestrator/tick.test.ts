@@ -96,7 +96,7 @@ interface FakeRunner extends AgentRunner {
   /** The branch head the fake reports, when a test moves it (a commit); HEAD otherwise. */
   headSha?: string;
   /** Ends the newest session of an item. */
-  end(itemId: string, status: SessionStatus, output?: unknown, extra?: { resumeAt?: string; endReason?: string; denied?: string[]; costUsd?: number; setupFailed?: true; setupOutcome?: string; cwd?: string }): void;
+  end(itemId: string, status: SessionStatus, output?: unknown, extra?: { resumeAt?: string; endReason?: string; denied?: string[]; costUsd?: number; setupFailed?: true; setupOutcome?: string; cwd?: string; orphaned?: true }): void;
 }
 
 interface World {
@@ -200,7 +200,7 @@ function world(cfg: ProjectConfig | ConfigSource, items: WorkItem[] = []): World
       const asked = [...runner.requests].reverse().find((request) => request.subject.id === itemId);
       const told = /merge it to/.test(asked?.vars.finish ?? "");
       if (runner.merges && told && session.role === "implement" && status === "succeeded" && (output as { done?: boolean } | undefined)?.done === true) runner.main = MAIN_MERGED;
-      const over: Session = { ...session, status, finishedAt: now(), endReason: extra.endReason ?? status, agentSessionId: `agent-${session.ref.id}`, ...(extra.costUsd !== undefined ? { costUsd: extra.costUsd } : {}), ...(extra.setupFailed ? { setupFailed: true as const } : {}), ...(extra.setupOutcome ? { setupOutcome: extra.setupOutcome } : {}), ...(extra.cwd ? { cwd: extra.cwd } : {}) };
+      const over: Session = { ...session, status, finishedAt: now(), endReason: extra.endReason ?? status, agentSessionId: `agent-${session.ref.id}`, ...(extra.costUsd !== undefined ? { costUsd: extra.costUsd } : {}), ...(extra.setupFailed ? { setupFailed: true as const } : {}), ...(extra.setupOutcome ? { setupOutcome: extra.setupOutcome } : {}), ...(extra.cwd ? { cwd: extra.cwd } : {}), ...(extra.orphaned ? { orphaned: true as const } : {}) };
       sessions.set(itemId, over);
       store.setValue(sessionResultKey(session.ref.id), JSON.stringify({ output, resumeAt: extra.resumeAt, denied: extra.denied }));
       store.put(over, "orchestrator", now());
@@ -261,7 +261,7 @@ const REVIEW_OK = { verdict: "approve", findings: [] };
 const REVIEW_CHANGES = { verdict: "changes", findings: [{ severity: "must", file: "src/a.ts", text: "Off by one." }] };
 
 /** Ends the item's session, moves past the continuation delay and ticks. */
-async function step(w: World, id: string, status: SessionStatus, output?: unknown, extra?: { resumeAt?: string; endReason?: string; denied?: string[] }) {
+async function step(w: World, id: string, status: SessionStatus, output?: unknown, extra?: Parameters<FakeRunner["end"]>[3]) {
   w.runner.end(id, status, output, extra);
   await w.run();
   w.clock.ms += 1000;
@@ -437,9 +437,86 @@ for (const [name, raw] of [["level 3 before approval", { level: 3 }], ["level 4"
     assert.equal(w.job("1")?.parked?.as, "escalated");
     assert.equal(w.job("1")?.merged, undefined);
     assert.deepEqual(w.reasons("orchestrator.merged"), []);
-    assert.match(w.reasons("orchestrator.escalated")[0] ?? "", /merged scopesoup\/1 to main .* although its instructions said to commit and stop, not to merge: its session started at level (3|4)/);
+    assert.match(w.reasons("orchestrator.escalated")[0] ?? "", /merged scopesoup\/1 to main .* although its instructions said to commit and stop, not to merge \(its session started at level (3|4)/);
+  });
+
+  test(`${name}: a session told to commit and stop that merged without saying so is escalated as a merge, not "nothing to change" (#238)`, async () => {
+    const w = world(config(raw), [item("1")]);
+    w.runner.commitsAhead = async () => 0;
+    w.store.addUsageSample(usage(0.1, 0.1));
+    await w.run();
+    await step(w, "1", "succeeded", TRIAGE_OK);
+    w.runner.main = MAIN_MERGED; // it merged on its own and its answer names no merge
+    await step(w, "1", "succeeded", IMPLEMENT_OK);
+    assert.equal(w.job("1")?.parked?.as, "escalated");
+    assert.match(w.reasons("orchestrator.escalated")[0] ?? "", /merged scopesoup\/1 to main .* although its instructions said to commit and stop/);
   });
 }
+
+test("main moved before the implementor's branch was cut and it changed nothing: \"nothing to change\", not a merge it made (#238)", async () => {
+  const w = world(config({ level: 3 }), [item("1")]);
+  w.runner.commitsAhead = async () => 0;
+  w.store.addUsageSample(usage(0.1, 0.1));
+  await w.run();
+  // The implementor's start cuts its branch from a main that moved since the step was picked.
+  const start = w.runner.start.bind(w.runner);
+  w.runner.start = async (request) => {
+    if (request.role === "implement") w.runner.main = MAIN_MERGED;
+    return start(request);
+  };
+  await step(w, "1", "succeeded", TRIAGE_OK);
+  assert.equal(w.runner.requests.at(-1)?.role, "implement");
+  await step(w, "1", "succeeded", IMPLEMENT_OK);
+  assert.equal(w.job("1")?.parked?.as, "escalated");
+  assert.match(w.reasons("orchestrator.escalated")[0] ?? "", /^Nothing to change: /);
+});
+
+test("a session left by an earlier run (Scope Soup restarted) starts its step again, never counted as a failure (#238)", async () => {
+  const w = world(config({ level: 2 }), [item("1")]);
+  w.store.addUsageSample(usage(0.1, 0.1));
+  await w.run();
+  const max = persistenceLimits(w.depsFor().config.load().config!.settings.persistence.value).maxAttempts;
+  const orphan = async (): Promise<void> => {
+    await step(w, "1", "failed", undefined, { endReason: "Orphaned: left by an earlier run of Scope Soup; its process is gone.", orphaned: true });
+    w.clock.ms += 1000;
+    await w.run();
+  };
+  for (let i = 0; i < max - 1; i++) await orphan();
+  assert.equal(w.job("1")?.parked, undefined);
+  assert.equal(w.job("1")?.failures, 0);
+  assert.deepEqual(roles(w), Array(max).fill("triage"));
+  assert.match(w.reasons("orchestrator.interrupted")[0] ?? "", /left by an earlier run of Scope Soup .* not counted as a failure/);
+  // A session that ends on its own in between starts the count again.
+  await step(w, "1", "failed", undefined, { endReason: "crashed" });
+  w.clock.ms += 20_000;
+  await w.run();
+  for (let i = 0; i < max - 1; i++) await orphan();
+  assert.equal(w.job("1")?.parked, undefined);
+  // The limit in a row: a crash at every start ends with a person.
+  await orphan();
+  assert.equal(w.job("1")?.parked?.as, "escalated");
+  assert.equal(w.events("orchestrator.restart_limit").length, 1);
+});
+
+test("a change in the merge queue when the level is lowered to 3 leaves the queue, and the implementor's own session merges it (#238)", async () => {
+  let state: ReturnType<ConfigSource["load"]> = { config: config({ level: 4, ...MERGES }), changed: true };
+  const queue = fakeQueue();
+  const w = world({ load: () => state }, [item("1")]);
+  w.queue = queue;
+  await toHandOver(w);
+  assert.equal(w.job("1")?.parked?.as, "queued");
+  state = { config: config({ level: 3, ...MERGES }), changed: true };
+  await w.run();
+  assert.equal(w.job("1")?.parked, undefined);
+  assert.equal(w.job("1")?.queued, undefined);
+  assert.match(w.reasons("orchestrator.step").at(-1) ?? "", /waited in the merge queue, but the project is at level 3 now/);
+  w.clock.ms += 1000;
+  await w.run();
+  assert.equal(w.runner.requests.at(-1)?.role, "implement");
+  assert.match(w.runner.requests.at(-1)?.vars.finish ?? "", /merge it to/);
+  await step(w, "1", "succeeded", IMPLEMENT_OK);
+  assert.equal(w.job("1")?.merged, HEAD);
+});
 
 test("level 3, nothing committed and nothing merged (the answer names no merge): still \"nothing to change\" for a person", async () => {
   const w = world(config({ level: 3 }), [item("1")]);
@@ -1854,6 +1931,9 @@ function fakeQueue(): QueueDriver & { enqueued: string[]; notices: Notice[]; kep
     async drain(sink: QueueSink) {
       for (const notice of fake.notices.splice(0)) await sink.deliver(notice);
     },
+    async deliverDecided(sink: QueueSink) {
+      for (const notice of fake.notices.splice(0)) await sink.deliver(notice);
+    },
     state: () => { throw new Error("not used"); },
     pausedWhy: () => fake.paused,
     checkMissing: () => fake.missing,
@@ -2020,6 +2100,49 @@ test("merging by queue: Stop ends a running check's drain; its waiting notice is
   assert.equal(calls.at(-1), "release");
 });
 
+test("merging by queue: the level lowered while a drain checks the change: it waits for the drain, which merges it, and the implementor merges nothing (#238)", async () => {
+  let state: ReturnType<ConfigSource["load"]> = { config: config(QUEUE), changed: true };
+  const w = world({ load: () => state }, [item("1")]);
+  const queue = fakeQueue();
+  w.queue = queue;
+  queue.state = () => ({ entries: [{}], batches: [] }) as never;
+  await toHandOver(w);
+  let open: () => void = () => {};
+  const gate = new Promise<void>((resolve) => {
+    open = resolve;
+  });
+  queue.drain = async (sink) => {
+    await gate;
+    await sink.deliver({ kind: "mark-merged", batch: 3, tested: SHA2, members: [{ change: ref("1"), sha: SHA2, head: SHA }] });
+  };
+  const run = (): ReturnType<typeof tick> => tick({ ...w.depsFor(), queueWaitMs: 20 });
+  await run();
+  state = { config: config({ ...QUEUE, level: 3 }), changed: true };
+  await run();
+  assert.equal(w.job("1")?.parked?.as, "queued", "it stays in the queue while the drain runs");
+  assert.deepEqual(queue.kept.at(-1) ?? [], ["fake:work:1"], "not reconciled away while the drain runs");
+  open();
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  await run();
+  assert.equal(w.job("1")?.merged, SHA2);
+  assert.ok(!w.runner.requests.slice(3).some((request) => request.role === "implement"), "no implementor is resumed to merge it again");
+});
+
+test("merging by queue: a mark-merged notice for a job that no longer waits in the queue is not applied to it (#238)", async () => {
+  const w = world(config(QUEUE), [item("1")]);
+  const queue = fakeQueue();
+  w.queue = queue;
+  await toHandOver(w);
+  const job = loadJobs(w.store)["fake:work:1"]!;
+  delete job.parked;
+  job.step = "implement";
+  saveJobs(w.store, { "fake:work:1": job });
+  queue.notices.push({ kind: "mark-merged", batch: 3, tested: SHA2, members: [{ change: ref("1"), sha: SHA2, head: SHA }] });
+  await w.run();
+  assert.equal(w.job("1")?.merged, undefined);
+  assert.equal(w.events("orchestrator.queue_notice_stale").length, 1);
+});
+
 test("merging by queue: a note the drain makes carries the time it was made and is logged then, so a push before Stop reads as before it", async () => {
   const w = world(config(QUEUE), [item("1")]);
   const queue = fakeQueue();
@@ -2154,15 +2277,20 @@ test("merging by queue: when the close fails the item is not started again; with
   queue.notices.push({ kind: "mark-merged", batch: 3, tested: SHA2, members: [{ change: ref("1"), sha: SHA2, head: SHA }] });
   await w.run();
   await w.run();
-  // The issue is still open on the host, but the job parked as merged and nothing starts for it.
-  assert.deepEqual(w.closes, [`1 ${SHA2} 3`]);
+  // The issue is still open on the host, but the job parked as merged and nothing starts for it; each tick tries the close again.
+  assert.deepEqual(w.closes, [`1 ${SHA2} 3`, `1 ${SHA2} 3`]);
   assert.equal(w.job("1")?.merged, SHA2);
   assert.equal(w.job("1")?.parked?.as, "queued");
   assert.equal(w.events("orchestrator.started").length, startedBefore);
   assert.deepEqual(w.reasons("orchestrator.item_closed"), []);
   // The failure leaves a standing note on the board, once.
-  assert.equal(w.reasons("orchestrator.close_failed").length, 1);
-  assert.match(w.reasons("orchestrator.close_failed")[0] ?? "", /closing it on the host failed: close it on the host by hand/);
+  assert.ok(w.reasons("orchestrator.close_failed").length >= 1);
+  assert.match(w.reasons("orchestrator.close_failed")[0] ?? "", /closing it on the host failed: Scope Soup tries again at each tick, or close it on the host by hand/);
+  // Each tick tries the close again (#238); once the host takes it, it is closed.
+  w.closeResult = "closed";
+  await w.run();
+  assert.equal(w.closes.length, 3);
+  assert.equal(w.reasons("orchestrator.item_closed").length, 1);
 
   const h = world(config(QUEUE), [item("1")]);
   const hq = fakeQueue();

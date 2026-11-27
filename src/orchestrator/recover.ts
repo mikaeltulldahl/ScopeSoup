@@ -2,9 +2,17 @@
 // the only copy of where an item stands. Each item is looked at once per store: the first tick
 // that sees it. A deleted store sees every item again.
 //
-// Only what one laptop needs: an item whose log has an open question waits for its answer; one
-// whose newest revision has a passing review and has not merged goes to merging; one whose last
-// session said what comes next starts that step again. Anything else starts as a new item.
+// The rule for a restart and a lost store (#238): what is lost is only what this process or this store held; the host (each
+// Item's log) and git (its branch, the remote's main) are read back, and nothing they do not say is made up.
+// - A restart keeps the store: a session whose process is gone is `orphaned`, and its step starts again, not counted as a failure,
+//   up to the attempts' limit in a row (`settleStep`). A change in the merge queue stays there, the queue's state being in the store.
+// - A lost store: the answers are the log's added to what the store has (a person may answer before the first tick), and the
+//   job is what the log says: an item whose log has an open question waits for its answer; one whose newest revision has a
+//   passing review and has not merged goes to merging (handed over again, so to the queue that exists now); one whose last
+//   session said what comes next starts that step again. Anything else starts as a new item.
+// - Either way, a change is merged when main holds it, whoever put it there: the queue's notice, the session merge check (told or
+//   not, against the main the work started from), or a handed-over branch a person merged.
+// - An answer on the meta branch is recorded only once the item's log took it (`answerAll` in the server), so it is never only here.
 //
 // A GitHub Item has no log of its own. Its record is Scope Soup's comments: the log comment's lines and the waiting triage
 // rewrite (`hostRecord`), and the question comments. `jobFromHost` reads those. Its answers stay on GitHub and are read from
@@ -233,15 +241,19 @@ export function recoverFromLogs(ctx: Context, items: readonly WorkItem[]): void 
     !!claimant && !!item.holder && item.holder.actor.id !== claimant && (item.holder.until === undefined || Date.parse(item.holder.until) > Date.parse(ctx.at));
   const fresh = items.filter((item) => !known.has(refKey(item.ref)) && !heldElsewhere(item));
   if (fresh.length === 0) return;
-  const answered = new Set(loadAnswers(store).map((answer) => refKey(answer.subject)));
+  // The answers the store has: an answer a person gave after the store was lost and before this read-back is one of them, and the
+  // log's answers are added to it, not replaced by it or skipped for it. The same answer to the same question is one answer: the
+  // store's time is the server's, the log line's the host's, so the time does not tell them apart.
+  const sameAs = (answer: RecordedAnswer): string => `${refKey(answer.subject)}|${answer.question ?? ""}|${answer.answer}`;
+  const had = new Set(loadAnswers(store).map(sameAs));
   for (const item of fresh) {
     const key = refKey(item.ref);
     if (ctx.jobs[key]) continue;
     // A GitHub Item, whose record is Scope Soup's comments (a question comment has an id).
     const onHost = !item.log && (!!item.hostRecord || (item.openQuestions ?? []).some((question) => question.id !== undefined));
     if (!item.log && !onHost) continue;
-    if (!onHost && !answered.has(key)) {
-      const answers = answersFromLog(item);
+    if (!onHost) {
+      const answers = answersFromLog(item).filter((answer) => !had.has(sameAs(answer)));
       if (answers.length > 0) restoreAnswers(store, answers, ctx.at);
     }
     const job = onHost ? jobFromHost(item) : jobFromLog(item);

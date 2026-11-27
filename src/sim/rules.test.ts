@@ -107,7 +107,8 @@ describe("each rule fires on a bad state built by hand", { concurrency: 1 }, () 
     assert.match(fires("A1", obs({ items: [asked] })) ?? "", /its lane is in-progress/);
   });
   it("A1", "a timed wait whose card says another cause (decision 3, #230)", () => {
-    const at = (cause: "text" | "timer", reason: string) => obs({ items: [item("A-1", { kind: "start", role: "implement", cause }, { card: card("A-1", { lane: "todo", reason }) })] });
+    // Read after a tick (between ticks the card is the last tick's, #238).
+    const at = (cause: "text" | "timer", reason: string) => obs({ action: { kind: "tick" }, items: [item("A-1", { kind: "start", role: "implement", cause }, { card: card("A-1", { lane: "todo", reason }) })] });
     assert.match(fires("A1", at("timer", "ready; waiting for a free agent slot")) ?? "", /waits for a timer/);
     assert.equal(fires("A1", at("timer", "the implement step failed once; it tries again in 30 s")), null);
     assert.match(fires("A1", at("text", "ready; waiting for a free agent slot")) ?? "", /read back/);
@@ -158,8 +159,11 @@ describe("each rule fires on a bad state built by hand", { concurrency: 1 }, () 
     assert.match(fires("B6", obs({ items: [item("A-1", { kind: "person", why: "holds" }, { item: held })] }), obs({ started: [started("A-1", "implement")] })) ?? "", /holds/);
   });
   it("B7", "a triage started twice on the same input after it settled (#196, #197)", () => {
-    const done = ledger({ ended: [{ step: 1, item: key("A-1"), role: "triage", session: "s1", status: "succeeded", settled: true }] });
+    const done = ledger({ ended: [{ step: 1, item: key("A-1"), role: "triage", session: "s-A-1", status: "succeeded", settled: true }] });
     assert.match(fires("B7", obs({ started: [started("A-1", "triage")] }), obs({ ledger: done, started: [started("A-1", "triage")] })) ?? "", /same input/);
+    // The session with this input never ended with a result (a restart left it with no process): its step starts again (#238).
+    const older = ledger({ ended: [{ step: 1, item: key("A-1"), role: "triage", session: "s0", status: "succeeded", settled: true }] });
+    assert.equal(fires("B7", obs({ started: [started("A-1", "triage")] }), obs({ ledger: older, started: [started("A-1", "triage")] })), null);
     assert.match(fires("B7", obs({ ledger: ledger({ asksInFair: new Map([[key("A-1"), 4]]) }) })) ?? "", /asked 4 times/);
     const shown = (text: string, body: string, questions: number): string | null => {
       const rewrite = { original: body.trim(), text, questions: Array.from({ length: questions }, () => ({ question: "?", options: [], recommendation: "" })), round: 1 };
@@ -238,8 +242,22 @@ describe("each rule fires on a bad state built by hand", { concurrency: 1 }, () 
   it("E4", "a session merged without being told, and nobody is told (decision 108)", () => {
     const g = new FakeGit();
     g.mergeToMain(g.commit([g.main], ["src/a.ts"], "work", "agent"), "session untold", key("A-1"));
-    const o = obs({ action: tick, git: gitObs(g), items: [item("A-1", SLOT)] });
+    const session = { ref: { host: "scopesoup", kind: "session" as const, id: "s1" }, role: "implement" as const, subject: { host: "metaBranch", kind: "work" as const, id: "A-1" }, status: "succeeded" as const, attempt: 1, startedAt: AT };
+    const o = obs({ action: tick, git: gitObs(g), items: [item("A-1", SLOT)], sessions: [session] });
     assert.match(fires("E4", o, o, o, o) ?? "", /without being told/);
+    // Another machine's implementor merged it (multiplayer): that machine judges it.
+    const elsewhere = obs({ action: tick, git: gitObs(g), items: [item("A-1", SLOT)] });
+    assert.equal(fires("E4", elsewhere, elsewhere, elsewhere, elsewhere), null);
+  });
+  it("E5", "the queue merged an Item's change and its implementor merges it again (#238)", () => {
+    const g = new FakeGit();
+    g.mergeToMain(g.commit([g.main], ["src/a.ts"], "work", "agent"), "queue", key("A-1"));
+    const first = obs({ git: gitObs(g), items: [item("A-1", SLOT)] });
+    g.mergeToMain(g.commit([g.main], ["src/a.ts"], "work", "agent"), "session told", key("A-1"));
+    assert.match(fires("E5", first, obs({ git: gitObs(g), items: [item("A-1", SLOT)] })) ?? "", /went to main again/);
+    // Closed in between (done, then reopened): a new merge is new work.
+    const closed = obs({ git: first.git, items: [item("A-1", SLOT, { item: { ...workItem("A-1"), state: "done" } })] });
+    assert.equal(fires("E5", first, closed, obs({ git: gitObs(g), items: [item("A-1", SLOT)] })), null);
   });
   it("F1", "W changed with no event about the Item", () => {
     assert.match(fires("F1", obs({ action: tick, items: [item("A-1", SLOT)] }), obs({ action: tick, items: [item("A-1", { kind: "person", why: "escalated" })] })) ?? "", /no event about it/);
@@ -399,6 +417,30 @@ describe("runs the simulator shrank, held since their fix", { concurrency: 1 }, 
     const steps: Action[] = [{ kind: "tick" }, { kind: "close", item: "A-1", state: "abandoned" }, { kind: "tick" }, { kind: "tick" }, { kind: "tick" }];
     await holdsOn("I2", { items: 5, level: 3, slots: 3, steps: 80, profile: "normal" }, steps);
     await holdsOn("C3", { items: 5, level: 3, slots: 3, steps: 80, profile: "normal" }, steps);
+  });
+
+  test("G1: a session ended by a restart starts its step again, not counted as a failure, so a third restart does not escalate it (#238)", async () => {
+    await holdsOn("G1", { items: 10, level: 3, slots: 3, steps: 600, profile: "rough" }, [
+      { kind: "tick" },
+      { kind: "end", item: "A-3", v: 951361 },
+      { kind: "restart" },
+      { kind: "tick" },
+      { kind: "level", to: 1 },
+      { kind: "clock", ms: 60000 },
+      { kind: "switch", to: "resume" },
+      { kind: "tick" },
+      { kind: "end", item: "A-1", v: 289275 },
+      { kind: "tick" },
+      { kind: "clock", ms: 60000 },
+      { kind: "end", item: "A-5", v: 313800 },
+      { kind: "tick" },
+      { kind: "restart" },
+      { kind: "tick" },
+    ]);
+  });
+
+  test("I1: the store lost while the host is down: the Items read before still own their branches (the checker's own setup, #238)", async () => {
+    await holdsOn("I1", { items: 12, level: 4, slots: 2, steps: 600, profile: "normal" }, [{ kind: "tick" }, { kind: "host-down", steps: 3 }, { kind: "lose-store" }]);
   });
 
   test("C3: a closed Item's open question ends with it (#229)", async () => {

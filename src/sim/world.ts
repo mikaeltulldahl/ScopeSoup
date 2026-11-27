@@ -17,7 +17,7 @@ import { tick } from "../orchestrator/tick.ts";
 import { initialState } from "../queue/state.ts";
 import type { PickRequestPort, ScopeSoupServer } from "../server/server.ts";
 import { createServer } from "../server/server.ts";
-import { applyControl, pauseAtStartup, setRolesForTest } from "../store/control.ts";
+import { applyControl, mergeQueueOn, mergeQueueStopped, pauseAtStartup, setRolesForTest } from "../store/control.ts";
 import { KEYS } from "../store/keys.ts";
 import type { Store } from "../store/store.ts";
 import { openStore } from "../store/store.ts";
@@ -122,28 +122,63 @@ function makeConfig(level: number, slots: number, machine = "laptop-a"): Project
   return result.config;
 }
 
-/** The queue as the simulator runs it at level 4: it takes changes and merges or sends back when the simulator says. */
+/**
+ * The queue as the simulator runs it at level 4: it takes changes and merges or sends back when the simulator says. A drain takes
+ * the waiting changes into a batch (`inFlight`) and runs beside the ticks until the simulator decides each of them, as the real
+ * one runs while it checks: across a level change too, and it ends with the process (a restart).
+ */
 export interface SimQueue extends QueueDriver {
   waiting: Map<string, { ref: Ref; sha: string }>;
   notices: Notice[];
+  /** Changes a drain of this process took into a batch, decided only by the simulator's queue step. */
+  inFlight: Set<string>;
+  /** A drain of this process runs. */
+  draining: boolean;
+  /** Wakes the drain after the simulator decided something. */
+  wake: () => void;
 }
 
-function simQueue(): SimQueue {
+function simQueue(paused: () => boolean): SimQueue {
+  let woken: (() => void) | null = null;
+  const deliver = async (sink: QueueSink): Promise<void> => {
+    // As the real driver: a notice is kept until it is taken; a throw keeps it for the next time.
+    while (q.notices.length > 0) {
+      await sink.deliver(q.notices[0]!);
+      q.notices.shift();
+    }
+  };
   const q: SimQueue = {
-    waiting: new Map(), notices: [],
+    waiting: new Map(), notices: [], inFlight: new Set(), draining: false,
+    wake() {
+      const w = woken;
+      woken = null;
+      w?.();
+    },
     async enqueue(item, _branch, _repo, _paths) {
       return { ok: false, reason: "not wired" } as never;
     },
     reconcile(keep) {
       for (const key of [...q.waiting.keys()]) if (!keep.has(key)) q.waiting.delete(key);
+      for (const key of [...q.inFlight]) if (!keep.has(key)) q.inFlight.delete(key);
     },
     async drain(sink: QueueSink) {
-      // As the real driver: a notice is kept until it is taken; a throw keeps it for the next time.
-      while (q.notices.length > 0) {
-        await sink.deliver(q.notices[0]!);
-        q.notices.shift();
+      q.draining = true;
+      try {
+        for (;;) {
+          await deliver(sink);
+          // As the real one: with merging paused (or below level 4) the batch under way finishes and no new one is built.
+          if (!paused()) for (const key of q.waiting.keys()) q.inFlight.add(key);
+          for (const key of [...q.inFlight]) if (!q.waiting.has(key)) q.inFlight.delete(key);
+          if (q.inFlight.size === 0) return;
+          await new Promise<void>((resolve) => {
+            woken = resolve;
+          });
+        }
+      } finally {
+        q.draining = false;
       }
     },
+    deliverDecided: deliver,
     state: () => initialState(),
     pausedWhy: () => null,
     resume() {},
@@ -231,7 +266,7 @@ export class SimWorld {
   }
 
   private makeQueue(): SimQueue {
-    const q = simQueue();
+    const q = simQueue(() => this.configNow.level < 4 || !mergeQueueOn(this.store));
     q.enqueue = async (item, branch) => {
       const sha = this.git.branches.get(branch);
       if (!sha) return { ok: false, reason: `no branch ${branch}` };
@@ -467,8 +502,13 @@ export class SimWorld {
         return;
       case "queue": {
         const entry = this.queue.waiting.get(this.key(action.item));
-        if (!entry) return this.skip();
+        // The real queue is driven only at level 4 while merging is on (`driveQueue`); a drain under way finishes its batch whatever
+        // the level is now. Otherwise it neither merges nor sends back.
+        // Stop ends a drain at its next step, so a stopped one decides nothing.
+        const inFlight = this.queue.draining && this.queue.inFlight.has(this.key(action.item)) && !mergeQueueStopped(this.store);
+        if (!entry || (!inFlight && (this.configNow.level < 4 || !mergeQueueOn(this.store)))) return this.skip();
         this.queue.waiting.delete(this.key(action.item));
+        this.queue.inFlight.delete(this.key(action.item));
         if (action.merge) {
           const main = this.git.mergeToMain(entry.sha, "queue", this.key(action.item));
           this.queue.notices.push({ kind: "mark-merged", batch: this.step, members: [{ change: entry.ref, sha: main, head: entry.sha }], tested: main });
@@ -477,6 +517,7 @@ export class SimWorld {
           this.queue.notices.push({ kind: "send-back", change: entry.ref, sha: entry.sha, reason: { kind: "culprit", prefix: 0, chainSha: entry.sha, files: ["test/f.ts"], excerpt: "a test failed" } });
           this.count("queue-sent-back");
         }
+        this.queue.wake();
         return;
       }
       case "person-merge": {
@@ -509,7 +550,13 @@ export class SimWorld {
     this.runner.live.clear();
     const firstId = this.store.list("session").length + 1;
     this.runner = this.makeRunner(firstId);
-    // The merge queue keeps its state in the store, so it survives a restart.
+    // The merge queue keeps its state in the store, so it survives a restart; its drain does not (a new queue object, so the tick
+    // starts a new one).
+    const old = this.queue;
+    this.queue = this.makeQueue();
+    for (const [key, entry] of old.waiting) this.queue.waiting.set(key, entry);
+    this.queue.notices.push(...old.notices);
+    for (const key of old.inFlight) this.queue.inFlight.add(key);
     this.server = this.makeServer();
     pauseAtStartup(this.store, this.now());
   }

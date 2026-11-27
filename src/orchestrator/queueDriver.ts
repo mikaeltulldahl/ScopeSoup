@@ -110,6 +110,8 @@ export interface QueueDriver {
   reconcile(keep: ReadonlySet<string>): void;
   /** Does what the engine is waiting for, until it waits for nothing, Stop is pressed, or (merging paused) the next step would start a new batch. */
   drain(sink: QueueSink): Promise<void>;
+  /** Delivers only what the queue decided already and has not delivered (its outbox): nothing is built, checked or pushed. */
+  deliverDecided(sink: QueueSink): Promise<void>;
   /** The engine's state as stored. */
   state(): QueueState;
   /** The engine is paused: why, or null. */
@@ -744,6 +746,10 @@ export function createQueueDriver(deps: QueueDriverDeps): QueueDriver {
       const stored = load();
       save({ ...stored, ready: [...stored.ready.filter((r) => refKey(r.change) !== refKey(item)), { change: item, sha, paths }] });
       return { ok: true, sha };
+    },
+
+    async deliverDecided(sink) {
+      await deliverOutbox(null, sink);
     },
 
     reconcile(keep) {

@@ -655,7 +655,9 @@ test("the startup sweep settles sessions left by an earlier run", async () => {
   // Recorded before the machine last started: the pid now belongs to something else (here: this test).
   const reused: Session = { ...base, ref: { host: "scopesoup", kind: "session", id: "reused" }, status: "running", pid: process.pid, startedAt: new Date(T0 - 2 * 3600_000).toISOString() };
   const done: Session = { ...base, ref: { host: "scopesoup", kind: "session", id: "done" }, status: "succeeded", finishedAt: at, endReason: "Completed." };
-  for (const session of [leftover, gone, neverStarted, reused, done]) w.store.put(session, "orchestrator", at);
+  // A live process whose start time cannot be read: it may be this session's agent, still working, so the session stays running.
+  const unknown: Session = { ...base, ref: { host: "scopesoup", kind: "session", id: "unknown" }, status: "running", pid: process.pid };
+  for (const session of [leftover, gone, neverStarted, reused, done, unknown]) w.store.put(session, "orchestrator", at);
 
   await w.runner.reconcile();
 
@@ -664,10 +666,12 @@ test("the startup sweep settles sessions left by an earlier run", async () => {
   const read = (id: string) => w.store.get<Session>({ host: "scopesoup", kind: "session", id });
   assert.match(read("leftover")?.endReason ?? "", /Orphaned: .*was still there and was killed/);
   assert.match(read("gone")?.endReason ?? "", /Orphaned: .*its process is gone/);
+  assert.equal(read("gone")?.orphaned, true, "its step starts again, not counted as a failure");
   assert.match(read("never")?.endReason ?? "", /Orphaned/);
   assert.match(read("reused")?.endReason ?? "", /machine restarted since.*left alone/);
   for (const id of ["leftover", "gone", "never", "reused"]) assert.equal(read(id)?.status, "failed");
   assert.deepEqual(read("done"), done);
+  assert.deepEqual(read("unknown"), unknown, "not taken for a session left by a restart: two agents must not share a worktree");
 
   const events = w.store.lastSeq();
   await w.runner.reconcile();
@@ -701,7 +705,9 @@ test("the startup sweep kills only a process created when the session started, a
   assert.match(read("match")?.endReason ?? "", /was still there and was killed/);
   assert.match(read("later")?.endReason ?? "", /another program and was left alone/);
   assert.match(read("earlier")?.endReason ?? "", /another program and was left alone/);
-  assert.match(read("unreadable")?.endReason ?? "", /start time could not be read, so it was left alone/);
+  // It may be the session's own agent: the session stays running (#238), not over as left by a restart.
+  assert.equal(read("unreadable")?.status, "running");
+  assert.equal(read("unreadable")?.orphaned, undefined);
 });
 
 test("deleteBranch removes an item branch and its worktree, tolerates a missing one, refuses main", async () => {

@@ -193,6 +193,10 @@ export interface ReviewAnswer {
 export interface Job {
   /** The implement session started last: the level it started at, and whether its finish text told it to merge (decision 108). */
   sessionStart?: { level: number; mayMerge: boolean };
+  /** Sessions of this step left by an earlier run of Scope Soup in a row (`Session.orphaned`); at the attempts' limit a person is asked. */
+  orphanRestarts?: number;
+  /** The change merged, and closing its Item on the host failed: each tick tries again until it is closed (#238). */
+  closeOwed?: { sha: string; batch?: number };
   item: Ref;
   workspace: string;
   branch: string;
@@ -220,6 +224,8 @@ export interface Job {
   merge?: true;
   /** Levels 2 and 3: where the remote's main was when the item's first implement session started. A branch head already in it is no work done. */
   base?: string;
+  /** Where main was once this round's implement session started (its branch cut): a head new in main since then was merged by it. */
+  roundBase?: string;
   parked?: {
     as: ParkedAs; reason: string; at: string;
     /**
