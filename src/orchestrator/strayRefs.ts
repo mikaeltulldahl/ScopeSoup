@@ -172,7 +172,7 @@ export async function sweepLeftovers(deps: SweepDeps): Promise<{ removed: number
     }
   };
 
-  for (const [ref, owner] of claim) {
+  for (const [ref, whose] of claim) {
     const sha = refs.get(ref)!;
     if (checkedOut.has(ref)) continue;
     const kind = ref.startsWith("refs/tags/") ? "tag" : "branch";
@@ -181,13 +181,13 @@ export async function sweepLeftovers(deps: SweepDeps): Promise<{ removed: number
     let safe = false;
     try {
       // Found only by being new since the baseline: a tag fetched from the remote meanwhile is new too, and is not the agent's.
-      if (!owner.byName && (await git.onRemote(ref))) continue;
-      safe = await git.refSafe(sha, owner.branch);
+      if (!whose.byName && (await git.onRemote(ref))) continue;
+      safe = await git.refSafe(sha, whose.branch);
     } catch {
       continue;
     }
-    if (safe) await remove(owner.item, ref, sha, what, `git update-ref ${ref} ${sha}`, () => git.deleteRef(ref, sha));
-    else if (owner.byName || !maybeLive(ref)) keep(owner.item, ref, sha, what);
+    if (safe) await remove(whose.item, ref, sha, what, `git update-ref ${ref} ${sha}`, () => git.deleteRef(ref, sha));
+    else if (whose.byName || !maybeLive(ref)) keep(whose.item, ref, sha, what);
   }
   for (const { entry, item, branch } of stashOf) {
     const what = `A stash entry made on ${branch} (${entry.sha.slice(0, 12)})`;
