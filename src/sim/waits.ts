@@ -75,6 +75,9 @@ export function waitsFor(input: WaitInput): W {
     const answered = job.answered?.length ?? 0;
     return { kind: "person", why: "answer", n: Math.max(0, asked - answered) };
   }
+  // In Backlog with no work under way, nothing starts until a person moves it to To do, whatever else holds it back (decision 121): the
+  // board shows it in Backlog, blocked or not (a person's Triage pick there that found a blocker, say).
+  if (!job && item.backlog) return { kind: "not-started" };
   const blockers = [...item.blockedBy.map((ref) => `${ref.host}:${ref.kind}:${ref.id}`), ...input.ownBlockers].filter((key) => input.open.has(key));
   // A person's Triage pick runs on a blocked Item too (decision 104): they asked for a look at it as it is, blockers and all (#243, A4).
   const pickedTriage = role === "triage" && job?.triageAskedBy !== undefined;

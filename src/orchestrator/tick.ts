@@ -154,6 +154,14 @@ function interrupted(ctx: Context, key: string, job: Job, item: WorkItem | null)
     const reason = `${asked.by} picked ${PICK_WORDS[asked.to] ?? asked.to} for ${item?.ref.id ?? key} on the board: the ${session.role} session ${session.ref.id} is ended now and its result is not taken.`;
     const stopped = runner.stopFor?.(job.item, `Stopped: ${reason}`, true) ?? 0;
     if (stopped > 0) ctx.commit("orchestrator.stopped", reason, key, { by: asked.by, to: asked.to, role: session.role, session: session.ref.id });
+    // Ended at once (its process is gone): the job goes on as the pick left it in this tick, and its slot is free.
+    const after = store.get<Session>(session.ref);
+    if (!after || !isLive(after)) {
+      delete job.interrupt;
+      delete job.sessionId;
+      delete job.resume;
+      return false;
+    }
     if (Date.parse(ctx.at) - Date.parse(asked.at) <= INTERRUPT_WAIT_MS) return true;
     ctx.commit("orchestrator.interrupt_failed", `The ${session.role} session ${session.ref.id} on ${item?.ref.id ?? key} is still there ${Math.round(INTERRUPT_WAIT_MS / 60_000)} minutes after ${asked.by}'s pick ended it; the job goes on as the pick left it, and nothing starts on the Item while that session runs.`, key, { by: asked.by, session: session.ref.id });
   }
@@ -780,6 +788,14 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
   await overturnsMerged(ctx, itemByKey);
 
   await renewClaims(ctx, itemByKey);
+  // A renewal reads the Item from the host: one it found moved to Backlog on another machine is given up in this tick, as step 1b gives
+  // up one the tick read so at its start (#243), so the next tick does not do it with nothing new read.
+  for (const [key, job] of Object.entries(jobs)) {
+    const before = itemByKey.get(key);
+    const read = store.get<WorkItem>(job.item);
+    if (!before || before.backlog || !read?.backlog || job.sessionId || read.state === "done" || read.state === "abandoned") continue;
+    if (readInBacklog(job, read)) await dropAsked(ctx, jobs, key, job, read);
+  }
 
   // Level 4 merges through the merge queue: the queue is driven now that finished sessions are settled.
   if (config.level >= 4) await driveQueue(ctx, items);
@@ -1146,6 +1162,18 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
         // Checked again with no await before the start: a chat turn a person began meanwhile keeps the item.
         if (runner.busy?.(job.item)) {
           reasons.push(`${entry.item.ref.id} waits: a person is talking to one of its sessions`);
+          continue;
+        }
+        // The ceiling as it is now: a person may have lowered it while this start was prepared (the configuration is read again).
+        const ceilingNow = Math.min(slots, deps.config.load().config?.settings.maxParallelSessions.value ?? slots);
+        if (running >= ceilingNow) {
+          const reason = ceilingNow === 1 ? "the 1 session slot is in use" : `all ${ceilingNow} session slots are in use`;
+          reasons.push(reason);
+          // A new Item gives back what was taken for it; work under way keeps its claim and clone for its next step.
+          if (!entry.job) {
+            if (deps.actions.claims) await ctx.act("release the claim", key, () => deps.actions.release(job.item, `${entry.item.ref.id} is not started: ${reason}`));
+            await ctx.act("free the workspace of an item that does not start", key, () => runner.releaseWorkspace(job.workspace, `${entry.item.ref.id} is not started: ${reason}`));
+          }
           continue;
         }
         // A person picked a state for the Item while its start was prepared (decision 104): their pick stands, and nothing starts.

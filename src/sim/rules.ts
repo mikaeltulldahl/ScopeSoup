@@ -159,6 +159,8 @@ export const RULES: Rule[] = [
         if (w.kind === "not-started" || (w.kind === "start" && w.cause === "slot")) return null;
         // A session that ended is settled by the tick first, and what follows may start in the same tick.
         if (w.kind === "session" && w.settling) return null;
+        // A person's pick ended the running session (decision 104): once it is gone the picked step may start in the same tick.
+        if (w.kind === "session" && before.job?.interrupt) return null;
         // A blocker whose session the tick settled first may have closed in the same tick.
         if (w.kind === "blocker" && w.on.every((k) => { const b = o.items.find((each) => each.key === k); return !b || isClosed(b); })) return null;
         // A triage whose Item's text changed under it is stopped and started again (decision 6).
@@ -330,6 +332,8 @@ export const RULES: Rule[] = [
       }
       // A person's move, start over or edit since then sends the Item elsewhere, rightly.
       for (const r of o.requests) if (r.status === 200 && r.item && /move|start-over|edit|pick/.test(r.path)) delete expect[`metaBranch:work:${r.item}`];
+      // So does a pick asked on another machine's board and carried out here (decision 104), read at a fetch.
+      for (const e of o.events) if (e.kind === "person.moved" && e.subject) delete expect[e.subject];
       for (const s of o.started) {
         const want = expect[s.item];
         if (!want) continue;
@@ -783,7 +787,8 @@ export const RULES: Rule[] = [
     why: "One Item never holds up another: an Item waiting only for a slot starts in the next tick when one is free (and the pace allows one more).",
     check(o, prev) {
       if (!isTick(o) || !prev || !o.tick) return null;
-      const free = prev.slots - prev.liveCount - o.started.length;
+      // A ceiling a person lowered during the tick holds from then on (the tick reads it again before each start).
+      const free = Math.min(prev.slots, o.slots) - prev.liveCount - o.started.length;
       if (free <= 0) return null;
       // An Item whose paths overlap one that started implement in this tick waits for the same files, rightly.
       const overlaps = (i: ItemObs): boolean => o.started.some((s) => s.role === "implement" && (prevOf(prev, s.item)?.paths ?? []).some((p) => i.paths.includes(p)));

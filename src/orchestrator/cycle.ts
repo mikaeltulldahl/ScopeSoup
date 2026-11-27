@@ -15,7 +15,7 @@ import { persistenceLimits } from "../config/persistence.ts";
 import type { Context } from "./context.ts";
 import { ACTOR, errorText } from "./context.ts";
 import type { AskedText, Decision, ItemLinkAnswer, Job, ParkedAs, ReviewAnswer, TakenDecision, TriageAnswer } from "./jobs.ts";
-import { ASK_PERSON, answerIn, askedInLog, jobQuestions, parkSet, asImplement, asReview, asTriage, formatFindings, hasMarkup, recoverFields, keepsRecommendations, picks, questionsSettled, releaseIn, parkedRewrite, changedRewrite, sameText } from "./jobs.ts";
+import { ASK_PERSON, answerIn, askedInLog, jobQuestions, nextPark, parkSet, asImplement, asReview, asTriage, formatFindings, hasMarkup, recoverFields, keepsRecommendations, picks, questionsSettled, releaseIn, parkedRewrite, changedRewrite, sameText } from "./jobs.ts";
 import { providerFor } from "./providers/index.ts";
 import type { Actions, ClaimResult, SessionResultRecord } from "./ports.ts";
 import { CLAIM_EXPIRY_MINUTES } from "./ports.ts";
@@ -67,7 +67,7 @@ export function backoffMs(failures: number, capMs: number): number {
 export async function park(ctx: Context, job: Job, as: ParkedAs, reason: string, ask?: Parameters<Actions["answerTurn"]>[1], retry?: "hand-over", marks: { byStep?: true; verdict?: true } = {}): Promise<void> {
   const key = refKey(job.item);
   job.parked = { as, reason, at: ctx.at, ...(retry ? { retry } : {}), ...(marks.byStep ? { byStep: true } : {}), ...(marks.verdict ? { verdict: true } : {}) };
-  job.parks = (job.parks ?? 0) + 1;
+  job.parks = nextPark(job, ctx.deps.store.get<WorkItem>(job.item)?.log);
   // A person's ask was for the step that ended here (decision 104).
   delete job.triageAskedBy;
   delete job.reviewAskedBy;
@@ -1798,7 +1798,7 @@ function askersOpen(ctx: Context, item: WorkItem, entries: readonly WaitingAbout
 /** `park` for an Item with no claim or workspace of its own to give back (no job, or one parked before). */
 async function parkFresh(ctx: Context, job: Job, reason: string): Promise<void> {
   job.parked = { as: "needs-decision", reason, at: ctx.at };
-  job.parks = (job.parks ?? 0) + 1;
+  job.parks = nextPark(job, ctx.deps.store.get<WorkItem>(job.item)?.log);
   delete job.sessionId;
   ctx.commit(PARK_EVENT["needs-decision"], reason, refKey(job.item), { step: job.step });
   await tellPeople(ctx, job, "needs-decision", reason, "decision");

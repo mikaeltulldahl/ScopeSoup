@@ -672,6 +672,8 @@ export function askedInLog(job: Job, item: Pick<WorkItem, "log" | "openQuestions
   const names = (answer: LogRecord, line: LogRecord): boolean => {
     const { to, toBy, toQuestion, toSet } = answer.fields;
     if (typeof toQuestion === "string" && toQuestion !== line.fields.question) return false;
+    // An answer that names its park's set too is that set's only: two parks of one instant may ask the same text (a job made again).
+    if (typeof toSet === "string" && typeof line.fields.set === "string" && toSet !== line.fields.set) return false;
     if (typeof to === "string") return Date.parse(to) === Date.parse(line.at) && (typeof toBy !== "object" || toBy === null || sameWriter(toBy as { who: string; machine?: string }, line.by));
     return typeof toSet === "string" && toSet === line.fields.set;
   };
@@ -759,6 +761,21 @@ export function settleRewrite(store: Store, item: Ref, answers: readonly string[
 /** The set a park's questions carry in the item's log: the park's count and moment, so a job rebuilt from the log does not reuse an old one (#230). */
 export function parkSet(job: Job): string {
   return `${job.parks ?? 0}@${job.parked?.at ?? ""}`;
+}
+
+/**
+ * The number of the job's next park: one past both its own count and every park number in the Item's log. A job made again on the Item
+ * (an answer released the one before, a person's move) counts on from the parks before it, so a park in the same instant as an earlier
+ * job's never gets that job's set, and its answers are not taken for this one's.
+ */
+export function nextPark(job: Job, log: readonly LogRecord[] | undefined): number {
+  let most = job.parks ?? 0;
+  for (const line of log ?? []) {
+    const set = line.kind === "question" ? line.fields.set : undefined;
+    const n = typeof set === "string" ? Number(set.split("@")[0]) : Number.NaN;
+    if (Number.isInteger(n) && n > most) most = n;
+  }
+  return most + 1;
 }
 
 /** How long a job waits at most for the description Scope Soup wrote to be read back from the host (`Job.writing`). */

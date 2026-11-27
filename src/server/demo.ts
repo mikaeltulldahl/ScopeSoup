@@ -513,6 +513,12 @@ export function seedDemo(store: Store, now: Date, dir?: string): void {
   applyControl(store, "agents.start", at(-200), "demo", "mira");
   applyControl(store, "mergeQueue.start", at(-200), "demo", "mira");
   store.setValue(KEYS.sync, JSON.stringify({ lastAt: at(-0.5) }));
+  // What the orchestrator's last tick decided about pacing and the waiting caps (decision 133), for the Usage tab.
+  store.setValue(KEYS.pacing, JSON.stringify({
+    at: at(-0.5), running: { triage: 0, implement: 2, review: 1 }, ceiling: 4, cap: 3,
+    why: "the weekly window is at 52 %; one more session would put it at about 55 % by 18:40, over its pace line (54 % then)",
+    waiting: 2, caps: { triage: 2, work: 5 }, waits: ["new triage waits: 2 things wait for you (it starts below 2)"],
+  }));
   // 30 days of synthetic usage readings and the finished sessions that filled the windows, for the Usage page.
   const usage = demoUsage(now);
   // Those sessions ran on the demo's own Items, so History names each one.

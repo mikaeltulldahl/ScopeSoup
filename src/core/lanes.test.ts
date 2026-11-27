@@ -60,6 +60,14 @@ test("Backlog (decision 121): an open todo Item a person has not moved to To do,
   assert.equal(assessed[3]!.turn.actor, "agent");
 });
 
+test("a change from before with no job (work dropped, a store lost): an open blocker holds it in Blocked, not In review", () => {
+  const index = buildIndex(snapshot({ works: [work(1, { blockedBy: [ref("work", 2)] }), work(2), work(3)], changes: [change(10, [1]), change(30, [3])], level: 3 }));
+  // Without Scope Soup (no level: the board reads the host alone) the change's own state decides, as before.
+  const hostOnly = buildIndex(snapshot({ works: [work(1, { blockedBy: [ref("work", 2)] }), work(2)], changes: [change(10, [1])] }));
+  assert.equal(laneOf(hostOnly.snapshot.works[0]!, hostOnly), "in-review");
+  assert.deepEqual(index.snapshot.works.map((item) => laneOf(item, index)), ["blocked", "todo", "in-review"]);
+});
+
 test("done and abandoned", () => {
   const index = buildIndex(snapshot({ works: [work(1, { state: "done" }), work(2, { state: "abandoned" }), work(3)], changes: [change(30, [3], { state: "merged" })] }));
   assert.deepEqual(index.snapshot.works.map((item) => laneOf(item, index)), ["done", null, "done"]);

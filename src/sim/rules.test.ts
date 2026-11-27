@@ -427,6 +427,38 @@ async function holdsOn(id: string, options: Shrunk, actions: Action[]): Promise<
 }
 
 describe("runs the simulator shrank, held since their fix", { concurrency: 1 }, () => {
+  // Fixed (#223): a move's words, written by the park's set before the store read its questions back, answer every question of the set.
+  test("A3: a move answers both questions of a park the store has not read back", async () => {
+    await holdsOn("A3", {items: 6, level: 2, slots: 2, steps: 600, profile: "rough"}, [
+      {kind: "tick"},
+      {kind: "end", item: "A-1", v: 784594},
+      {kind: "tick"},
+      {kind: "move", item: "A-1", v: 848690},
+    ]);
+  });
+
+  // Fixed (#223): the ceiling is read again right before a start, so one lowered while the tick awaits holds the next start.
+  test("D1: slots lowered inside a tick hold the next start", async () => {
+    await holdsOn("D1", {items: 9, level: 4, slots: 2, steps: 600, profile: "rough"}, [{ kind: "inside-tick", inner: { kind: "slots", to: 1 } }]);
+  });
+
+  // Fixed (#223): a job made again on an Item counts its parks on from the log, so a re-triage's park in the same instant as the one
+  // before does not get its set, and the earlier answer does not release it.
+  test("A3: a re-triage's questions are not released by the answer to the park before", async () => {
+    await holdsOn("A3", {items: 11, level: 3, slots: 2, steps: 600, profile: "calm"}, [
+      {kind: "tick"},
+      {kind: "end", item: "A-1", v: 997478},
+      {kind: "tick"},
+      {kind: "end", item: "A-3", v: 399605},
+      {kind: "tick"},
+      {kind: "answer", item: "A-3", v: 147897},
+      {kind: "tick"},
+      {kind: "end", item: "A-3", v: 70262},
+      {kind: "tick"},
+      {kind: "tick"},
+    ]);
+  });
+
   // Fixed (#255): a commit no longer forgets what was said, so a tick after a tick that started sessions says its idle line once, new,
   // and the next one says nothing (F3 now tells news from the same words again).
   test("F3: ticks in a row say a standing line once", async () => {

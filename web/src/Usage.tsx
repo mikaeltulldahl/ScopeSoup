@@ -266,7 +266,7 @@ function Meter({ window, now, saver, picked, pick, hint, dismissHint }: { window
               class={`usage-thumb${dragged !== null ? " dragging" : ""}${saver.busy ? " busy" : ""}`} style={{ left: percent(limit) }}
               role="slider" aria-label={`Budget of the ${TITLE[window.kind]}`} aria-valuemin={0} aria-valuemax={200}
               aria-valuenow={Math.round(snapBudget(budget ?? 0) * 100)} aria-valuetext={`Budget ${Math.round((budget ?? 0) * 100)} % of the window's even pace`}
-              title={`Budget: ${Math.round((budget ?? 0) * 100)} % of the window's even pace; the pace line ends there at the reset. Drag to change, past the end for more than 100 %.`}
+              title={`Budget: ${Math.round((budget ?? 0) * 100)} % of the window's even pace; the pace line ends there at the reset. Drag to change, past the end (or the arrow keys) for more than 100 %.`}
               onPointerDown={(event) => {
                 if (saver.busy) return;
                 dismissHint();
@@ -276,6 +276,20 @@ function Meter({ window, now, saver, picked, pick, hint, dismissHint }: { window
               onPointerMove={(event) => dragged !== null && (event.buttons & 1) !== 0 && move(event)}
               onPointerUp={drop}
               onPointerCancel={() => pick(null)}
+              tabIndex={0}
+              onKeyDown={(event) => {
+                // Arrow keys step 5 % up to 200 %, past where the screen lets a drag reach.
+                const steps: Record<string, number> = { ArrowRight: 0.05, ArrowUp: 0.05, ArrowLeft: -0.05, ArrowDown: -0.05, PageUp: 0.25, PageDown: -0.25, Home: -2, End: 2 };
+                const step = steps[event.key];
+                if (step === undefined || saver.busy) return;
+                event.preventDefault();
+                dismissHint();
+                const value = snapBudget((budget ?? 0) + step);
+                pick({ kind: window.kind, value, dragging: false });
+                void saver.save(BUDGET_SETTING[window.kind], value).then((ok) => {
+                  if (!ok) pick(null);
+                });
+              }}
             ><i class="usage-knob" /><span /></div>
           ) : (
             <div class="usage-thumb fixed" style={{ left: percent(limit) }} title={`Budget: ${Math.round((budget ?? 0) * 100)} % of the window's even pace`}><span /></div>
