@@ -526,6 +526,46 @@ async function holdsOn(id: string, options: Shrunk, actions: Action[]): Promise<
 }
 
 describe("runs the simulator shrank, held since their fix", { concurrency: 1 }, () => {
+  // Fixed (#268): a host outage lost the revision line; recovery takes the revision the passing review names, so the merge is found.
+  test("E5: the revision line lost to a host outage, merged by the queue, the store lost: no second merge", async () => {
+    await holdsOn("E5", {items: 12, level: 4, slots: 2, steps: 600, profile: "normal", ageing: true}, [
+      {kind: "close", item: "A-2", state: "done"},
+      {kind: "tick"},
+      {kind: "close", item: "A-1", state: "done"},
+      {kind: "move", item: "A-3", v: 146012},
+      {kind: "tick"},
+      {kind: "move", item: "A-3", v: 836288},
+      {kind: "tick"},
+      {kind: "end", item: "A-5", v: 141136},
+      {kind: "tick"},
+      {kind: "lose-store"},
+      {kind: "switch", to: "resume"},
+      {kind: "tick"},
+      {kind: "host-down", steps: 1},
+      {kind: "end", item: "A-5", v: 853882},
+      {kind: "tick"},
+      {kind: "clock", ms: 60000},
+      {kind: "tick"},
+      {kind: "end", item: "A-5", v: 139211},
+      {kind: "tick"},
+      {kind: "queue", item: "A-5", merge: true},
+      {kind: "lose-store"},
+      {kind: "fair"},
+      {kind: "tick"},
+      {kind: "end", item: "A-5", v: 67},
+      {kind: "tick"},
+      {kind: "clock", ms: 1860000},
+      {kind: "tick"},
+      {kind: "end", item: "A-5", v: 98},
+      {kind: "tick"},
+      {kind: "clock", ms: 1000},
+      {kind: "tick"},
+      {kind: "end", item: "A-5", v: 129},
+      {kind: "tick"},
+      {kind: "queue", item: "A-5", merge: true},
+    ]);
+  });
+
   // Fixed (#268): a hand-over finds the reviewed revision on main already (the queue merged it, its notice lost with the store): merged.
   test("E5: merged by the queue, then the store lost: the rebuilt hand-over closes it, nothing is merged again", async () => {
     await holdsOn("E5", {items: 12, level: 4, slots: 2, steps: 600, profile: "normal", ageing: true}, [

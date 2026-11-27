@@ -141,6 +141,8 @@ function fromLines(item: WorkItem, log: readonly LogRecord[], startedAt: string)
     const findings: Finding[] = (Array.isArray(review.fields.findings) ? review.fields.findings : []).filter((text): text is string => typeof text === "string").map((text) => ({ severity: "must", text }));
     job.review = { verdict: review.fields.verdict === "pass" ? "approve" : "changes", findings };
     if (str(review.fields.sha)) job.reviewedHead = str(review.fields.sha);
+    // No revision line (a host outage lost it): the revision the review read is the newest known (#268).
+    if (!newest && str(review.fields.sha)) job.head = str(review.fields.sha);
   }
   return { job, of, sessions, newest, review };
 }
@@ -184,7 +186,9 @@ function resumeFromLines(job: Job, log: readonly LogRecord[], sessions: readonly
   // 3. Reviewed and not merged: the hand-over (merging) is done again, without a session. Not when a triage ran after that review:
   // the work was dropped and started again from triage (a person's To do or Triage pick), so the old approval hands nothing over.
   const triagedSince = review !== undefined && sessions.some((line) => line.fields.role === "triage" && log.indexOf(line) > log.indexOf(review));
-  if (newest && review && review.fields.sha === newest.fields.sha && review.fields.verdict === "pass" && !triagedSince) {
+  // A revision line a host outage lost: the review names the revision it read (#268).
+  const reviewedNewest = review !== undefined && (newest ? review.fields.sha === newest.fields.sha : str(review.fields.sha) !== "");
+  if (reviewedNewest && review.fields.verdict === "pass" && !triagedSince) {
     setWhere(job, { step: "review", owes: "hand-over" });
     return job;
   }
