@@ -4,8 +4,8 @@
 //
 // The rule for a restart and a lost store (#238): what is lost is only what this process or this store held; the host (each
 // Item's log) and git (its branch, the remote's main) are read back, and nothing they do not say is made up.
-// - A restart keeps the store: a session no process backs any more is `orphaned`, and its step starts again, not counted as
-//   a failure (`settleStep`). A change in the merge queue stays there, the queue's state being in the store.
+// - A restart keeps the store: a session whose process is gone is `orphaned`, and its step starts again, not counted as a failure,
+//   up to the attempts' limit in a row (`settleStep`). A change in the merge queue stays there, the queue's state being in the store.
 // - A lost store: the answers are the log's added to what the store has (a person may answer before the first tick), and the
 //   job is what the log says: an item whose log has an open question waits for its answer; one whose newest revision has a
 //   passing review and has not merged goes to merging (handed over again, so to the queue that exists now); one whose last

@@ -124,6 +124,7 @@ export function startRecheck(ctx: Context, job: Job, recheck: Recheck): void {
   job.failures = 0;
   delete job.notBefore;
   delete job.base;
+  delete job.roundBase;
   ctx.commit("orchestrator.triage_again", `The triage of ${job.item.id} (${recheck.previousAt}) is out of date: ${recheck.reasons.join("; ")}. It is taken again, told what changed, before the implement step.`, refKey(job.item), { reasons: recheck.reasons, commits: recheck.commitCount });
 }
 

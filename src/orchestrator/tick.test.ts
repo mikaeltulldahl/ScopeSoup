@@ -453,20 +453,49 @@ for (const [name, raw] of [["level 3 before approval", { level: 3 }], ["level 4"
   });
 }
 
+test("main moved before the implementor's branch was cut and it changed nothing: \"nothing to change\", not a merge it made (#238)", async () => {
+  const w = world(config({ level: 3 }), [item("1")]);
+  w.runner.commitsAhead = async () => 0;
+  w.store.addUsageSample(usage(0.1, 0.1));
+  await w.run();
+  // The implementor's start cuts its branch from a main that moved since the step was picked.
+  const start = w.runner.start.bind(w.runner);
+  w.runner.start = async (request) => {
+    if (request.role === "implement") w.runner.main = MAIN_MERGED;
+    return start(request);
+  };
+  await step(w, "1", "succeeded", TRIAGE_OK);
+  assert.equal(w.runner.requests.at(-1)?.role, "implement");
+  await step(w, "1", "succeeded", IMPLEMENT_OK);
+  assert.equal(w.job("1")?.parked?.as, "escalated");
+  assert.match(w.reasons("orchestrator.escalated")[0] ?? "", /^Nothing to change: /);
+});
+
 test("a session left by an earlier run (Scope Soup restarted) starts its step again, never counted as a failure (#238)", async () => {
   const w = world(config({ level: 2 }), [item("1")]);
   w.store.addUsageSample(usage(0.1, 0.1));
   await w.run();
   const max = persistenceLimits(w.depsFor().config.load().config!.settings.persistence.value).maxAttempts;
-  for (let i = 0; i < max + 1; i++) {
+  const orphan = async (): Promise<void> => {
     await step(w, "1", "failed", undefined, { endReason: "Orphaned: left by an earlier run of Scope Soup; its process is gone.", orphaned: true });
     w.clock.ms += 1000;
     await w.run();
-  }
+  };
+  for (let i = 0; i < max - 1; i++) await orphan();
   assert.equal(w.job("1")?.parked, undefined);
   assert.equal(w.job("1")?.failures, 0);
-  assert.deepEqual(roles(w), Array(max + 2).fill("triage"));
+  assert.deepEqual(roles(w), Array(max).fill("triage"));
   assert.match(w.reasons("orchestrator.interrupted")[0] ?? "", /left by an earlier run of Scope Soup .* not counted as a failure/);
+  // A session that ends on its own in between starts the count again.
+  await step(w, "1", "failed", undefined, { endReason: "crashed" });
+  w.clock.ms += 20_000;
+  await w.run();
+  for (let i = 0; i < max - 1; i++) await orphan();
+  assert.equal(w.job("1")?.parked, undefined);
+  // The limit in a row: a crash at every start ends with a person.
+  await orphan();
+  assert.equal(w.job("1")?.parked?.as, "escalated");
+  assert.equal(w.events("orchestrator.restart_limit").length, 1);
 });
 
 test("a change in the merge queue when the level is lowered to 3 leaves the queue, and the implementor's own session merges it (#238)", async () => {

@@ -490,6 +490,7 @@ export function backToImplement(ctx: Context, job: Job, reason: string): void {
   delete job.agentSession;
   delete job.merge;
   delete job.base;
+  delete job.roundBase;
   delete job.sentBack;
   // The decisions were about work that is gone.
   delete job.taken;
@@ -687,14 +688,16 @@ async function settleSessionMerge(ctx: Context, job: Job, item: WorkItem | null,
   let contains: boolean | null;
   let onBase: boolean | null = false;
   let squash: string | null = null;
+  // A merge found after the fact is this round's: its head is new since the round's session started.
+  const base = late ? (job.roundBase ?? job.base) : job.base;
   try {
     tip = (await runner.fetchMain(job.branch)).main;
     head = await runner.head(job.branch);
     contains = await runner.contains(job.branch, head, tip);
-    if (job.base) onBase = await runner.contains(job.branch, head, job.base);
+    if (base) onBase = await runner.contains(job.branch, head, base);
     // Main does not contain the head, but the session names a commit: a squash merge, when that commit is on main, new since the
     // work started, and carries the branch's files as the head has them.
-    if (contains !== true && said && job.base && onBase !== true && runner.squashed) squash = await runner.squashed(job.branch, said, job.base, head, tip);
+    if (contains !== true && said && base && onBase !== true && runner.squashed) squash = await runner.squashed(job.branch, said, base, head, tip);
   } catch (error) {
     if (late) return false;
     await park(ctx, job, "escalated", `The implementor said ${job.branch} is done, but Scope Soup could not read whether ${name} contains it: ${errorText(error)} Answer here to look again.`, "escalation", "hand-over");
@@ -703,7 +706,7 @@ async function settleSessionMerge(ctx: Context, job: Job, item: WorkItem | null,
   // The head was in main before the work started: nothing was committed, whatever the answer says.
   if (onBase === true) {
     if (late) return false;
-    await failed(ctx, job, `The implementer reported the work done, but ${job.branch} has no commits over ${name} as it was when the work started (${job.base!.slice(0, 7)}).`);
+    await failed(ctx, job, `The implementer reported the work done, but ${job.branch} has no commits over ${name} as it was when the work started (${base!.slice(0, 7)}).`);
     return true;
   }
   const merged = contains === true ? head : squash;
@@ -723,7 +726,7 @@ async function settleSessionMerge(ctx: Context, job: Job, item: WorkItem | null,
     job.merged = merged;
     const how = contains === true
       ? `${name} at ${tip.slice(0, 7)} contains its head ${head.slice(0, 7)}`
-      : `${name} at ${tip.slice(0, 7)} contains ${merged.slice(0, 7)}, a squash of its head ${head.slice(0, 7)} (the same files, new since ${job.base!.slice(0, 7)})`;
+      : `${name} at ${tip.slice(0, 7)} contains ${merged.slice(0, 7)}, a squash of its head ${head.slice(0, 7)} (the same files, new since ${base!.slice(0, 7)})`;
     ctx.commit(
       "orchestrator.merged",
       `${job.branch} is merged: ${how}. The implementing session merged it${late ? ` under the level its session started with (started at level ${job.sessionStart?.level ?? "?"}, the level is now ${ctx.config.level})` : ""}${said ? ` (it says: ${clipText(said, 200)})` : ""}.`,
@@ -938,14 +941,25 @@ async function settleStep(ctx: Context, job: Job, session: Session | null, recor
     ctx.commit("orchestrator.interrupted", `The ${job.step} session was stopped (${session.endReason ?? "no reason recorded"}). It continues when work may start again; this is not counted as a failure.`, key);
     return;
   }
-  // Left by an earlier run (Scope Soup restarted while it ran): the restart is not the step's failure, so the step starts again.
+  // Left by an earlier run (Scope Soup restarted while it ran): the restart is not the step's failure, so the step starts again, up
+  // to the attempts' limit in a row (a crash at every start ends with a person, not in a loop).
   if (session.orphaned) {
+    job.orphanRestarts = (job.orphanRestarts ?? 0) + 1;
+    const max = persistenceLimits(ctx.config.settings.persistence.value).maxAttempts;
+    if (job.orphanRestarts >= max) {
+      delete job.orphanRestarts;
+      const reason = `The ${job.step} session was left by an earlier run of Scope Soup ${max} times in a row (${session.endReason ?? "no reason recorded"}): Scope Soup may be stopping while it runs. Answer here to start it again.`;
+      ctx.commit("orchestrator.restart_limit", reason, key, { step: job.step, restarts: max });
+      await park(ctx, job, "escalated", reason, "escalation");
+      return;
+    }
     job.notBefore = later(ctx.at, CONTINUE_MS);
     job.resume = session.agentSessionId;
     delete job.sessionId;
     ctx.commit("orchestrator.interrupted", `The ${job.step} session was left by an earlier run of Scope Soup (${session.endReason ?? "no reason recorded"}). The step starts again; this is not counted as a failure.`, key);
     return;
   }
+  delete job.orphanRestarts;
   // The setup failed, so no agent ran: the Item parked for a person with the setup's reason, not counted against the step.
   // The reason goes to the host (a comment, the item's log), so it never carries the setup's output (`setupHostText`).
   if (session.setupFailed) {
@@ -1059,7 +1073,7 @@ async function settleStep(ctx: Context, job: Job, session: Session | null, recor
     // It merged although its instructions said to commit and stop: it says so (`mergedAs`), or its branch has nothing over main and
     // main holds a head that is new since the work started. Merged under the level its session started with (decision 108), the
     // Item is done as after a level 2 merge; merged untold, it is escalated. Either way it is not "nothing to change".
-    if (answer.mergedAs || (empty && job.base)) {
+    if (answer.mergedAs || (empty && job.roundBase)) {
       if (await mergedUnderEarlierLevel(ctx, job, item, job.sessionStart?.mayMerge === true)) {
         delete job.resumeWith;
         return;

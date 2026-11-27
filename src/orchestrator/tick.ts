@@ -944,12 +944,6 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
           continue;
         }
       }
-      // Where main is when the work starts, so a branch head already in it is not taken for a merge, and one new in it is (a
-      // session that merged, told or not).
-      if (step === "implement" && job.base === undefined) {
-        const main = await watchMain(ctx, job, `before the implement session for ${entry.item.ref.id}`);
-        if (main) job.base = main;
-      }
       try {
         const answers = knownAnswers(store).filter((answer) => refKey(answer.subject) === key);
         const decided = answersText(answers, key);
@@ -1005,11 +999,19 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
       const kept = adoptStored(store, jobs, key)!;
       // What this tick added to the job before the start, and has not saved yet.
       if (job.triaging) kept.triaging = job.triaging;
-      if (job.base !== undefined) kept.base = job.base;
       target = kept;
     }
     jobs[key] = target;
     target.sessionId = session.ref.id;
+    // Where main is once the session's branch is cut (read after the start, so it holds the cut): a branch head already in it is not
+    // taken for a merge, and one new in it is (a session that merged, told or not). `roundBase` is this round's; `base` the work's first.
+    if (step === "implement") {
+      const main = await watchMain(ctx, target, `once the implement session for ${entry.item.ref.id} started`);
+      if (main) {
+        target.roundBase = main;
+        target.base ??= main;
+      } else delete target.roundBase;
+    }
     if (step === "implement" && startedAs) target.sessionStart = startedAs;
     if (step === "implement") busy = busyItems(jobs);
     delete target.notBefore;

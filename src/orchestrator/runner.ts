@@ -512,8 +512,17 @@ export function createRunner(deps: RunnerDeps): Runner {
           // Pids are reused (Windows does it quickly, and a shutdown that hibernates does not reset the boot time), so the process
           // must also have been created when this session started: at most SPAWN_BEFORE_MS before it was recorded, not after.
           const created = await processes.startTimeMs(session.pid);
-          if (created === null) what = `process ${session.pid} is there but its start time could not be read, so it was left alone`;
-          else if (created > startedMs + SPAWN_AFTER_MS || created < startedMs - SPAWN_BEFORE_MS) {
+          if (created === null) {
+            // It may be this session's agent, still working: the session stays running (two agents must not share a worktree), until
+            // the process is gone or the session's time limit is up, when it is over as a failure, not as left by a restart.
+            if (at - startedMs <= hardMs) continue;
+            const over: Session = { ...session, status: "failed", finishedAt: iso(at), endReason: `Timed out: left by an earlier run of Scope Soup; process ${session.pid} is there but its start time could not be read, so it was left alone, and the session is older than ${config.settings.sessionTimeoutMinutes.value} minutes.` };
+            store.tx(() => {
+              if (store.getValue(sessionResultKey(session.ref.id)) === null) store.setValue(sessionResultKey(session.ref.id), "{}");
+              store.put(over, ACTOR, iso(at));
+            });
+            continue;
+          } else if (created > startedMs + SPAWN_AFTER_MS || created < startedMs - SPAWN_BEFORE_MS) {
             what = `process ${session.pid} was created at ${iso(created)}, not when the session started, so it is another program and was left alone`;
           } else {
             processes.killTree(session.pid, created);

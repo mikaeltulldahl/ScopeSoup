@@ -183,7 +183,8 @@ export const RULES: Rule[] = [
     id: "B3",
     why: "Nothing acts on a stale basis: a request made from a page that no longer holds is refused (#195, #209, #183).",
     check(o) {
-      const stale = o.requests.find((r) => r.body.parkedAt === "2026-01-01T00:00:00.000Z" && r.status >= 200 && r.status < 300);
+      // An answer the server says it had already (a retry, #238) changes nothing, so it is not acted on.
+      const stale = o.requests.find((r) => r.body.parkedAt === "2026-01-01T00:00:00.000Z" && r.status >= 200 && r.status < 300 && (r.response as { already?: boolean } | null)?.already !== true);
       return stale ? `${stale.path} on ${stale.item} was carried out with a parked state the Item never had` : null;
     },
   },
@@ -521,7 +522,7 @@ export const RULES: Rule[] = [
   // --- G. Restart and recovery ---
   {
     id: "G1",
-    why: "Restart: every switch is paused, and after the first tick each Item's W is what it was, except that a session became a wait to start the same step (not counted as a failure), or questions that waited for the session to end were written.",
+    why: "Restart: every switch is paused, and after the first tick each Item's W is what it was, except that a session became a wait to start the same step (not counted as a failure), or questions that waited for the session to end were written, or the restarts in a row reached the attempts' limit and a person is asked.",
     check(o, prev, memo) {
       if (o.action.kind === "restart" && prev) {
         const on = (["triage", "implement", "review"] as const).find((r) => o.switches[r] === "started");
@@ -543,7 +544,8 @@ export const RULES: Rule[] = [
         if (w.kind === "session" && w.settling) return null;
         // Questions other Items' agents asked about it wait until no session runs on it: the session's end lets them be written, as
         // any session's end does.
-        const asked = o.events.some((e) => e.kind === "orchestrator.about_other_written" && e.subject === i.key);
+        // Or the restarts in a row reached the attempts' limit, and a person is asked (a crash at every start must end).
+        const asked = o.events.some((e) => (e.kind === "orchestrator.about_other_written" || e.kind === "orchestrator.restart_limit") && e.subject === i.key);
         if (w.kind === "session") return (i.w.kind === "start" && i.w.role === w.role) || asked ? null : `${i.id} had a ${w.role} session before the restart and is ${wText(i.w)} after the first tick`;
         if (["person", "queue", "blocker", "nothing"].includes(w.kind) && wText(w) !== wText(i.w)) return `${i.id} was ${wText(w)} before the restart and is ${wText(i.w)} after the first tick`;
         return null;

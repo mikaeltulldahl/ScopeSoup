@@ -437,7 +437,8 @@ describe("Items that change the same files", { concurrency: 4 }, () => {
   });
 
   test("an Item in the merge queue holds back one whose paths overlap until its change is merged", async () => {
-    const w = world(config({ level: 3 }), [item("1"), item("2")]);
+    // Level 4: below it a change leaves the queue (#238).
+    const w = world(config({ level: 4, remoteUrl: "git@git.example.invalid:team/project.git", checkCommand: ["node", "check.js"] }), [item("1"), item("2")]);
     const jobs = loadJobs(w.store);
     const at = new Date(T0).toISOString();
     jobs[refKey(ref("1"))] = { ...waitingJob("1", ["src/a.ts"]), head: "3".repeat(40), queued: "3".repeat(40), parked: { as: "queued", reason: "In the merge queue.", at } };
