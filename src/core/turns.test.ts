@@ -180,7 +180,9 @@ test("a change not merged below level 3 waits for its implementor, and no reason
   const approved = snapshot({ works: [work(2)], changes: [change(20, [2], { verdicts: [verdict("review", "pass")] })] });
   assert.equal(turnOf({ ...approved, ...paused, paused: true, level: 3 }, 2).reason, "approved; at level 3 Scope Soup merges nothing itself: its implementor or a person merges it");
   assert.doesNotMatch(turnOf({ ...approved, ...paused, paused: true, level: 3 }, 2).reason, /queue/);
-  assert.equal(turnOf({ ...approved, ...paused, paused: true, level: 4 }, 2).reason, "approved, but the queue is paused");
+  // At level 4 it is in the queue once its job is (#230).
+  const queued = { ...approved, jobs: [{ subject: ref("work", 2), stage: "queue" as const, step: "review" as const }], parked: [{ subject: ref("work", 2), as: "queued" as const, reason: "Reviewed.", at: T0 }] };
+  assert.equal(turnOf({ ...queued, ...paused, paused: true, level: 4 }, 2).reason, "approved, but the queue is paused");
 });
 
 test("a pull request Scope Soup will not review says who it waits for", () => {
@@ -385,4 +387,24 @@ test("a same-files wait shows on the card over Scope Soup's own leftover hold, n
   const held = (holder: typeof bot | typeof alice) => turnOf(snapshot({ works: [work(1, { holder }), work(2, { state: "doing" })], sameFiles }), 1).reason;
   assert.match(held(bot), /^waits for /);
   assert.match(held(alice), /^held by Alice/);
+});
+
+test("with a job, the lane and the reason follow what the Item waits for (decisions 2 and 3, #230)", () => {
+  const laneOf = (s: Snapshot, id: number) => situate(s.works.find((each) => each.ref.id === String(id))!, buildIndex(s)).lane;
+  const subject = ref("work", 1);
+  // A review runs before the store has read the change: In review.
+  const reviewing = snapshot({ works: [work(1)], sessions: [session(1, subject, { role: "review" })], jobs: [{ subject, stage: "implement", step: "review" }] });
+  assert.equal(laneOf(reviewing, 1), "in-review");
+  // A question at implement, with a commit and no change read yet: In progress, never Queued.
+  const asked = snapshot({ works: [work(1)], parked: [{ subject, as: "needs-decision", reason: "Which?", at: T0 }], jobs: [{ subject, stage: "implement", step: "implement" }] });
+  assert.equal(laneOf(asked, 1), "in-progress");
+  // Before any change: To do.
+  assert.equal(laneOf({ ...asked, jobs: [{ subject, stage: "start", step: "triage" }] }, 1), "todo");
+  // The two timed waits say so, the written text first.
+  const timed = (job: Partial<NonNullable<Snapshot["jobs"]>[number]>) => turnOf(snapshot({ works: [work(1)], jobs: [{ subject, stage: "start", step: "implement", ...job }] }), 1).reason;
+  assert.equal(timed({ timer: { until: at(3), failures: 2 } }), "the implement step failed 2 times; it tries again in 3 min");
+  assert.equal(timed({ timer: { until: at(1) } }), "its implement step starts in 1 min");
+  assert.match(timed({ text: at(20), timer: { until: at(1) } }), /read back from demo \(at most 20 min more\)/);
+  // Past their moment they say nothing.
+  assert.equal(timed({ timer: { until: at(-1) } }), "ready; waiting for a free agent slot");
 });

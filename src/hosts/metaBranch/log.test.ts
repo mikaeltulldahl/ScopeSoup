@@ -227,3 +227,63 @@ test("fold: an answer names its question by `at`, and by `toBy` when two were as
   assert.equal(broken.openQuestions.length, 3);
   assert.equal(broken.malformed.length, 2);
 });
+
+test("log: an answer closes its question whichever folds first (the same instant, a name that sorts before the asker's) (#230)", () => {
+  const soup = { who: "scopesoup", machine: "laptop-a", agent: true };
+  const ada = { who: "Ada", machine: "laptop-a" };
+  const t = "2026-11-18T10:00:00Z";
+  // Named by `to`: it folds before the question (Ada sorts before scopesoup) and still closes it.
+  assert.equal(fold(jsonl({ at: t, by: soup, kind: "question", question: "Go?" }, { at: t, by: ada, kind: "answer", answer: "Yes", to: t, toBy: soup })).openQuestions.length, 0);
+  // Without `to`: it takes the newest question open at the end of its instant.
+  const two = fold(jsonl({ at: "2026-11-18T09:00:00Z", by: soup, kind: "question", question: "Older?" }, { at: t, by: soup, kind: "question", question: "Newer?" }, { at: t, by: ada, kind: "answer", answer: "Yes" }));
+  assert.deepEqual(two.openQuestions.map((line) => line.question), ["Older?"]);
+});
+
+test("log: a new set of questions from Scope Soup replaces the set still open (decision 1 of #211, #230)", () => {
+  const soup = { who: "scopesoup", machine: "laptop-a", agent: true };
+  const t = "2026-11-18T10:00:00Z";
+  const picture = fold(jsonl(
+    { at: t, by: soup, kind: "question", question: "Too large?", parked: "not-ready", set: "1" },
+    { at: t, by: soup, kind: "question", question: "First of two?", parked: "needs-decision", set: "2" },
+    { at: t, by: soup, kind: "question", question: "Second of two?", parked: "needs-decision", set: "2" },
+    { at: t, by: robin, kind: "question", question: "A person's own?" },
+  ));
+  assert.deepEqual(picture.openQuestions.map((line) => line.question), ["A person's own?", "First of two?", "Second of two?"]);
+});
+
+test("log: an answer to one of several questions asked in the same instant closes that one only (#230)", () => {
+  const soup = { who: "scopesoup", machine: "laptop-a", agent: true };
+  const t = "2026-11-18T10:00:00Z";
+  const picture = fold(jsonl(
+    { at: t, by: soup, kind: "question", question: "First?" },
+    { at: t, by: soup, kind: "question", question: "Second?" },
+    { at: "2026-11-18T10:05:00Z", by: robin, kind: "answer", answer: "Yes", to: t, toBy: soup, toQuestion: "Second?" },
+  ));
+  assert.deepEqual(picture.openQuestions.map((line) => line.question), ["First?"]);
+});
+
+test("log: an answer named by its park's set closes that set's question, also one that folds after it (#230)", () => {
+  const soup = { who: "scopesoup", machine: "laptop-a", agent: true };
+  const ada = { who: "Ada", machine: "laptop-a" };
+  const t = "2026-11-18T10:00:00Z";
+  // Set 1 is answered (folding before its question), and set 2, asked in the same instant, stays open.
+  const picture = fold(jsonl(
+    { at: t, by: soup, kind: "question", question: "First park?", parked: "needs-decision", set: "1" },
+    { at: t, by: ada, kind: "answer", answer: "Yes", toSet: "1" },
+  ));
+  assert.equal(picture.openQuestions.length, 0);
+  const later = fold(jsonl(
+    { at: t, by: soup, kind: "question", question: "First park?", parked: "needs-decision", set: "1" },
+    { at: t, by: ada, kind: "answer", answer: "Yes", toSet: "1" },
+    { at: t, by: soup, kind: "question", question: "Second park?", parked: "needs-decision", set: "2" },
+  ));
+  assert.deepEqual(later.openQuestions.map((line) => line.question), ["Second park?"]);
+});
+
+test("log: the same question of a set written twice (a retried write) is one question, and stays answered (#230)", () => {
+  const soup = { who: "scopesoup", machine: "laptop-a", agent: true };
+  const ask = (at: string) => ({ at, by: soup, kind: "question", question: "Go?", parked: "needs-decision", set: "1" });
+  assert.equal(fold(jsonl(ask("2026-11-18T10:00:00Z"), ask("2026-11-18T10:01:00Z"))).openQuestions.length, 1);
+  const answered = { at: "2026-11-18T10:01:00Z", by: { who: "Ada", machine: "laptop-a" }, kind: "answer", answer: "Yes", to: "2026-11-18T10:00:00Z", toBy: soup, toQuestion: "Go?" };
+  assert.equal(fold(jsonl(ask("2026-11-18T10:00:00Z"), answered, ask("2026-11-18T10:01:00Z"))).openQuestions.length, 0);
+});

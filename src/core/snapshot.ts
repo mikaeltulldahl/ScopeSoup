@@ -82,10 +82,28 @@ export interface Snapshot {
   answers?: RecordedAnswer[];
   /** Triaged Items whose first implement step waits for busy Items that change the same files, or are linked with `conflictsWith` (`mayConflict`; core/sameFiles.ts). Absent when none waits. */
   sameFiles?: { subject: Ref; waitsFor: Ref[]; mayConflict?: Ref[] }[];
+  /** Where each Item's job is (Scope Soup's store): the lane and the card's reason follow it. Absent when there is no job (no orchestrator runs). */
+  jobs?: JobStage[];
   /** The merge queue's health. Absent when no queue has run. */
   queue?: QueueHealth;
   /** Rewrites of open Items' descriptions that another Item's triage gave with no question, for a person (decision 110). Absent when none. */
   proposedRewrites?: ProposedRewriteView[];
+}
+
+/** Where an Item's job is: the stage its work is at, and a timed wait before its next step. */
+export interface JobStage {
+  subject: Ref;
+  /**
+   * `start`: no change yet (triage, or an implement step not begun); `implement`: a change in the implementor's hands; `review`: the change
+   * is reviewed or under review; `queue`: the merge queue has it.
+   */
+  stage: "start" | "implement" | "review" | "queue";
+  /** The step that runs next. */
+  step: "triage" | "implement" | "review";
+  /** Until when it waits for the description Scope Soup wrote at a person's Accept to be read back from the host. */
+  text?: string;
+  /** Its next try waits until `until`: a retry after `failures` failed attempts, the short pause between steps, or a usage limit's reset. */
+  timer?: { until: string; failures?: number };
 }
 
 /** A rewrite another Item's triage proposed for this one's description, with no question. Agent text: data. */
@@ -119,6 +137,8 @@ export interface Index {
   parkedByWork: Map<string, Parked>;
   /** Keys of the items whose change has merged. */
   mergedWork: Set<string>;
+  /** Where each item's job is, by item key. */
+  jobByWork: Map<string, JobStage>;
 }
 
 function push<T>(map: Map<string, T[]>, key: string, value: T): void {
@@ -149,6 +169,7 @@ export function buildIndex(snapshot: Snapshot): Index {
     run: new Map(snapshot.runs.map((run) => [refKey(run.ref), run])),
     parkedByWork: new Map((snapshot.parked ?? []).map((parked) => [refKey(parked.subject), parked])),
     mergedWork: mergedKeys(snapshot),
+    jobByWork: new Map((snapshot.jobs ?? []).map((job) => [refKey(job.subject), job])),
     changesByWork: new Map(),
     batchesByChange: new Map(),
     sessionsBySubject: new Map(),
