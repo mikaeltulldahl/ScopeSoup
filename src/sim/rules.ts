@@ -106,6 +106,8 @@ export const RULES: Rule[] = [
         if (w.kind === "not-started" || (w.kind === "start" && w.cause === "slot")) return null;
         // A session that ended is settled by the tick first, and what follows may start in the same tick.
         if (w.kind === "session" && w.settling) return null;
+        // A blocker whose session the tick settled first may have closed in the same tick.
+        if (w.kind === "blocker" && w.on.every((k) => { const b = o.items.find((each) => each.key === k); return !b || isClosed(b); })) return null;
         // A triage whose Item's text changed under it is stopped and started again (decision 6).
         if (w.kind === "session" && w.role === "triage" && s.role === "triage") return null;
         if (w.kind === "start" && w.cause === "timer") return null;
@@ -611,7 +613,7 @@ export const RULES: Rule[] = [
     id: "I1",
     why: "Everything has an owner: each branch, worktree, tag and stash Scope Soup or its agents made belongs to an Item that exists.",
     check(o) {
-      const known = new Set(o.items.map((i) => i.key));
+      const known = new Set([...o.items.map((i) => i.key), ...(o.hostRead?.items.keys() ?? [])]);
       for (const [ref, owner] of o.git.owners) {
         if (!owner.scopesoup || !owner.item || known.has(owner.item)) continue;
         if (ref.startsWith("refs/heads/") && !o.git.branches.has(ref.slice(11))) continue;
@@ -644,7 +646,8 @@ export const RULES: Rule[] = [
     id: "I3",
     why: "Bounded: Scope Soup's branches and worktrees stay proportional to open Items and slots, never to the project's history.",
     check(o) {
-      const open = o.items.filter((i) => !isClosed(i)).length;
+      const hostOpen = [...(o.hostRead?.items.values() ?? [])].filter((w) => w.state !== "done" && w.state !== "abandoned").length;
+      const open = Math.max(hostOpen, o.items.filter((i) => !isClosed(i)).length);
       const ours = [...o.git.branches.keys()].filter((b) => b.startsWith("scopesoup/")).length + o.git.worktrees.length;
       const bound = 3 * open + 2 * o.slots + 4;
       return ours > bound ? `${ours} branches and worktrees of Scope Soup's for ${open} open Items (bound ${bound})` : null;

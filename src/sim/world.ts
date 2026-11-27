@@ -99,7 +99,6 @@ export interface WorldOptions {
   slots: number;
 }
 
-const OVER = new Set(["succeeded", "failed", "cancelled", "limit"]);
 
 function makeConfig(level: number, slots: number): ProjectConfig {
   const result = validateConfig({
@@ -695,11 +694,6 @@ export class SimWorld {
       return;
     }
     this.skip();
-  }
-
-  /** Whether a session of this store is over. */
-  static over(status: string): boolean {
-    return OVER.has(status);
   }
 
   jobs(): ReturnType<typeof loadJobs> {
