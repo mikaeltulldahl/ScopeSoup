@@ -40,14 +40,14 @@ function toRebuild(o: Observation, prev: Observation | undefined, memo: Record<s
 }
 
 /** Counts ticks since a condition first held for a key; returns the count (0 on the first). Clears when it stops holding. */
-function ticksSince(memo: Record<string, unknown>, key: string, holds: boolean, o: Observation): number {
+function ticksSince(memo: Record<string, unknown>, key: string, holds: boolean, o: Observation, counts = isTick(o)): number {
   const table = (memo.since ??= {}) as Record<string, number>;
   if (!holds) {
     delete table[key];
     return 0;
   }
   if (!(key in table)) table[key] = 0;
-  else if (isTick(o)) table[key]!++;
+  else if (counts) table[key]!++;
   return table[key]!;
 }
 
@@ -320,7 +320,8 @@ export const RULES: Rule[] = [
     check(o, _prev, memo) {
       return first(o.items, (i) => {
         const left = [i.job ? "a job" : "", (i.host?.openQuestions ?? []).length > 0 ? "an open question" : "", i.live.length > 0 ? "a live session" : "", i.item.holder?.actor.id === OWN ? "Scope Soup's claim" : ""].filter(Boolean);
-        const n = ticksSince(memo, `C3|${i.key}`, isClosed(i) && left.length > 0, o);
+        // A tick while the host does not answer cannot give the claim back: it does not count.
+        const n = ticksSince(memo, `C3|${i.key}`, isClosed(i) && left.length > 0, o, isTick(o) && !o.remote.down);
         return n > 2 ? `${i.id} is ${i.item.state} but still has ${left.join(", ")} after ${n} ticks` : null;
       });
     },
@@ -420,12 +421,12 @@ export const RULES: Rule[] = [
   // --- E. The core rules ---
   {
     id: "E1",
-    why: "Nothing irreversible without a person: Items are only added by a person's request, and only branches under scopesoup/ are deleted.",
+    why: "Nothing irreversible without a person: Items are only added by a person's request, and only branches under scopesoup/ are deleted, besides an agent's leftovers whose commits are all on main or its Item's pushed branch (#236).",
     check(o, prev) {
       const made = o.requests.filter((r) => r.path === "/api/items" && r.status === 200).length;
       if (prev && o.remote.items > prev.remote.items + made) return `${o.remote.items - prev.remote.items - made} Item(s) appeared with no person's request`;
       if (prev && o.remote.items < prev.remote.items) return `an Item disappeared from the host`;
-      const bad = o.git.deleted.find((d) => !d.ref.startsWith("refs/heads/scopesoup/"));
+      const bad = o.git.deleted.find((d) => !d.ref.startsWith("refs/heads/scopesoup/") && !(d.madeBy?.scopesoup && d.madeBy.item && !d.unmerged));
       return bad ? `${bad.ref} was deleted` : null;
     },
   },
@@ -586,12 +587,13 @@ export const RULES: Rule[] = [
   },
   {
     id: "H3",
-    why: "Timed waits end: no job waits for written text past 30 minutes and a tick, and no claim of Scope Soup's outlives 120 minutes without a session (#194, #197).",
+    why: "Timed waits end: no job waits for written text past 30 minutes and a tick, and no claim of Scope Soup's outlives 120 minutes without a session or a change in this machine's merge queue (#194, #197, #229).",
     check(o, _prev, memo) {
       return first(o.items, (i) => {
         const writing = i.job?.writing;
         if (writing && Date.parse(o.at) - Date.parse(writing.at) > 31 * 60_000 && isTick(o) && /written|its text|description/i.test(i.card?.reason ?? "")) return `${i.id} still waits for its text, written at ${writing.at}`;
-        const claimed = i.item.holder?.actor.id === OWN && i.live.length === 0 && (!i.item.holder.until || i.item.holder.until > o.at);
+        // A change waiting in this machine's merge queue is work under way here: its claim keeps other machines off it.
+        const claimed = i.item.holder?.actor.id === OWN && i.live.length === 0 && i.w.kind !== "queue" && (!i.item.holder.until || i.item.holder.until > o.at);
         const table = (memo.claims ??= {}) as Record<string, string>;
         if (!claimed) delete table[i.key];
         else table[i.key] ??= o.at;
@@ -646,17 +648,24 @@ export const RULES: Rule[] = [
   },
   {
     id: "I2",
-    why: "Done means gone: within 2 ticks after its Item ends, what Scope Soup and its agents left for it is removed (worktree, tags, stash, extra branches).",
+    why: "Done means gone: within 2 ticks after its Item ends, what Scope Soup and its agents left for it is removed (worktree, tags, stash, extra branches), or, when it holds work found nowhere else, kept and reported on the Item with its sha (#236).",
     check(o, _prev, memo) {
+      // Reported as kept: `ref@sha`, from the events since the start.
+      const reported = (memo.leftoversKept ??= {}) as Record<string, true>;
+      for (const e of o.events) {
+        const data = (e.data ?? {}) as Record<string, unknown>;
+        if (e.kind === "orchestrator.leftover_kept") reported[`${String(data.ref)}@${String(data.sha)}`] = true;
+      }
+      const excused = (key: string, ref: string, sha: string | undefined): boolean => o.git.unique.has(key) && !!reported[`${ref}@${sha}`];
       return first(o.items, (i) => {
         const left: string[] = [];
         for (const t of o.git.worktrees) if (t.item === i.key) left.push(`worktree ${t.workspace}`);
         for (const [ref, madeBy] of o.git.owners) {
           if (madeBy.item !== i.key || !madeBy.scopesoup) continue;
-          if (ref.startsWith("refs/tags/") && o.git.tags.has(ref.slice(10))) left.push(ref);
-          if (ref.startsWith("refs/heads/") && ref !== `refs/heads/scopesoup/${i.id}` && o.git.branches.has(ref.slice(11))) left.push(ref);
+          if (ref.startsWith("refs/tags/") && o.git.tags.has(ref.slice(10)) && !excused(ref, ref, o.git.tags.get(ref.slice(10)))) left.push(ref);
+          if (ref.startsWith("refs/heads/") && ref !== `refs/heads/scopesoup/${i.id}` && o.git.branches.has(ref.slice(11)) && !excused(ref, ref, o.git.branches.get(ref.slice(11)))) left.push(ref);
         }
-        if (o.git.stash.some((s) => s.item === i.key && s.scopesoup)) left.push("a stash entry");
+        if (o.git.stash.some((s) => s.item === i.key && s.scopesoup && !excused(`stash:${s.sha}`, "refs/stash", s.sha))) left.push("a stash entry");
         const n = ticksSince(memo, `I2|${i.key}`, isClosed(i) && left.length > 0, o);
         return n > 2 ? `${i.id} is ${i.item.state} but ${left.join(", ")} is still there after ${n} ticks` : null;
       });
@@ -676,8 +685,9 @@ export const RULES: Rule[] = [
   {
     id: "I4",
     why: "Merged is the host's word, not ancestry: a branch with work that did not land is never deleted.",
-    check(o) {
-      const lost = o.git.deleted.find((d) => d.unmerged && d.madeBy?.scopesoup);
+    check(o, prev) {
+      // Judged when it happens: a reopen later does not undo the person's close the deletion followed.
+      const lost = o.git.deleted.slice(prev?.git.deleted.length ?? 0).find((d) => d.unmerged && d.madeBy?.scopesoup);
       if (!lost) return null;
       const i = o.items.find((each) => each.key === lost.madeBy?.item);
       // A person closed the Item: its work is theirs to throw away.
@@ -697,11 +707,29 @@ export const RULES: Rule[] = [
   },
   {
     id: "I6",
-    why: "Nothing outside Scope Soup's own: branches, tags and stashes Scope Soup did not create are never touched.",
-    check(o) {
-      if (!o.git.branches.has("feature/by-hand")) return "the branch feature/by-hand, a person's, is gone";
-      if (!o.git.tags.has("v1.0")) return "the tag v1.0, a person's, is gone";
-      if (!o.git.stash.some((s) => !s.scopesoup)) return "a person's stash entry is gone";
+    why: "Nothing outside Scope Soup's own: branches, tags and stashes Scope Soup did not create, also those a person makes while an Item runs, are never touched, nor reported as an agent's (#236).",
+    check(o, _prev, memo) {
+      // Every ref and stash entry of a person's seen so far.
+      const seen = (memo.persons ??= {}) as Record<string, string>;
+      for (const [ref, madeBy] of o.git.owners) {
+        if (madeBy.scopesoup || ref.startsWith("worktree:")) continue;
+        const sha = ref.startsWith("refs/tags/") ? o.git.tags.get(ref.slice(10)) : o.git.branches.get(ref.slice(11));
+        if (sha !== undefined) seen[ref] ??= sha;
+      }
+      for (const s of o.git.stash) if (!s.scopesoup) seen[`stash:${s.sha}`] ??= s.sha;
+      for (const ref of Object.keys(seen)) {
+        const there = ref.startsWith("stash:") ? o.git.stash.some((s) => `stash:${s.sha}` === ref) : ref.startsWith("refs/tags/") ? o.git.tags.has(ref.slice(10)) : o.git.branches.has(ref.slice(11));
+        if (!there) return `${ref}, a person's, is gone`;
+      }
+      const named = o.events.find((e) => {
+        if (!e.kind.startsWith("orchestrator.leftover_")) return false;
+        const data = (e.data ?? {}) as Record<string, unknown>;
+        return data.ref === "refs/stash" ? !!seen[`stash:${String(data.sha)}`] : typeof data.ref === "string" && !!seen[data.ref];
+      });
+      if (named) {
+        const data = (named.data ?? {}) as Record<string, unknown>;
+        return `${String(data.ref)} (${String(data.sha).slice(0, 7)}), a person's, was reported as an agent's leftover (${named.kind})`;
+      }
       return null;
     },
   },
@@ -738,13 +766,14 @@ export const RULES: Rule[] = [
     id: "J3",
     why: "Nothing an agent creates lands in To do; new Items land in Backlog unless a person files them in To do (#221).",
     check(o, prev, memo) {
-      // New: never seen in the run before (an Item the store lost and read back from the host is not new).
-      const seen = ((memo.seen ??= {}) as Record<string, true>);
-      for (const i of prev?.items ?? []) seen[i.key] = true;
+      // New is new to the run: an Item read back after the store was lost was seen before.
+      const seen = (memo.seen ??= {}) as Record<string, true>;
+      const before = { ...seen };
+      for (const i of o.items) seen[i.key] = true;
       const todo = todoLane(o);
       if (!todo || !prev) return null;
       return first(o.items, (i) => {
-        if (seen[i.key] || i.card?.lane !== todo) return null;
+        if (before[i.key] || prevOf(prev, i.key) || i.card?.lane !== todo) return null;
         const filed = o.requests.some((r) => r.status === 200 && r.path === "/api/items" && r.body.todo === true);
         return filed ? null : `${i.id} is new and landed in To do`;
       });

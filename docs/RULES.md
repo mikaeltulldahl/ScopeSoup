@@ -1,12 +1,6 @@
 # Rules: a small core, and levels
 
-An earlier project started with no rules about how agents work and grew them over nine days. Its history shows a pattern:
-
-- Rules written in advance survived only where they guard something irreversible or something only a person may do.
-- Every guessed number or procedure was changed within 3 to 28 hours.
-- Every rule written after a concrete failure still stands. The ones enforced by code stayed fixed; the ones in prose were broken again.
-
-So Scope Soup keeps a small core that is always on and enforced in code. How much Scope Soup does on its own is one setting, the `level` (0 to 4). How agents work in a project (tests, commit messages, whether to merge or open a pull request) is the project's own `CLAUDE.md`'s call, not Scope Soup's.
+Scope Soup keeps a small core that is always on and enforced in code, because rules written in advance survived only where they guard something irreversible or something only a person may do, and the ones in prose were broken again. How much Scope Soup does on its own is one setting, the `level` (0 to 4). How agents work in a project (tests, commit messages, whether to merge or open a pull request) is the project's own `CLAUDE.md`'s call.
 
 ## Core: always on, enforced in code
 
@@ -16,11 +10,11 @@ So Scope Soup keeps a small core that is always on and enforced in code. How muc
 4. **An append-only log.** Every action the tool takes is an event with who or what did it and on whose authority. Events are never edited or removed.
 5. **People's decisions are surfaced, not made.** An Item an agent proposes is a draft that waits for a person's Approve; agents create none. When an item needs a decision, the tool asks with options and a recommendation and waits. Scope Soup never takes the recommendation itself. This is the one core rule that is parked on judgement; the tool provides the place to put decisions and the list that shows them.
 
-Enforced on the command line: every session is refused `git push --force*`, `git push -f*` and `*--no-verify*` (`--disallowedTools`), and from level 4 any `git push`. A role on GitHub Copilot CLI, which cannot refuse a flag, gets the git rules its `allowedTools` map to and the prompt forbids `--no-verify` and force pushes, with a warning on the Settings page; branch protection on the remote is the guard there (decision 85). After every session Scope Soup checks that the remote's main moved only fast-forward; if not, it pauses the three agent roles with the reason.
+Enforced on the command line: every session is refused `git push --force*`, `git push -f*` and `*--no-verify*`, and from level 4 any `git push`. A role on GitHub Copilot CLI cannot refuse a flag; branch protection on the remote is the guard there (decision 85). After every session Scope Soup checks that the remote's main moved only fast-forward; if not, it pauses the three agent roles.
 
 ## Levels
 
-One setting, `level`, says how much Scope Soup does. Each level includes the ones below. The default is 0, and Scope Soup starts nothing of its own until a switch is resumed on its lane. The details are in `docs/RUNNING.md`, "Levels".
+One setting, `level`, says how much Scope Soup does. Each level includes the ones below. The default is 0. The details are in [`RUNNING.md`](RUNNING.md), "Levels".
 
 | Level | Scope Soup does |
 |---|---|
@@ -30,26 +24,12 @@ One setting, `level`, says how much Scope Soup does. Each level includes the one
 | 3 Review | A reviewer reads every built change. Findings go back to the implementor; after approval the implementor merges. |
 | 4 Autopilot | Scope Soup merges every reviewed change itself, through its merge queue (its switch on the Merge queue lane: Resume and Pause). |
 
-There is no level above 4: no change waits for a person's approval. A project that wants a person to merge stays below level 4 and says so in its `CLAUDE.md`.
-
-The level limits only what Scope Soup does on its own: a person's pick of an Item's state works at any level (`docs/RUNNING.md`, "The State menu"). A level change is an event with the level it came from and went to.
+No change waits for a person's approval. A project that wants a person to merge stays below level 4 and says so in its `CLAUDE.md`. The level limits only what Scope Soup does on its own: a person's pick of an Item's state works at any level ([`RUNNING.md`](RUNNING.md), "The State menu").
 
 ## Always on with the levels: the usage stop and claims
 
-No rule is a switch any more; an older file's `rules` is dropped, with a notice, when Scope Soup migrates the file to format 2 (`docs/RUNNING.md`).
-
 - **The usage stop.** From level 1 Scope Soup keeps the share of the 5-hour and weekly windows that `settings.reserveFiveHour` and `settings.reserveSevenDay` name for you, one per window (default 20 % each): no session starts while less is left of either. The reserves are the usage settings.
 - **Claims.** When the host is shared with other machines, Scope Soup claims each Item before it starts work on it, so two machines do not start the same Item: on a meta branch with writes on and a remote to share it with, a `claimed` line; on GitHub with writes on, a claim comment. A claim lasts a fixed 120 minutes and is renewed once less than half is left. On a meta branch with no remote nothing is claimed.
-
-## Removed rules
-
-A file of format 0 that names a removed key still loads: Scope Soup migrates it to format 2 at start, dropping the key with a notice. In a format-2 file it is an unknown key.
-
-- `isolatedResources`, `oneCoordinator`, `toolVerification`, `queueOnlyWriter` (never built). The merging rules below stay.
-- `irreversibleActions` (read by no code), `testsWithChange` and `agentCheckCommand` (the project's `CLAUDE.md` says how changes are tested), `changePerItem`, `weeklyPacing` and `waitingCap`, and the check before a risk-class change.
-- `reviewer` (level 3 reviews every change).
-- `riskClasses` (with its effects) and `pinnedApproval`. Approve and merge, Send back and the PR for the record are gone.
-- `hardBudgetStop` (the usage stop is always on from level 1) and `claims` (claims are written by themselves on a shared host).
 
 ## The queue is the only writer of the main branch
 
@@ -69,7 +49,7 @@ Below level 4 Scope Soup pushes nothing to the main branch; the implementing ses
 
 ## Numbers are settings
 
-Batch size, the budget reserve, stall timeouts and similar numbers are settings, never rules. A number edited by hand can carry a `reason`. In the earlier project every one of them was changed within a day or two of first guessing it.
+Batch size, the usage reserve, stall timeouts and similar numbers are settings, never rules. A number edited by hand can carry a `reason`.
 
 ## Adding a rule
 

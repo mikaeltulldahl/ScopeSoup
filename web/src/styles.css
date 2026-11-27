@@ -780,3 +780,20 @@ button.decision-choice:hover:not(:disabled) { background: var(--accent-soft); fi
 .model-sizes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
 .model-size { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .model-size select { width: 100%; min-width: 0; }
+
+/* --- Moving cards (#222): the card being dragged, the gap where it lands, a lane that takes it or not --- */
+.lanes [data-card] { touch-action: manipulation; }
+.card-ghost { position: fixed; z-index: 90; margin: 0; pointer-events: none; box-shadow: 0 10px 28px rgba(0, 0, 0, 0.28); border-color: var(--accent); rotate: 1.5deg; cursor: grabbing; }
+body.card-dragging, body.card-dragging * { cursor: grabbing !important; user-select: none; -webkit-user-select: none; }
+.drop-gap { border: 1.5px dashed var(--accent); border-radius: var(--radius); background: var(--sunken); }
+.lane.drop-takes .lane-body { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: var(--radius); }
+.lane.drop-refused .lane-body { outline: 2px dashed var(--blocked); outline-offset: 3px; border-radius: var(--radius); }
+body.card-dragging .lane.drop-refused, body.card-dragging .lane.drop-refused * { cursor: not-allowed !important; }
+.drop-why { margin: 0; padding: 6px 8px; border-radius: var(--radius); background: var(--blocked); color: #fff; font-size: 0.85rem; }
+@media (prefers-reduced-motion: reduce) {
+  .card-ghost { rotate: none; }
+}
+/* Multi-select (#235): cards selected with Ctrl or Shift+click, and the ghost of several carried together. */
+.card.card-selected { border-color: var(--accent); background: var(--sunken); box-shadow: 0 0 0 2px var(--accent); }
+.card-ghost-group { box-shadow: 4px 4px 0 var(--surface), 4px 4px 0 1px var(--accent), 8px 8px 0 var(--surface), 8px 8px 0 1px var(--accent), 0 10px 28px rgba(0, 0, 0, 0.28); }
+.card-ghost-group::after { content: attr(data-count); position: absolute; top: -9px; right: -9px; min-width: 22px; height: 22px; padding: 0 5px; box-sizing: border-box; border-radius: 11px; background: var(--accent); color: var(--surface); font-size: 0.75rem; font-weight: 700; display: grid; place-items: center; }

@@ -75,7 +75,8 @@ export function waitsFor(input: WaitInput): W {
   }
   const blockers = [...item.blockedBy.map((ref) => `${ref.host}:${ref.kind}:${ref.id}`), ...input.ownBlockers].filter((key) => input.open.has(key));
   if (blockers.length > 0) return { kind: "blocker", on: [...new Set(blockers)] };
-  if (!job) return { kind: "not-started" };
+  // A job a person put back (To do, Backlog) is dropped by the next tick: nothing of it waits.
+  if (!job || job.dropAskedBy) return { kind: "not-started" };
   const start = (cause: StartCause): W => ({ kind: "start", role, cause });
   // In Backlog after a person's one-off triage, the implement step waits for a person to move it to To do (decision 121); work with a
   // revision or something to resume is never held there.

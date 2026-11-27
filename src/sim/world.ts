@@ -24,6 +24,7 @@ import { openStore } from "../store/store.ts";
 import { syncHost } from "../sync/syncHost.ts";
 import type { Host } from "../ports/host.ts";
 import { FakeGit, PATHS } from "./git.ts";
+import type { StashEntry } from "./git.ts";
 import { MetaRemote, metaHost } from "./metaHost.ts";
 import type { Rng } from "./random.ts";
 import { random } from "./random.ts";
@@ -53,6 +54,7 @@ export type Action =
   | { kind: "sync" }
   | { kind: "clock"; ms: number }
   | { kind: "main-commit"; v: number }
+  | { kind: "person-refs"; v: number }
   | { kind: "host-down"; steps: number }
   | { kind: "foreign-claim"; item: string }
   | { kind: "usage"; reserve: boolean }
@@ -417,6 +419,10 @@ export class SimWorld {
         this.count("main-commit");
         return;
       }
+      case "person-refs":
+        this.git.personRefs(action.v);
+        this.count("person-refs");
+        return;
       case "host-down":
         this.remote.down = action.steps;
         this.count("host-down");
@@ -497,6 +503,9 @@ export class SimWorld {
     this.store = openStore(":memory:");
     this.actions = createHostActions({ host: this.host, git: async () => ({ code: 0, stdout: "", stderr: "" }), config: () => this.configNow, store: this.store });
     this.runner.live.clear();
+    // Which worktree an Item holds is kept in the store (`src/orchestrator/slots.ts`): with the store, every holding is gone, and the
+    // worktrees are free ones the next Item takes. The fake's worktrees are holdings, so they go too.
+    this.git.worktrees.clear();
     this.runner = this.makeRunner(this.runner.requests.length + 100);
     this.queue = this.makeQueue();
     this.server = this.makeServer();
@@ -580,14 +589,19 @@ export class SimWorld {
       this.git.branches.set(branch, sha);
       return sha;
     };
-    // An agent's leftovers now and then (rule group I).
+    // An agent's leftovers now and then (rule group I). A stash entry's changes are in the commit that follows, when one does.
+    let stashed: StashEntry | undefined;
     if (!this.fair && r.chance(0.1)) {
       const tree = this.git.worktrees.get(workspace);
       const kind = r.int(5);
-      if (kind === 0) this.git.stash.push({ workspace, item: this.key(id), scopesoup: true });
+      if (kind === 0) {
+        const head = this.git.branches.get(branch) ?? this.git.main;
+        stashed = { workspace, item: this.key(id), scopesoup: true, sha: this.git.commit([head], [], `WIP on ${branch}`, "agent"), branch };
+        this.git.stash.push(stashed);
+      }
       if (kind === 1) {
-        this.git.tags.set(`wip-${id}`, this.git.branches.get(branch) ?? this.git.main);
-        this.git.owners.set(`refs/tags/wip-${id}`, { item: this.key(id), scopesoup: true });
+        this.git.tags.set(`scopesoup/${id}-wip`, this.git.branches.get(branch) ?? this.git.main);
+        this.git.owners.set(`refs/tags/scopesoup/${id}-wip`, { item: this.key(id), scopesoup: true });
       }
       if (kind === 2) {
         this.git.branches.set(`scopesoup/${id}-extra`, this.git.branches.get(branch) ?? this.git.main);
@@ -599,6 +613,7 @@ export class SimWorld {
     }
     if (roll < 12) {
       const head = commit();
+      if (stashed) stashed.same = head;
       let merged: "told" | "untold" | undefined;
       if ((told && (this.fair || r.chance(0.75))) || (!told && r.chance(0.03))) {
         this.git.mergeToMain(head, told ? "session told" : "session untold", this.key(id));

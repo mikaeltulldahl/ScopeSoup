@@ -232,12 +232,13 @@ export const postEdit = (ref: string, fields: ItemFields) => postJson("/api/item
  * One call of the State menu (#154), after its Undo wait: `path` with `body` as JSON, as the board's person. `keepalive` lets it
  * go out while the page unloads. Rejects with the server's reason.
  */
-export async function postStep(path: string, body: Record<string, unknown>, keepalive = false): Promise<void> {
+export async function postStep(path: string, body: Record<string, unknown>, keepalive = false): Promise<number> {
   const response = await call(path, { method: "POST", keepalive, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
   if (!response.ok) {
     const answer = (await response.json().catch(() => null)) as { error?: { message?: string } } | null;
     throw new Error(answer?.error?.message ?? `The server answered ${response.status}.`);
   }
+  return response.status;
 }
 
 /** Loads the views again at once (after a change the board made itself). */
@@ -247,6 +248,17 @@ export const reloadViews = (): void => listeners.forEach((listener) => listener(
 export async function postVote(ref: string, direction: "up" | "down"): Promise<void> {
   await postJson("/api/item/vote", { ref, direction });
   listeners.forEach((listener) => listener());
+}
+
+/**
+ * Places the Item right above `before` (null: last) in its lane's order, To do or Backlog (#222); `lane` names the lane when it has
+ * just moved there. Resolves with the server's note when it kept the Item at the edge of its group instead.
+ */
+export async function postPlace(ref: string, before: string | null, lane: string): Promise<string | undefined> {
+  const response = await call("/api/item/place", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ref, before, lane }) });
+  const answer = (await response.json().catch(() => null)) as { note?: string; error?: { message?: string } } | null;
+  if (!response.ok) throw new Error(answer?.error?.message ?? `The server answered ${response.status}.`);
+  return answer?.note;
 }
 
 /** Lets go of a person's hold on the Item, as the board's picked person (anyone may; the log names both). */

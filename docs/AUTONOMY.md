@@ -1,49 +1,8 @@
-# Autonomy: neither a wild goose chase nor a halt at every turn
+# Autonomy: the limits that keep a run from wandering
 
-**Superseded.** Areas, Steer, Assume and Auto, plan first and assume and tell were not built and are retired. How much Scope Soup does is now one setting, the `level` (`docs/RULES.md`, `docs/RUNNING.md`, "Levels"; decisions 52 to 59 in `docs/DECISIONS.md`). Questions always go to a person. What was built from this page stays: the limits of the `persistence` setting, questions with options on the item page, the proposed restructuring (`docs/DESIGN.md`, "A proposed restructuring"), and the fence and progress guards. The rest of this page is kept as history.
+How much Scope Soup does is one setting, the `level` ([`RULES.md`](RULES.md), [`RUNNING.md`](RUNNING.md), "Levels"; decisions 52 to 59 in [`DECISIONS.md`](DECISIONS.md)). Questions always go to a person. Areas, Steer, Assume and Auto, plan first, and assume and tell were never built and are retired (decisions 13, 38, 58); their design is kept as history in git: `git show a6fb0d3:docs/AUTONOMY.md`. What was built stays and is described here: the fence and the progress guards, the limits of the `persistence` setting, questions with options on the item page, and the proposed restructuring ([`DESIGN.md`](DESIGN.md), "Agents push back").
 
-Status: design, agreed in outline on 2026-11-18, settled on 2026-11-19 (decisions 38 and 44). Built so far: the fixed limits of the `persistence` slider, decisions on the item page. The `autonomy` slider that once took recommended options was removed: questions always go to a person. Planned: areas and levels, plan first, assumptions on the board, the fence and progress guards (built).
-
-The orchestrator can fail in two directions. It can run far on a wrong guess, or it can stop and wait for an answer at every small question. Both waste the same thing: a person's attention. This is how Scope Soup is meant to find the middle.
-
-## The idea: direction first, then growing freedom
-
-A new feature needs a person to steer it. Once its direction is set and it has proved itself, changes to it are gradual and can happen with less asking. So freedom is not one setting for the project. It belongs to each **area** of the product, and it grows with evidence.
-
-An area is a named part of the product with the paths that make it up ("bank import", "the board", "merge queue"). Each area has a level:
-
-| Level | What happens to an item in the area | Typical for |
-|---|---|---|
-| **Steer** | Work starts with a plan a person approves: the goal, the approach, what is left out, the first slices. No code before that. The approved plan becomes items. | A new feature; an area nobody has decided the shape of |
-| **Assume** | Agents build without asking. A small, reversible choice is made on the agent's recommendation and recorded on the item, where a person can overturn it. Only the stops listed below wait for an answer. | An area with an approved direction and working tests |
-| **Auto** | As Assume, and low-risk changes merge without a person seeing them first. | A mature area changed in small steps |
-
-**Steer is the plan gate for new areas.** Every area nobody has shaped yet starts at Steer, and it is the one standing approval gate. An item that touches no known area is treated as Steer. An item that spans areas takes the most careful level among them.
-
-**Moving between levels**.
-- The tool proposes moving an area up when the evidence is there: a number of items merged in it with no assumption overturned, no change reverted and no red batch traced to it. It shows the evidence; a person confirms.
-- The tool moves an area down automatically, one level, when an assumption in it is overturned, a change is reverted, or an item there ends in an escalation. It says why.
-
-This is the same shape as the staged rules in `docs/RULES.md`: those mature with the project, these with each feature.
-
-## Plan first (the Steer level)
-
-Planned. Today an item goes from triage to implementation with no plan step. Restructuring is built on its own: triage may propose to split an item, fold a part into another Item or close it as a duplicate, and a person accepts, edits or rejects that on the item page (decision 94; `docs/DESIGN.md`, "Agents push back").
-
-The plan step is plan mode made into a step of the cycle:
-
-1. A planning session reads the item and the code and writes a plan: goal, approach, alternatives it rejected, what is out of scope, the slices in order, what proves each slice done, and the questions only a person can answer.
-2. A person reads it on the item page, answers the questions, and approves, changes or rejects it. This is where steering is cheap: nothing has been built.
-3. The approved plan becomes the item's fence (below) and, when it has several slices, child items.
-
-## Assume and tell
-
-Planned. Today every decision from triage, the implementer or the fixer waits on the item page (a set of several decisions from triage is never reused from an earlier answer, see `docs/DESIGN.md`, "Answers"); `assumption` lines that older versions wrote in the log are kept and shown in the item's history. Decision 66 brings back part of this section for the implementor: it decides questions that are cheap to change later itself and records them for Accept or Overturn on the board, and parks and asks the expensive ones.
-
-Triage already separates "this hides a decision" from "this is ready" (built). The change is what happens next:
-
-- A choice that is **cheap to undo** is made on the recommendation. The item records the assumption in words: what was chosen, what the other options were, why. A person sees assumptions in a list of their own, and overturning one reopens the item with the new answer.
-- A choice is **not** cheap to undo when it is irreversible, costs money, touches real data, changes what users are promised, or changes the scope. Those wait, at every level.
+The orchestrator can fail in two directions: run far on a wrong guess, or stop at every small question. Both waste a person's attention. An Item stops only for a decision, the fence, no progress, or not ready; it stops with what was tried, the options and a recommendation, so the answer is one tap on the board; and any session may say the Item itself is wrong by proposing a rewrite for a person to accept, edit or reject. Only that Item stops: the loop goes on with the others.
 
 ## Two guards against wandering
 
@@ -66,25 +25,3 @@ A file counts as inside when the triage named it, it is under a named folder, a 
 - A reviewer's `should` findings on a change it approves follow `review.shouldFindings` (decision 95): `"fix"` (the default) sends them back to the implementor once before the merge, a round that is not counted toward the limit or the progress guard; what an approval still says `should` after that round merges and becomes one Item draft. `"draft"` merges at once and makes them one draft. Drafts (also those agents list in `drafts`) wait for a person's Approve; nothing is filed on a host by itself. An implementor that answers done with nothing committed on its first build found nothing to change in the code: the Item is escalated as "Nothing to change" for a person to close (or to answer, which runs the step again), not retried.
 
 Also built: a proposed split when triage finds an item too large (above), and the limits on fix rounds and on failed attempts set by the `persistence` slider. A send-back by a person starts a fresh budget of fix rounds, counted from the send-back; the agents' earlier rounds do not count against it, and neither do the progress guards' memory.
-
-## Usage is the orchestrator's to aim
-
-Sessions are not given a usage budget to manage. The orchestrator decides what to start, from what each kind of item has cost before (by size and model) and what the windows have left, and it decides where spare quota goes: making more work ready rather than idling. A session is only ever stopped for the fence or for progress, never for having "used its share".
-
-## A stop is never a dead end
-
-When an item does stop:
-
-- **Only that item stops.** The loop goes on with other items, and with making work ready when nothing else is.
-- **It stops for one of a short list of reasons**: a decision that is not cheap to undo; a plan to approve; an approval of a high-risk change; the fence; no progress; not ready. Nothing else is allowed to wait for an answer.
-- **It arrives prepared**: what was tried, what the options are, which one is recommended, so the answer is one tap on the board (built for decisions from triage, the implementer and the fixer; see the item page).
-- **It may say the item is wrong**: any session can propose a rewrite of the item's description or verification with the reason. A person sees a diff and accepts, edits or rejects it; the item restarts from the accepted text, and a rejection goes to the next session (`docs/DESIGN.md`, "Agents push back"). Autonomy never decides this.
-
-## How to tell whether the balance is right
-
-Two numbers, shown per area:
-
-- **Asked for nothing**: the share of stops a person answered with the recommendation unchanged. High means it asks too easily; that area can move up.
-- **Overturned**: the share of assumptions and merged changes a person reversed. High means it runs too freely; that area moves down.
-
-The levels are tuned on those two, not on feeling.

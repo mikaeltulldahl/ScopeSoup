@@ -32,7 +32,9 @@ it("random runs keep the lifecycle rules, apart from the known failures, and rea
     for (const failure of result.failures) if (!first.has(failure.rule)) first.set(failure.rule, result);
     totals.steps += result.steps;
     totals.merges += result.merges;
-    totals.answers += result.seen.get("answered") ?? 0;
+    // A person's answers: to questions, and to a triage's rewrite (with its questions). Since questions close when answered (#230),
+    // the fake person no longer answers the same stale question again and again.
+    totals.answers += (result.seen.get("answered") ?? 0) + ["accept", "edit", "reject"].reduce((sum, each) => sum + (result.seen.get(`rewrite-${each}`) ?? 0), 0);
     totals.restarts += result.seen.get("restart") ?? 0;
     totals.accepted += result.seen.get("rewrite-accept") ?? 0;
     totals.rejected += result.seen.get("rewrite-reject") ?? 0;
@@ -66,9 +68,10 @@ it("random runs keep the lifecycle rules, apart from the known failures, and rea
     assert.ok(totals.accepted > 0 && totals.rejected > 0, "no rewrite was both accepted and rejected");
     assert.ok(totals.restarts > 0, "no restart");
     assert.ok(totals.closed > 0, "no close by a person");
-    const wanted = ["not-started", "session", "nothing", "queue", "blocker", "person(answer)", "person(rewrite)", "person(not-ready)", "person(holds)", "start(slot)", "start(timer)", "start(same-files)", "start(switch)", "start(level)", "start(usage)"];
-    // Seen in the long run only: the normal run's few seeds do not reach an escalation.
-    if (LONG) wanted.push("person(escalated)");
+    const wanted = ["not-started", "session", "nothing", "queue", "person(answer)", "person(rewrite)", "person(not-ready)", "person(holds)", "start(slot)", "start(timer)", "start(same-files)", "start(switch)", "start(level)", "start(usage)"];
+    // Seen in the long run only: the normal run's few seeds do not reach an escalation, and reach a blocked Item only by chance (a
+    // blockedBy link from a triage that settles while the other Item is open; since #229 none of the 8 seeds does).
+    if (LONG) wanted.push("person(escalated)", "blocker");
     for (const w of wanted) {
       assert.ok(waits.has(w), `no Item ever waited as ${w}`);
     }

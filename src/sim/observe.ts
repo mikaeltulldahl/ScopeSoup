@@ -12,7 +12,7 @@ import { loadSnapshot } from "../server/snapshot.ts";
 import { knownAnswers } from "../store/answers.ts";
 import { loadOwnBlockers } from "../store/blockers.ts";
 import { switchState } from "../store/control.ts";
-import type { Commit, Worktree } from "./git.ts";
+import type { Commit, FakeGit, StashEntry, Worktree } from "./git.ts";
 import type { Role, W } from "./waits.ts";
 import { isBusy, waitsFor } from "./waits.ts";
 import type { Action, Ledger, PageJson, SimWorld } from "./world.ts";
@@ -38,8 +38,10 @@ export interface GitObs {
   main: string;
   branches: Map<string, string>;
   tags: Map<string, string>;
-  stash: { workspace: string; item: string; scopesoup: boolean }[];
+  stash: StashEntry[];
   worktrees: Worktree[];
+  /** Scope Soup's tags, branches (full names) and stash entries (`stash:<sha>`) that hold work on neither main nor their Item's pushed branch. */
+  unique: Set<string>;
   owners: Map<string, { item?: string; scopesoup: boolean }>;
   deleted: { ref: string; madeBy?: { item?: string; scopesoup: boolean }; unmerged: boolean }[];
   mainMoves: { sha: string; how: string; item?: string }[];
@@ -160,7 +162,7 @@ export async function observe(world: SimWorld, seed: number, action: Action, pre
     ...(first ? { firstEvent: JSON.stringify(first) } : {}),
     answers: knownAnswers(store), tick: action.kind === "tick" || action.kind === "inside-tick" ? world.lastTick : null, tickError: world.tickError,
     git: {
-      main: git.main, branches: new Map(git.branches), tags: new Map(git.tags), stash: [...git.stash], worktrees: [...git.worktrees.values()].map((t) => ({ ...t, dirty: [...t.dirty], untracked: [...t.untracked] })),
+      main: git.main, branches: new Map(git.branches), tags: new Map(git.tags), stash: git.stash.map((entry) => ({ ...entry })), unique: uniqueLeftovers(git), worktrees: [...git.worktrees.values()].map((t) => ({ ...t, dirty: [...t.dirty], untracked: [...t.untracked] })),
       owners: new Map(git.owners), deleted: [...git.deleted], mainMoves: [...git.mainMoves],
       contains: (a, d) => git.contains(a, d), commit: (sha) => git.commits.get(sha),
     },
@@ -172,4 +174,16 @@ export async function observe(world: SimWorld, seed: number, action: Action, pre
     queued: [...world.queue.waiting.keys(), ...world.queue.notices.flatMap((n) => (n.kind === "mark-merged" ? n.members.map((m) => refKey(m.change)) : n.kind === "send-back" ? [refKey(n.change)] : []))],
     fairTicks: world.fair && previous ? previous.fairTicks + (action.kind === "tick" ? 1 : 0) : 0,
   };
+}
+
+export function uniqueLeftovers(git: FakeGit): Set<string> {
+  const out = new Set<string>();
+  const branchOf = (item: string | undefined): string => `scopesoup/${item?.split(":").pop() ?? ""}`;
+  for (const [ref, madeBy] of git.owners) {
+    if (!madeBy.scopesoup) continue;
+    const sha = ref.startsWith("refs/tags/") ? git.tags.get(ref.slice(10)) : ref.startsWith("refs/heads/") ? git.branches.get(ref.slice(11)) : undefined;
+    if (sha !== undefined && !git.safe(sha, branchOf(madeBy.item))) out.add(ref);
+  }
+  for (const entry of git.stash) if (entry.scopesoup && !git.stashSafe(entry, entry.branch)) out.add(`stash:${entry.sha}`);
+  return out;
 }

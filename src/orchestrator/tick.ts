@@ -24,7 +24,7 @@ import { linkedItem } from "./aboutOthers.ts";
 import type { Context, TickDeps } from "./context.ts";
 import type { ClaimResult } from "./ports.ts";
 import { createLog, errorText } from "./context.ts";
-import { afterRewrite, backToImplement, emptyBranch, followRewrite, followQuestions, overturnsBack, park, retryHandOver, retryPost, reviewOffAtLevel2, settle, withdrawSettledDuplicates, writeAboutOthers } from "./cycle.ts";
+import { afterRewrite, backToImplement, emptyBranch, followRewrite, followQuestions, keptBranch, overturnsBack, park, retryHandOver, retryPost, reviewOffAtLevel2, settle, withdrawSettledDuplicates, writeAboutOthers } from "./cycle.ts";
 import { loadOwnBlockers, withOwnBlockers } from "../store/blockers.ts";
 import { decide } from "./usageCheck.ts";
 import { allowanceDecision } from "./allowance.ts";
@@ -159,6 +159,77 @@ function interrupted(ctx: Context, key: string, job: Job, item: WorkItem | null)
   return false;
 }
 
+/**
+ * The job's Item is closed or gone (decision 5): work whose output would be thrown away is stopped at once. Its step session is
+ * ended the way Stop ends sessions, and a result it left is not settled. A person's chat turn on the Item is left alone. True while
+ * that session is still there (the job waits for its process to exit); false once there is none, with the session forgotten, or, with
+ * `takeEnded`, a session that ended already left to be settled.
+ */
+function stopForClosed(ctx: Context, key: string, job: Job, item: WorkItem | null, takeEnded: boolean): boolean {
+  const { store, runner } = ctx.deps;
+  const isLive = (each: Session): boolean => !OVER.includes(each.status) && !each.finishedAt;
+  const own = job.sessionId ? store.get<Session>({ host: "scopesoup", kind: "session", id: job.sessionId }) : undefined;
+  const session = own && isLive(own) ? own : store.list<Session>("session").find((each) => refKey(each.subject) === key && !each.chat && isLive(each));
+  if (session) {
+    const reason = `${item ? `${item.ref.id} is ${item.state}` : `${key} is no longer in the store`}: the ${session.role} session ${session.ref.id} is ended now and its result is not taken.`;
+    const stopped = runner.stopFor?.(job.item, `Stopped: ${reason}`, true) ?? 0;
+    if (stopped > 0) ctx.commit("orchestrator.stopped", reason, key, { role: session.role, session: session.ref.id });
+    const after = store.get<Session>(session.ref);
+    if (after && isLive(after)) return true;
+  } else if (own && job.sessionId) {
+    if (takeEnded) return false;
+    ctx.commit("orchestrator.result_dropped", `${item ? `${item.ref.id} is ${item.state}` : `${key} is no longer in the store`}: the result of its ${own.role} session ${own.ref.id} is not taken.`, key, { step: job.step });
+  }
+  delete job.interrupt;
+  delete job.sessionId;
+  delete job.resume;
+  return false;
+}
+
+/**
+ * A claim of this machine's on an Item with no job here that holds one (none, a parked one, or one whose change merged) and no session
+ * of Scope Soup's on it holds the Item for nothing: its job closed (the Item was closed), the store was lost with the job in it, or a
+ * release failed (the host did not answer). A claim that ran out counts too: the host shows it until it is let go. It is released, as
+ * the job would have, again on each tick until that works.
+ */
+async function releaseClaimsHeldForNothing(ctx: Context, items: readonly WorkItem[]): Promise<void> {
+  const { actions, store } = ctx.deps;
+  if (!actions.claims || !actions.claimant) return;
+  const live = new Set(store.list<Session>("session").filter((each) => !OVER.includes(each.status) && !each.finishedAt).map((each) => refKey(each.subject)));
+  for (const listed of items) {
+    // Read again: a job closed earlier in this tick released its claim already.
+    const item = store.get<WorkItem>(listed.ref) ?? listed;
+    const key = refKey(item.ref);
+    const holder = item.holder;
+    // The jobs that hold a claim: a session runs, or a change is queued or handed over and has not merged; one waiting to start its
+    // next step keeps its claim until it runs out (`renewClaims` does not renew it). A parked one (its release failed) or a merged one
+    // holds nothing: what is left is a person's answer, or closing the Item.
+    const job = ctx.jobs[key];
+    const expired = !!holder?.until && Date.parse(holder.until) <= Date.parse(ctx.at);
+    const holds = !!job && job.merged === undefined && (job.parked ? job.parked.as === "queued" || job.parked.as === "handed-over" : !!job.sessionId || !expired);
+    if (!holder || holder.actor.id !== actions.claimant || holds || live.has(key)) continue;
+    const reason = `${item.ref.id} has no work under way here${item.state === "done" || item.state === "abandoned" ? ` (it is ${item.state})` : ""}: this machine's claim on it goes back.`;
+    try {
+      await actions.release(item.ref, reason);
+      ctx.commit("orchestrator.claim_released", reason, key);
+    } catch (error) {
+      ctx.commit("orchestrator.action_failed", `Could not release the claim: ${errorText(error)}`, key);
+    }
+  }
+}
+
+/** Removes, or reports, what agents of closed Items left in Scope Soup's clone; the work under way here is left alone. */
+async function sweep(ctx: Context, subject?: string): Promise<void> {
+  const { runner } = ctx.deps;
+  if (!runner.sweepLeftovers) return;
+  const live = Object.values(ctx.jobs).map((job) => ({ item: refKey(job.item), branch: job.branch }));
+  try {
+    await runner.sweepLeftovers(live);
+  } catch (error) {
+    ctx.commit("orchestrator.action_failed", `Could not clear the agents' leftover refs: ${errorText(error)}`, subject);
+  }
+}
+
 /** Drops a job a person put back in To do: its claim on the host (when this machine holds it) and its workspace go back. */
 async function dropAsked(ctx: Context, jobs: Jobs, key: string, job: Job, item: WorkItem | null): Promise<void> {
   const { actions, runner } = ctx.deps;
@@ -196,7 +267,11 @@ async function renewClaims(ctx: Context, itemByKey: Map<string, WorkItem>): Prom
     const item = itemByKey.get(key);
     if (!item || item.state === "done" || item.state === "abandoned") continue;
     if (job.parked && job.parked.as !== "queued" && job.parked.as !== "handed-over") continue;
+    // Merged: nothing is held for it any more (`releaseClaimsHeldForNothing`).
+    if (job.merged !== undefined) continue;
     const holder = item.holder;
+    // Waiting to start its next step (a slot, a timer, a paused switch): the claim is not renewed and runs out; the start claims again.
+    if (!job.parked && !job.sessionId && holder?.actor.id === actions.claimant) continue;
     if (holder && holder.actor.id !== actions.claimant && holder.actor.id.startsWith(`${actions.claimant.split("@")[0]}@`) && !job.parked && job.sessionId && (!holder.until || Date.parse(holder.until) > Date.parse(ctx.at))) {
       await lost(job, item, key, `${holder.actor.name} holds it`);
       continue;
@@ -437,6 +512,9 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
     }
   }
 
+  // What agents of Items closed since left in Scope Soup's clone (a close whose sweep failed, or work dropped without a close).
+  await sweep(ctx);
+
   // Scope Soup's own blockers count as the host's do.
   const items = withVotes(withOwnBlockers(store.list<WorkItem>("work"), loadOwnBlockers(store)), loadVotes(store));
   const itemByKey = new Map(items.map((item) => [refKey(item.ref), item]));
@@ -457,6 +535,15 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
     const item = itemByKey.get(key) ?? null;
     // A post that failed in an earlier tick; one that fails in this tick is tried again by the next.
     const repost = job.parked?.retry === "post";
+    // A merged Item reopened on GitHub is work again: its merged job is over too.
+    const over = !item || item.state === "done" || item.state === "abandoned" || (job.merged !== undefined && item.merged?.reopened !== undefined);
+    // Closing an Item ends everything it owns (decision 5): its step session is stopped at once and its result not taken; the job
+    // closes below, once that session is gone. Done at the implement step is the usual end (the session merged, and the host closed
+    // the Item): when that session is over already, what it said (drafts, questions about other Items) is still taken.
+    if (over && stopForClosed(ctx, key, job, item, item?.state === "done" && job.step === "implement")) {
+      running++;
+      continue;
+    }
     // A person's pick replaced the step that runs: its session is ended, and its result is not settled (decision 104).
     if (job.interrupt && interrupted(ctx, key, job, item)) {
       running++;
@@ -469,7 +556,7 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
     }
     // A person put the Item back in To do on the board (src/server/moves.ts): once its session is over (its result is not
     // taken), the job goes with this machine's claim and workspace. The branch stays; the Item starts again at triage.
-    if (job.dropAskedBy) {
+    if (job.dropAskedBy && !over) {
       const session = job.sessionId ? store.get<Session>({ host: "scopesoup", kind: "session", id: job.sessionId }) : undefined;
       if (session && !OVER.includes(session.status) && !session.finishedAt) {
         running++;
@@ -537,21 +624,25 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
         ctx.say("orchestrator.main_unread", `Could not tell whether ${job.branch} is merged: ${errorText(error)}`, key);
       }
     }
-    // A merged Item reopened on GitHub is work again: its merged job is over too.
-    const over = !item || item.state === "done" || item.state === "abandoned" || (job.merged !== undefined && item.merged?.reopened !== undefined);
     // Questions or a rewrite that could not be posted for a reason that can change are posted again, without waiting for a person.
     if (repost && !job.sessionId && !over && job.parked?.retry === "post") {
       await retryPost(ctx, job);
       continue;
     }
     const mergedOrHandedOver = job.parked?.as === "queued" || job.parked?.as === "handed-over";
-    // An item that is finished or gone needs no job.
+    // An item that is finished or gone needs no job: what the job held goes with it (this machine's claim, the worktree). The
+    // branch goes too, unless it may hold work nobody closed: the Item left the store (no person closed it), or a triage again on built
+    // work (a recheck) was under way, whose commits are not Scope Soup's to throw away.
     if (!job.sessionId && over) {
       delete jobs[key];
-      const why = item ? `The item is ${item.state}; its job is closed.` : "The item is no longer in the store; its job is closed.";
+      const kept = !item || job.step === "triage" ? await keptBranch(ctx, job) : null;
+      const why = `${item ? `The item is ${item.state}; its job is closed.` : "The item is no longer in the store; its job is closed."}${kept ? ` Its branch ${job.branch} is kept: ${kept}.` : ""}`;
       ctx.commit(mergedOrHandedOver ? "orchestrator.finished" : "orchestrator.job_closed", why, key);
-      if (!job.parked) await ctx.act("remove the worktree", key, () => runner.releaseWorkspace(job.workspace));
-      await ctx.act("delete the branch", key, () => runner.deleteBranch(job.branch));
+      const { actions } = ctx.deps;
+      if (actions.claims && actions.claimant && item?.holder?.actor.id === actions.claimant) await ctx.act("release the claim", key, () => actions.release(job.item, why));
+      await ctx.act("remove the worktree", key, () => runner.releaseWorkspace(job.workspace));
+      if (!kept) await ctx.act("delete the branch", key, () => runner.deleteBranch(job.branch));
+      await sweep(ctx, key);
       continue;
     }
     // A person overturned a decision while the work waits (for review, a slot, a retry, or an answer it was given): the
@@ -561,6 +652,9 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
     // the implementor merges. Its own session is resumed to merge it, as level 2 does after a build.
     if (item && config.level === 2 && job.step === "review" && !job.sessionId && !job.parked && !job.owes && !job.reviewAskedBy) reviewOffAtLevel2(ctx, job);
   }
+
+  // This machine's claim on an Item it has no work under way for (its job closed, or the store was lost) goes back.
+  await releaseClaimsHeldForNothing(ctx, items);
 
   // Questions agents asked about other Items are written on each that is free now, before anything starts on it.
   await writeAboutOthers(ctx);

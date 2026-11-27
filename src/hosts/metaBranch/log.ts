@@ -248,10 +248,16 @@ export function foldLog(log: ParsedLog): LogPicture {
     const key = question ? answeredKey(question) : null;
     if (key) answered.add(key);
   };
+  const closesAt: number[] = [];
   const answerNewest = (before: number): void => {
     while (newestAnswers.length > 0 && newestAnswers[0]! < before) {
       newestAnswers.shift();
       markAnswered(picture.openQuestions.pop());
+    }
+    while (closesAt.length > 0 && closesAt[0]! < before) {
+      closesAt.shift();
+      for (const question of picture.openQuestions) markAnswered(question);
+      picture.openQuestions = [];
     }
   };
   for (const entry of ordered) {
@@ -418,8 +424,12 @@ export function foldLog(log: ParsedLog): LogPicture {
         // A save of the shared settings, in the settings' own log (settings/log.jsonl): what changed.
         if (!Array.isArray(data.changes)) bad("a settings line needs `changes`, a list of { key, from?, to? }");
         break;
-      case "created":
       case "edited":
+        // Closing an Item ends what it asked: a question open when it was closed stays closed, also after a reopen. At the end of the
+        // close's instant, so a question of the same instant that folds after it (an earlier `by` as text) is ended too.
+        if (data.state === "done" || data.state === "abandoned") closesAt.push(Date.parse(at));
+        break;
+      case "created":
       case "session":
       case "assumption":
       // A person's verdict on an implementor's recorded decision; read by `assumptionsOf` (map.ts).

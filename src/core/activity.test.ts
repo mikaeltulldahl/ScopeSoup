@@ -210,3 +210,9 @@ test("the Jira board buttons' events are rows with the Item link; an account id 
   ]);
   assert.ok(ACTIVITY_EVENTS.includes("person.claimed") && ACTIVITY_EVENTS.includes("person.handed_back") && ACTIVITY_EVENTS.includes("person.released"));
 });
+
+test("a leftover ref kept in Scope Soup's clone shows on its Item, with the sha", () => {
+  const events = [event(-5, "orchestrator.leftover_kept", "orchestrator", { ref: "refs/tags/wip-3", sha: "3333333dddd", reason: "kept for a person" }, "demo:work:3")];
+  const rows = buildActivity(input({ works: [work(3)], events }), T0).rows;
+  assert.deepEqual(rows.map((row) => [row.items[0]?.id, row.text, row.tone]), [["3", "Kept wip-3 at 3333333 in Scope Soup's clone: an agent left it, and it holds work found nowhere else", "bad"]]);
+});

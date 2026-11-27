@@ -1,48 +1,44 @@
 # Onboarding a project
 
-Onboarding puts a project under Scope Soup changing nothing on its branches but one commit of its setup script (`.scopesoup/scopesoup-setup.mjs`), which the person merges the way the project's changes merge. The project's shared settings go on its meta ref (`refs/scopesoup/meta`), beside the main branch, never on it. Scope Soup starts at level 0, where it only shows the work, and the person raises the level one step at a time when they want it to do more (decision 59, `docs/RULES.md`, "Levels").
+Onboarding changes nothing on a project's branches but one commit of its setup script (`.scopesoup/scopesoup-setup.mjs`), which the person merges the way the project's changes merge. The shared settings go on the meta ref (`refs/scopesoup/meta`), never on the main branch. Scope Soup starts at level 0, where it only shows the work, and the person raises the level one step at a time (decision 59, [`RULES.md`](RULES.md), "Levels").
 
 ## 1. The skill
 
-The Claude Code skill `/scopesoup:scopesoup-onboard` (`plugins/scopesoup/skills/scopesoup-onboard`) runs in a session in the project. `docs/RUNNING.md`, "Onboarding with the Claude Code plugin", says how to install it. It asks three things:
+The Claude Code skill `/scopesoup:scopesoup-onboard` (`plugins/scopesoup/skills/scopesoup-onboard`) runs in a session in the project ([`RUNNING.md`](RUNNING.md), "Onboarding with the Claude Code plugin", has the install). It asks three things:
 
 1. Where the project's clone is.
 2. The backlog, in two parts asked together: where it is today (GitHub Issues, another tracker, a text file, or nowhere yet), and where to keep it from now on (Scope Soup's own Items on the project's meta branch, GitHub Issues when the remote is on GitHub, or Jira; one question, three choices).
 3. For Items only: this machine's prefix for new ids (it proposes the first free one).
 
-On a new project the backlog question also asks singleplayer (nothing under `refs/scopesoup/*` is pushed) or multiplayer (shared through the remote), decision 93. A person joining is multiplayer. The Settings page switches it ("Players").
+On a new project it also asks singleplayer (nothing under `refs/scopesoup/*` is pushed) or multiplayer (shared through the remote; decision 93). A person joining is multiplayer.
 
 The two parts of the backlog question decide what happens (decided):
 
 - **Today GitHub Issues, from now on GitHub Issues**: Scope Soup reads the issues live. Nothing moves.
-- **Today GitHub Issues, from now on Items**: the skill offers the one-time import (decision 67, `docs/RUNNING.md`, "Importing from GitHub Issues"): every open issue becomes an Item with its labels, priority, parent, blockers and last 3 comments; pull requests and closed issues are left out. The import only reads GitHub. The backlog question then has one more part, what to do with the issues on GitHub: **leave** them (GitHub is not changed), **label** them `moved-to-scopesoup` with a comment naming the Item, or **close** them as not planned after labelling. The yes to the summary covers it; the import runs after the configuration is checked, and can be read and undone as one meta commit.
+- **Today GitHub Issues, from now on Items**: the skill offers the one-time import ([`RUNNING.md`](RUNNING.md), "Importing from GitHub Issues"; decision 67) and asks what to do with the issues on GitHub: **leave** them, **label** them `moved-to-scopesoup`, or **close** them as not planned after labelling. The yes to the summary covers it; the import runs after the configuration is checked, as one meta commit.
 - **Today nowhere or a text file, from now on Items**: Items start empty; the skill offers to write the first ones, or file them from the text.
-- **From now on Jira** (any "today"): the skill asks the site (https only), project, deployment, Cloud email and optionally a filter and components, and builds and checks the host with `pnpm config:host jira` (the same checks as Settings' "Connect to Jira", decision 98); `--look` reads the project once to count the open issues. Nothing is imported or moved. The token comes only from `SCOPESOUP_JIRA_TOKEN`: it is never asked for or written, and the skill says to set it when it is missing (decision 101). The Cloud email goes in this machine's private file (`jira.email`).
+- **From now on Jira** (any "today"): the skill asks the site (https only), project, deployment, Cloud email and optionally a filter and components, and builds and checks the host with `pnpm config:host jira` (as Settings' "Connect to Jira", decision 98). Nothing is imported or moved. The token comes only from `SCOPESOUP_JIRA_TOKEN`, never asked for or written (decision 101).
 - **Today another tracker**: Items, GitHub Issues or Jira from now on, and the skill says that importing from that tracker is not supported yet.
 
-Everything else it reads from the clone or proposes: the remote and main branch, `realPaths` (the person's own clone), Scope Soup's own clone (`repoPath`), `machineName`, and a config folder outside any git repository.
+Everything else it reads from the clone or proposes: the remote and main branch, `realPaths`, Scope Soup's own clone (`repoPath`), `machineName`, and a config folder outside any git repository.
 
-It also proposes the setup of a fresh clone (decision 65), without a fourth question: Scope Soup's worktrees and clones lack what the person's checkout has (installed dependencies, generated files, submodules, a `.env` with test settings). From what it finds (lockfiles, `requirements*.txt`, `Makefile` targets, CI setup steps, the README, and the ignored personal files in the person's clone, with `pnpm config:setup`) it proposes the steps, the personal files to copy and the files to watch, and the person confirms or corrects them in the summary. Nothing is copied blindly, and secrets never go into the repository, a prompt or a log: the script copies only the files listed, from the person's clone (`--from-clone`), only to where git ignores them, and prints names only.
+It also proposes the setup of a fresh clone (decision 65; [`RUNNING.md`](RUNNING.md), "The setup of a fresh clone"), without a fourth question: from what it finds (lockfiles, `Makefile` targets, CI setup steps, and the ignored personal files in the person's clone, with `pnpm config:setup`) it proposes the steps, the personal files to copy and the files to watch, and the person confirms or corrects them in the summary. Secrets never go into the repository, a prompt or a log: the script copies only the files listed, from the person's clone, only to where git ignores them, and prints names only.
 
-It shows one summary with the whole file and does nothing before one yes. Then it writes this machine's `scopesoup.config.json` in the config folder (its name, where the clones are, a few lines), and checks it with the shared settings it proposes (`pnpm config:check --shared`) until both are clean. As the first person on the project it writes those shared settings (`level: 0`, the host, `setupCommand`, `setupWatch`) to the meta ref, one commit named after the person, pushed in multiplayer (`pnpm settings:init`): Scope Soup reads them from there at once. The setup script `.scopesoup/scopesoup-setup.mjs` is code that runs, so it goes into the repository: committed in Scope Soup's own clone on a branch `scopesoup/onboard` and pushed, for the person to merge the way the project's changes merge. The Settings page shows the setup afterwards and lets the person edit it.
+It shows one summary with the whole file and does nothing before one yes. Then it writes this machine's `scopesoup.config.json` in the config folder and checks it with the shared settings it proposes (`pnpm config:check --shared`) until both are clean. As the first person on the project it writes those shared settings (`level: 0`, the host, `setupCommand`, `setupWatch`) to the meta ref, one commit named after the person (`pnpm settings:init`). The setup script is committed in Scope Soup's own clone on a branch `scopesoup/onboard` and pushed, for the person to merge.
 
 ## Joining a project Scope Soup already runs
 
-A person who joins a project that a teammate already runs with Scope Soup runs the same skill on their own machine, in a session in their clone of the project. The project's shared settings are on its meta ref already, so the skill writes only that machine's private `scopesoup.config.json` (its name, where the clones are, for Items the person's name, email and own prefix, what the machine may spend). It runs `pnpm config:check`, which fetches the meta ref and checks the private file with the project's settings. Nothing is committed and nothing is pushed: `pnpm settings:init` refuses when the settings exist, and says the person is joining. The level and every other project setting are as the team set them; a change on the Settings page is in effect for everyone, and History says who made it.
+A person who joins runs the same skill in a session in their own clone. The shared settings are on the meta ref already, so the skill writes only that machine's private `scopesoup.config.json` and runs `pnpm config:check`, which fetches the meta ref and checks the file with the project's settings. Nothing is committed or pushed. The level and every other project setting are as the team set them; a change on the Settings page is in effect for everyone, and History says who made it.
 
-Three optional steps, each only on the person's yes: the plugin in the project's `.claude/settings.json`, for teammates, the Scope Soup section in the project's `CLAUDE.md`, and a short part at the end of the `README.md` (if there is one) saying how to open the board. The section opens with how to open the board, lists the item commands and sets no rules for sessions.
-
-The skill does not ask for a check command, the remote's URL or anything else a higher level needs. The Settings page asks for those when the level is picked.
+Three optional steps, each only on the person's yes: the plugin in the project's `.claude/settings.json`, the Scope Soup section in the project's `CLAUDE.md`, and a short part at the end of the `README.md` saying how to open the board. The skill does not ask for a check command or the remote's URL: the Settings page asks when the level needs them.
 
 ## 2. Level 0: Watch
 
-Scope Soup starts and the board fills. Nothing runs: no session, no write on its own. A person can still create and edit Items from the board when the host is writable. When there are ready Items without a triage, the overview says so: "N Items have no triage: set level 1 and press Resume on the Backlog."
+Scope Soup starts and the board fills. Nothing runs: no session, no write on its own. A person can still create and edit Items from the board when the host is writable.
 
 ## 3. Raising the level
 
-On the Settings page the levels are five rows, each with one sentence of what Scope Soup does and what it needs. A level whose needs are missing is shown but cannot be picked, with what is missing. Picking level 4 asks for the check command and the remote's URL right there: "What command decides a change is OK — the one you would want green before anything merges?", with the candidates Scope Soup found in the repository (`package.json` scripts, CI workflow files, `Makefile` targets) to pick from. It runs in a fresh clone after the setup.
-
-The level is a project setting, the same on every machine: saving it is one commit on the meta ref, named after the person picked at the top of the board, in effect at once here and on the other machines at their next fetch. After a level is saved, the person presses Resume on the lanes: triage on Backlog, from level 2 implementors on In progress, from level 3 review on In review, at level 4 the merge queue on Merge queue. Scope Soup comes up paused after every start-up, so they are resumed again after a restart (an upgrade from the board restores them itself).
+On the Settings page the levels are five rows; a level whose needs are missing cannot be picked, and picking level 4 asks for the check command and the remote's URL right there ([`RUNNING.md`](RUNNING.md), "The Settings page and the sliders"). The level is a project setting, the same on every machine. After it is saved, the person presses Resume on the lanes ([`RUNNING.md`](RUNNING.md), "Start, Pause and Stop"); Scope Soup comes up paused after every start-up.
 
 A typical order:
 
@@ -54,8 +50,8 @@ Each level can be lowered again at any time. A step above the new level waits wh
 
 ## An existing project
 
-- The existing backlog is not changed, unless the person imports it from GitHub Issues into Items and picks label or close for the issues on GitHub. At level 1 and up, Scope Soup picks from the whole backlog in order. On GitHub it adds its own labels and comments to the issues it works on (`docs/github-mapping.md`).
-- Existing habits are read, not replaced: labels, branch names and CI stay as they are. How a session works (tests, commit messages, merge or pull request) is what the project's `CLAUDE.md` says.
+- The existing backlog is not changed, unless the person imports it and picks label or close for the issues on GitHub. On GitHub Scope Soup adds its own labels and comments to the issues it works on ([`github-mapping.md`](github-mapping.md)).
+- Existing habits are read, not replaced: labels, branch names and CI stay as they are. How a session works is what the project's `CLAUDE.md` says.
 - The first Items at level 2 should be small, so the first evidence is cheap.
 
 ## An empty project
@@ -66,11 +62,11 @@ There is nothing to read, so the first Items are the skeleton: the repository la
 
 Everything Scope Soup adds is a file or state that reads without Scope Soup: a configuration file outside the repository, the shared settings and Items on the meta ref (or issues, labels and comments on GitHub), merged commits. Offboarding (decision 75) lists and removes what Scope Soup left, so trying Scope Soup and deciding against it is easy and safe.
 
-**Pausing is not leaving.** Stop on the board (it ends running sessions and pauses triage, implementors, review and the merge queue), or level 0, stops Scope Soup's work and keeps everything; Resume on the lanes, or a higher level, undoes it. Nothing below is needed for that.
+**Pausing is not leaving.** Stop on the board, or level 0, stops Scope Soup's work and keeps everything; Resume, or a higher level, undoes it.
 
-**A record from the start.** Onboarding, and Scope Soup while it runs, append to a manifest in the config folder (`scopesoup.manifest.jsonl`) what they made or changed outside it: Scope Soup's clone and folders, the meta ref, the `scopesoup/onboard` branch, the setup script, the CLAUDE.md section, the plugin lines and the labels Scope Soup created on GitHub. Offboarding works from it and from Scope Soup's own names (`refs/scopesoup/*`, `scopesoup/*` branches, its labels, the `.v*` copies); nothing else of the person's is listed.
+**A record from the start.** Onboarding, and Scope Soup while it runs, append to a manifest in the config folder (`scopesoup.manifest.jsonl`) what they made or changed outside it. Offboarding works from it and from Scope Soup's own names (`refs/scopesoup/*`, `scopesoup/*` branches, its labels, the `.v*` copies); nothing else of the person's is listed.
 
-**Leaving** is the skill `/scopesoup:scopesoup-offboard` (`plugins/scopesoup/skills/scopesoup-offboard`), or `pnpm offboard` in Scope Soup's folder (`docs/RUNNING.md`, "Offboarding"). The Settings page's "Stop using Scope Soup" shows the same list, read only, with Stop. The skill says pausing is not leaving, has Scope Soup stopped, shows everything in five groups with what would happen to each, asks one yes per group, then acts and reports:
+**Leaving** is the skill `/scopesoup:scopesoup-offboard`, or `pnpm offboard` ([`RUNNING.md`](RUNNING.md), "Offboarding"). The Settings page's "Stop using Scope Soup" shows the same list, read only. The skill has Scope Soup stopped, shows everything in five groups with what would happen to each, asks one yes per group, then acts and reports:
 
 - **Work in progress:** `scopesoup/*` branches on the remote and in the clones, open pull requests Scope Soup opened (a batch's pull request and `scopesoup/batch-...` branch left after a failure among them). Anything not merged is kept unless the person says so for that group's kept entries too.
 - **Items:** exported first as Markdown files (one per Item, with its log) and the shared settings; then `refs/scopesoup/meta`, `refs/scopesoup/merge-queue` and `refs/scopesoup/resources/*` are deleted on the remote. Exporting as GitHub issues is not built.
