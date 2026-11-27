@@ -1,4 +1,4 @@
-// An agent's leftover refs in Scope Soup's own clone (decision 118, rule I2): stash entries, tags and branches it made and did not
+// An agent's leftover refs in Scope Soup's own clone (decision 125, rule I2): stash entries, tags and branches it made and did not
 // remove. Once its Item is closed and no job of this machine has it, each is removed when nothing would be lost (all its commits are on
 // the remote's main or on the Item's branch as pushed), with an event naming the ref and its sha written first; one that holds work
 // found nowhere else is kept and reported once, on the Item.
@@ -14,7 +14,7 @@
 
 import { renameSync, writeFileSync, readFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
-import type { WorkItem } from "../model/types.ts";
+import type { Ref, WorkItem } from "../model/types.ts";
 import { refKey } from "../model/types.ts";
 import type { Store } from "../store/store.ts";
 import { workBranch } from "./paths.ts";
@@ -128,8 +128,9 @@ export async function sweepLeftovers(deps: SweepDeps): Promise<{ removed: number
   }
   for (const [key, before] of Object.entries(baselines)) {
     if (!done(key)) continue;
-    const ref = items.get(key)?.ref;
-    const branch = itemBranches.get(key) ?? (ref ? workBranch(ref) : null);
+    // An Item gone from the store: its branch from its key (`host:kind:id`).
+    const [host, kind, ...id] = key.split(":");
+    const branch = itemBranches.get(key) ?? (host && kind && id.length > 0 ? workBranch({ host, kind: kind as Ref["kind"], id: id.join(":") }) : null);
     if (!branch) continue;
     const had = new Set(before);
     for (const name of refs.keys()) {
