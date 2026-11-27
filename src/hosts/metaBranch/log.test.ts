@@ -233,3 +233,15 @@ test("log: an answer closes its question whichever folds first (the same instant
   const two = fold(jsonl({ at: "2026-11-18T09:00:00Z", by: soup, kind: "question", question: "Older?" }, { at: t, by: soup, kind: "question", question: "Newer?" }, { at: t, by: ada, kind: "answer", answer: "Yes" }));
   assert.deepEqual(two.openQuestions.map((line) => line.question), ["Older?"]);
 });
+
+test("log: a new set of questions from Scope Soup replaces the set still open (decision 1 of #211, #230)", () => {
+  const soup = { who: "scopesoup", machine: "laptop-a", agent: true };
+  const t = "2026-11-18T10:00:00Z";
+  const picture = fold(jsonl(
+    { at: t, by: soup, kind: "question", question: "Too large?", parked: "not-ready", set: "1" },
+    { at: t, by: soup, kind: "question", question: "First of two?", parked: "needs-decision", set: "2" },
+    { at: t, by: soup, kind: "question", question: "Second of two?", parked: "needs-decision", set: "2" },
+    { at: t, by: robin, kind: "question", question: "A person's own?" },
+  ));
+  assert.deepEqual(picture.openQuestions.map((line) => line.question), ["A person's own?", "First of two?", "Second of two?"]);
+});

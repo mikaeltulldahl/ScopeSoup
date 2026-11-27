@@ -210,6 +210,8 @@ export interface Job {
   failures: number;
   /** How many times review (or a failed merging) sent the change back to the implementor. */
   fixRounds: number;
+  /** How many times the job parked: each park's questions in the item's log carry it as their `set`, which replaces the set before (#230). */
+  parks?: number;
   /** The step may not start before this (a retry timer or a limit reset). */
   notBefore?: string;
   /** The agent session to continue, after a limit or a stop cut it off. */

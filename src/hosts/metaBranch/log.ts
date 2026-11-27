@@ -159,6 +159,8 @@ export interface QuestionLine {
   multiSelect?: true;
   /** A proposed restructuring: `original`, `parts` (and `carried`), and `reason`. */
   proposal?: { id: string; reason: string; original: OriginalFate; parts: ProposedPart[]; carried?: string };
+  /** The park that asked it: a question of another set by the same writer replaces it. */
+  set?: string;
 }
 
 /** An item's current picture, as far as its log tells it. */
@@ -222,7 +224,8 @@ function foldOrder(a: LogEntry, b: LogEntry): number {
  *   the newest revision's.
  * - `question` is open until an `answer` names it by its `at` in `to` (and, when the answer has
  *   it, its writer in `toBy`), whichever of the two folds first, or, without `to`, until the next
- *   answer (which takes the newest question open at the end of its own instant).
+ *   answer (which takes the newest question open at the end of its own instant), or until a question of
+ *   another `set` by the same writer replaces it (each park of Scope Soup's writes one set).
  */
 export function foldLog(log: ParsedLog): LogPicture {
   const picture: LogPicture = { revisions: [], reviews: [], checks: [], openQuestions: [], entries: log.entries.length, lines: [], unknown: [], malformed: [...log.malformed] };
@@ -323,6 +326,8 @@ export function foldLog(log: ParsedLog): LogPicture {
         const context = text(data.context);
         if (context) line.context = context;
         if (data.multiSelect === true) line.multiSelect = true;
+        const set = text(data.set);
+        if (set) line.set = set;
         const proposed = data.proposal;
         if (typeof proposed === "object" && proposed !== null && !Array.isArray(proposed)) {
           const fields = proposed as Record<string, unknown>;
@@ -340,6 +345,8 @@ export function foldLog(log: ParsedLog): LogPicture {
           earlyAnswers.splice(early, 1);
           break;
         }
+        // A new set of questions from the same writer replaces the set still open (decision 1 of #211).
+        if (set) picture.openQuestions = picture.openQuestions.filter((open) => !(open.set !== undefined && open.set !== set && sameActor(open.by, by)));
         picture.openQuestions.push(line);
         break;
       }

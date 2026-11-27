@@ -66,6 +66,7 @@ export function backoffMs(failures: number, capMs: number): number {
 export async function park(ctx: Context, job: Job, as: ParkedAs, reason: string, ask?: Parameters<Actions["answerTurn"]>[1], retry?: "hand-over", marks: { byStep?: true; verdict?: true } = {}): Promise<void> {
   const key = refKey(job.item);
   job.parked = { as, reason, at: ctx.at, ...(retry ? { retry } : {}), ...(marks.byStep ? { byStep: true } : {}), ...(marks.verdict ? { verdict: true } : {}) };
+  job.parks = (job.parks ?? 0) + 1;
   // A person's ask was for the step that ended here (decision 104).
   delete job.triageAskedBy;
   delete job.reviewAskedBy;
@@ -116,10 +117,12 @@ async function tellPeople(ctx: Context, job: Job, as: ParkedAs, reason: string, 
       ? [{ question: `Proposed restructuring: ${proposal.reason}`, options: [], recommendation: "", proposal: { id: proposal.id, reason: proposal.reason, original: proposal.original, parts: proposal.parts, ...(proposal.carried ? { carried: proposal.carried } : {}) } }]
       : questions.length > 0 ? questions : [decision ?? { question: reason, options: [], recommendation: "" }])));
   if (!posted) {
+    // The questions of one park are one set: a later park's set replaces it in the log (decision 1 of #211).
+    const set = String(job.parks ?? 0);
     await ctx.act("put the item on a person's list", key, () => actions.answerTurn(job.item, ask, reason));
     for (const each of questions) {
       await ctx.act("write the question to the item's log", key, () =>
-        actions.appendLog(job.item, "question", { question: each.question, options: each.options, ...(each.recommendation ? { recommendation: each.recommendation } : {}), ...(each.context ? { context: each.context } : {}), ...(each.multiSelect ? { multiSelect: true } : {}), parked: as }));
+        actions.appendLog(job.item, "question", { question: each.question, options: each.options, ...(each.recommendation ? { recommendation: each.recommendation } : {}), ...(each.context ? { context: each.context } : {}), ...(each.multiSelect ? { multiSelect: true } : {}), parked: as, set }));
     }
     // The parts a restructuring has made so far stay in the store: the log line keeps what a person decides on.
     const fields: Record<string, unknown> = proposal
@@ -128,6 +131,7 @@ async function tellPeople(ctx: Context, job: Job, as: ParkedAs, reason: string, 
         ? { question: decision.question, options: decision.options, ...(decision.recommendation ? { recommendation: decision.recommendation } : {}), ...(decision.context ? { context: decision.context } : {}), ...(decision.multiSelect ? { multiSelect: true } : {}) }
         : { question: reason };
     fields.parked = as;
+    fields.set = set;
     if (rewriting) fields.rewrite = job.rewrite!.round;
     if (retry) fields.retry = retry;
     if (questions.length === 0) await ctx.act("write the question to the item's log", key, () => actions.appendLog(job.item, "question", fields));
@@ -1745,6 +1749,7 @@ function askersOpen(ctx: Context, item: WorkItem, entries: readonly WaitingAbout
 /** `park` for an Item with no claim or workspace of its own to give back (no job, or one parked before). */
 async function parkFresh(ctx: Context, job: Job, reason: string): Promise<void> {
   job.parked = { as: "needs-decision", reason, at: ctx.at };
+  job.parks = (job.parks ?? 0) + 1;
   delete job.sessionId;
   ctx.commit(PARK_EVENT["needs-decision"], reason, refKey(job.item), { step: job.step });
   await tellPeople(ctx, job, "needs-decision", reason, "decision");
