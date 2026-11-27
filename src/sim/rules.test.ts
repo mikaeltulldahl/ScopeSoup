@@ -159,8 +159,11 @@ describe("each rule fires on a bad state built by hand", { concurrency: 1 }, () 
     assert.match(fires("B6", obs({ items: [item("A-1", { kind: "person", why: "holds" }, { item: held })] }), obs({ started: [started("A-1", "implement")] })) ?? "", /holds/);
   });
   it("B7", "a triage started twice on the same input after it settled (#196, #197)", () => {
-    const done = ledger({ ended: [{ step: 1, item: key("A-1"), role: "triage", session: "s1", status: "succeeded", settled: true }] });
+    const done = ledger({ ended: [{ step: 1, item: key("A-1"), role: "triage", session: "s-A-1", status: "succeeded", settled: true }] });
     assert.match(fires("B7", obs({ started: [started("A-1", "triage")] }), obs({ ledger: done, started: [started("A-1", "triage")] })) ?? "", /same input/);
+    // The session with this input never ended with a result (a restart left it with no process): its step starts again (#238).
+    const older = ledger({ ended: [{ step: 1, item: key("A-1"), role: "triage", session: "s0", status: "succeeded", settled: true }] });
+    assert.equal(fires("B7", obs({ started: [started("A-1", "triage")] }), obs({ ledger: older, started: [started("A-1", "triage")] })), null);
     assert.match(fires("B7", obs({ ledger: ledger({ asksInFair: new Map([[key("A-1"), 4]]) }) })) ?? "", /asked 4 times/);
     const shown = (text: string, body: string, questions: number): string | null => {
       const rewrite = { original: body.trim(), text, questions: Array.from({ length: questions }, () => ({ question: "?", options: [], recommendation: "" })), round: 1 };
