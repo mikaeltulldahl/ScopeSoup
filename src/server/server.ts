@@ -1136,6 +1136,12 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
     if (typeof ref !== "string") return sendError(response, 400, "BAD_FIELD", 'Give { "ref": "host:work:id" }.');
     const item = loadSnapshot(store).works.find((work) => refKey(work.ref) === ref);
     if (!item) return sendError(response, 404, "ITEM_NOT_FOUND", `No item ${ref}.`);
+    const parked = loadJobs(store)[refKey(item.ref)];
+    if (!parked || !resumesStep(parked)) return sendError(response, 409, "NOT_PARKED", `${ref} is not parked on a question or escalation of an implement step.`);
+    // The question the job is parked on is answered in the log first, as a move does: a Start over the log does not take is not made,
+    // so no question stays open there for a job that is gone (#230, #253).
+    const problem = await answerByMove(item, "Start over from triage");
+    if (problem) return sendError(response, 502, "WRITE_REFUSED", `${item.ref.id} is not started over: its open question could not be answered in its log (${problem}). Try again.`);
     const at = now().toISOString();
     const started = store.tx(() => {
       const job = loadJobs(store)[refKey(item.ref)];
