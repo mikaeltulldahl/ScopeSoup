@@ -1,7 +1,7 @@
 // Where a usage window is heading. Pure: the readings and the time come in as arguments.
 // Per account from the start: pass one account's readings (today there is one account).
 
-import type { Session, UsageSample, UsageWindowKind } from "../model/types.ts";
+import type { UsageSample, UsageWindowKind } from "../model/types.ts";
 
 /** How far back the rate is taken from: the last hour (5-hour window) or the last day (weekly). */
 export const FORECAST_LOOKBACK_MS: Record<UsageWindowKind, number> = {
@@ -23,33 +23,27 @@ export interface UsageForecast {
   atReset?: number;
 }
 
-/** Fewer session-hours than this in the span, and the per-session rate is noise: use the raw rate. */
-const MIN_SESSION_HOURS = 0.25;
-
-/** What is planned, so the forecast follows the settings and not only the past rate. */
+/** What is planned: while paused or idle Scope Soup starts nothing, so the forecast expects no more use. */
 export interface ForecastLoad {
-  /** Sessions that ran (started and finished times); only their overlap with the readings counts. */
-  sessions: readonly Pick<Session, "startedAt" | "finishedAt">[];
-  /** Sessions planned at once: maxParallelSessions. */
-  planned: number;
   paused: boolean;
   /** Whether work is ready, or sessions run. False means idle. */
   workReady: boolean;
 }
 
-/** How long one session ran inside [from, to], in ms. A session without an end runs to `to`. */
-export function overlapMs(session: Pick<Session, "startedAt" | "finishedAt">, from: number, to: number): number {
-  const start = Date.parse(session.startedAt);
-  const end = session.finishedAt === undefined ? to : Date.parse(session.finishedAt);
-  if (Number.isNaN(start) || Number.isNaN(end)) return 0;
-  return Math.max(0, Math.min(end, to) - Math.max(start, from));
+/** One window's level at a time, and when that window resets (NaN when not reported). */
+export interface WindowReading {
+  at: number;
+  utilization: number;
+  resetsAt: number;
 }
 
-/** Session-hours that ran between two instants. */
-function sessionHours(sessions: ForecastLoad["sessions"], from: number, to: number): number {
-  let total = 0;
-  for (const session of sessions) total += overlapMs(session, from, to);
-  return total / 3600_000;
+/**
+ * Whether the window started over between two of its readings: the earlier reading's reset time has passed, or a later one is
+ * reported. A drop without that is the reported level wobbling, not a reset. The plot (`usagePlot`) and the forecast use the same rule.
+ */
+export function resetBetween(before: WindowReading, now: WindowReading): boolean {
+  if (Number.isNaN(before.resetsAt)) return false;
+  return before.resetsAt <= now.at || (!Number.isNaN(now.resetsAt) && now.resetsAt > before.resetsAt);
 }
 
 function clock(then: Date, now: Date): string {
@@ -60,15 +54,14 @@ function clock(then: Date, now: Date): string {
 }
 
 /**
- * The forecast for one window, or null when there are too few readings.
- * `samples` are one account's readings in any order.
- * With `load`, the rate is the use per session-hour times the planned sessions (zero while paused or idle);
- * with too few session-hours, or without `load`, it is the raw rate.
+ * The forecast for one window, or null when there are too few readings or the newest reading's reset has passed.
+ * `samples` are one account's readings in any order. The rate is the one the readings show over the lookback, since the window's
+ * last reset: the slope the Usage plot draws. With `load`, paused or idle expects no more use.
  */
 export function forecastWindow(samples: readonly UsageSample[], kind: UsageWindowKind, now: Date, load?: ForecastLoad): UsageForecast | null {
   const lookback = FORECAST_LOOKBACK_MS[kind];
   const nowMs = now.getTime();
-  let readings = samples
+  let readings: WindowReading[] = samples
     .flatMap((sample) => {
       const window = sample.windows.find((each) => each.kind === kind);
       const at = Date.parse(sample.at);
@@ -76,9 +69,9 @@ export function forecastWindow(samples: readonly UsageSample[], kind: UsageWindo
       return [{ at, utilization: window.utilization, resetsAt: Date.parse(window.resetsAt) }];
     })
     .sort((a, b) => a.at - b.at);
-  // A reset starts a new window: only readings after the last drop belong together.
+  // Only readings since the last reset belong to this window.
   for (let i = readings.length - 1; i > 0; i--) {
-    if (readings[i]!.utilization < readings[i - 1]!.utilization) {
+    if (resetBetween(readings[i - 1]!, readings[i]!)) {
       readings = readings.slice(i);
       break;
     }
@@ -91,12 +84,8 @@ export function forecastWindow(samples: readonly UsageSample[], kind: UsageWindo
   if (span < lookback * MIN_SPAN_SHARE) return null;
   if (last.resetsAt <= nowMs) return null;
 
-  let rate = (last.utilization - first.utilization) / span; // share per ms
-  if (load) {
-    const hours = sessionHours(load.sessions, first.at, last.at);
-    if (hours >= MIN_SESSION_HOURS) rate = ((last.utilization - first.utilization) / hours / 3600_000) * load.planned;
-    if (load.paused || !load.workReady) rate = 0;
-  }
+  let rate = Math.max(0, last.utilization - first.utilization) / span; // share per ms
+  if (load && (load.paused || !load.workReady)) rate = 0;
   if (last.utilization >= 1) return { outcome: "used_up", at: new Date(last.at).toISOString(), words: "used up" };
   if (rate <= 0) return { outcome: "lasts", words: "lasts to the reset", atReset: last.utilization };
   const full = last.at + (1 - last.utilization) / rate;

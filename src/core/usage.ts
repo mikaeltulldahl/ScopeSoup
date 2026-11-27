@@ -11,7 +11,8 @@
 
 import { refKey } from "../model/types.ts";
 import type { Session, SessionRole, UsageSample, UsageWindowKind } from "../model/types.ts";
-import { overlapMs } from "./forecast.ts";
+import { resetBetween } from "./forecast.ts";
+import type { WindowReading } from "./forecast.ts";
 
 export type UsageKey = SessionRole | "outside";
 export type UsageMethod = "session" | "runtime" | "tokens" | "outside";
@@ -57,10 +58,14 @@ function zeros<K extends string>(keys: readonly K[]): Record<K, number> {
   return Object.fromEntries(keys.map((key) => [key, 0])) as Record<K, number>;
 }
 
-interface Reading {
-  at: number;
-  utilization: number;
-  resetsAt: number;
+type Reading = WindowReading;
+
+/** How long one session ran inside [from, to], in ms. A session without an end runs to `to`. */
+export function overlapMs(session: Pick<Session, "startedAt" | "finishedAt">, from: number, to: number): number {
+  const start = Date.parse(session.startedAt);
+  const end = session.finishedAt === undefined ? to : Date.parse(session.finishedAt);
+  if (Number.isNaN(start) || Number.isNaN(end)) return 0;
+  return Math.max(0, Math.min(end, to) - Math.max(start, from));
 }
 
 /** One window's readings, oldest first. */
@@ -86,11 +91,8 @@ function changesOf(readings: readonly Reading[]): Change[] {
   for (let i = 1; i < readings.length; i++) {
     const before = readings[i - 1]!;
     const now = readings[i]!;
-    // A reset is the window really starting over: the earlier reading's reset time has passed, or a later one is reported.
-    // A drop without that is the reported level wobbling, read as no change.
-    const passed = !Number.isNaN(before.resetsAt) && before.resetsAt <= now.at;
-    const moved = !Number.isNaN(before.resetsAt) && !Number.isNaN(now.resetsAt) && now.resetsAt > before.resetsAt;
-    if (passed || moved) {
+    // A drop without a reset is the reported level wobbling, read as no change.
+    if (resetBetween(before, now)) {
       // The window emptied at its reset time; what is read now was used after that.
       const resetAt = Math.min(Math.max(before.resetsAt, before.at), now.at);
       changes.push({ kind: "reset", at: resetAt });
@@ -288,8 +290,8 @@ export interface ForecastPoint {
 }
 
 /**
- * The dashed line from now to the reset: from the level now to full at the forecast's time and full to the reset, or to the
- * level expected at the reset. Empty without a forecast or with the reset passed.
+ * The dashed line from the newest reading (`now` is its time, `utilization` its level) to the reset: to full at the forecast's
+ * time and full to the reset, or to the level expected at the reset. Empty without a forecast or with the reset passed.
  */
 export function forecastLine(
   now: number,
@@ -426,6 +428,14 @@ export interface PaceSegment {
 export function paceLines(resets: readonly number[], windowMs: number, level: number): PaceSegment[] {
   const clamped = Math.min(1, Math.max(0, level));
   return resets.map((reset) => ({ from: reset - windowMs, to: reset, level: clamped }));
+}
+
+/**
+ * The pace lines a plot of [from, to] shows: one per window that is in view, the coming one (`resets` holds the passed ones
+ * and the coming one) included when its reset is past `to`, where the plot cuts it.
+ */
+export function paceInView(resets: readonly (string | number)[], from: number, to: number, windowMs: number, level: number): PaceSegment[] {
+  return paceLines(resetMarks(resets, from, Number.POSITIVE_INFINITY), windowMs, level).filter((segment) => segment.from < to);
 }
 
 /** A pace line's level at a time, or undefined outside its window. */
