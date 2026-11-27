@@ -8,6 +8,5 @@ import type { Known } from "./known.ts";
 export const KNOWN_MULTI: Record<string, Known> = {
   // Seen in the long run only (seed in the long run).
   A1: { seed: 36, long: true, what: "Scope Soup's own blockers are kept per store: an Item one machine's triage blocked stays blocked in that store (W) after the blocker left the host's record, while another machine works on it and the board shows its lane (pre-existing on main; the two-jobs cause of #243 is gone)" },
-  A3: { seed: 1, long: true, what: "a job parked on a question that is not open on the host, across machines (#248)" },
-  H5: { seed: 1, long: true, what: "an Item waiting only for a slot is not started while one is free, across machines (#256)" },
+  A3: { seed: 16, long: true, what: "a question line written on an Item closed on another machine, or closed in the same second, is folded as ended or open against what its asker's job says, the log ordered by skewed clocks; and a question post reported as failed that the log took (#248: the parked job that did not settle from answers given on another board is fixed)" },
 };

@@ -52,18 +52,20 @@ function ticksSince(memo: Record<string, unknown>, key: string, holds: boolean, 
 }
 
 /**
- * Whether a person on another machine's board answered the newest set of questions this machine's Scope Soup asked in the Item's log,
- * as this copy of the Item reads (an answer names its question by `to`, the line's time, or `toSet`, its set). False on a single machine.
+ * The answers a person on another machine's board gave to the newest set of questions this machine's Scope Soup asked in the Item's
+ * log, as this copy of the Item reads (an answer names its question by `to`, the line's time, or `toSet`, its set), each as its time
+ * and text. None on a single machine.
  */
-function answeredElsewhere(item: ItemObs["item"], machine: string | undefined): boolean {
-  if (!machine) return false;
+function answersElsewhere(item: ItemObs["item"], machine: string | undefined): string[] {
+  if (!machine) return [];
   const log = item.log ?? [];
   const asked = log.filter((line) => line.kind === "question" && line.by.agent && line.by.machine === machine);
   const set = asked[asked.length - 1]?.fields.set;
-  if (set === undefined) return false;
+  if (set === undefined) return [];
   const ofSet = asked.filter((line) => line.fields.set === set);
-  return log.some((line) => line.kind === "answer" && !line.by.agent && !!line.by.machine && line.by.machine !== machine
-    && (line.fields.toSet === set || (typeof line.fields.to === "string" && ofSet.some((q) => Date.parse(q.at) === Date.parse(line.fields.to as string)))));
+  return log.filter((line) => line.kind === "answer" && !line.by.agent && !!line.by.machine && line.by.machine !== machine
+    && (line.fields.toSet === set || (typeof line.fields.to === "string" && ofSet.some((q) => Date.parse(q.at) === Date.parse(line.fields.to as string)))))
+    .map((line) => `${line.at} ${String(line.fields.answer)}`);
 }
 
 // A triage runs in To do, or in Backlog when a person asked for one there (#221).
@@ -129,8 +131,12 @@ export const RULES: Rule[] = [
         if (personAsk && !asks(i.w) && open > 1) return `${i.id} has ${open} open question lines on the host, but W is ${wText(i.w)}, which asks one thing`;
         if (open > 0 && !personAsk && i.w.kind !== "session") return `${i.id} has ${open} open question line(s) on the host, but W is ${wText(i.w)}`;
         if (i.w.kind === "person" && i.w.why === "answer" && i.w.n !== undefined && i.w.n > 0 && open === 0 && !i.job?.parked?.retry) {
-          // Answered on another machine's board (#248): this machine reads it at whatever step syncs, and its next tick settles the job.
-          if (answeredElsewhere(i.host, o.machine) && (!isTick(o) || !answeredElsewhere(i.item, o.machine))) return null;
+          // Answered on another machine's board (#248): this machine reads it at whatever step syncs (a tick's own sync too), and the
+          // next tick that starts with it read settles the job.
+          const before = prevOf(prev, i.key)?.item;
+          const read = before ? answersElsewhere(before, o.machine) : [];
+          const given = answersElsewhere(i.host, o.machine);
+          if (given.length > 0 && (!isTick(o) || given.some((answer) => !read.includes(answer)))) return null;
           // Closed on another machine, which ends its questions: this machine's job closes once it reads the close.
           if (o.machine && (i.host.state === "done" || i.host.state === "abandoned")) return null;
           return `${i.id} is parked on ${i.w.n} question(s), none of them open on the host`;
@@ -625,7 +631,7 @@ export const RULES: Rule[] = [
         const asked = o.events.some((e) => (e.kind === "orchestrator.about_other_written" || e.kind === "orchestrator.restart_limit") && e.subject === i.key);
         if (asked) return null;
         // A person on another machine's board answered what it waited for (#248): the first tick settles it from the log.
-        if (w.kind === "person" && answeredElsewhere(i.item, o.machine)) return null;
+        if (w.kind === "person" && answersElsewhere(i.item, o.machine).length > 0) return null;
         if (w.kind === "session") return i.w.kind === "start" && i.w.role === w.role ? null : `${i.id} had a ${w.role} session before the restart and is ${wText(i.w)} after the first tick`;
         if (["person", "queue", "blocker", "nothing"].includes(w.kind) && wText(w) !== wText(i.w)) return `${i.id} was ${wText(w)} before the restart and is ${wText(i.w)} after the first tick`;
         return null;
