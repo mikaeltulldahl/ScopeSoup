@@ -103,6 +103,8 @@ export interface JobStage {
   phase: Phase;
   /** A person picked the step that runs next (decision 104): below the level that shows its switch, no switch holds it. */
   picked?: true;
+  /** How many times the job parked: a question line of a lower park number is one it settled already (`earlierPark`). */
+  parks?: number;
 }
 
 /** A rewrite another Item's triage proposed for this one's description, with no question. Agent text: data. */

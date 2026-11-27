@@ -422,4 +422,11 @@ test("with a job, the lane and the reason follow what the Item waits for (decisi
   const written = (from: string) => turnOf(snapshot({ works: [answered], jobs: [{ subject, stage: "start", step: "implement", phase: { at: "implement", run: { is: "waiting", text: { from, at: at(-1) } }, why: "first" } }] }), 1).reason;
   assert.match(written(itemTextHash(answered)), /read back from demo/);
   assert.equal(written("another text"), "Answer the question: the item needs a decision");
+  // The store still reads the question of park 2, which the job settled (it rejected a rewrite, say): it asks nothing now (#268). The
+  // question of a park the job waits on, or one with no park, still does.
+  const q = (set?: string) => work(1, { needsDecision: true, openQuestions: [{ at: at(-5), by: { who: "scopesoup", agent: true }, question: "Accept the rewrite?", options: [], ...(set ? { set } : {}) }] });
+  const going = (item: ReturnType<typeof q>, parks: number) => turnOf(snapshot({ works: [item], jobs: [{ subject, stage: "start", step: "implement", parks, phase: { at: "implement", run: { is: "waiting" }, why: "first" } }] }), 1).reason;
+  assert.equal(going(q(`2@${at(-5)}`), 2), "ready; waiting for a free agent slot");
+  assert.equal(going(q(`3@${at(-5)}`), 2), "Answer the question: the item needs a decision");
+  assert.equal(going(q(), 2), "Answer the question: the item needs a decision");
 });

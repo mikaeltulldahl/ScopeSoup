@@ -522,6 +522,18 @@ async function holdsOn(id: string, options: Shrunk, actions: Action[]): Promise<
 }
 
 describe("runs the simulator shrank, held since their fix", { concurrency: 1 }, () => {
+  // Fixed (#268): a rewrite rejected whose read-back is lost: the store's stale question of the settled park asks nothing on the card.
+  test("A1: a rewrite rejected whose read-back did not come: the card says the next step, not that it needs a decision", async () => {
+    await holdsOn("A1", {items: 12, level: 2, slots: 3, steps: 600, profile: "calm", ageing: true}, [
+      {kind: "tick"},
+      {kind: "end", item: "A-2", v: 584883},
+      {kind: "tick"},
+      {kind: "sync"},
+      {kind: "answer", item: "A-2", v: 390002},
+      {kind: "tick"},
+    ]);
+  });
+
   // Held (#268): a job rebuilt from the log counts no parks, so its question line's set is not an earlier park's; the answer names it.
   test("A3: a question parked, the store lost and the job rebuilt, then answered: the question closes on the host", async () => {
     await holdsOn("A3", {items: 7, level: 4, slots: 1, steps: 600, profile: "calm", ageing: true}, [

@@ -99,7 +99,7 @@ export function loadSnapshot(store: Store): Snapshot {
 export function jobStage(job: Job): JobStage {
   const phase = phaseOf(job);
   const stage: JobStage["stage"] = phase.at === "queued" ? "queue" : stepAt(job) === "review" || job.reviewedHead ? "review" : job.head || (stepAt(job) === "implement" && job.implement) ? "implement" : "start";
-  return { subject: job.item, stage, step: stepAt(job), phase, ...(pickOf(job)?.to === stepAt(job) ? { picked: true as const } : {}) };
+  return { subject: job.item, stage, step: stepAt(job), phase, ...(pickOf(job)?.to === stepAt(job) ? { picked: true as const } : {}), ...(job.parks ? { parks: job.parks } : {}) };
 }
 
 /** The parts of an item's restructuring that exist on its host, found by their part lines; a child is `linked` when it is a sub-issue of the item. */

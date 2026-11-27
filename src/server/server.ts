@@ -85,6 +85,7 @@ import { isFolder, isFolderName, openFolder, projectView } from "./project.ts";
 import type { FolderOpener, ProjectInfo } from "./project.ts";
 import { plural } from "../model/plural.ts";
 import { parkedForAnswer } from "../core/phase.ts";
+import { earlierPark } from "../core/questions.ts";
 import { phaseOf } from "../orchestrator/phase.ts";
 
 export interface ServerOptions {
@@ -287,15 +288,6 @@ export interface RestructureHost {
 
 /** What the Settings page says after a shared setting was saved. */
 /** Whether the job is parked on the parked state of that time (the one a page read). */
-/**
- * A question line of an earlier park than the job's own (its set's number is below the job's park count): the store reads it while the
- * job's own park is not read back yet, after an answer whose read-back was lost (#268). A line with no set, or of this park, is not.
- */
-function earlierPark(question: Pick<OpenQuestion, "set">, job: Job): boolean {
-  const number = Number.parseInt(question.set ?? "", 10);
-  return Number.isInteger(number) && number < (job.parks ?? 0);
-}
-
 function sameParked(job: Job | undefined, parkedAt: string): boolean {
   const parked = where(job)?.parked;
   return !!parked && Date.parse(parked.at) === Date.parse(parkedAt);
@@ -595,7 +587,7 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
     // read-back after an answer, #268): then the answer names this park's set instead.
     const parkedJob = loadJobs(store)[ref];
     const newestOpen = open[open.length - 1];
-    const newest = newestOpen && !(parkedJob && where(parkedJob).parked && earlierPark(newestOpen, parkedJob)) ? newestOpen : undefined;
+    const newest = newestOpen && !(parkedJob && where(parkedJob).parked && earlierPark(newestOpen, parkedJob.parks)) ? newestOpen : undefined;
     for (const { text, to, index: given } of entries) {
       // `question` only means something while the item parked on several questions; a stale page or a re-triage is refused below.
       if (given !== undefined && several.length === 0) return sendError(response, 409, "NO_OPEN_QUESTIONS", `${ref} does not wait on several questions (any more): reload the item.`);
@@ -945,7 +937,7 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
     const parkedJob = loadJobs(store)[refKey(work.ref)];
     const parked = where(parkedJob)?.parked;
     const set = parked ? parkSet(parkedJob!) : "";
-    const unread = onLog && !!parkedJob && parkedForAnswer(phaseOf(parkedJob)) && open.every((question) => earlierPark(question, parkedJob));
+    const unread = onLog && !!parkedJob && parkedForAnswer(phaseOf(parkedJob)) && open.every((question) => earlierPark(question, parkedJob.parks));
     const asked: (Pick<OpenQuestion, "at" | "by" | "question" | "set"> | null)[] = unread ? [...open, null] : open;
     for (const question of asked) {
       try {
