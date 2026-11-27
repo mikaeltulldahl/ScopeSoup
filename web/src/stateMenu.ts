@@ -7,7 +7,7 @@ import type { ItemPage } from "../../src/core/views.ts";
 import type { ThemeWords } from "./theme.ts";
 import { fill } from "./theme.ts";
 
-export const STATE_KEYS = ["triage", "backlog", "blocked", "todo", "in-progress", "in-review", "merge-queue", "done", "abandoned"] as const;
+export const STATE_KEYS = ["triage", "backlog", "todo", "blocked", "in-progress", "in-review", "merge-queue", "done", "abandoned"] as const;
 export type StateKey = (typeof STATE_KEYS)[number];
 
 /** One call the pick sends, in order. `block` adds the blocker the person picks. */

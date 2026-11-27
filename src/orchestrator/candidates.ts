@@ -88,14 +88,15 @@ export function planOrder(items: WorkItem[], changes: Change[], jobs: Jobs, now:
 
 /**
  * The busy Items, with the paths and links their triage named: a running or started implement step, a review, or a change that
- * exists and is not on main yet (in the merge queue, handed over, or parked for a person after a revision was written). A job
+ * exists and is not on main yet (in the merge queue, handed over, or parked for a person after a revision was written), and an implement
+ * step that began and parked on a question or an escalation before any commit. A job
  * parked before any change exists (a triage question, a rewrite, not ready) holds nothing back; a merged one is over.
  */
 export function busyItems(jobs: Jobs): NamedFiles[] {
   return Object.values(jobs).flatMap((job) => {
     if (job.merged !== undefined) return [];
     const busy = job.parked
-      ? job.parked.as === "queued" || job.parked.as === "handed-over" || job.head !== undefined || job.queued !== undefined
+      ? job.parked.as === "queued" || job.parked.as === "handed-over" || job.head !== undefined || job.queued !== undefined || (job.parked.byStep === true && job.step === "implement")
       : job.step === "review" || (job.step === "implement" && (job.sessionId !== undefined || !awaitsImplement(job)));
     if (!busy) return [];
     const paths = (job.triage?.paths ?? []).filter((path) => path.trim());

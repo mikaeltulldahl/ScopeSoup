@@ -248,7 +248,7 @@ export const RULES: Rule[] = [
   {
     id: "B7",
     why: "No repeat without new input: no session of a role twice on the same input after a settled result; under Fair at most 3 asks per Item (#171, #196, #197).",
-    check(o, _prev, memo) {
+    check(o, prev, memo) {
       const seen = (memo.inputs ??= {}) as Record<string, string>;
       for (const s of o.started) {
         const input = JSON.stringify([s.request.vars.itemTitle, s.request.vars.itemBody, s.request.message ?? "", s.request.vars.recheck ?? "", s.request.vars.history ?? "", s.request.resume ?? "", o.git.branches.get(s.request.branch) ?? "", o.git.main]);
@@ -256,13 +256,20 @@ export const RULES: Rule[] = [
         const before = seen[key];
         // A retry after a failure (or a cut-off session resumed) is not a repeat.
         const last = o.ledger.ended.filter((e) => e.item === s.item && e.role === s.role).at(-1);
-        if (before && last?.settled) return `a ${s.role} session started again on ${s.item.split(":").pop()} with the same input as session ${before}, after it succeeded`;
+        // An Item with no job on this machine, or one a person's move drops, starts anew (as does one whose claim went to another machine), and a job with a failure counted is retried: an implementor's "done" with no commit is settled in the ledger but a failure to the tick.
+        const dropped = prev !== undefined && prev.items.some((i) => i.key === s.item && (i.job === undefined || i.job.dropAskedBy !== undefined || i.job.failures > 0));
+        if (before && last?.settled && !dropped) return `a ${s.role} session started again on ${s.item.split(":").pop()} with the same input as session ${before}, after it succeeded`;
         seen[key] = s.session;
       }
       for (const [key, n] of o.ledger.asksInFair) if (n > 3) return `under Fair, ${key.split(":").pop()} was asked ${n} times`;
       return first(o.items, (i) => {
         const rewrite = i.w.kind === "person" && i.w.why === "rewrite" ? i.job?.rewrite : undefined;
-        if (rewrite && squash(rewrite.text) === squash(i.item.body ?? "")) return `${i.id} shows a rewrite that equals its description`;
+        // Questions (or label changes) come with the description unchanged, as its own text: that is no rewrite to accept. A rewrite
+        // that differs from the description only in whitespace is dropped in every case, and a rewrite alone that equals it is none.
+        if (rewrite && squash(rewrite.text) === squash(i.item.body ?? "")) {
+          const alone = rewrite.questions.length === 0 && !rewrite.labels;
+          if (alone || rewrite.text !== rewrite.original) return `${i.id} shows a rewrite that equals its description${alone ? "" : " apart from whitespace"}`;
+        }
         return null;
       });
     },
@@ -363,7 +370,10 @@ export const RULES: Rule[] = [
         const before = prevOf(prev, s.item);
         if (!before?.job || before.job.head || before.job.implement || before.job.implementAskedBy) return null;
         const paths = before.paths;
-        const other = prev!.items.find((i) => i.key !== s.item && !isClosed(i) && i.job && isBusy(i.job, !!i.job.head && o.git.contains(i.job.head, o.git.main) === true) && i.paths.some((p) => paths.includes(p)));
+        // Busy before the tick and still busy after it: a session that ended in this tick and merged its change is over, and the start
+        // that follows in the same tick is rightly let go.
+        const busyIn = (i: ItemObs, git: Observation["git"]): boolean => !isClosed(i) && !!i.job && isBusy(i.job, !!i.job.head && git.contains(i.job.head, git.main) === true);
+        const other = prev!.items.find((i) => i.key !== s.item && busyIn(i, prev!.git) && i.paths.some((p) => paths.includes(p)) && o.items.some((now) => now.key === i.key && busyIn(now, o.git)));
         return other ? `${before.id}'s implement started while ${other.id} is busy on the same paths` : null;
       });
     },

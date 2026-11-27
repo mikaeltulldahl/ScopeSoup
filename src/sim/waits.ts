@@ -108,7 +108,7 @@ export function waitsFor(input: WaitInput): W {
  */
 export function isBusy(job: Job, onMain: boolean): boolean {
   if (job.merged || onMain) return false;
-  if (job.parked) return job.parked.as === "queued" || job.parked.as === "handed-over" || !!job.head || !!job.queued;
+  if (job.parked) return job.parked.as === "queued" || job.parked.as === "handed-over" || !!job.head || !!job.queued || (job.parked.byStep === true && job.step === "implement");
   return job.step === "review" || (job.step === "implement" && (!!job.sessionId || !!job.head || !!job.implement || !!job.agentSession || !!job.resumeWith || !!job.resume || job.failures > 0));
 }
 

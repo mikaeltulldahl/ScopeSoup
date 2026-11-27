@@ -13,7 +13,7 @@ export const ORDERED_LANES: readonly string[] = ["todo", "backlog"];
 /** The State menu's option for a lane of the board (the merge queue's lane is Queued and Checking drawn as one). */
 export function laneState(lane: string): StateKey | undefined {
   if (lane === MERGE_LANE || lane === "queued" || lane === "checking") return "merge-queue";
-  const keys: readonly string[] = ["backlog", "blocked", "todo", "in-progress", "in-review", "done"];
+  const keys: readonly string[] = ["backlog", "todo", "blocked", "in-progress", "in-review", "done"];
   return keys.includes(lane) ? (lane as StateKey) : undefined;
 }
 

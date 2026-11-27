@@ -5,13 +5,13 @@ import { refKey } from "../model/types.ts";
 import type { Index, JobStage } from "./snapshot.ts";
 
 // Backlog: what a person has not chosen yet, which no agent starts; To do: what agents may start (decision 121).
-export const LANES = ["backlog", "blocked", "todo", "in-progress", "in-review", "queued", "checking", "done"] as const;
+export const LANES = ["backlog", "todo", "blocked", "in-progress", "in-review", "queued", "checking", "done"] as const;
 export type Lane = (typeof LANES)[number];
 
 export const LANE_TITLES: Record<Lane, string> = {
   backlog: "Backlog",
-  blocked: "Blocked",
   todo: "To do",
+  blocked: "Blocked",
   "in-progress": "In progress",
   "in-review": "In review",
   queued: "Queued",
