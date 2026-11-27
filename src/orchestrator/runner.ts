@@ -521,7 +521,7 @@ export function createRunner(deps: RunnerDeps): Runner {
           }
         }
       }
-      const over: Session = { ...session, status: "failed", finishedAt: iso(at), endReason: `Orphaned: left by an earlier run of Scope Soup; ${what}.` };
+      const over: Session = { ...session, status: "failed", finishedAt: iso(at), endReason: `Orphaned: left by an earlier run of Scope Soup; ${what}.`, orphaned: true };
       store.tx(() => {
         if (store.getValue(sessionResultKey(session.ref.id)) === null) store.setValue(sessionResultKey(session.ref.id), "{}");
         store.put(over, ACTOR, iso(at));

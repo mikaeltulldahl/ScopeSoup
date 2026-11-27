@@ -96,7 +96,7 @@ interface FakeRunner extends AgentRunner {
   /** The branch head the fake reports, when a test moves it (a commit); HEAD otherwise. */
   headSha?: string;
   /** Ends the newest session of an item. */
-  end(itemId: string, status: SessionStatus, output?: unknown, extra?: { resumeAt?: string; endReason?: string; denied?: string[]; costUsd?: number; setupFailed?: true; setupOutcome?: string; cwd?: string }): void;
+  end(itemId: string, status: SessionStatus, output?: unknown, extra?: { resumeAt?: string; endReason?: string; denied?: string[]; costUsd?: number; setupFailed?: true; setupOutcome?: string; cwd?: string; orphaned?: true }): void;
 }
 
 interface World {
@@ -200,7 +200,7 @@ function world(cfg: ProjectConfig | ConfigSource, items: WorkItem[] = []): World
       const asked = [...runner.requests].reverse().find((request) => request.subject.id === itemId);
       const told = /merge it to/.test(asked?.vars.finish ?? "");
       if (runner.merges && told && session.role === "implement" && status === "succeeded" && (output as { done?: boolean } | undefined)?.done === true) runner.main = MAIN_MERGED;
-      const over: Session = { ...session, status, finishedAt: now(), endReason: extra.endReason ?? status, agentSessionId: `agent-${session.ref.id}`, ...(extra.costUsd !== undefined ? { costUsd: extra.costUsd } : {}), ...(extra.setupFailed ? { setupFailed: true as const } : {}), ...(extra.setupOutcome ? { setupOutcome: extra.setupOutcome } : {}), ...(extra.cwd ? { cwd: extra.cwd } : {}) };
+      const over: Session = { ...session, status, finishedAt: now(), endReason: extra.endReason ?? status, agentSessionId: `agent-${session.ref.id}`, ...(extra.costUsd !== undefined ? { costUsd: extra.costUsd } : {}), ...(extra.setupFailed ? { setupFailed: true as const } : {}), ...(extra.setupOutcome ? { setupOutcome: extra.setupOutcome } : {}), ...(extra.cwd ? { cwd: extra.cwd } : {}), ...(extra.orphaned ? { orphaned: true as const } : {}) };
       sessions.set(itemId, over);
       store.setValue(sessionResultKey(session.ref.id), JSON.stringify({ output, resumeAt: extra.resumeAt, denied: extra.denied }));
       store.put(over, "orchestrator", now());
@@ -261,7 +261,7 @@ const REVIEW_OK = { verdict: "approve", findings: [] };
 const REVIEW_CHANGES = { verdict: "changes", findings: [{ severity: "must", file: "src/a.ts", text: "Off by one." }] };
 
 /** Ends the item's session, moves past the continuation delay and ticks. */
-async function step(w: World, id: string, status: SessionStatus, output?: unknown, extra?: { resumeAt?: string; endReason?: string; denied?: string[] }) {
+async function step(w: World, id: string, status: SessionStatus, output?: unknown, extra?: Parameters<FakeRunner["end"]>[3]) {
   w.runner.end(id, status, output, extra);
   await w.run();
   w.clock.ms += 1000;
@@ -437,9 +437,57 @@ for (const [name, raw] of [["level 3 before approval", { level: 3 }], ["level 4"
     assert.equal(w.job("1")?.parked?.as, "escalated");
     assert.equal(w.job("1")?.merged, undefined);
     assert.deepEqual(w.reasons("orchestrator.merged"), []);
-    assert.match(w.reasons("orchestrator.escalated")[0] ?? "", /merged scopesoup\/1 to main .* although its instructions said to commit and stop, not to merge: its session started at level (3|4)/);
+    assert.match(w.reasons("orchestrator.escalated")[0] ?? "", /merged scopesoup\/1 to main .* although its instructions said to commit and stop, not to merge \(its session started at level (3|4)/);
+  });
+
+  test(`${name}: a session told to commit and stop that merged without saying so is escalated as a merge, not "nothing to change" (#238)`, async () => {
+    const w = world(config(raw), [item("1")]);
+    w.runner.commitsAhead = async () => 0;
+    w.store.addUsageSample(usage(0.1, 0.1));
+    await w.run();
+    await step(w, "1", "succeeded", TRIAGE_OK);
+    w.runner.main = MAIN_MERGED; // it merged on its own and its answer names no merge
+    await step(w, "1", "succeeded", IMPLEMENT_OK);
+    assert.equal(w.job("1")?.parked?.as, "escalated");
+    assert.match(w.reasons("orchestrator.escalated")[0] ?? "", /merged scopesoup\/1 to main .* although its instructions said to commit and stop/);
   });
 }
+
+test("a session left by an earlier run (Scope Soup restarted) starts its step again, never counted as a failure (#238)", async () => {
+  const w = world(config({ level: 2 }), [item("1")]);
+  w.store.addUsageSample(usage(0.1, 0.1));
+  await w.run();
+  const max = persistenceLimits(w.depsFor().config.load().config!.settings.persistence.value).maxAttempts;
+  for (let i = 0; i < max + 1; i++) {
+    await step(w, "1", "failed", undefined, { endReason: "Orphaned: left by an earlier run of Scope Soup; its process is gone.", orphaned: true });
+    w.clock.ms += 1000;
+    await w.run();
+  }
+  assert.equal(w.job("1")?.parked, undefined);
+  assert.equal(w.job("1")?.failures, 0);
+  assert.deepEqual(roles(w), Array(max + 2).fill("triage"));
+  assert.match(w.reasons("orchestrator.interrupted")[0] ?? "", /left by an earlier run of Scope Soup .* not counted as a failure/);
+});
+
+test("a change in the merge queue when the level is lowered to 3 leaves the queue, and the implementor's own session merges it (#238)", async () => {
+  let state: ReturnType<ConfigSource["load"]> = { config: config({ level: 4, ...MERGES }), changed: true };
+  const queue = fakeQueue();
+  const w = world({ load: () => state }, [item("1")]);
+  w.queue = queue;
+  await toHandOver(w);
+  assert.equal(w.job("1")?.parked?.as, "queued");
+  state = { config: config({ level: 3, ...MERGES }), changed: true };
+  await w.run();
+  assert.equal(w.job("1")?.parked, undefined);
+  assert.equal(w.job("1")?.queued, undefined);
+  assert.match(w.reasons("orchestrator.step").at(-1) ?? "", /waited in the merge queue, but the project is at level 3 now/);
+  w.clock.ms += 1000;
+  await w.run();
+  assert.equal(w.runner.requests.at(-1)?.role, "implement");
+  assert.match(w.runner.requests.at(-1)?.vars.finish ?? "", /merge it to/);
+  await step(w, "1", "succeeded", IMPLEMENT_OK);
+  assert.equal(w.job("1")?.merged, HEAD);
+});
 
 test("level 3, nothing committed and nothing merged (the answer names no merge): still \"nothing to change\" for a person", async () => {
   const w = world(config({ level: 3 }), [item("1")]);

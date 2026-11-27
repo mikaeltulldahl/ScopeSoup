@@ -259,6 +259,15 @@ function answerEntry(given: { answer?: unknown; to?: unknown; question?: unknown
 }
 
 /** Thrown inside the store transaction that records answers, so a refused one rolls back the others. */
+/** Thrown to roll back a transaction run only to learn its outcome. */
+class DryRun extends Error {
+  outcome: unknown;
+  constructor(outcome: unknown) {
+    super("dry run");
+    this.outcome = outcome;
+  }
+}
+
 class AnswerRefused extends Error {
   refused: AnswerRefusal;
   index: number;
@@ -589,61 +598,76 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
     if (new Set(keys).size !== keys.length) return sendError(response, 400, "DUPLICATE_ANSWER", "Give one answer to each question.");
     const at = now().toISOString();
     type Outcome = { released: boolean; open?: number } | { refused: AnswerRefusal; index: number };
-    let outcome: Outcome;
-    try {
-      outcome = store.tx((): Outcome => {
-        const job = loadJobs(store)[ref];
-        if (!resolved.some((each) => each.target) && parkedAt !== undefined && !(job?.parked && Date.parse(job.parked.at) === Date.parse(parkedAt))) return { refused: "parked-changed", index: -1 };
-        let released = false;
-        let left: number | undefined;
-        for (const each of resolved) {
-          const asking = each.target?.options ?? each.asked?.options ?? parked?.decision?.options;
-          addAnswer(store, { subject, answer: each.text, by: by().who, at, textHash: itemTextHash(item), ...(each.question ? { question: each.question } : {}), ...(asking && asking.length > 0 ? { options: optionTexts(asking) } : {}) });
-          if (several.length > 0) {
-            if (!each.target) {
-              left ??= several.filter((one) => one.answer === undefined).length;
+    // `dry`: decided and rolled back, so a refusal is known before anything is written on the host.
+    const record = (dry: boolean): Outcome => {
+      let outcome: Outcome;
+      try {
+        outcome = store.tx((): Outcome => {
+          const job = loadJobs(store)[ref];
+          if (!resolved.some((each) => each.target) && parkedAt !== undefined && !(job?.parked && Date.parse(job.parked.at) === Date.parse(parkedAt))) return { refused: "parked-changed", index: -1 };
+          let released = false;
+          let left: number | undefined;
+          for (const each of resolved) {
+            const asking = each.target?.options ?? each.asked?.options ?? parked?.decision?.options;
+            addAnswer(store, { subject, answer: each.text, by: by().who, at, textHash: itemTextHash(item), ...(each.question ? { question: each.question } : {}), ...(asking && asking.length > 0 ? { options: optionTexts(asking) } : {}) });
+            if (several.length > 0) {
+              if (!each.target) {
+                left ??= several.filter((one) => one.answer === undefined).length;
+                continue;
+              }
+              // Kept in the job, and released with the last open answer; checked again here, so two answers cannot race.
+              const done = answerQuestion(store, subject, each.index, each.text, by().who, at, parkedAt);
+              // Thrown, so the answers recorded before it in this transaction are rolled back too.
+              if ("refused" in done) throw new AnswerRefused(done.refused, each.index);
+              released ||= done.released;
+              left = done.open;
               continue;
             }
-            // Kept in the job, and released with the last open answer; checked again here, so two answers cannot race.
-            const done = answerQuestion(store, subject, each.index, each.text, by().who, at, parkedAt);
-            // Thrown, so the answers recorded before it in this transaction are rolled back too.
-            if ("refused" in done) throw new AnswerRefused(done.refused, each.index);
-            released ||= done.released;
-            left = done.open;
-            continue;
+            const picksUp = !released && parked && (parked.as === "needs-decision" || parked.as === "not-ready" || parked.as === "escalated");
+            if (picksUp) released = releaseJob(store, subject, by().who, at, `${by().who} answered: ${each.text}`);
           }
-          const picksUp = !released && parked && (parked.as === "needs-decision" || parked.as === "not-ready" || parked.as === "escalated");
-          if (picksUp) released = releaseJob(store, subject, by().who, at, `${by().who} answered: ${each.text}`);
-        }
-        return { released, ...(left !== undefined ? { open: left } : {}) };
-      });
-    } catch (error) {
-      if (!(error instanceof AnswerRefused)) throw error;
-      outcome = { refused: error.refused, index: error.index };
-    }
-    if ("refused" in outcome) {
+          const result = { released, ...(left !== undefined ? { open: left } : {}) };
+          if (dry) throw new DryRun(result);
+          return result;
+        });
+      } catch (error) {
+        if (error instanceof DryRun) return error.outcome as Outcome;
+        if (!(error instanceof AnswerRefused)) throw error;
+        outcome = { refused: error.refused, index: error.index };
+      }
+      return outcome;
+    };
+    const refuse = (outcome: { refused: AnswerRefusal; index: number }): void => {
       const refusals: Record<AnswerRefusal, [string, string]> = {
         "no-questions": ["NO_OPEN_QUESTIONS", `${ref} does not wait on that question (any more): reload the item.`],
         "parked-changed": ["PARKED_CHANGED", `${ref} parked on other questions now: reload the item.`],
         answered: ["ALREADY_ANSWERED", `Question ${outcome.index + 1} on ${ref} has an answer already.`],
       };
       const [code, message] = refusals[outcome.refused];
-      return sendError(response, 409, code, message);
-    }
-    const released = outcome.released;
-    const left = outcome.open !== undefined ? { open: outcome.open } : {};
-    // In the item's log too (meta branch), naming the question, so the answer outlives the local store. One write for all of them.
+      sendError(response, 409, code, message);
+    };
+    // In the item's log first (meta branch), naming the question, so the answer outlives the local store: it is recorded here only
+    // once the log took it, as on GitHub, where the comment is written first. One write for all of them.
     const write = items?.write;
-    if (write?.appendLog && subject.host === items!.host) {
+    const logs = !!write?.appendLog && subject.host === items!.host;
+    let logged: WriteOutcome | undefined;
+    if (logs) {
+      const tried = record(true);
+      if ("refused" in tried) return refuse(tried);
       const lines = resolved.map((each) => ({ kind: "answer", by: by(), fields: { answer: each.text, ...(each.asked ? { to: each.asked.at, toBy: each.asked.by } : {}) } }));
-      let logged: WriteOutcome | undefined;
       try {
-        if (lines.length > 1 && write.appendLogs) logged = await write.appendLogs(subject, lines);
-        else for (const line of lines) logged = await write.appendLog(subject, line);
+        if (lines.length > 1 && write!.appendLogs) logged = await write!.appendLogs(subject, lines);
+        else for (const line of lines) logged = await write!.appendLog!(subject, line);
       } catch (error) {
         options.onRefresh?.();
-        return sendJson(response, 200, { recorded: true, released, ...left, logged: false, problem: error instanceof Error ? error.message : String(error) });
+        return sendError(response, 503, "LOG_WRITE_FAILED", `The answer could not be written to ${ref}'s log, so it is not recorded: ${error instanceof Error ? error.message : String(error)} Try again.`);
       }
+    }
+    const outcome = record(false);
+    if ("refused" in outcome) return refuse(outcome);
+    const released = outcome.released;
+    const left = outcome.open !== undefined ? { open: outcome.open } : {};
+    if (logs) {
       await options.syncNow?.();
       return sendJson(response, 200, { recorded: true, released, ...left, logged: true, shared: logged?.shared });
     }

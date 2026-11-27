@@ -82,7 +82,7 @@ export interface Observation {
   /** Requests made in this step (a slice of the ledger). */
   requests: Ledger["requests"];
   remote: { refusedRewrites: number; down: boolean; items: number };
-  /** The host's Items as read at a version of the remote, so an unchanged remote is not read again. */
+  /** The host's Items as read at a version of the remote, so an unchanged remote is not read again; the last read while it is down. */
   hostRead?: { version: number; items: Map<string, WorkItem> };
   /** The board's lanes, in order (the Backlog and To do rules of #221 turn on when a To do lane is there). */
   lanes: string[];
@@ -165,7 +165,8 @@ export async function observe(world: SimWorld, seed: number, action: Action, pre
     ledger: world.ledger,
     requests: world.ledger.requests.slice(requestsBefore).filter((r) => r.step === world.step),
     remote: { refusedRewrites: world.remote.refusedRewrites.length, down: world.remote.down > 0 || world.wasDown, items: world.remote.files.size },
-    ...(hostItems ? { hostRead: { version: world.remote.version, items: hostItems } } : {}),
+    // While the host does not answer, the last read stands: Items are never removed from it, so what it had still exists (I1).
+    ...(hostItems ? { hostRead: { version: world.remote.version, items: hostItems } } : previous?.hostRead ? { hostRead: previous.hostRead } : {}),
     lanes: board.lanes.map((lane) => lane.lane),
     queued: [...world.queue.waiting.keys(), ...world.queue.notices.flatMap((n) => (n.kind === "mark-merged" ? n.members.map((m) => refKey(m.change)) : n.kind === "send-back" ? [refKey(n.change)] : []))],
     fairTicks: world.fair && previous ? previous.fairTicks + (action.kind === "tick" ? 1 : 0) : 0,

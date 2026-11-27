@@ -13,6 +13,7 @@ import { createTestRepo, itemMd } from "../hosts/metaBranch/testRepo.ts";
 import type { Store } from "../store/store.ts";
 import { openStore } from "../store/store.ts";
 import { createSync } from "../sync/index.ts";
+import { loadAnswers } from "../store/answers.ts";
 import type { Job } from "../orchestrator/jobs.ts";
 import { loadJobs, saveJobs } from "../orchestrator/jobs.ts";
 import type { ScopeSoupServer } from "./server.ts";
@@ -313,4 +314,25 @@ test("two log questions answered with one Send are one commit on the meta branch
   const log = repo.git(["cat-file", "-p", `${META}:items/${id}/log.jsonl`]).split("\n").map((line) => JSON.parse(line) as Record<string, unknown>);
   assert.deepEqual(log.slice(-2).map((line) => [line.kind, line.answer]), [["answer", "low"], ["answer", "At hand height, as written"]]);
   assert.deepEqual((await page(ref)).questions, []);
+});
+
+test("an answer the item's log does not take is not recorded: the store is never its only copy (#238)", async () => {
+  const made = await post("/api/items", { title: "Pick a gate" });
+  const ref = made.body.ref as string;
+  const id = ref.split(":").pop()!;
+  await other.write!.appendLog!({ host: "metaBranch", kind: "work", id }, { kind: "question", by: { who: "planner", agent: true }, fields: { question: "Which gate?", options: ["wood", "iron"], recommendation: "wood" } });
+  await refresh();
+  const failing = { ...host.write!, appendLog: async () => { throw new Error("the remote did not answer"); }, appendLogs: async () => { throw new Error("the remote did not answer"); } };
+  const down = createServer({ store, port: 0, items: { host: "metaBranch", write: failing }, syncNow: refresh });
+  const url = (await down.start()).url;
+  try {
+    const response = await fetch(`${url}/api/answer`, { method: "POST", headers: { "Content-Type": "application/json", "X-ScopeSoup-Person": "Ada" }, body: JSON.stringify({ ref, answer: "wood" }) });
+    const body = (await response.json()) as Record<string, unknown>;
+    assert.equal(response.status, 503, JSON.stringify(body));
+    assert.equal((body.error as { code?: string } | undefined)?.code ?? body.code, "LOG_WRITE_FAILED");
+  } finally {
+    await down.stop();
+  }
+  assert.deepEqual(loadAnswers(store).filter((answer) => answer.subject.id === id), []);
+  assert.equal((await page(ref)).questions.length, 1);
 });

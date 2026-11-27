@@ -17,7 +17,7 @@ import { tick } from "../orchestrator/tick.ts";
 import { initialState } from "../queue/state.ts";
 import type { ScopeSoupServer } from "../server/server.ts";
 import { createServer } from "../server/server.ts";
-import { applyControl, pauseAtStartup, setRolesForTest } from "../store/control.ts";
+import { applyControl, mergeQueueOn, pauseAtStartup, setRolesForTest } from "../store/control.ts";
 import { KEYS } from "../store/keys.ts";
 import type { Store } from "../store/store.ts";
 import { openStore } from "../store/store.ts";
@@ -443,7 +443,8 @@ export class SimWorld {
         return;
       case "queue": {
         const entry = this.queue.waiting.get(this.key(action.item));
-        if (!entry) return this.skip();
+        // The real queue is driven only at level 4 while merging is on (`driveQueue`): otherwise it neither merges nor sends back.
+        if (!entry || this.configNow.level < 4 || !mergeQueueOn(this.store)) return this.skip();
         this.queue.waiting.delete(this.key(action.item));
         if (action.merge) {
           const main = this.git.mergeToMain(entry.sha, "queue", this.key(action.item));

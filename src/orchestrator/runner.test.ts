@@ -664,6 +664,7 @@ test("the startup sweep settles sessions left by an earlier run", async () => {
   const read = (id: string) => w.store.get<Session>({ host: "scopesoup", kind: "session", id });
   assert.match(read("leftover")?.endReason ?? "", /Orphaned: .*was still there and was killed/);
   assert.match(read("gone")?.endReason ?? "", /Orphaned: .*its process is gone/);
+  assert.equal(read("gone")?.orphaned, true, "its step starts again, not counted as a failure");
   assert.match(read("never")?.endReason ?? "", /Orphaned/);
   assert.match(read("reused")?.endReason ?? "", /machine restarted since.*left alone/);
   for (const id of ["leftover", "gone", "never", "reused"]) assert.equal(read(id)?.status, "failed");

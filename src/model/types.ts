@@ -438,6 +438,8 @@ export interface Session {
   chat?: true;
   /** The project's setup failed in the folder, so no agent ran: the setup's failure, not the agent's. */
   setupFailed?: true;
+  /** Left by an earlier run of Scope Soup: no process of this run backs it (a restart). Its step starts again, not counted as a failure. */
+  orphaned?: true;
   /** With `setupFailed`: what happened, in a few words and without the setup's output ("exit 1"). What leaves the machine is built from it. */
   setupOutcome?: string;
 }

@@ -713,7 +713,7 @@ async function settleSessionMerge(ctx: Context, job: Job, item: WorkItem | null,
     delete job.merged;
     await park(
       ctx, job, "escalated",
-      `The implementor merged ${job.branch} to ${main} (${name} contains ${merged.slice(0, 7)}) although its instructions said to commit and stop, not to merge: its session started at level ${job.sessionStart?.level ?? "?"}, where nothing merges before review, and the level is ${ctx.config.level} now. The change is on ${main} without the review or the merge queue's check. Look at it; close the Item if it is fine, or answer here to have it looked at again.`,
+      `The implementor merged ${job.branch} to ${main} (${name} contains ${merged.slice(0, 7)}) although its instructions said to commit and stop, not to merge (its session started at level ${job.sessionStart?.level ?? "?"}; the level is ${ctx.config.level} now). The change is on ${main} without the review or the merge queue's check. Look at it; close the Item if it is fine, or answer here to have it looked at again.`,
       "escalation",
     );
     return true;
@@ -779,6 +779,22 @@ export function reviewOffAtLevel2(ctx: Context, job: Job): void {
     ctx, job,
     `Nobody reviews at this level now. If the work is done, merge it to ${ctx.config.mainBranch} and push the way CLAUDE.md says (or open a pull request if it says so).`,
     `${job.branch} waited at the review step, but the project is at level 2, where nobody reviews and the implementor merges. Next: the implementor's own session merges it.`,
+  );
+}
+
+/**
+ * A change that waits in the merge queue when the level is lowered below 4 (to 2 or 3): Scope Soup merges nothing below level 4, so
+ * it leaves the queue and the implementor's own session merges it, as after an approval at level 3. Left parked, it would wait for a
+ * queue that is not driven.
+ */
+export function queueOffBelowLevel4(ctx: Context, job: Job): void {
+  const was = job.queued;
+  delete job.parked;
+  delete job.queued;
+  job.merge = true;
+  backToImplementor(
+    ctx, job, APPROVED,
+    `${job.branch}${was ? ` (${was.slice(0, 7)})` : ""} waited in the merge queue, but the project is at level ${ctx.config.level} now, where Scope Soup merges nothing and the implementor merges. It leaves the queue. Next: the implementor's own session merges it.`,
   );
 }
 
@@ -922,6 +938,14 @@ async function settleStep(ctx: Context, job: Job, session: Session | null, recor
     ctx.commit("orchestrator.interrupted", `The ${job.step} session was stopped (${session.endReason ?? "no reason recorded"}). It continues when work may start again; this is not counted as a failure.`, key);
     return;
   }
+  // Left by an earlier run (Scope Soup restarted while it ran): the restart is not the step's failure, so the step starts again.
+  if (session.orphaned) {
+    job.notBefore = later(ctx.at, CONTINUE_MS);
+    job.resume = session.agentSessionId;
+    delete job.sessionId;
+    ctx.commit("orchestrator.interrupted", `The ${job.step} session was left by an earlier run of Scope Soup (${session.endReason ?? "no reason recorded"}). The step starts again; this is not counted as a failure.`, key);
+    return;
+  }
   // The setup failed, so no agent ran: the Item parked for a person with the setup's reason, not counted against the step.
   // The reason goes to the host (a comment, the item's log), so it never carries the setup's output (`setupHostText`).
   if (session.setupFailed) {
@@ -1025,23 +1049,24 @@ async function settleStep(ctx: Context, job: Job, session: Session | null, recor
       if (overturnsBack(ctx, job)) return;
       return handOver(ctx, job, item);
     }
-    // The level was raised while it worked, so it merged under the level its session started with (decision 108): if main holds
-    // what it merged, the Item is done as after a level 2 merge, not "nothing to change".
-    if (answer.mergedAs && !merging) {
-      if (await mergedUnderEarlierLevel(ctx, job, item, job.sessionStart?.mayMerge === true)) {
-        delete job.resumeWith;
-        return;
-      }
-    }
     // A round for the review's `should` findings (review.shouldFindings "fix") that committed nothing: the approved change goes on,
     // and the findings become a draft.
     if (job.shouldRound) {
       delete job.shouldRound;
       if (job.head && (await headOf(ctx, job)) === job.head) return shouldNothingNew(ctx, job, item);
     }
+    const empty = await emptyBranch(ctx, job);
+    // It merged although its instructions said to commit and stop: it says so (`mergedAs`), or its branch has nothing over main and
+    // main holds a head that is new since the work started. Merged under the level its session started with (decision 108), the
+    // Item is done as after a level 2 merge; merged untold, it is escalated. Either way it is not "nothing to change".
+    if (answer.mergedAs || (empty && job.base)) {
+      if (await mergedUnderEarlierLevel(ctx, job, item, job.sessionStart?.mayMerge === true)) {
+        delete job.resumeWith;
+        return;
+      }
+    }
     // Done with nothing committed. On the first build the implementor found nothing to change in the code: no retry would find
     // more, so it goes to a person to close it (or to answer, which runs the step again). In a fix round the step failed.
-    const empty = await emptyBranch(ctx, job);
     if (empty && job.fixRounds === 0) {
       return parkByStep(
         ctx, job, "escalated",

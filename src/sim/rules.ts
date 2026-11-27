@@ -435,9 +435,12 @@ export const RULES: Rule[] = [
     id: "E4",
     why: "Main moves only three ways: a session told to merge, the merge queue, or a person; a session that merged untold is escalated (decision 108).",
     check(o, _prev, memo) {
+      // Escalated once is handled: what a person answers to the escalation is theirs to decide.
+      const escalated = (memo.escalated ??= {}) as Record<string, true>;
       return first(o.git.mainMoves.filter((m) => m.how === "session untold"), (m) => {
         const i = o.items.find((each) => each.key === m.item);
-        const handled = !i || i.job?.parked?.as === "escalated" || isClosed(i);
+        if (i?.job?.parked?.as === "escalated") escalated[m.sha] = true;
+        const handled = !i || escalated[m.sha] === true || isClosed(i);
         const n = ticksSince(memo, `E4|${m.sha}`, !handled, o);
         return n > 2 ? `${i!.id}'s session merged without being told to and it was not escalated` : null;
       });
@@ -494,7 +497,7 @@ export const RULES: Rule[] = [
   // --- G. Restart and recovery ---
   {
     id: "G1",
-    why: "Restart: every switch is paused, and after the first tick each Item's W is what it was, except that a session became a wait to start the same step.",
+    why: "Restart: every switch is paused, and after the first tick each Item's W is what it was, except that a session became a wait to start the same step (not counted as a failure), or questions that waited for the session to end were written.",
     check(o, prev, memo) {
       if (o.action.kind === "restart" && prev) {
         const on = (["triage", "implement", "review"] as const).find((r) => o.switches[r] === "started");
@@ -514,7 +517,10 @@ export const RULES: Rule[] = [
         const w = before[i.key];
         if (!w) return null;
         if (w.kind === "session" && w.settling) return null;
-        if (w.kind === "session") return i.w.kind === "start" && i.w.role === w.role ? null : `${i.id} had a ${w.role} session before the restart and is ${wText(i.w)} after the first tick`;
+        // Questions other Items' agents asked about it wait until no session runs on it: the session's end lets them be written, as
+        // any session's end does.
+        const asked = o.events.some((e) => e.kind === "orchestrator.about_other_written" && e.subject === i.key);
+        if (w.kind === "session") return (i.w.kind === "start" && i.w.role === w.role) || asked ? null : `${i.id} had a ${w.role} session before the restart and is ${wText(i.w)} after the first tick`;
         if (["person", "queue", "blocker", "nothing"].includes(w.kind) && wText(w) !== wText(i.w)) return `${i.id} was ${wText(w)} before the restart and is ${wText(i.w)} after the first tick`;
         return null;
       });

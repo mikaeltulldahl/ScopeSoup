@@ -355,6 +355,30 @@ describe("runs the simulator shrank, held since their fix", { concurrency: 1 }, 
     await holdsOn("C3", { items: 5, level: 3, slots: 3, steps: 80, profile: "normal" }, steps);
   });
 
+  test("G1: a session ended by a restart starts its step again, not counted as a failure, so a third restart does not escalate it (#238)", async () => {
+    await holdsOn("G1", { items: 10, level: 3, slots: 3, steps: 600, profile: "rough" }, [
+      { kind: "tick" },
+      { kind: "end", item: "A-3", v: 951361 },
+      { kind: "restart" },
+      { kind: "tick" },
+      { kind: "level", to: 1 },
+      { kind: "clock", ms: 60000 },
+      { kind: "switch", to: "resume" },
+      { kind: "tick" },
+      { kind: "end", item: "A-1", v: 289275 },
+      { kind: "tick" },
+      { kind: "clock", ms: 60000 },
+      { kind: "end", item: "A-5", v: 313800 },
+      { kind: "tick" },
+      { kind: "restart" },
+      { kind: "tick" },
+    ]);
+  });
+
+  test("I1: the store lost while the host is down: the Items read before still own their branches (the checker's own setup, #238)", async () => {
+    await holdsOn("I1", { items: 12, level: 4, slots: 2, steps: 600, profile: "normal" }, [{ kind: "tick" }, { kind: "host-down", steps: 3 }, { kind: "lose-store" }]);
+  });
+
   test("C3: a closed Item's open question ends with it (#229)", async () => {
     await holdsOn("C3", { items: 4, level: 4, slots: 1, steps: 80, profile: "calm" }, [
       { kind: "tick" },

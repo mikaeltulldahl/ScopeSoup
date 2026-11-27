@@ -17,7 +17,7 @@ import type { LogRecord, Ref, Session, SessionStatus, WorkItem } from "../model/
 import { refKey } from "../model/types.ts";
 import { createServer } from "../server/server.ts";
 import { loadSnapshot } from "../server/snapshot.ts";
-import { loadAnswers } from "../store/answers.ts";
+import { addAnswer, loadAnswers } from "../store/answers.ts";
 import { openStore } from "../store/store.ts";
 import type { Store } from "../store/store.ts";
 import { createSync } from "../sync/index.ts";
@@ -207,6 +207,22 @@ test("a pending question and its later answer both survive the deleted local sto
   assert.equal(third.requests[0]?.role, "triage");
   // In the earlier rounds, after the triage that asked it (decision 112).
   assert.match(third.requests[0]?.vars.history ?? "", /Triage 1: [^\n]*\nA person answered "Letters or digits in ids\?": letters\n/);
+});
+
+test("an answer given after the store was lost and before the read-back does not keep the log's answers out (#238)", async () => {
+  const { host, item } = await project();
+  const first = start(host);
+  await first.run();
+  await first.end("succeeded", { ...TRIAGE_OK, hidesDecision: true, decision: { question: "Letters or digits in ids?", options: ["letters", "digits"], recommendation: "letters" } });
+  const asked = first.store.get<WorkItem>(item)?.openQuestions?.[0];
+  await host.write!.appendLog!(item, { kind: "answer", by: { who: "Ada", agent: false }, fields: { answer: "letters", to: asked!.at } });
+
+  // Deleted: a person answers on this laptop before its first tick read the log back.
+  const second = start(host);
+  await second.sync();
+  addAnswer(second.store, { subject: item, answer: "Keep it short.", by: "Ada", at: "2026-11-18T11:00:00.000Z" });
+  await second.run();
+  assert.deepEqual(loadAnswers(second.store).map((answer) => answer.answer), ["letters", "Keep it short."]);
 });
 
 test("three open triage questions all wait again after a deleted store; the first answer does not release the item, the third does", async () => {
