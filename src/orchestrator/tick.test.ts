@@ -1902,6 +1902,9 @@ function fakeQueue(): QueueDriver & { enqueued: string[]; notices: Notice[]; kep
     async drain(sink: QueueSink) {
       for (const notice of fake.notices.splice(0)) await sink.deliver(notice);
     },
+    async deliverDecided(sink: QueueSink) {
+      for (const notice of fake.notices.splice(0)) await sink.deliver(notice);
+    },
     state: () => { throw new Error("not used"); },
     pausedWhy: () => fake.paused,
     checkMissing: () => fake.missing,
@@ -2066,6 +2069,49 @@ test("merging by queue: Stop ends a running check's drain; its waiting notice is
   assert.deepEqual(outcome, ["refused"]);
   assert.equal(w.job("1")?.merged, undefined, "the notice was not applied");
   assert.equal(calls.at(-1), "release");
+});
+
+test("merging by queue: the level lowered while a drain checks the change: it waits for the drain, which merges it, and the implementor merges nothing (#238)", async () => {
+  let state: ReturnType<ConfigSource["load"]> = { config: config(QUEUE), changed: true };
+  const w = world({ load: () => state }, [item("1")]);
+  const queue = fakeQueue();
+  w.queue = queue;
+  queue.state = () => ({ entries: [{}], batches: [] }) as never;
+  await toHandOver(w);
+  let open: () => void = () => {};
+  const gate = new Promise<void>((resolve) => {
+    open = resolve;
+  });
+  queue.drain = async (sink) => {
+    await gate;
+    await sink.deliver({ kind: "mark-merged", batch: 3, tested: SHA2, members: [{ change: ref("1"), sha: SHA2, head: SHA }] });
+  };
+  const run = (): ReturnType<typeof tick> => tick({ ...w.depsFor(), queueWaitMs: 20 });
+  await run();
+  state = { config: config({ ...QUEUE, level: 3 }), changed: true };
+  await run();
+  assert.equal(w.job("1")?.parked?.as, "queued", "it stays in the queue while the drain runs");
+  assert.deepEqual(queue.kept.at(-1) ?? [], ["fake:work:1"], "not reconciled away while the drain runs");
+  open();
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  await run();
+  assert.equal(w.job("1")?.merged, SHA2);
+  assert.ok(!w.runner.requests.slice(3).some((request) => request.role === "implement"), "no implementor is resumed to merge it again");
+});
+
+test("merging by queue: a mark-merged notice for a job that no longer waits in the queue is not applied to it (#238)", async () => {
+  const w = world(config(QUEUE), [item("1")]);
+  const queue = fakeQueue();
+  w.queue = queue;
+  await toHandOver(w);
+  const job = loadJobs(w.store)["fake:work:1"]!;
+  delete job.parked;
+  job.step = "implement";
+  saveJobs(w.store, { "fake:work:1": job });
+  queue.notices.push({ kind: "mark-merged", batch: 3, tested: SHA2, members: [{ change: ref("1"), sha: SHA2, head: SHA }] });
+  await w.run();
+  assert.equal(w.job("1")?.merged, undefined);
+  assert.equal(w.events("orchestrator.queue_notice_stale").length, 1);
 });
 
 test("merging by queue: a note the drain makes carries the time it was made and is logged then, so a push before Stop reads as before it", async () => {

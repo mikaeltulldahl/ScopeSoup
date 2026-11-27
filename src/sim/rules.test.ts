@@ -214,6 +214,16 @@ describe("each rule fires on a bad state built by hand", { concurrency: 1 }, () 
     const o = obs({ action: tick, git: gitObs(g), items: [item("A-1", SLOT)] });
     assert.match(fires("E4", o, o, o, o) ?? "", /without being told/);
   });
+  it("E5", "the queue merged an Item's change and its implementor merges it again (#238)", () => {
+    const g = new FakeGit();
+    g.mergeToMain(g.commit([g.main], ["src/a.ts"], "work", "agent"), "queue", key("A-1"));
+    const first = obs({ git: gitObs(g), items: [item("A-1", SLOT)] });
+    g.mergeToMain(g.commit([g.main], ["src/a.ts"], "work", "agent"), "session told", key("A-1"));
+    assert.match(fires("E5", first, obs({ git: gitObs(g), items: [item("A-1", SLOT)] })) ?? "", /went to main again/);
+    // Closed in between (done, then reopened): a new merge is new work.
+    const closed = obs({ git: first.git, items: [item("A-1", SLOT, { item: { ...workItem("A-1"), state: "done" } })] });
+    assert.equal(fires("E5", first, closed, obs({ git: gitObs(g), items: [item("A-1", SLOT)] })), null);
+  });
   it("F1", "W changed with no event about the Item", () => {
     assert.match(fires("F1", obs({ action: tick, items: [item("A-1", SLOT)] }), obs({ action: tick, items: [item("A-1", { kind: "person", why: "escalated" })] })) ?? "", /no event about it/);
     assert.equal(fires("F1", obs({ action: tick, items: [item("A-1", SLOT)] }), obs({ action: tick, events: [event(key("A-1"))], items: [item("A-1", { kind: "person", why: "escalated" })] })), null);

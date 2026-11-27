@@ -38,7 +38,7 @@ import { migrateRemovedSteps, recoverFromLogs } from "./recover.ts";
 import { watchMain } from "./mainGuard.ts";
 import { closeMerged } from "./mergedClose.ts";
 import { readSessionResult } from "./runner.ts";
-import { driveQueue } from "./queueMerge.ts";
+import { driveQueue, settleQueueBelowLevel4 } from "./queueMerge.ts";
 import { checkHoldings, readHoldings, WorkNotFound } from "./workspaces.ts";
 import { awaitsImplement, triagedText, recheckPromptText, staleTriage, startRecheck } from "./recheck.ts";
 import { itemTextHash } from "../core/answerReuse.ts";
@@ -510,6 +510,10 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
   // A person handed an item back with a branch: the cycle goes on from the review (docs/PEOPLE.md).
   const handbacksWaiting = await adoptHandbacks(ctx, items, store.list<Change>("change"));
 
+  // Below level 4 the merge queue finishes what level 4 began and lets every change go (levels 2 and 3, where the implementor merges).
+  const queueLeft = config.level >= 2 && config.level < 4 && Object.values(jobs).some((job) => job.parked?.as === "queued" && job.queued !== undefined && job.merged === undefined)
+    && (await settleQueueBelowLevel4(ctx));
+
   // 1b. Sessions that are over move their job to the next step.
   let running = 0;
   // A hand-over owed waits while its switch is paused (Pause, Stop, start-up). At level 4 that is the merge queue's: the hand-over
@@ -635,8 +639,9 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
     // A job at the review step at level 2 (the level was lowered while it waited for a reviewer): nobody reviews at this level, and
     // the implementor merges. Its own session is resumed to merge it, as level 2 does after a build.
     if (item && config.level === 2 && job.step === "review" && !job.sessionId && !job.parked && !job.owes && !job.reviewAskedBy) reviewOffAtLevel2(ctx, job);
-    // A change in the merge queue when the level was lowered below 4: the queue is not driven there, and the implementor merges.
-    if (item && config.level >= 2 && config.level < 4 && job.parked?.as === "queued" && job.queued !== undefined && job.merged === undefined && !job.sessionId) queueOffBelowLevel4(ctx, job);
+    // A change in the merge queue when the level was lowered below 4: the queue is not driven there, and the implementor merges, once
+    // nothing of the queue's is in flight for it (`settleQueueBelowLevel4`).
+    if (item && queueLeft && job.parked?.as === "queued" && job.queued !== undefined && job.merged === undefined && !job.sessionId) queueOffBelowLevel4(ctx, job);
   }
 
   // This machine's claim on an Item it has no work under way for (its job closed, or the store was lost) goes back.

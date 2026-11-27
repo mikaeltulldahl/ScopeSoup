@@ -446,6 +446,22 @@ export const RULES: Rule[] = [
       });
     },
   },
+  {
+    id: "E5",
+    why: "Main gets a change once: after the merge queue merged an Item's change, nothing merges for that Item again until it is closed (#238: a level lowered while the queue's drain ran).",
+    check(o, _prev, memo) {
+      const merged = (memo.merged ??= {}) as Record<string, string>;
+      for (const i of o.items) if (isClosed(i)) delete merged[i.key];
+      const from = (memo.seen as number | undefined) ?? 0;
+      memo.seen = o.git.mainMoves.length;
+      for (const m of o.git.mainMoves.slice(from)) {
+        if (!m.item) continue;
+        if (merged[m.item]) return `${m.item.split(":").pop()}'s change went to main again (${m.how}) after the merge queue merged it (${merged[m.item]!.slice(-7)}), before the Item was closed`;
+        if (m.how === "queue") merged[m.item] = m.sha;
+      }
+      return null;
+    },
+  },
   // --- F. Events ---
   {
     id: "F1",
