@@ -105,6 +105,8 @@ export interface Observation {
   requests: Ledger["requests"];
   /** The multiplayer profile: the answers people gave on the other machines' boards, which this machine reads from the logs (B1). */
   answersElsewhere?: Ledger["answers"];
+  /** The multiplayer profile: the requests people made on the other machines' boards (a pick there is carried out here, J1). */
+  requestsElsewhere?: Ledger["requests"];
   /** `retries`: swaps refused because another push got in first, since the start (5 in a row and a write gives up: "the remote kept moving"). */
   remote: { refusedRewrites: number; down: boolean; items: number; retries: number };
   /** The host's Items as read at a version of the remote, so an unchanged remote is not read again; the last read while it is down. */

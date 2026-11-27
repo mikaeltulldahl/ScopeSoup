@@ -5117,6 +5117,22 @@ test("Backlog read at a fetch (#243): a job no person put under way is dropped, 
   assert.deepEqual(w.runner.requests.map((request) => `${request.role} ${request.subject.id}`), ["triage 2"], "only the person's triage runs");
 });
 
+test("Backlog (decision 121): a question another Item's triage asked about an Item there, answered otherwise than recommended, runs no triage there (#264)", async () => {
+  const w = world(config(), [item("1", { body: "Tide table units." }), item("2", { body: "Wind units.", backlog: true })]);
+  w.store.addUsageSample(usage(0.1, 0.1));
+  await w.run();
+  await step(w, "1", "succeeded", { ...TRIAGE_OK, aboutOthers: [{ item: "#2", questions: [ABOUT_Q] }] });
+  assert.equal(w.job("2")?.parked?.as, "needs-decision");
+  assert.deepEqual(answerRewrite(w, "2", ["Metres per second"]), { rerun: true });
+  w.clock.ms += 1000;
+  await w.run();
+  w.clock.ms += 60_000;
+  await w.run();
+  assert.equal(w.job("2"), undefined, "the job the questions made is closed");
+  assert.match(w.reasons("orchestrator.job_closed").at(-1) ?? "", /^A person answered what other Items' agents asked about 2, which is in Backlog: nothing runs on it/);
+  assert.ok(!w.runner.requests.some((request) => request.subject.id === "2"), "no triage of 2 in Backlog");
+});
+
 // --- Implement anyway and the implementor's model per size (decision 105) ---
 
 /** A job parked by triage's verdict and overruled by a person (src/server/moves.ts): at the implement step, with Ada's ask. */

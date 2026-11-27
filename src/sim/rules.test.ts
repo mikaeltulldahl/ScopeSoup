@@ -178,6 +178,9 @@ describe("each rule fires on a bad state built by hand", { concurrency: 1 }, () 
     const parked = obs({ items: [item("A-1", { kind: "person", why: "answer", n: 1 }, { job: job("A-1", { step: "implement", parked: { as: "needs-decision", reason: "", at: AT, byStep: true } }) })] });
     const answered = obs({ requests: [{ step: 1, path: "/api/answer", body: {}, status: 200, response: {}, item: "A-1" }], items: parked.items });
     assert.match(fires("B8", parked, answered, obs({ started: [started("A-1", "triage")], items: parked.items })) ?? "", /next session is triage/);
+    // Questions another Item's agent asked about it were written before the implementor resumed: answered, it is triaged again (#264).
+    const written = obs({ events: [event(key("A-1"), "orchestrator", "orchestrator.about_other_written")], items: parked.items });
+    assert.equal(fires("B8", parked, answered, written, obs({ started: [started("A-1", "triage")], items: parked.items })), null);
   });
   it("B9", "a triage taken again with nothing it read changed: age alone is no input (#217)", () => {
     const g = new FakeGit();
@@ -328,6 +331,12 @@ describe("each rule fires on a bad state built by hand", { concurrency: 1 }, () 
   });
   it("G1", "a switch is still started after a restart", () => {
     assert.match(fires("G1", obs(), obs({ action: { kind: "restart" } })) ?? "", /switch is started/);
+    // A queued change after the level was lowered to 2: the restart ends the queue's run, and the implementor merges it (#264).
+    const paused = { triage: "paused", implement: "paused", review: "paused", mergeQueue: "paused" };
+    const queued = obs({ level: 2, items: [item("A-1", { kind: "queue" })] });
+    const merges = obs({ level: 2, action: tick, switches: paused, items: [item("A-1", { kind: "start", role: "implement", cause: "switch" })] });
+    assert.equal(fires("G1", queued, obs({ action: { kind: "restart" }, switches: paused, items: queued.items }), merges), null);
+    assert.match(fires("G1", queued, obs({ action: { kind: "restart" }, switches: paused, items: queued.items }), { ...merges, level: 4 }) ?? "", /was queue before the restart/);
   });
   it("G2", "the tick threw", () => {
     assert.match(fires("G2", obs({ tickError: "boom" })) ?? "", /threw: boom/);
@@ -422,6 +431,9 @@ describe("each rule fires on a bad state built by hand", { concurrency: 1 }, () 
     const asked = ledger({ requests: [{ step: 1, path: "/api/item/move", body: { to: "triage" }, status: 200, response: {}, item: "A-1" }] });
     assert.equal(fires("J1", before, obs({ lanes: LANES, ledger: asked, started: [started("A-1", "triage")] })), null);
     assert.match(fires("J1", before, obs({ lanes: LANES, ledger: asked, started: [started("A-1", "implement")] })) ?? "", /implement session started on A-1/);
+    // Asked on another machine's board as a pick, which this machine carries out (#264).
+    const elsewhere = [{ step: 1, path: "/api/item/pick", body: { steps: [{ kind: "move", to: "triage" }] }, status: 202, response: {}, item: "A-1" }];
+    assert.equal(fires("J1", before, obs({ lanes: LANES, requestsElsewhere: elsewhere, started: [started("A-1", "triage")] })), null);
   });
   it("J2", "an Item moves into To do with no person's move (#221)", () => {
     const at = (lane: string) => obs({ lanes: LANES, items: [item("A-1", { kind: "not-started" }, { card: card("A-1", { lane: lane as never }) })] });

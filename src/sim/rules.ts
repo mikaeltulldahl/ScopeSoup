@@ -398,6 +398,9 @@ export const RULES: Rule[] = [
       for (const r of o.requests) if (r.status === 200 && r.item && /move|start-over|edit|pick/.test(r.path)) delete expect[`metaBranch:work:${r.item}`];
       // So does a pick asked on another machine's board and carried out here (decision 104), read at a fetch.
       for (const e of o.events) if (e.kind === "person.moved" && e.subject) delete expect[e.subject];
+      // So do questions other Items' agents asked about it, written before the implementor resumed: once answered, it is triaged again
+      // with the answers, and the implementor's work waits for that (#264).
+      for (const e of o.events) if (e.kind === "orchestrator.about_other_written" && e.subject) delete expect[e.subject];
       for (const s of o.started) {
         const want = expect[s.item];
         if (!want) continue;
@@ -765,6 +768,10 @@ export const RULES: Rule[] = [
         if (asked) return null;
         // A person on another machine's board answered what it waited for (#248): the first tick settles it from the log.
         if (w.kind === "person" && answersElsewhere(i.item, o.machine).length > 0) return null;
+        // The level was lowered below the step while its session or the queue's run was in flight: once that ends (a restart ends it),
+        // the implementor merges instead (a review at level 2, a queued change below level 4), as it would have without the restart (#264).
+        const lowered = (w.kind === "session" && w.role === "review" && o.level < 3) || (w.kind === "queue" && o.level < 4);
+        if (lowered && i.w.kind === "start" && i.w.role === "implement") return null;
         if (w.kind === "session") return i.w.kind === "start" && i.w.role === w.role ? null : `${i.id} had a ${w.role} session before the restart and is ${wText(i.w)} after the first tick`;
         if (["person", "queue", "blocker", "nothing"].includes(w.kind) && wText(w) !== wText(i.w)) return `${i.id} was ${wText(w)} before the restart and is ${wText(i.w)} after the first tick`;
         return null;
@@ -989,7 +996,8 @@ export const RULES: Rule[] = [
         const now = o.items.find((each) => each.key === s.item)?.item;
         const readInBacklog = now?.backlog === true && !o.requests.some((r) => r.item === id && r.body.lane === "backlog");
         if (prevOf(prev, s.item)?.card?.lane !== "backlog" && !readInBacklog) return null;
-        const asked = s.role === "triage" && o.ledger.requests.some((r) => r.status === 200 && r.item === id && r.path === "/api/item/move" && r.body.to === "triage");
+        // A person's Triage: on this board, or a pick on another machine's board that this machine carries out (#264).
+        const asked = s.role === "triage" && [...o.ledger.requests, ...(o.requestsElsewhere ?? [])].some((r) => r.item === id && personTriage(r));
         return asked ? null : `a ${s.role} session started on ${id}, which was in Backlog`;
       });
     },
@@ -1049,6 +1057,14 @@ function personIntoTodo(r: { path: string; body: Record<string, unknown> }): boo
     return steps.some((step) => (step.kind === "lane" && step.lane === "todo") || step.kind === "claim" || (step.kind === "move" && step.to === "implement"));
   }
   return false;
+}
+
+/** A person's Triage on the board: the move, or a pick with that step (asked of another machine: 202). */
+function personTriage(r: { path: string; status: number; body: Record<string, unknown> }): boolean {
+  if (r.path === "/api/item/move") return r.status === 200 && r.body.to === "triage";
+  if (r.path !== "/api/item/pick" || (r.status !== 200 && r.status !== 202)) return false;
+  const steps = Array.isArray(r.body.steps) ? (r.body.steps as Record<string, unknown>[]) : [];
+  return steps.some((step) => step.kind === "move" && step.to === "triage");
 }
 
 /** The To do lane's id, once the board has one (#221); undefined before. */

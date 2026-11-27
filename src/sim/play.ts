@@ -291,10 +291,10 @@ export async function shrink(result: RunResult, rule: string): Promise<Action[]>
 
 /** The shrunk steps as a test to paste into `src/sim/rules.test.ts`. */
 export function pasteable(result: RunResult, rule: string, actions: Action[]): string {
-  const { items, level, slots, steps, profile } = result.options;
+  const { items, level, slots, steps, profile, ageing } = result.options;
   return [
     `test("${rule}: seed ${result.seed}, shrunk", async () => {`,
-    `  await failsOn("${rule}", ${JSON.stringify({ items, level, slots, steps, profile })}, [`,
+    `  await failsOn("${rule}", ${JSON.stringify({ items, level, slots, steps, profile, ...(ageing ? { ageing } : {}) })}, [`,
     ...actions.map((a) => `    ${JSON.stringify(a)},`),
     "  ]);",
     "});",
