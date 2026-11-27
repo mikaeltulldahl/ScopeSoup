@@ -30,6 +30,7 @@ What Scope Soup is: a server program with a web GUI that runs a software project
 | `src/hosts/<name>` | One adapter per host | `model`, `ports` |
 | `src/orchestrator` | The tick loop, the agent runner, the usage check | everything above |
 | `src/server` | HTTP, SSE, the status endpoint | everything above |
+| `src/sim` | The lifecycle simulator: the real tick, store, sync and server against fakes, with the rules checked after every step (decision 120) | everything above |
 | `web` | The board (Preact), built with Vite | only the server's HTTP API |
 
 The rule that matters most: `model`, `core`, `queue` and `store` never import a host. A test checks it (`src/core/boundaries.test.ts`).
@@ -375,6 +376,7 @@ Rules every change to Scope Soup keeps. A reviewer reads them here, with the res
 - Server actions on jobs go through one store transaction, and every state change writes its event in that same transaction.
 - A fake refuses what the real port refuses. A test double of the queue, a host or the store must reject the same inputs the real one rejects, or a test on it proves nothing.
 - A change of what Scope Soup writes to a host is a person's to decide before it is merged.
+- A bug in the Item lifecycle is a gap in the simulator's rules (`src/sim/rules.ts`): a rule that fails on it comes first, then the fix.
 
 ## Further design
 
