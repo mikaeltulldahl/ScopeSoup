@@ -33,7 +33,7 @@ import type { Store } from "../store/store.ts";
 import type { UsageCheckDecision } from "./usageCheck.ts";
 import type { Job, Jobs, Recheck } from "./jobs.ts";
 import type { RetriageBudget } from "../core/retriage.ts";
-import { adoptStored, changedMeanwhile, dropUnreadable, loadJobs, NO_DECISIONS, takenText, WRITING_WAIT_MS, atStep, stepAt, sessionIdOf, parkedOf, resumeOf, mergeApproved, shouldRoundOf, writingOf, timerOf, recheckOf, endSession, markMerged, awaitText, startSession } from "./jobs.ts";
+import { adoptStored, changedMeanwhile, dropUnreadable, loadJobs, NO_DECISIONS, takenText, WRITING_WAIT_MS, atStep, stepAt, sessionIdOf, parkedOf, mergeApproved, shouldRoundOf, writingOf, waitingOf, endSession, markMerged, awaitText, startSession } from "./jobs.ts";
 import { workBranch, workspaceKey } from "./paths.ts";
 import { adoptHandbacks } from "./handback.ts";
 import { recoverFromLogs } from "./recover.ts";
@@ -438,8 +438,8 @@ async function overturnsMerged(ctx: Context, itemByKey: Map<string, WorkItem>): 
  * (and any answers a person gave since); without a known session a fresh one gets the message after its prompt.
  */
 export function implementorMessage(job: Job, decided: string): { resume?: string; message?: string } {
-  if (stepAt(job) !== "implement" || job.resumeWith === undefined) return resumeOf(job) ? { resume: resumeOf(job) } : {};
-  const resume = resumeOf(job) ?? job.agentSession;
+  if (stepAt(job) !== "implement" || job.resumeWith === undefined) return waitingOf(job)?.resume ? { resume: waitingOf(job)!.resume } : {};
+  const resume = waitingOf(job)?.resume ?? job.agentSession;
   if (resume) return { resume, message: `${job.resumeWith} Answer as before.${decided ? `\n\n${DECIDED}\n${decided}` : ""}` };
   // Level 3, approved, and the session that wrote the change is lost: a fresh implementor is told to merge the approved branch.
   if (mergeApproved(job)) return { message: `The work on this Item is done on ${job.branch}, and a reviewer approved it. Merge it now as CLAUDE.md says, and answer as above.` };
@@ -934,7 +934,7 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
     }
     // Backlog is no work (decision 121): a person's moves take an Item with work under way to To do. Left is a person's one-off
     // triage there, whose implement step waits for To do; a job that has a session, a revision or something to resume never waits.
-    if (item.backlog && stepAt(job) === "implement" && job.implementAskedBy === undefined && job.head === undefined && !job.resumeWith && !resumeOf(job)) {
+    if (item.backlog && stepAt(job) === "implement" && job.implementAskedBy === undefined && job.head === undefined && !job.resumeWith && !waitingOf(job)?.resume) {
       reasons.push(`${item.ref.id} ${BACKLOG_REASON} before its ${stepAt(job)} step`);
       continue;
     }
@@ -968,7 +968,7 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
       if (unread) ctx.commit("orchestrator.text_unread", `The description written on ${item.ref.host} at ${writtenAt} is still not read back after ${WRITING_WAIT_MS / 60_000} minutes: ${item.ref.id} goes on with the text the store has.`, key);
       else ctx.commit("orchestrator.text_read", `The description written on ${item.ref.host} is read back: ${item.ref.id}'s next step may start.`, key);
     }
-    const notBefore = timerOf(job);
+    const notBefore = waitingOf(job)?.notBefore;
     if (notBefore && Date.parse(notBefore) > Date.parse(at)) {
       reasons.push(`${item.ref.id} waits until ${notBefore} before its ${stepAt(job)} step`);
       // A step that follows within a moment keeps its slot, so work under way is finished before new work starts.
@@ -1016,7 +1016,7 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
   // Triage again within its share (#217): one To do Item whose triage is out of date, the stalest, while the share has room and no
   // other one chosen so is under way; after the steps of work under way, ahead of new work (the share bounds it). Backlog never; at
   // level 1 no implement step waits, so nothing is chosen.
-  if (level >= 2 && control.triage === "started" && !Object.values(jobs).some((job) => recheckOf(job)?.background)) {
+  if (level >= 2 && control.triage === "started" && !Object.values(jobs).some((job) => job.at.kind === "triage" && job.at.recheck?.background)) {
     retriageShare = pace.retriage();
     const looked = retriageLooked.get(store);
     if (retriageShare.allow && (looked === undefined || Date.parse(at) - looked >= RETRIAGE_LOOK_MS || Date.parse(at) < looked)) {
@@ -1122,7 +1122,7 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
       : again
       ? `its triage is out of date (${again}) and is taken again before its implement step`
       : entry.job
-      ? `its ${step} step is due${entry.job.answerArrived ? " (the answer arrived)" : resumeOf(entry.job) ? " (continuing the session that was cut off)" : entry.job.resumeWith !== undefined ? (entry.job.agentSession ? " (resuming the implementor's session with what came back)" : " (a fresh implementor, with what came back: the session that wrote the change is not known)") : entry.job.failures > 0 ? ` (attempt ${entry.job.failures + 1})` : ""}`
+      ? `its ${step} step is due${entry.job.answerArrived ? " (the answer arrived)" : waitingOf(entry.job)?.resume ? " (continuing the session that was cut off)" : entry.job.resumeWith !== undefined ? (entry.job.agentSession ? " (resuming the implementor's session with what came back)" : " (a fresh implementor, with what came back: the session that wrote the change is not known)") : entry.job.failures > 0 ? ` (attempt ${entry.job.failures + 1})` : ""}`
       : step === "triage"
       ? "it is ready and first in line (triages run oldest first, a higher priority ahead)"
       : `it is ready and first in line (by To do's score, see "How Items are ordered")`;

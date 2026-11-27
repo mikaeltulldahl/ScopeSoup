@@ -20,8 +20,8 @@ import { setRolesForTest } from "../store/control.ts";
 import { conflictQuestion, GO_ON_WITH_BOTH, itemTextHash } from "../core/answerReuse.ts";
 import { addAnswer } from "../store/answers.ts";
 import type { Actions, AgentRunner, SessionRequest } from "./ports.ts";
-import { adoptWritten, loadJobs, saveJobs, recheckOf, stepAt, atStep, markMerged } from "./jobs.ts";
-import type { Job } from "./jobs.ts";
+import { adoptWritten, loadJobs, saveJobs, stepAt, atStep, markMerged } from "./jobs.ts";
+import type { Job, Recheck } from "./jobs.ts";
 import { realGit } from "./process.ts";
 import { triagedNow, triagedText, staleWithoutGit, usablePaths } from "./recheck.ts";
 import { sessionResultKey } from "./runner.ts";
@@ -29,6 +29,9 @@ import { tick } from "./tick.ts";
 import { changeStat, commitsTouching } from "./worktree.ts";
 import { withoutTriageKeys } from "../server/triage.ts";
 import { loadSnapshot } from "../server/snapshot.ts";
+
+/** Why the triage the job is at runs again. */
+const recheckIn = (job: Job | undefined): Recheck | undefined => (job?.at.kind === "triage" ? job.at.recheck : undefined);
 
 const T0 = Date.parse("2026-11-18T10:00:00.000Z");
 const DAY = 24 * 3600_000;
@@ -194,7 +197,7 @@ describe("a waiting Item's triage again", { concurrency: 8 }, () => {
     w.clock.ms += 1000;
     await w.run();
     assert.equal(w.requests.at(-1)?.role, "implement");
-    assert.equal(recheckOf(w.job("1")), undefined);
+    assert.equal(recheckIn(w.job("1")), undefined);
   });
 
   test("an edited text has the triage again, shown the text it read before", async () => {

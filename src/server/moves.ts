@@ -15,7 +15,7 @@ import type { Job, Jobs } from "../orchestrator/jobs.ts";
 import { workBranch, workspaceKey } from "../orchestrator/paths.ts";
 import { sessionOf, stepOf, waitsForAnswer as answerAwaited } from "../core/phase.ts";
 import { phaseOf } from "../orchestrator/phase.ts";
-import { atStep, stepAt, mergeApproved, sessionIdOf, release, clearTimer, moveStep, handOverTaken, toReview } from "../orchestrator/jobs.ts";
+import { atStep, stepAt, mergeApproved, sessionIdOf, parkedOf, release, nextStep, handOverTaken, toReview } from "../orchestrator/jobs.ts";
 
 export const MOVES = ["triage", "todo", "in-review", "merge-queue", "implement"] as const;
 export type Move = (typeof MOVES)[number];
@@ -188,8 +188,7 @@ export function applyMove(jobs: Jobs, key: string, move: Move, input: MoveInput,
   if (move === "implement") {
     // Triage's verdict is overruled: the implement step runs next whatever the level, with triage's notes as they are.
     release(job);
-    clearTimer(job);
-    moveStep(job, "implement");
+    nextStep(job, "implement");
     delete job.resumeWith;
     delete job.reviewAskedBy;
     delete job.queueAskedBy;
@@ -205,7 +204,7 @@ export function applyMove(jobs: Jobs, key: string, move: Move, input: MoveInput,
     job.dropAskedBy = by;
     // What it was parked on is answered in its log with the move, and a hand-over it owed is not made: it waits for nothing but the drop
     // (#268: an owed hand-over left the product's wait saying hand-over while the tick drops the job).
-    release(job);
+    if (parkedOf(job)) release(job);
     handOverTaken(job);
     return { ok: true, reason: `${by} put ${id} back in To do: the work under way is dropped (the branch stays) and the agents start it again from triage.${ends}` };
   }

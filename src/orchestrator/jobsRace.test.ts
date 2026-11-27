@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { openStore } from "../store/store.ts";
-import { answerQuestion, loadJobs, jobQuestions, releaseJob, saveJobs, owesHandOver, parkedOf, stepAt, atStep, moveStep } from "./jobs.ts";
+import { answerQuestion, loadJobs, jobQuestions, releaseJob, saveJobs, owesHandOver, parkedOf, stepAt, atStep, nextStep } from "./jobs.ts";
 import type { Job, JobAt, Jobs, JobParked, JobStep } from "./jobs.ts";
 
 function job(id: string, extra: Partial<Job> = {}): Job {
@@ -75,7 +75,7 @@ test("a hand-over release (the job stays, owes set) survives the tick's save", (
   const store = openStore(":memory:");
   store.tx(() => saveJobs(store, { [K1]: job("1", { at: parkedAt({ ...parked, retry: "hand-over" }) }), [K2]: job("2") }));
   const tick = loadJobs(store);
-  moveStep(tick[K2]!, "review");
+  nextStep(tick[K2]!, "review");
   assert.equal(releaseJob(store, { host: "h", kind: "work", id: "1" }, "Ada", "2026-11-20T10:05:00Z", "again"), true);
   store.tx(() => saveJobs(store, tick));
   const after = loadJobs(store);

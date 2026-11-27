@@ -8,7 +8,7 @@
 import type { ItemObs, Observation } from "./observe.ts";
 import type { W } from "./waits.ts";
 import { implementBegun, isBusy, newWork, personHolds, stageLane, wText } from "./waits.ts";
-import { mergedOf, parkedOf, sessionIdOf, stepAt, timerOf, writingOf } from "../orchestrator/jobs.ts";
+import { parkedOf, sessionIdOf, stepAt, waitingOf, writingOf } from "../orchestrator/jobs.ts";
 
 export interface Rule {
   id: string;
@@ -208,7 +208,7 @@ export const RULES: Rule[] = [
     why: "What is said to have happened did happen: queued means the queue has it, handed over means the branch exists, Done means merged or closed by a person.",
     check(o) {
       return first(o.items, (i) => {
-        if (i.w.kind === "queue" && !o.queued.includes(i.key) && !mergedOf(i.job)) return `${i.id} is parked as queued, but the queue does not have it`;
+        if (i.w.kind === "queue" && !o.queued.includes(i.key) && i.job?.at.kind !== "merged") return `${i.id} is parked as queued, but the queue does not have it`;
         if (i.w.kind === "person" && i.w.why === "merge" && i.job && !o.git.branches.has(i.job.branch)) return `${i.id} is handed over, but ${i.job.branch} does not exist`;
         if (i.item.state === "done" && !o.ledger.closesAsked.has(i.key)) {
           if (!o.git.mainMoves.some((m) => m.item === i.key)) return `${i.id} is Done, but its change is not on main and no person closed it`;
@@ -500,7 +500,7 @@ export const RULES: Rule[] = [
         const merged = !!head && o.git.contains(head, o.git.main) === true && o.git.commit(head)?.by === "agent";
         const n = ticksSince(memo, `C2|${i.key}`, merged && !isClosed(i), o);
         if (n > 2) return `${i.id}'s change is on main, but it is still ${i.item.state} after ${n} ticks`;
-        if (mergedOf(i.job) && o.started.some((s) => s.item === i.key)) return `a session started on ${i.id}, whose change merged`;
+        if (i.job?.at.kind === "merged" && o.started.some((s) => s.item === i.key)) return `a session started on ${i.id}, whose change merged`;
         return null;
       });
     },
@@ -535,6 +535,8 @@ export const RULES: Rule[] = [
       return first(o.items, (i) => {
         if (i.live.length > 1) return `${i.id} has ${i.live.length} live sessions`;
         if (i.live.length === 1 && sessionIdOf(i.job) && sessionIdOf(i.job) !== i.live[0]!.id) return `${i.id}'s job names session ${sessionIdOf(i.job)}, but ${i.live[0]!.id} runs`;
+        // A session nothing tracks is never settled, and the tick starts work beside it (#211: a pick while its start was prepared).
+        if (i.live.length === 1 && i.job && !sessionIdOf(i.job)) return `${i.live[0]!.id} runs on ${i.id}, but its job names no session`;
         return null;
       });
     },
@@ -615,7 +617,7 @@ export const RULES: Rule[] = [
       return first(o.items, (i) => {
         if (!i.job) return null;
         if (i.job.failures > 6) return `${i.id} failed ${i.job.failures} times without being put down for a person`;
-        const notBefore = timerOf(i.job);
+        const notBefore = waitingOf(i.job)?.notBefore;
         if (notBefore && Date.parse(notBefore) - Date.parse(o.at) > 6 * 3600_000) return `${i.id} waits until ${notBefore}, further than any cap`;
         return null;
       });

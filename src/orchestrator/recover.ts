@@ -24,7 +24,7 @@ import { refKey } from "../model/types.ts";
 import type { Context } from "./context.ts";
 import { SCOPESOUP } from "./hostActions.ts";
 import type { Decision, Finding, Job, JobStep, ParkedAs } from "./jobs.ts";
-import { formatFindings, atStep, editParked, moveStep, oweHandOver, owesHandOver, parkJob, parkedOf, stepAt } from "./jobs.ts";
+import { formatFindings, atStep, editParked, owesHandOver, parkJob, parkedOf, stepAt } from "./jobs.ts";
 import { workBranch, workspaceKey } from "./paths.ts";
 
 const SEEN_KEY = "orchestrator.logs_read";
@@ -78,7 +78,6 @@ export function jobFromHost(item: WorkItem): Job | null {
 
   if (rewrite) {
     const questions = rewrite.questions.map(decisionOf);
-    moveStep(job, "triage");
     job.triage ??= { ready: true, size: "medium", paths: [], hidesDecision: false };
     job.triage.hidesDecision = questions.length > 0;
     job.rewrite = { original: (item.body ?? "").trim(), text: rewrite.text, questions, round: rewrite.round, ...(rewrite.labels ? { labels: rewrite.labels } : {}) };
@@ -174,7 +173,7 @@ function resumeFromLines(job: Job, log: readonly LogRecord[], sessions: readonly
   // 2. The last session said which step comes next: that step starts again.
   const next = str(sessions[sessions.length - 1]?.fields.next);
   if (STEPS.includes(next)) {
-    moveStep(job, next as JobStep);
+    job.at = atStep(next as JobStep);
     // A review that asked for changes sent the change back to the implementor: a fresh one gets the findings.
     if (next === "implement" && sessions[sessions.length - 1]?.fields.role === "review" && job.review?.verdict === "changes" && job.review.findings.length > 0) {
       // The log's findings already carry their severity and file.
@@ -189,8 +188,7 @@ function resumeFromLines(job: Job, log: readonly LogRecord[], sessions: readonly
   // A revision line a host outage lost: the review names the revision it read (#268).
   const reviewedNewest = review !== undefined && (newest ? review.fields.sha === newest.fields.sha : str(review.fields.sha) !== "");
   if (reviewedNewest && review.fields.verdict === "pass" && !triagedSince) {
-    moveStep(job, "review");
-    oweHandOver(job);
+    job.at = { kind: "hand-over", step: "review" };
     return job;
   }
   return null;

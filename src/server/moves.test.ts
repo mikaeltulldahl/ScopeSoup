@@ -5,8 +5,8 @@ import assert from "node:assert/strict";
 import { after, before, describe, test } from "node:test";
 import { T0, work } from "../core/testing.ts";
 import type { ItemPage } from "../core/views.ts";
-import type { Job } from "../orchestrator/jobs.ts";
-import { loadJobs, saveJobs, owesHandOver, parkedOf, recheckOf, sessionIdOf, stepAt, timerOf, atStep } from "../orchestrator/jobs.ts";
+import type { Job, Recheck } from "../orchestrator/jobs.ts";
+import { loadJobs, saveJobs, owesHandOver, parkedOf, sessionIdOf, stepAt, atStep, waitingOf } from "../orchestrator/jobs.ts";
 import { refKey } from "../model/types.ts";
 import type { Store } from "../store/store.ts";
 import { openStore } from "../store/store.ts";
@@ -15,6 +15,9 @@ import { createServer } from "./server.ts";
 import type { MoveInput } from "./moves.ts";
 import { applyMove, moveWhys } from "./moves.ts";
 import { memoryRequests } from "../hosts/metaBranch/requests.ts";
+
+/** Why the triage the job is at runs again. */
+const recheckIn = (job: Job | undefined): Recheck | undefined => (job?.at.kind === "triage" ? job.at.recheck : undefined);
 
 const item = work(7, { title: "Tidy the dock" });
 const key = refKey(item.ref);
@@ -101,7 +104,7 @@ describe("the rules", () => {
     const jobs = { [key]: job({ head: "abc", agentSession: "a1", triaged: { at: T0, textHash: "h", title: "t", body: "", verification: "", blockers: [] } }) };
     const triaged = applyMove(jobs, key, "triage", input({ job: jobs[key] }), "Ada", "2026-11-25T10:00:00Z");
     assert.equal(triaged.ok, true);
-    assert.deepEqual([stepAt(jobs[key]!), jobs[key]!.head, jobs[key]!.agentSession, recheckOf(jobs[key])?.reasons, recheckOf(jobs[key])?.previous], ["triage", undefined, undefined, ["Ada asked for it on the board"], triage]);
+    assert.deepEqual([stepAt(jobs[key]!), jobs[key]!.head, jobs[key]!.agentSession, recheckIn(jobs[key])?.reasons, recheckIn(jobs[key])?.previous], ["triage", undefined, undefined, ["Ada asked for it on the board"], triage]);
 
     const review = { [key]: job({ at: { kind: "parked", step: "implement", parked: { as: "handed-over", reason: "x", at: T0 } }, head: "abc" }) };
     assert.equal(applyMove(review, key, "in-review", input({ job: review[key], level: 3 }), "Ada", T0).ok, true);
@@ -173,7 +176,7 @@ describe("the rules", () => {
     const jobs = { [key]: verdict({ reviewAskedBy: "Cy", reviewSendBacks: 3 }) };
     const done = applyMove(jobs, key, "implement", input({ job: jobs[key], level: 1 }), "Ada", T0);
     assert.ok(done.ok && /Ada overruled triage's verdict on 7 \(Implement anyway\)/.test(done.reason));
-    assert.deepEqual([stepAt(jobs[key]!), parkedOf(jobs[key]), jobs[key]!.implementAskedBy, jobs[key]!.reviewAskedBy, timerOf(jobs[key]), jobs[key]!.triage], ["implement", undefined, "Ada", undefined, undefined, triage]);
+    assert.deepEqual([stepAt(jobs[key]!), parkedOf(jobs[key]), jobs[key]!.implementAskedBy, jobs[key]!.reviewAskedBy, waitingOf(jobs[key])?.notBefore, jobs[key]!.triage], ["implement", undefined, "Ada", undefined, undefined, triage]);
     assert.equal(jobs[key]!.reviewSendBacks, undefined, "a fresh start: no step-up carried over");
     // Once it is under way, there is nothing to overrule.
     assert.deepEqual(applyMove(jobs, key, "implement", input({ job: jobs[key] }), "Ada", T0), { ok: false, why: "only triage's not-ready verdict can be overruled" });
@@ -237,7 +240,7 @@ describe("POST /api/item/move", () => {
     // Triage again by a person: the old triage goes, the job starts at triage.
     const again = await post({ ref: key, to: "triage" });
     assert.equal(again.status, 200);
-    assert.deepEqual([stepAt(loadJobs(store)[key]!), recheckOf(loadJobs(store)[key])?.reasons], ["triage", ["Ada asked for it on the board"]]);
+    assert.deepEqual([stepAt(loadJobs(store)[key]!), recheckIn(loadJobs(store)[key])?.reasons], ["triage", ["Ada asked for it on the board"]]);
   });
 
   test("POST /api/item/pick runs a pick's steps in order in one request, checks what the page saw once, and says which went through", async () => {

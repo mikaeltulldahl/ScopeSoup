@@ -21,7 +21,7 @@ import { readPacing } from "./pacing.ts";
 import type { MergeQueue } from "./mergeQueue.ts";
 import { createLoop } from "./loop.ts";
 import { workspaceKey } from "./paths.ts";
-import { answerQuestion, asImplement, asTriage, loadJobs, jobQuestions, releaseJob, resumesStep, saveJobs, settleRewrite, WRITING_WAIT_MS, stepAt, mergeApproved, mergedOf, owesHandOver, parkedOf, sessionIdOf, shouldRoundOf, writingOf, atStep, endSession, moveStep, release } from "./jobs.ts";
+import { answerQuestion, asImplement, asTriage, loadJobs, jobQuestions, releaseJob, resumesStep, saveJobs, settleRewrite, WRITING_WAIT_MS, stepAt, mergeApproved, owesHandOver, parkedOf, sessionIdOf, shouldRoundOf, writingOf, atStep, endSession, release, nextStep, toReview as pickReview } from "./jobs.ts";
 import { readProposedRewrites } from "./aboutOthers.ts";
 import { loadOwnBlockers, setOwnBlockers } from "../store/blockers.ts";
 import { buildItemPage } from "../core/item-page.ts";
@@ -47,6 +47,9 @@ import { QUEUE_KEY, readQueueHealth, requestQueueResume } from "./queueHealth.ts
 import { defaultConfig, initialState, step as queueStep } from "../queue/index.ts";
 import type { Job, JobFields, JobParked } from "./jobs.ts";
 import { applyMove } from "../server/moves.ts";
+
+/** The sha of the job's change on main, once it merged. */
+const shaOf = (job: Job | null | undefined): string | undefined => (job?.at.kind === "merged" ? job.at.sha : undefined);
 
 const T0 = Date.parse("2026-11-18T10:00:00.000Z");
 /** The fake remote's main before and after a session merged, and the head of every item branch. */
@@ -384,7 +387,7 @@ test("level 3 (Review): triage, implement and review start; an approved change g
   await toHandOver(w);
   assert.deepEqual(roles(w), ["triage", "implement", "review", "implement"]);
   assert.equal(parkedOf(w.job("1"))?.as, "queued");
-  assert.equal(mergedOf(w.job("1")), HEAD);
+  assert.equal(shaOf(w.job("1")), HEAD);
   assert.deepEqual((w.queue as ReturnType<typeof fakeQueue>).enqueued, []);
 });
 
@@ -428,7 +431,7 @@ test("a session started at level 2 that merged, finished after the level became 
   await step(w, "1", "succeeded", { ...IMPLEMENT_OK, mergedAs: MAIN_MERGED });
   assert.equal(w.runner.main, MAIN_MERGED);
   assert.deepEqual(w.reasons("orchestrator.escalated"), []);
-  assert.equal(mergedOf(w.job("1")), HEAD);
+  assert.equal(shaOf(w.job("1")), HEAD);
   assert.deepEqual(roles(w), ["triage", "implement"], "no review of what is merged");
   assert.match(w.reasons("orchestrator.merged")[0] ?? "", /The implementing session merged it under the level its session started with \(started at level 2, the level is now 3\)/);
 });
@@ -444,7 +447,7 @@ for (const [name, raw] of [["level 3 before approval", { level: 3 }], ["level 4"
     w.runner.main = MAIN_MERGED; // it merged on its own, against its instructions
     await step(w, "1", "succeeded", { ...IMPLEMENT_OK, mergedAs: MAIN_MERGED });
     assert.equal(parkedOf(w.job("1"))?.as, "escalated");
-    assert.equal(mergedOf(w.job("1")), undefined);
+    assert.equal(shaOf(w.job("1")), undefined);
     assert.deepEqual(w.reasons("orchestrator.merged"), []);
     assert.match(w.reasons("orchestrator.escalated")[0] ?? "", /merged scopesoup\/1 to main .* although its instructions said to commit and stop, not to merge \(its session started at level (3|4)/);
   });
@@ -524,7 +527,7 @@ test("a change in the merge queue when the level is lowered to 3 leaves the queu
   assert.equal(w.runner.requests.at(-1)?.role, "implement");
   assert.match(w.runner.requests.at(-1)?.vars.finish ?? "", /merge it to/);
   await step(w, "1", "succeeded", IMPLEMENT_OK);
-  assert.equal(mergedOf(w.job("1")), HEAD);
+  assert.equal(shaOf(w.job("1")), HEAD);
 });
 
 test("level 3, nothing committed and nothing merged (the answer names no merge): still \"nothing to change\" for a person", async () => {
@@ -537,7 +540,7 @@ test("level 3, nothing committed and nothing merged (the answer names no merge):
   assert.equal(w.runner.main, MAIN_START, "the session was told not to merge, so main is as before");
   assert.equal(parkedOf(w.job("1"))?.as, "escalated");
   assert.match(w.reasons("orchestrator.escalated")[0] ?? "", /^Nothing to change: /);
-  assert.equal(mergedOf(w.job("1")), undefined);
+  assert.equal(shaOf(w.job("1")), undefined);
 });
 
 /** A person presses one of the switches (store/control.ts). */
@@ -946,7 +949,7 @@ test("the job cycle: triage, implement, review, the implementor resumed with the
   // A change that touches a migration does not wait for an answer any more: the session merged it, and it is done.
   const job = w.job("1");
   assert.equal(parkedOf(job)?.as, "queued");
-  assert.equal(mergedOf(job), HEAD);
+  assert.equal(shaOf(job), HEAD);
   assert.equal(w.reasons("orchestrator.waiting_person").length, 0);
   assert.match(w.reasons("orchestrator.merged")[0] ?? "", /scopesoup\/1 is merged: origin\/main at 2222222 contains its head 3333333\. The implementing session merged it/);
   assert.deepEqual(w.closes, [`1 ${HEAD} -`]);
@@ -968,7 +971,7 @@ test("level 2: Scope Soup's claim is released once the implementing session merg
   await step(w, "1", "succeeded", TRIAGE_OK);
   assert.ok(!w.calls.includes("release 1"));
   await step(w, "1", "succeeded", IMPLEMENT_OK);
-  assert.equal(mergedOf(w.job("1")), HEAD);
+  assert.equal(shaOf(w.job("1")), HEAD);
   assert.equal(w.calls.filter((call) => call === "release 1").length, 1);
   assert.ok(w.hostWrites.includes("release 1 merged on main as 3333333"), w.hostWrites.join(" | "));
 });
@@ -2009,11 +2012,11 @@ test("merging by queue: a long check runs beside the ticks; a tick starts ready 
   await run();
   assert.equal(drains, 1, "no second check starts while one runs");
   assert.equal(most, 1);
-  assert.equal(mergedOf(w.job("1")), undefined);
+  assert.equal(shaOf(w.job("1")), undefined);
   open();
   await new Promise((resolve) => setTimeout(resolve, 5));
   await run();
-  assert.equal(mergedOf(w.job("1")), SHA2);
+  assert.equal(shaOf(w.job("1")), SHA2);
   await new Promise((resolve) => setTimeout(resolve, 5));
   assert.equal(calls.at(-1), "release");
   assert.equal(calls.filter((call) => call === "acquire").length, 1);
@@ -2062,7 +2065,7 @@ test("merging by queue: Stop ends a running check's drain; its waiting notice is
   await run();
   await new Promise((resolve) => setTimeout(resolve, 5));
   assert.deepEqual(outcome, ["refused"]);
-  assert.equal(mergedOf(w.job("1")), undefined, "the notice was not applied");
+  assert.equal(shaOf(w.job("1")), undefined, "the notice was not applied");
   assert.equal(calls.at(-1), "release");
 });
 
@@ -2090,7 +2093,7 @@ test("merging by queue: the level lowered while a drain checks the change: it wa
   open();
   await new Promise((resolve) => setTimeout(resolve, 5));
   await run();
-  assert.equal(mergedOf(w.job("1")), SHA2);
+  assert.equal(shaOf(w.job("1")), SHA2);
   assert.ok(!w.runner.requests.slice(3).some((request) => request.role === "implement"), "no implementor is resumed to merge it again");
 });
 
@@ -2101,11 +2104,11 @@ test("merging by queue: a mark-merged notice for a job that no longer waits in t
   await toHandOver(w);
   const job = loadJobs(w.store)["fake:work:1"]!;
   release(job);
-  moveStep(job, "implement");
+  nextStep(job, "implement");
   saveJobs(w.store, { "fake:work:1": job });
   queue.notices.push({ kind: "mark-merged", batch: 3, tested: SHA2, members: [{ change: ref("1"), sha: SHA2, head: SHA }] });
   await w.run();
-  assert.equal(mergedOf(w.job("1")), undefined);
+  assert.equal(shaOf(w.job("1")), undefined);
   assert.equal(w.events("orchestrator.queue_notice_stale").length, 1);
 });
 
@@ -2185,7 +2188,7 @@ test("merging by queue: Pause merge queue lets a running check's drain finish; i
   await run();
   await new Promise((resolve) => setTimeout(resolve, 5));
   assert.deepEqual(outcome, ["applied"]);
-  assert.equal(mergedOf(w.job("1")), SHA2, "the merge under way finished");
+  assert.equal(shaOf(w.job("1")), SHA2, "the merge under way finished");
   assert.equal(calls.at(-1), "release");
 });
 
@@ -2196,7 +2199,7 @@ test("merging by queue: a change the queue merged gets its revision and merged l
   await toHandOver(w);
   queue.notices.push({ kind: "mark-merged", batch: 3, tested: SHA2, members: [{ change: ref("1"), sha: SHA2, head: SHA }] });
   await w.run();
-  assert.equal(mergedOf(w.job("1")), SHA2);
+  assert.equal(shaOf(w.job("1")), SHA2);
   assert.deepEqual(logCalls(w), [
     `appendLog 1 revision {"sha":"${HEAD}","branch":"scopesoup/1"}`,
     `appendLog 1 review {"sha":"${HEAD}","verdict":"pass","findings":[],"model":"opus"}`,
@@ -2245,7 +2248,7 @@ test("merging by queue: when the close fails the item is not started again; with
   await w.run();
   // The issue is still open on the host, but the job parked as merged and nothing starts for it; each tick tries the close again.
   assert.deepEqual(w.closes, [`1 ${SHA2} 3`, `1 ${SHA2} 3`]);
-  assert.equal(mergedOf(w.job("1")), SHA2);
+  assert.equal(shaOf(w.job("1")), SHA2);
   assert.equal(parkedOf(w.job("1"))?.as, "queued");
   assert.equal(w.events("orchestrator.started").length, startedBefore);
   assert.deepEqual(w.reasons("orchestrator.item_closed"), []);
@@ -4992,6 +4995,39 @@ test("a person's Merge queue over a running review ends that review and hands th
   assert.deepEqual(queue.enqueued, ["1 scopesoup/1"]);
 });
 
+test("a person's Merge queue made while a review's start is prepared wins: no review runs, and the change is handed over", async () => {
+  for (const when of ["workspace", "start"] as const) {
+    const queue = fakeQueue();
+    const w = world(config({ level: 4, ...MERGES }), [item("1")]);
+    w.queue = queue;
+    w.store.addUsageSample(usage(0.1, 0.1));
+    // A review a person asked for waits to start on a change the reviewer approved at this head before.
+    saveJobs(w.store, { [refKey(ref("1"))]: pickedReview("1", { reviewedHead: HEAD, review: { verdict: "approve", findings: [] } }) });
+    const key = refKey(ref("1"));
+    // The person picks Merge queue while the workspace is prepared, or while the runner starts the session: no session is stored yet,
+    // so the pick ends none, and the job owes the hand-over.
+    const pick = (): void => {
+      const jobs = loadJobs(w.store);
+      const now = new Date(w.clock.ms).toISOString();
+      assert.ok(applyMove(jobs, key, "merge-queue", { item: w.store.get<WorkItem>(ref("1"))!, job: jobs[key], lane: "in-review", level: 4, mergeQueueOn: true, at: w.clock.ms }, "Ada", now).ok);
+      saveJobs(w.store, jobs);
+    };
+    const take = w.runner.takeWorkspace;
+    const start = w.runner.start;
+    if (when === "workspace") w.runner.takeWorkspace = async (...args) => (pick(), take(...args));
+    else w.runner.start = async (request) => (pick(), start(request));
+    await w.run();
+    w.runner.takeWorkspace = take;
+    w.runner.start = start;
+    // Before the start nothing starts; a session the runner started meanwhile is ended and not taken.
+    if (when === "workspace") assert.deepEqual(roles(w), [], when);
+    else assert.match(w.runner.stops[0] ?? "", /a person picked a state for the Item while this session started/, when);
+    assert.deepEqual([sessionIdOf(w.job("1")), owesHandOver(w.job("1"))], [undefined, true], when);
+    await w.run();
+    assert.deepEqual(queue.enqueued, ["1 scopesoup/1"], when);
+  }
+});
+
 test("a triage a person picked runs at level 0, and its settling clears the ask", async () => {
   const w = world(config({ level: 0 }), [item("1"), item("2")]);
   w.store.addUsageSample(usage(0.1, 0.1));
@@ -5191,7 +5227,7 @@ test("a pick that replaces the running step ends its session at once, as Stop do
   const jobs = loadJobs(w.store);
   const key = refKey(ref("1"));
   Object.assign(jobs[key]!, { head: HEAD, reviewAskedBy: "Ada", interrupt: { by: "Ada", at: new Date(T0).toISOString(), to: "in-review" } });
-  moveStep(jobs[key]!, "review");
+  pickReview(jobs[key]!, false);
   saveJobs(w.store, jobs);
   await w.run();
   assert.match(w.runner.stops[0] ?? "", /^Stopped: Ada picked In review for 1 on the board: the implement session s2 is ended now/);

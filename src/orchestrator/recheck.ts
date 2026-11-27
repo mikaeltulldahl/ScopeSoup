@@ -14,7 +14,7 @@ import { watchMain } from "./mainGuard.ts";
 import type { Triaged, TriagedText, Job, Recheck, TriageAnswer } from "./jobs.ts";
 import { plural } from "../model/plural.ts";
 import { pastFloor, staleness, stalest } from "../core/retriage.ts";
-import { recheckOf, stepAt, toTriage } from "./jobs.ts";
+import { stepAt, toTriage } from "./jobs.ts";
 
 /** The most commits a triage that runs again is shown; it is told how many there were in all. */
 export const MAX_COMMITS = 20;
@@ -174,7 +174,7 @@ export async function retriageCandidate<T extends { item: WorkItem; job: Job }>(
 
 /** `{{recheck}}` in the triage's prompt: empty, or what changed since the triage before. Agent and item text is data. */
 export function recheckPromptText(job: Job): string {
-  const recheck = recheckOf(job);
+  const recheck = job.at.kind === "triage" ? job.at.recheck : undefined;
   if (!recheck) return "";
   const previous = recheck.previous;
   const answer = [

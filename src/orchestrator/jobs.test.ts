@@ -2,8 +2,11 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { LogRecord, OpenQuestion } from "../model/types.ts";
 import type { Job, JobAt, JobParked } from "./jobs.ts";
-import { asImplement, askedInLog, asReview, asTriage, changedRewrite, hasMarkup, recoverFields, sameText, withoutVerification, dropUnreadable, loadJobs, saveJobs, parkedOf, writingOf, atStep, awaitText, endSession, handOverTaken, markMerged, mergedOf, nextStep, owesHandOver, parkJob, release, startSession, toReview } from "./jobs.ts";
+import { asImplement, askedInLog, asReview, asTriage, changedRewrite, hasMarkup, recoverFields, sameText, withoutVerification, dropUnreadable, loadJobs, saveJobs, parkedOf, writingOf, atStep, awaitText, endSession, handOverTaken, markMerged, nextStep, owesHandOver, parkJob, release, startSession, toReview, wait, editParked, toTriage, oweHandOver, oweClose } from "./jobs.ts";
 import { openStore } from "../store/store.ts";
+
+/** The sha of the job's change on main, once it merged. */
+const shaOf = (job: Job | null | undefined): string | undefined => (job?.at.kind === "merged" ? job.at.sha : undefined);
 
 test("a stored answer that carries the removed tests or untested fields is still read", () => {
   const implement = asImplement({ done: true, summary: "s", risk: "low", riskReason: "r", tests: "Added a test for parsing." });
@@ -212,7 +215,41 @@ test("each move builds the case it goes to, keeping what that case carries and n
   parkJob(job, { as: "queued", reason: "q", at: "t" });
   markMerged(job, "abc");
   assert.deepEqual(job.at, { kind: "merged", step: "review", sha: "abc", parked: { as: "queued", reason: "q", at: "t" } });
-  assert.equal(mergedOf(job), "abc");
+  assert.equal(shaOf(job), "abc");
+});
+
+test("a move asked of a case its callers are never in throws, and leaves the job as it was", () => {
+  const base = { item: { host: "meta", kind: "work" as const, id: "A-1" }, workspace: "w", branch: "scopesoup/A-1", failures: 0, fixRounds: 0, startedAt: "t" };
+  const parked: JobParked = { as: "escalated", reason: "r", at: "t" };
+  const cases: Record<string, JobAt> = {
+    running: atStep("review", { is: "running", session: "s1" }),
+    parked: { kind: "parked", step: "implement", parked },
+    owed: { kind: "hand-over", step: "review" },
+    merged: { kind: "merged", step: "review", sha: "abc" },
+  };
+  const impossible: [string, keyof typeof cases, (job: Job) => void][] = [
+    ["startSession", "running", (job) => startSession(job, "s2")],
+    ["startSession", "parked", (job) => startSession(job, "s2")],
+    ["wait", "owed", (job) => wait(job, "n")],
+    ["nextStep", "parked", (job) => nextStep(job, "review", "n")],
+    ["nextStep", "running", (job) => nextStep(job, "review", "n")],
+    ["nextStep", "merged", (job) => nextStep(job, "review", "n")],
+    ["nextStep", "owed", (job) => nextStep(job, "review", "n")],
+    ["parkJob", "owed", (job) => parkJob(job, parked)],
+    ["editParked", "running", (job) => editParked(job, parked)],
+    ["editParked", "merged", (job) => editParked(job, parked)],
+    ["release", "running", (job) => release(job)],
+    ["toTriage", "owed", (job) => toTriage(job)],
+    ["toReview", "merged", (job) => toReview(job, true)],
+    ["oweHandOver", "parked", (job) => oweHandOver(job)],
+    ["markMerged", "merged", (job) => markMerged(job, "def")],
+    ["oweClose", "parked", (job) => oweClose(job, { sha: "abc" })],
+  ];
+  for (const [move, from, act] of impossible) {
+    const job: Job = { ...base, at: cases[from]! };
+    assert.throws(() => act(job), new RegExp(`^Error: ${move}: a job that is `), `${move} on ${from}`);
+    assert.equal(job.at, cases[from], `${move} on ${from} leaves the job`);
+  }
 });
 
 test("a stored job of an older shape is dropped with an event at the tick, and is never read", () => {

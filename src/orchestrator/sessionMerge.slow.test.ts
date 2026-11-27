@@ -16,13 +16,16 @@ import { agentsState, setRolesForTest } from "../store/control.ts";
 import { openStore } from "../store/store.ts";
 import type { Store } from "../store/store.ts";
 import type { Job } from "./jobs.ts";
-import { releaseJob, mergedOf, parkedOf, sessionIdOf, stepAt } from "./jobs.ts";
+import { releaseJob, parkedOf, sessionIdOf, stepAt } from "./jobs.ts";
 import type { Actions } from "./ports.ts";
 import { dryActions } from "./ports.ts";
 import { createRunner } from "./runner.ts";
 import { tick } from "./tick.ts";
 import { isolateGitConfig } from "./fixtures/git-env.ts";
 import { execFileSyncRetrying } from "../hosts/spawnRetry.ts";
+
+/** The sha of the job's change on main, once it merged. */
+const shaOf = (job: Job | null | undefined): string | undefined => (job?.at.kind === "merged" ? job.at.sha : undefined);
 
 const FAKE = join(import.meta.dirname, "providers", "claude", "fake-claude.ts");
 const T0 = Date.parse("2026-11-21T10:00:00Z");
@@ -142,7 +145,7 @@ describe("merging by the session", { concurrency: 7 }, () => {
     assert.equal(git(w.remote, "rev-parse", "main^"), before, "one squash commit on main");
     const job = w.job();
     assert.equal(parkedOf(job)?.as, "queued", parkedOf(job)?.reason);
-    assert.equal(mergedOf(job), main);
+    assert.equal(shaOf(job), main);
     assert.deepEqual(w.lines.find((line) => line.kind === "merged")?.fields, { sha: main, target: "main" });
     assert.match(w.events("orchestrator.merged")[0] ?? "", /contains \w{7}, a squash of its head \w{7} \(the same files, new since \w{7}\)/);
   });

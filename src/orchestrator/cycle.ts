@@ -15,7 +15,7 @@ import { persistenceLimits } from "../config/persistence.ts";
 import type { Context } from "./context.ts";
 import { ACTOR, errorText } from "./context.ts";
 import type { AskedText, Decision, ItemLinkAnswer, Job, JobParked, JobStep, ParkedAs, ReviewAnswer, TakenDecision, TriageAnswer, Finding } from "./jobs.ts";
-import { ASK_PERSON, answerIn, askedInLog, jobQuestions, nextPark, parkSet, asImplement, asReview, asTriage, formatFindings, hasMarkup, recoverFields, keepsRecommendations, picks, questionsSettled, releaseIn, parkedRewrite, changedRewrite, sameText, atStep, stepAt, parkedOf, mergedOf, mergeApproved, shouldRoundOf, parkJob, editParked, release, nextStep, moveStep, endSession, wait, oweHandOver, handOverTaken, markMerged, dropMerge, dropShouldRound, setRecheck, toTriage } from "./jobs.ts";
+import { ASK_PERSON, answerIn, askedInLog, jobQuestions, nextPark, parkSet, asImplement, asReview, asTriage, formatFindings, hasMarkup, recoverFields, keepsRecommendations, picks, questionsSettled, releaseIn, parkedRewrite, changedRewrite, sameText, atStep, stepAt, parkedOf, mergeApproved, shouldRoundOf, parkJob, editParked, release, nextStep, endSession, wait, oweHandOver, handOverTaken, markMerged, toTriage, dropMark } from "./jobs.ts";
 import { providerFor } from "./providers/index.ts";
 import type { Actions, ClaimResult, SessionResultRecord } from "./ports.ts";
 import { CLAIM_EXPIRY_MINUTES } from "./ports.ts";
@@ -484,7 +484,7 @@ export function overturnsBack(ctx: Context, job: Job): boolean {
   if (pending.length === 0) return false;
   const waiting = stepAt(job) === "implement" && !mergeApproved(job) ? job.resumeWith ?? "" : "";
   // What the reviewer approved is not what a person wants: the change goes through review again before it is merged.
-  dropMerge(job);
+  dropMark(job, "merge");
   backToImplementor(ctx, job, waiting, `A person overturned ${pending.length === 1 ? "a decision" : `${pending.length} decisions`} the implementor took itself while the change has not merged. Next: the implementor's own session changes the work to match, before review.`);
   return true;
 }
@@ -510,7 +510,8 @@ async function failed(ctx: Context, job: Job, why: string, byStep = true): Promi
     return;
   }
   const delay = backoffMs(job.failures, ctx.config.settings.retryBackoffCapSeconds.value * 1000);
-  const notBefore = wait(job, later(ctx.at, delay));
+  const notBefore = later(ctx.at, delay);
+  wait(job, notBefore);
   ctx.commit(
     "orchestrator.retry_scheduled",
     `The ${stepAt(job)} step failed (${job.failures} of ${max}): ${why} Trying again in ${Math.round(delay / 1000)} s.`,
@@ -524,21 +525,19 @@ async function failed(ctx: Context, job: Job, why: string, byStep = true): Promi
  * neither reviewed nor merged, but implemented again. The reason goes into the event.
  */
 export function backToImplement(ctx: Context, job: Job, reason: string): void {
-  moveStep(job, "implement");
   handOverTaken(job);
-  endSession(job);
   job.failures = 0;
   delete job.head;
   // The work is gone: a new implementor starts from the Item, not from findings on work that is not there.
   delete job.resumeWith;
   delete job.agentSession;
-  dropMerge(job);
   delete job.base;
   delete job.roundBase;
   delete job.sentBack;
   // The decisions were about work that is gone.
   delete job.taken;
-  wait(job, later(ctx.at, CONTINUE_MS));
+  nextStep(job, "implement", later(ctx.at, CONTINUE_MS));
+  dropMark(job, "merge");
   ctx.commit("orchestrator.back_to_implement", `${reason} Nothing is reviewed or merged; next: implement.`, refKey(job.item), { next: "implement" });
 }
 
@@ -561,7 +560,7 @@ export async function emptyBranch(ctx: Context, job: Job): Promise<string | null
  */
 export async function afterBuild(ctx: Context, job: Job, item: WorkItem | null): Promise<void> {
   if (ctx.config.level >= 3) {
-    dropMerge(job);
+    dropMark(job, "merge");
     if (await fenced(ctx, job)) return;
     return next(ctx, job, "review", "Built. Next: review by another model.");
   }
@@ -999,7 +998,8 @@ async function settleStep(ctx: Context, job: Job, session: Session | null, recor
   }
 
   if (session.status === "limit") {
-    const notBefore = wait(job, record.resumeAt ?? later(ctx.at, 30 * 60_000), session.agentSessionId);
+    const notBefore = record.resumeAt ?? later(ctx.at, 30 * 60_000);
+    wait(job, notBefore, session.agentSessionId);
     ctx.commit("orchestrator.limit", `The ${stepAt(job)} session was cut off by the usage limit. It is resumed after ${notBefore}.`, key, { notBefore });
     return;
   }
@@ -1075,7 +1075,7 @@ async function settleStep(ctx: Context, job: Job, session: Session | null, recor
     const text = job.triaging ?? (item ? triagedText(item) : undefined);
     if (text) job.triaged = triagedNow(text, item, ctx.deps.store.list<WorkItem>("work"), ctx.at, main, answer.links ?? []);
     delete job.triaging;
-    setRecheck(job, undefined);
+    toTriage(job);
     // An answer with a rewrite goes through the rewrite loop. One without (from earlier) is settled as before.
     if (answer.rewrite !== undefined) return triage(ctx, job, answer, item);
     const decision = answer.decision;
@@ -1131,7 +1131,7 @@ async function settleStep(ctx: Context, job: Job, session: Session | null, recor
     // A round for the review's `should` findings (review.shouldFindings "fix") that committed nothing: the approved change goes on,
     // and the findings become a draft.
     if (shouldRoundOf(job)) {
-      dropShouldRound(job);
+      dropMark(job, "shouldRound");
       if (job.head && (await headOf(ctx, job)) === job.head) return shouldNothingNew(ctx, job, item);
     }
     const empty = await emptyBranch(ctx, job);
@@ -1166,7 +1166,7 @@ async function settleStep(ctx: Context, job: Job, session: Session | null, recor
   }
 
   if (stepAt(job) === "review") {
-    dropShouldRound(job);
+    dropMark(job, "shouldRound");
     // A person's In review pick (decision 104) was for this step; what comes next goes as the level says.
     delete job.reviewAskedBy;
     const answer = asReview(record.output);
@@ -1294,7 +1294,7 @@ const linkedItem = (ctx: Context, subject: Ref, name: string): WorkItem | null =
 
 /** Closed, or Done on the board: its change merged (also while the host still shows it open). Nothing to ask about it. */
 const finishedItem = (ctx: Context, work: WorkItem): boolean =>
-  !isOpenItem(work) || (work.merged !== undefined && work.merged.reopened === undefined) || mergedOf(ctx.jobs[refKey(work.ref)]) !== undefined;
+  !isOpenItem(work) || (work.merged !== undefined && work.merged.reopened === undefined) || ctx.jobs[refKey(work.ref)]?.at.kind === "merged";
 
 /**
  * True when `from` already waits on `target`, directly or through other open Items: its `blockedBy`, Scope Soup's own blockers, and
@@ -1662,7 +1662,7 @@ export async function afterRewrite(ctx: Context, job: Job): Promise<void> {
   const rewritten = rewrite?.settled === "accepted" || rewrite?.settled === "edited";
   if (!job.triage.ready && !job.triage.restructure && rewrite && (answered || rewritten)) {
     const settled = rewritten ? `${rewrite.settled} the rewrite${answered ? " with the answers to its questions" : ""}` : "answered its questions";
-    setRecheck(job, {
+    toTriage(job, {
       reasons: [`a person ${settled} after it said the Item was not ready`],
       previous: job.triage, previousAt: job.triaged?.at ?? job.startedAt, commits: [], commitCount: 0, finished: [],
       ...(rewritten && job.triaged ? { text: { title: job.triaged.title, body: rewrite.original, verification: job.triaged.verification } } : {}),
