@@ -856,6 +856,23 @@ export const RULES: Rule[] = [
     },
   },
   {
+    id: "G4",
+    why: "No move throws behind a catch: a thrown error in a tick (the loop's tick_failed), a claim renewal, or the merge queue is a bug; the host being down or refusing is not.",
+    check(o) {
+      // The simulator's own injected host failures (`metaHost.ts`, `multi.ts`): the remote down, a refused push, a race lost.
+      const expected = /did not answer|remote refused|kept moving/i;
+      // The words of the catches that report a thrown error (`tick.ts` renewClaims, `queueMerge.ts`, `queueDriver.ts`).
+      const thrown = /could not be renewed: |queue decided could not be applied: |The queue failed: |could not reach its clone or the remote: /;
+      for (const e of o.events) {
+        const reason = String((e.data as { reason?: unknown }).reason ?? "");
+        if (e.kind === "orchestrator.tick_failed") return `the loop would write tick_failed: ${reason.slice(0, 120)}`;
+        const caught = e.kind === "orchestrator.claim_lost" || e.kind === "orchestrator.queue_problem";
+        if (caught && thrown.test(reason) && !expected.test(reason)) return `${e.kind} from a thrown error: ${reason.slice(0, 160)}`;
+      }
+      return null;
+    },
+  },
+  {
     id: "G3",
     why: "The store is lost: after the read-back no done Item starts again and every open question is open again (long run only).",
     check(o, prev) {

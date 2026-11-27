@@ -382,6 +382,15 @@ describe("each rule fires on a bad state built by hand", { concurrency: 1 }, () 
   it("G2", "the tick threw", () => {
     assert.match(fires("G2", obs({ tickError: "boom" })) ?? "", /threw: boom/);
   });
+  it("G4", "a throw hidden behind a catch (tick_failed, a renewal, the queue), but not a host that is down", () => {
+    const said = (kind: string, reason: string): ScopeSoupEvent => ({ ...event("metaBranch:work:A-1", "orchestrator", kind), data: { reason } });
+    assert.match(fires("G4", obs({ events: [said("orchestrator.tick_failed", "The tick failed: boom")] })) ?? "", /tick_failed: The tick failed: boom/);
+    assert.match(fires("G4", obs({ events: [said("orchestrator.claim_lost", "The claim on A-1 could not be renewed: x is undefined.")] })) ?? "", /thrown error: .*x is undefined/);
+    assert.match(fires("G4", obs({ events: [said("orchestrator.queue_problem", "The queue failed: x is undefined")] })) ?? "", /queue_problem from a thrown/);
+    assert.equal(fires("G4", obs({ events: [said("orchestrator.claim_lost", "The claim on A-1 could not be renewed: the remote did not answer.")] })), null);
+    assert.equal(fires("G4", obs({ events: [said("orchestrator.queue_problem", "The queue could not reach its clone or the remote: the remote did not answer")] })), null);
+    assert.equal(fires("G4", obs({ events: [said("orchestrator.queue_problem", "Nothing is pushed: it moved.")] })), null);
+  });
   it("G3", "a closed Item starts again after the store was lost", () => {
     const lost = obs({ action: { kind: "lose-store" }, items: [item("A-1", NOTHING, { item: workItem("A-1", { state: "done" }) })] });
     assert.match(fires("G3", lost, obs({ action: tick, started: [started("A-1", "triage")] })) ?? "", /started again/);
