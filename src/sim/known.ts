@@ -10,12 +10,10 @@ export interface Known {
 }
 
 export const KNOWN: Record<string, Known> = {
-  B7: { seed: 3, what: "a triage rewrite that only adds whitespace is shown as a rewrite to accept when it comes with questions" },
   F3: { seed: 2, what: "the tick after a tick that committed something says its idle line (or a claim lost) again, though nothing changed" },
   // Seen in the long run only (seed in the long run). Less looked into than the ones above: the report says which may be the simulator's own.
   A6: { seed: 22, long: true, what: "the idle line names another machine's claim that the Item's log does not show (unsure: may be the fake host)" },
   C2: { seed: 3, long: true, what: "a change a person merged by hand (an escalated Item's branch) is on main, but the Item stays open" },
-  D3: { seed: 15, long: true, what: "an implement starts on the same paths as an Item whose implement step began but has no commit yet (busy is read from the head only; #187)" },
   // Since #229 (a released claim is read back at once, with an event about the Item) the normal run's seeds no longer show it.
   F1: { seed: 1, long: true, what: "an Item whose blocker closes goes from blocked to ready with no event about it; a person's release drops a job with none either" },
   E4: { seed: 13, long: true, what: "a session that merged without being told to is not escalated (decision 108)" },
