@@ -156,7 +156,7 @@ test("the status line carries the orchestrator's idle reason, and none when it i
 
 test("the compact status mirrors the board", () => {
   const status = toStatusView(buildBoard(sample(), now));
-  assert.deepEqual(status.lanes, { backlog: 0, blocked: 1, todo: 2, "in-progress": 1, "in-review": 1, queued: 1, checking: 5, done: 1 });
+  assert.deepEqual(status.lanes, { backlog: 0, todo: 2, blocked: 1, "in-progress": 1, "in-review": 1, queued: 1, checking: 5, done: 1 });
   assert.deepEqual(status.yourTurn.map((each) => each.ref), ["demo:work:3"]);
   assert.deepEqual(status.batches[1], { name: "batch 6", status: "testing", words: "checking: 4 min of ~8 min", members: ["#7", "#8"], progress: "4 min of ~8 min" });
   assert.equal(status.runners[0]?.words, "online, busy 4 min");
