@@ -361,7 +361,10 @@ export const RULES: Rule[] = [
           const now = readOf(i);
           // The paths it named: its answer's, which the job holds until the triage taken again answers.
           const paths = [...new Set([...before.paths, ...(prevOf(prev, s.item)?.paths ?? []), ...now.paths])];
-          const changed = now.text !== before.text || JSON.stringify(now.blockers) !== JSON.stringify(before.blockers)
+          // A person's edit since, as the Item's history says (on several machines a triage's start may already show an edit its
+          // session did not read).
+          const edited = (i.item.history ?? []).some((h) => h.kind === "edited" && !h.by.bot && Date.parse(h.at) > Date.parse(before.at) - 5 * 60_000);
+          const changed = edited || now.text !== before.text || JSON.stringify(now.blockers) !== JSON.stringify(before.blockers)
             || before.open.some((k) => closedNow.has(k)) || (paths.length > 0 && o.git.touching(before.main, o.git.main, paths) > 0);
           if (!changed) return `${i.id}'s triage was taken again with nothing it read changed since its triage of ${before.at}`;
         }
