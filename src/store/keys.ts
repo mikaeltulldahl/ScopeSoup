@@ -20,6 +20,8 @@ export const KEYS = {
   resources: "resources",
   /** The orchestrator's idle reason ("Nothing was started because ..."), written while nothing starts and emptied when something does. */
   idle: "orchestrator.idle_reason",
+  /** JSON `{ <item key>: [<open blocker keys>] }`: the Items the tick last read as waiting for blockers, so the tick that finds one free (or changed) says so. */
+  waitingOn: "orchestrator.waiting_on",
   /** JSON: the last update check (when, the newest release, a problem), so a restart does not ask again within the day. */
   updateCheck: "scopesoup.update_check",
   /** JSON: what Get latest or Go back paused and the next start is to start again (`{ triage, implement, review, mergeQueue, kind, to, at }`); "" when none. */

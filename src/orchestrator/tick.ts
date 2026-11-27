@@ -153,6 +153,10 @@ function interrupted(ctx: Context, key: string, job: Job, item: WorkItem | null)
     if (Date.parse(ctx.at) - Date.parse(asked.at) <= INTERRUPT_WAIT_MS) return true;
     ctx.commit("orchestrator.interrupt_failed", `The ${session.role} session ${session.ref.id} on ${item?.ref.id ?? key} is still there ${Math.round(INTERRUPT_WAIT_MS / 60_000)} minutes after ${asked.by}'s pick ended it; the job goes on as the pick left it, and nothing starts on the Item while that session runs.`, key, { by: asked.by, session: session.ref.id });
   }
+  else if (own && job.sessionId) {
+    // The session was over before the pick reached it: its result, not yet read, is not taken, and that is a change of the job.
+    ctx.commit("orchestrator.result_dropped", `${asked.by} picked ${PICK_WORDS[asked.to] ?? asked.to} for ${item?.ref.id ?? key} on the board: the result of its ${own.role} session ${own.ref.id}, which had ended, is not taken.`, key, { by: asked.by, step: job.step });
+  }
   delete job.interrupt;
   delete job.sessionId;
   delete job.resume;
@@ -247,6 +251,60 @@ function readInBacklog(job: Job, item: WorkItem): boolean {
   }
   if (mayWorkInBacklog(job) || job.merged !== undefined) return false;
   return job.parked?.as !== "queued" && job.parked?.as !== "handed-over";
+}
+
+/**
+ * Every Item waiting for open blockers is remembered (`KEYS.waitingOn`); the tick that reads one with other blockers, or none, writes
+ * an event about it (a blocker closed, at a sync or by this tick, or a person or triage took the link away). An Item that first waits is said where it is
+ * blocked (a person's request, a job's triage), not here.
+ */
+function noteBlockersChanged(ctx: Context, since: number): void {
+  const { store } = ctx.deps;
+  const items = withOwnBlockers(store.list<WorkItem>("work"), loadOwnBlockers(store));
+  const itemByKey = new Map(items.map((item) => [refKey(item.ref), item]));
+  let before: Record<string, string[]> = {};
+  const known = (store.getValue(KEYS.waitingOn) ?? null) !== null;
+  try {
+    before = JSON.parse(store.getValue(KEYS.waitingOn) ?? "{}") as Record<string, string[]>;
+  } catch {
+    before = {};
+  }
+  const isOpen = (key: string): boolean => {
+    const each = itemByKey.get(key);
+    return each !== undefined && each.state !== "done" && each.state !== "abandoned";
+  };
+  const now: Record<string, string[]> = {};
+  for (const item of items) {
+    if (item.state === "done" || item.state === "abandoned") continue;
+    const open = [...new Set(item.blockedBy.map(refKey))].filter(isOpen).sort();
+    if (open.length > 0) now[refKey(item.ref)] = open;
+  }
+  const words = (key: string): string => key.split(":").pop() ?? key;
+  for (const [key, was] of Object.entries(before)) {
+    const item = itemByKey.get(key);
+    if (!item || item.state === "done" || item.state === "abandoned") continue;
+    const open = now[key] ?? [];
+    if (JSON.stringify(open) === JSON.stringify(was)) continue;
+    const gone = was.filter((each) => !open.includes(each)).map((each) => {
+      const blocker = itemByKey.get(each);
+      return `${words(each)} ${blocker ? (blocker.state === "done" || blocker.state === "abandoned" ? `is ${blocker.state}` : "no longer blocks it") : "is no longer in the store"}`;
+    });
+    ctx.commit(open.length === 0 ? "orchestrator.unblocked" : "orchestrator.blockers_changed",
+      open.length === 0 ? `${item.ref.id} waited for ${was.map(words).join(", ")}: ${gone.join("; ")}. Nothing blocks it now.` : `${item.ref.id} still waits for ${open.map(words).join(", ")}: ${gone.join("; ")}.`,
+      key, { waitedFor: was, waitsFor: open });
+  }
+  // An Item that waits now and did not: a blocker reopened, or one a person or another machine added. When this tick wrote about the
+  // Item already (a triage that blocked it), that event says it. The first tick on a new store writes nothing: it only learns.
+  if (known) {
+    const said = new Set(store.eventsAfter(since, 100_000).filter((each) => !each.kind.startsWith("work.") && !each.kind.startsWith("change.")).map((each) => each.subject));
+    for (const [key, open] of Object.entries(now)) {
+      if (before[key] || said.has(key)) continue;
+      const item = itemByKey.get(key)!;
+      ctx.commit("orchestrator.blocked_by", `${item.ref.id} waits for ${open.map(words).join(", ")}.`, key, { waitsFor: open });
+    }
+  }
+  const text = JSON.stringify(now);
+  if (!known || text !== JSON.stringify(before)) store.setValue(KEYS.waitingOn, text);
 }
 
 /**
@@ -478,6 +536,7 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
   const report: TickReport = { at, started: [], running: 0, queued: 0 };
   let jobs: Jobs | null = null;
   const log = createLog(store, at, () => jobs);
+  const seq0 = store.lastSeq();
 
   // 1. Reconcile first, whatever else is wrong.
   try {
@@ -541,6 +600,8 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
   // Scope Soup's own blockers count as the host's do.
   const items = withVotes(withOwnBlockers(store.list<WorkItem>("work"), loadOwnBlockers(store)), loadVotes(store));
   const itemByKey = new Map(items.map((item) => [refKey(item.ref), item]));
+  // An Item that waited for blockers and now waits for fewer, or none, says so: what an Item waits for changed.
+  noteBlockersChanged(ctx, seq0);
   // A new store (data/ deleted): jobs and answers come back from the items' logs (meta branch).
   recoverFromLogs(ctx, items);
   // Jobs left at a step that was removed (an upgrade) move on before anything reads their step.
@@ -727,6 +788,8 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
   const off: SessionRole[] = [];
   const waitsFor: Record<SessionRole, number> = { triage: 0, implement: 0, review: 0 };
   const finish = (): TickReport => {
+    // A blocker this tick closed (the store has it at once) frees what waited for it in this tick.
+    noteBlockersChanged(ctx, seq0);
     report.running = running;
     // Steps waiting for a paused role are not work to stay awake for either.
     report.queued = Math.max(0, queuedCount - heldForClone - waitsFor.triage - waitsFor.implement - waitsFor.review - report.started.length);

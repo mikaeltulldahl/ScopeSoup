@@ -112,6 +112,9 @@ export interface Machine {
   started: { step: number; request: SessionRequest }[];
   /** The step of this machine's last sync (a fetch or the world's sync step). */
   syncedAt: number;
+  /** The step this machine was last checked at, and the step another machine last acted at (a push it reads at its next tick). */
+  checkedAt: number;
+  othersActedAt: number;
 }
 
 /** A step of a multiplayer run, as plain data. */
@@ -159,6 +162,8 @@ const FIRST_MACHINE_ONLY = new Set(["C3", "H3"]);
 const OFFLINE_EXCUSED = new Set(["C2", "C3", "H3"]);
 /** Rules that a person's request excuses: one on another machine's board counts too. */
 const EXCUSED_BY_ANY_BOARD = new Set(["C1", "J2", "J3"]);
+/** Rules about "run again at once": with another machine's step in between, the second tick may read what it pushed (F3). */
+const ALONE_ONLY = new Set(["F3"]);
 
 export function rulesFor(index: number): Rule[] {
   return RULES.filter((rule) => !NOT_PER_MACHINE.has(rule.id) && (index === 0 || !FIRST_MACHINE_ONLY.has(rule.id)));
@@ -212,7 +217,7 @@ export class MultiWorld {
       const link = new RemoteLink(this.remote);
       const git = new FakeGit(this.origin);
       const machine: Machine = {
-        index, name, link, skew: index === 0 ? 0 : (skews.int(181) - 90) * 1000, requests: [], memo: new Map(), rules: rulesFor(index), started: [], syncedAt: 0,
+        index, name, link, skew: index === 0 ? 0 : (skews.int(181) - 90) * 1000, requests: [], memo: new Map(), rules: rulesFor(index), started: [], syncedAt: 0, checkedAt: 0, othersActedAt: 0,
         world: undefined as unknown as SimWorld,
       };
       machine.world = new SimWorld(options, { machine: name, idPrefix: name.slice(-1).toUpperCase(), remote: link as unknown as MetaRemote, git, requests: this.requestPort(machine) });
@@ -446,13 +451,16 @@ export async function playMulti(seed: number, options: MultiOptions, multiRules:
       let message: string | null;
       try {
         const seen = EXCUSED_BY_ANY_BOARD.has(rule.id) ? anyBoard : o;
-        message = rule.check(only ? { ...seen, final: true } : seen, m.prev, m.memo.get(rule.id)!);
+        // Without a previous step the rule only learns (F3's memory of what was said), and finds nothing.
+        const before = ALONE_ONLY.has(rule.id) && m.othersActedAt > m.checkedAt ? undefined : m.prev;
+        message = rule.check(only ? { ...seen, final: true } : seen, before, m.memo.get(rule.id)!);
       } catch (error) {
         message = `the check threw: ${error instanceof Error ? error.message : String(error)}`;
       }
       if (message) fail(rule.id, message, m.name);
     }
     m.prev = o;
+    m.checkedAt = world.step;
   };
   const checkAcross = (final: boolean): void => {
     const o = world.observe(final);
@@ -478,6 +486,7 @@ export async function playMulti(seed: number, options: MultiOptions, multiRules:
     await world.apply(step);
     // A machine offline "for a while" comes back as the steps pass, whichever machine acts.
     for (const each of world.machines) if (each !== m && each.link.down > 0 && step.kind !== "offline") each.link.down--;
+    for (const each of world.machines) if (each !== m) each.othersActedAt = world.step;
     recent.push(`${world.step} ${multiActionText(world, step)}`);
     if (recent.length > 10) recent.shift();
     if (options.trace) console.log(`seed ${seed} step ${world.step}: ${multiActionText(world, step)}`);

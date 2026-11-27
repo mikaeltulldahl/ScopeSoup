@@ -94,6 +94,10 @@ export async function park(ctx: Context, job: Job, as: ParkedAs, reason: string,
 export async function retryPost(ctx: Context, job: Job): Promise<void> {
   const parked = job.parked!;
   await tellPeople(ctx, job, parked.postingAs ?? "needs-decision", parked.posting ?? parked.reason, "decision");
+  // Through at last: the parked Item went from an escalation (the host could not be written) to a person's question, which is a change.
+  if (job.parked && job.parked.retry !== "post") {
+    ctx.commit("orchestrator.question_posted", `The question that could not be posted is posted now: ${clipText(job.parked.reason, 300)}`, refKey(job.item), { step: job.step });
+  }
 }
 
 /** `park`'s word to a person: the questions, rewrite or split on the item's host (GitHub), else a person's list and the item's log. */
