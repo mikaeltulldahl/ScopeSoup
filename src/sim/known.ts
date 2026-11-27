@@ -13,7 +13,6 @@ export const KNOWN: Record<string, Known> = {
   B7: { seed: 3, what: "a triage rewrite that only adds whitespace is shown as a rewrite to accept when it comes with questions" },
   F3: { seed: 2, what: "the tick after a tick that committed something says its idle line (or a claim lost) again, though nothing changed" },
   // Seen in the long run only (seed in the long run). Less looked into than the ones above: the report says which may be the simulator's own.
-  A6: { seed: 22, long: true, what: "the idle line names another machine's claim that the Item's log does not show (unsure: may be the fake host)" },
   A3: { seed: 7, long: true, what: "a person's Start over drops an escalated job but leaves its question line open on the host (reached again after #243 moved the runs)" },
   B1: { seed: 34, long: true, what: "a triage after a lost store is not told an answer given before it (an answer that released a not-ready job is not read back from the log; reached again after #243 moved the runs)" },
   C2: { seed: 3, long: true, what: "a change a person merged by hand (an escalated Item's branch) is on main, but the Item stays open" },

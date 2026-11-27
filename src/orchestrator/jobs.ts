@@ -289,7 +289,7 @@ export interface Job {
   /**
    * The job is a person's Triage pick on an Item in Backlog, and what follows from it (decision 121): the one job that may stay on a
    * Backlog Item. Set by the tick when it sees such a pick; cleared once the Item is seen in To do. Any other job on an Item read in
-   * Backlog (another machine's person moved it there) is given up (#243).
+   * Backlog (another machine's person moved it there) is given up (#243), unless it is work a person put under way (`mayWorkInBacklog`).
    */
   pickedInBacklog?: true;
   /** A person picked In review on the board: this review step runs whatever the level (decision 104). Cleared when it is settled. */

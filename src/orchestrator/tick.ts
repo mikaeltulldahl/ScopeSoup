@@ -229,9 +229,19 @@ async function sweep(ctx: Context, subject?: string): Promise<void> {
 }
 
 /**
- * The job is on an Item in Backlog that it may not work on: only a person's Triage pick there (and what follows from it) stays in
- * Backlog (decision 121). A change queued or handed over, or merged, is left alone. Notes the pick on the job, and forgets it once the
- * Item is in To do.
+ * A job that may go on with its Item in Backlog (decision 121): a person's Triage pick there and what follows from it, and work a person
+ * put under way, which never stalls there (Implement anyway, a revision, something to resume: the board moved the Item to To do, and
+ * the store may not have read that yet).
+ */
+function mayWorkInBacklog(job: Job): boolean {
+  if (job.triageAskedBy !== undefined || job.pickedInBacklog) return true;
+  // A triage cut off and resumed is no work a person put under way: in Backlog it is not run (#243).
+  return job.step !== "triage" && (job.implementAskedBy !== undefined || job.head !== undefined || !!job.resume || job.resumeWith !== undefined);
+}
+
+/**
+ * The job is on an Item in Backlog that it may not work on (`mayWorkInBacklog`). A change queued or handed over, or merged, is left
+ * alone. Notes a person's Triage pick on the job, and forgets it once the Item is in To do.
  */
 function readInBacklog(job: Job, item: WorkItem): boolean {
   if (!item.backlog) {
@@ -239,7 +249,7 @@ function readInBacklog(job: Job, item: WorkItem): boolean {
     return false;
   }
   if (job.triageAskedBy !== undefined) job.pickedInBacklog = true;
-  if (job.pickedInBacklog || job.merged !== undefined) return false;
+  if (mayWorkInBacklog(job) || job.merged !== undefined) return false;
   return job.parked?.as !== "queued" && job.parked?.as !== "handed-over";
 }
 
@@ -998,7 +1008,7 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
         const read = store.get<WorkItem>(entry.item.ref);
         const gone = !read ? "it is no longer in the store"
           : read.state === "done" || read.state === "abandoned" ? `it is ${read.state}`
-          : read.backlog && job.triageAskedBy === undefined && !job.pickedInBacklog ? "it is in Backlog (moved there on another machine)"
+          : read.backlog && !mayWorkInBacklog(job) ? "it is in Backlog (moved there on another machine)"
           // New here, and another machine's work on it waits for a person's answer (its claim went back when it parked).
           : !entry.job && read.needsDecision ? "it waits for a decision by a person"
           : null;
