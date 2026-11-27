@@ -757,7 +757,11 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
       try {
         const tip = (await runner.fetchMain(job.branch)).main;
         const head = await runner.head(job.branch);
-        if ((await runner.contains(job.branch, head, tip)) === true) {
+        // An escalated hand-over may be one whose check failed before the base was compared (main could not be read): a head that is
+        // still the base, or in it, is no work done, not a person's merge. Without a base, only the revision the reviewer approved
+        // counts (#268).
+        const ownWork = !handOverStuck || (job.base !== undefined ? head !== job.base && (await runner.contains(job.branch, head, job.base)) !== true : head === job.reviewedHead);
+        if (ownWork && (await runner.contains(job.branch, head, tip)) === true) {
           setWhere(job, { merged: head });
           ctx.commit("orchestrator.merged", `${job.branch} is on ${config.mainBranch} of ${config.remote} as ${head.slice(0, 7)}: a person merged it.`, key, { sha: head, main: tip, by: "person" });
           await ctx.act("write the merge to the item's log", key, () => ctx.deps.actions.appendLog(job.item, "merged", { sha: head, target: config.mainBranch }));

@@ -5283,6 +5283,30 @@ test("meta branch: a handed-over change a person merged is logged as merged and 
   assert.equal(w.closes.length, 1);
 });
 
+test("an escalated hand-over whose branch head is still the base is no merge: the Item is not closed (#268)", async () => {
+  // The implementor said done with no commit; reading main failed, so it parked for a person before the base was compared. Now the
+  // head is main's own commit, which main contains: that is no work done, not a person's merge.
+  const w = world(config({ level: 2 }), [item("1")]);
+  w.closesItself = true;
+  w.store.addUsageSample(usage(0.1, 0.1));
+  const key = refKey(ref("1"));
+  const parked = (over: Record<string, unknown>) => jobOf({
+    item: ref("1"), workspace: workspaceKey(ref("1")), branch: "scopesoup/1", step: "implement" as const, failures: 0, fixRounds: 0, startedAt: new Date(T0).toISOString(),
+    parked: { as: "escalated", reason: "Could not read whether main contains it.", at: new Date(T0).toISOString(), retry: "hand-over" }, ...over,
+  } as JobFields & Partial<Where>);
+  w.runner.main = MAIN_START;
+  w.runner.headSha = MAIN_START;
+  saveJobs(w.store, { [key]: parked({ base: MAIN_START }) });
+  await w.run();
+  assert.equal(w.closes.length, 0);
+  assert.equal(where(w.job("1"))?.parked?.as, "escalated");
+  // With a commit over the base that main holds now, a person merged it: done.
+  w.runner.headSha = HEAD;
+  w.runner.main = MAIN_MERGED;
+  await w.run();
+  assert.deepEqual(w.closes, [`1 ${HEAD} -`]);
+});
+
 test("GitHub: a handed-over change a person merged is left to the host to close", async () => {
   const w = await handedOver();
   w.runner.main = MAIN_MERGED;
