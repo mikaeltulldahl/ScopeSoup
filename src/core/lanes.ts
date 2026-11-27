@@ -2,7 +2,7 @@
 
 import type { Batch, BatchMember, Change, Ref, Session, Verdict, WorkItem } from "../model/types.ts";
 import { refKey } from "../model/types.ts";
-import type { Index } from "./snapshot.ts";
+import type { Index, JobStage } from "./snapshot.ts";
 
 // Backlog: what a person has not chosen yet, which no agent starts; To do: what agents may start (decision 121).
 export const LANES = ["backlog", "blocked", "todo", "in-progress", "in-review", "queued", "checking", "done"] as const;
@@ -110,6 +110,37 @@ function batchFor(change: Change, index: Index): { batch: Batch; member: BatchMe
   );
 }
 
+/** The lane of a session's role: a triage in To do (or Backlog, when a person asked for one there), an implementor In progress, a reviewer In review. */
+function roleLane(role: string, item: WorkItem): Lane {
+  if (WORKING_ROLES.has(role)) return "in-progress";
+  if (role === "review") return "in-review";
+  return item.backlog ? "backlog" : "todo";
+}
+
+/**
+ * With a job (Scope Soup's store), the lane follows what the Item waits for, in the order of decision 3: a session that runs is in its role's
+ * lane; a wait for a person is in the lane of the stage its work is at (decision 2), never Queued or Checking; a blocker is Blocked; anything
+ * else waits at its stage. Null where the job's stage says nothing the change does not (no change begun, but one there).
+ */
+function jobLane(job: JobStage, situation: Situation, index: Index): Lane | null {
+  const { item, session, change } = situation;
+  const atStage = (): Lane | null => {
+    if (job.stage === "implement") return "in-progress";
+    if (job.stage === "review") return "in-review";
+    if (job.stage === "queue") return null;
+    return change ? null : item.backlog ? "backlog" : "todo";
+  };
+  const held = item.holder !== undefined && !item.holder.actor.bot;
+  if (held) return atStage();
+  if (session && isLive(session)) return roleLane(session.role, item);
+  const parked = index.parkedByWork.get(refKey(item.ref));
+  if (parked?.as === "handed-over") return "in-review";
+  if (parked && parked.as !== "queued") return atStage() ?? (item.backlog ? "backlog" : "todo");
+  if (job.stage === "start" && item.backlog) return "backlog";
+  if (!item.needsDecision && openBlockers(item, index).length > 0) return "blocked";
+  return atStage();
+}
+
 export function situate(item: WorkItem, index: Index): Situation {
   const change = currentChange(item, index);
   const session = sessionFor(item, change, index);
@@ -117,6 +148,18 @@ export function situate(item: WorkItem, index: Index): Situation {
   if (item.state === "abandoned") return base;
   // A merged change is Done even while the host still shows the issue open (the close failed or writes are off).
   if (item.state === "done" || index.mergedWork.has(refKey(item.ref))) return { ...base, lane: "done" };
+  const job = index.jobByWork.get(refKey(item.ref));
+  if (job && change?.state !== "merged") {
+    const found = change && change.state === "open" ? batchFor(change, index) : undefined;
+    const situation: Situation = { ...base, batch: found?.batch, member: found?.member, approved: change ? isApproved(change, index) : false };
+    const lane = jobLane(job, situation, index);
+    if (lane) return { ...situation, lane };
+    // In the merge queue's hands: waiting for a batch, or in one being checked.
+    if (job.stage === "queue") {
+      const testing = found && found.batch.status !== "failed" && found.batch.status !== "forming" && found.member.state !== "requeued" && found.member.state !== "culprit";
+      return { ...situation, lane: testing ? "checking" : "queued" };
+    }
+  }
   const working = session !== undefined && WORKING_ROLES.has(session.role);
   // Reviewed and handed to a person to merge: it waits in review, whether or not a pull request exists.
   const handedOver = index.parkedByWork.get(refKey(item.ref))?.as === "handed-over";

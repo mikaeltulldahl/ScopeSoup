@@ -221,8 +221,8 @@ function foldOrder(a: LogEntry, b: LogEntry): number {
  *   revision whose sha is already there is the same revision. `merged` counts only when its sha is
  *   the newest revision's.
  * - `question` is open until an `answer` names it by its `at` in `to` (and, when the answer has
- *   it, its writer in `toBy`), or, without `to`, until the next answer (which takes the newest
- *   open question).
+ *   it, its writer in `toBy`), whichever of the two folds first, or, without `to`, until the next
+ *   answer (which takes the newest question open at the end of its own instant).
  */
 export function foldLog(log: ParsedLog): LogPicture {
   const picture: LogPicture = { revisions: [], reviews: [], checks: [], openQuestions: [], entries: log.entries.length, lines: [], unknown: [], malformed: [...log.malformed] };
@@ -230,8 +230,20 @@ export function foldLog(log: ParsedLog): LogPicture {
   const ordered = [...log.entries].sort(foldOrder).filter((entry) => !seen.has(entry.key) && !!seen.add(entry.key));
   picture.lines = ordered;
   const merges: MergedLine[] = [];
+  // Answers that named a question not folded yet.
+  const earlyAnswers: { to: number; toBy?: LogActor }[] = [];
+  // Answers without `to`, by their instant: each takes the newest open question once its instant is folded, so a question of the same
+  // instant that folds after it (an earlier `by` as text) is the one it answers.
+  const newestAnswers: number[] = [];
+  const answerNewest = (before: number): void => {
+    while (newestAnswers.length > 0 && newestAnswers[0]! < before) {
+      newestAnswers.shift();
+      picture.openQuestions.pop();
+    }
+  };
   for (const entry of ordered) {
     const { at, by, data } = entry;
+    answerNewest(Date.parse(at));
     picture.lastAt = later(picture.lastAt, at);
     const bad = (problem: string): void => void picture.malformed.push({ line: entry.line, raw: JSON.stringify(data), problem });
     const sha = text(data.sha);
@@ -322,6 +334,12 @@ export function foldLog(log: ParsedLog): LogPicture {
           // answers it any more, so it is not an open question and the item is not held by it.
           else if (reason && (text(fields.description) || text(fields.verification))) break;
         }
+        // An answer naming this question may fold before it: the same instant with an earlier `by` as text, or another clock.
+        const early = earlyAnswers.findIndex((answer) => answer.to === Date.parse(at) && (answer.toBy === undefined || sameActor(by, answer.toBy)));
+        if (early >= 0) {
+          earlyAnswers.splice(early, 1);
+          break;
+        }
         picture.openQuestions.push(line);
         break;
       }
@@ -331,7 +349,7 @@ export function foldLog(log: ParsedLog): LogPicture {
           break;
         }
         if (data.to === undefined) {
-          picture.openQuestions.pop();
+          newestAnswers.push(Date.parse(at));
           break;
         }
         if (!isLogTime(data.to)) {
@@ -344,7 +362,9 @@ export function foldLog(log: ParsedLog): LogPicture {
           break;
         }
         const to = Date.parse(data.to);
+        const before = picture.openQuestions.length;
         picture.openQuestions = picture.openQuestions.filter((question) => !(Date.parse(question.at) === to && (toBy === undefined || sameActor(question.by, toBy))));
+        if (picture.openQuestions.length === before) earlyAnswers.push({ to, ...(toBy ? { toBy } : {}) });
         break;
       }
       case "settings":
@@ -364,6 +384,7 @@ export function foldLog(log: ParsedLog): LogPicture {
         picture.unknown.push(entry);
     }
   }
+  answerNewest(Infinity);
   // The change has merged when the newest revision has: an older revision's `merged` says nothing.
   const newest = picture.revisions[picture.revisions.length - 1];
   const merged = newest ? merges.filter((line) => line.sha === newest.sha).pop() : undefined;

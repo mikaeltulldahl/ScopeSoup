@@ -42,7 +42,7 @@ import { holdStands } from "../model/people.ts";
 import type { PickRequest, RequestStep } from "../hosts/metaBranch/requests.ts";
 import { aheadWhy, requestable, requestState } from "../hosts/metaBranch/requests.ts";
 import { randomUUID } from "node:crypto";
-import type { MoveInput } from "./moves.ts";
+import type { Move, MoveInput } from "./moves.ts";
 import type { AnswerRefusal, RewriteRefusal, Rewrite } from "../orchestrator/jobs.ts";
 import { workBranch } from "../orchestrator/paths.ts";
 import type { Media } from "../orchestrator/media.ts";
@@ -247,6 +247,9 @@ interface AnswerEntry {
   to?: string;
   index?: number;
 }
+
+/** The answer a person's move writes to the questions the Item's log still holds open. */
+const MOVE_ANSWERS: Record<Move, string> = { implement: "Implement anyway", todo: "Put back in To do", triage: "Triage again", "in-review": "Review again", "merge-queue": "To the merge queue" };
 
 /** One entry of `POST /api/answer(s)` read, or why it cannot be. */
 function answerEntry(given: { answer?: unknown; to?: unknown; question?: unknown }): AnswerEntry | string {
@@ -552,6 +555,25 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
     }
     const keys = resolved.map((each) => (each.index >= 0 ? `#${each.index}` : each.asked ? each.asked.at : "parked"));
     if (new Set(keys).size !== keys.length) return sendError(response, 400, "DUPLICATE_ANSWER", "Give one answer to each question.");
+    // In the item's log too (meta branch), naming the question, so the answer outlives the local store. One write for all of them, and
+    // first, as on GitHub: an answer the log does not take is not recorded, so the job is never released while its question stays open
+    // there (#230). What the store would refuse is refused before the write.
+    const write = items?.write;
+    let logged: WriteOutcome | undefined;
+    if (write?.appendLog && subject.host === items!.host) {
+      const job = loadJobs(store)[ref];
+      if (!resolved.some((each) => each.target) && parkedAt !== undefined && !(job?.parked && Date.parse(job.parked.at) === Date.parse(parkedAt))) return sendError(response, 409, "PARKED_CHANGED", `${ref} parked on other questions now: reload the item.`);
+      const already = resolved.find((each) => each.target?.answer !== undefined);
+      if (already) return sendError(response, 409, "ALREADY_ANSWERED", `Question ${already.index + 1} on ${ref} has an answer already.`);
+      const lines = resolved.map((each) => ({ kind: "answer", by: by(), fields: { answer: each.text, ...(each.asked ? { to: each.asked.at, toBy: each.asked.by } : {}) } }));
+      try {
+        if (lines.length > 1 && write.appendLogs) logged = await write.appendLogs(subject, lines);
+        else for (const line of lines) logged = await write.appendLog(subject, line);
+      } catch (error) {
+        options.onRefresh?.();
+        return sendError(response, 502, "WRITE_REFUSED", `The answer is not recorded: it could not be written to ${subject.id}'s log (${error instanceof Error ? error.message : String(error)}). Try again.`);
+      }
+    }
     const at = now().toISOString();
     type Outcome = { released: boolean; open?: number } | { refused: AnswerRefusal; index: number };
     let outcome: Outcome;
@@ -597,20 +619,9 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
     }
     const released = outcome.released;
     const left = outcome.open !== undefined ? { open: outcome.open } : {};
-    // In the item's log too (meta branch), naming the question, so the answer outlives the local store. One write for all of them.
-    const write = items?.write;
-    if (write?.appendLog && subject.host === items!.host) {
-      const lines = resolved.map((each) => ({ kind: "answer", by: by(), fields: { answer: each.text, ...(each.asked ? { to: each.asked.at, toBy: each.asked.by } : {}) } }));
-      let logged: WriteOutcome | undefined;
-      try {
-        if (lines.length > 1 && write.appendLogs) logged = await write.appendLogs(subject, lines);
-        else for (const line of lines) logged = await write.appendLog(subject, line);
-      } catch (error) {
-        options.onRefresh?.();
-        return sendJson(response, 200, { recorded: true, released, ...left, logged: false, problem: error instanceof Error ? error.message : String(error) });
-      }
+    if (logged) {
       await options.syncNow?.();
-      return sendJson(response, 200, { recorded: true, released, ...left, logged: true, shared: logged?.shared });
+      return sendJson(response, 200, { recorded: true, released, ...left, logged: true, shared: logged.shared });
     }
     options.onRefresh?.();
     return sendJson(response, 200, { recorded: true, released, ...left });
@@ -800,20 +811,28 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
       const moved = await inProcess(editItem, { ref, lane: "todo" });
       store.appendEvent({ kind: "person.moved", subject: ref, actor: who, data: { to: "todo", reason: moved.status < 400 ? `${work.ref.id} moved from Backlog to To do: ${who}'s Implement anyway puts work under way.` : `${work.ref.id} could not be moved from Backlog to To do for ${who}'s Implement anyway: ${moved.message ?? `the server answered ${moved.status}`}`, via: "board" } }, now().toISOString());
     }
-    // Implement anyway overrules the not-ready question the log still holds open: it is answered there, so the card stops asking.
+    const problem = await answerByMove(work, MOVE_ANSWERS[to]);
+    options.onRefresh?.();
+    return sendJson(response, 200, { ref, message: done.reason, ...(problem ? { logged: false, problem } : {}) });
+  }
+
+  /**
+   * A person's move replaces what the Item waited for (Implement anyway overrules the not-ready question; the others drop or replace the
+   * step): the questions the log still holds open are answered there with the move's words, so none is left open (#230). Returns why
+   * the write failed, if it did.
+   */
+  async function answerByMove(work: WorkItem, said: string): Promise<string | undefined> {
     const write = items?.write;
-    const asked = to === "implement" && write?.appendLog && work.ref.host === items!.host && !(options.questions && work.ref.host === options.questions.host) ? work.openQuestions ?? [] : [];
+    const asked = write?.appendLog && work.ref.host === items!.host && !(options.questions && work.ref.host === options.questions.host) ? work.openQuestions ?? [] : [];
     for (const question of asked) {
       try {
-        await write!.appendLog!(work.ref, { kind: "answer", by: by(), fields: { answer: "Implement anyway", to: question.at, toBy: question.by } });
+        await write!.appendLog!(work.ref, { kind: "answer", by: by(), fields: { answer: said, to: question.at, toBy: question.by } });
       } catch (error) {
-        options.onRefresh?.();
-        return sendJson(response, 200, { ref, message: done.reason, logged: false, problem: error instanceof Error ? error.message : String(error) });
+        return error instanceof Error ? error.message : String(error);
       }
     }
     if (asked.length > 0) await options.syncNow?.();
-    options.onRefresh?.();
-    return sendJson(response, 200, { ref, message: done.reason });
+    return undefined;
   }
 
   /**
@@ -1973,6 +1992,8 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
         return result;
       });
       if (!dropped.ok) return sendError(response, 409, "REFUSED", `${current.ref.id} cannot go to Backlog: ${dropped.why}.`);
+      // A failed write leaves the question open; the lane edit still goes on.
+      if ("reason" in dropped) await answerByMove(current, "Put back in Backlog");
     }
     if (body.verification !== undefined) {
       if (typeof body.verification !== "string") return bad("verification", "text");
@@ -2015,6 +2036,8 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
     try {
       const done = await write!.editWork!(current.ref, patch);
       const logged = write!.appendLog ? await write!.appendLog(done.work, { kind: "edited", by: by(), fields: { changed } }) : done;
+      // Reopened: a question left open from before the close asks nothing now (a new triage asks again if it still applies; #230).
+      if (patch.state === "todo" && (current.state === "done" || current.state === "abandoned")) await answerByMove(current, "Reopened");
       return written(response, logged);
     } catch (error) {
       return sendError(response, 400, "WRITE_REFUSED", error instanceof Error ? error.message : String(error));

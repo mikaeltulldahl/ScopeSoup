@@ -222,3 +222,14 @@ test("fold: an answer names its question by `at`, and by `toBy` when two were as
   assert.equal(broken.openQuestions.length, 3);
   assert.equal(broken.malformed.length, 2);
 });
+
+test("log: an answer closes its question whichever folds first (the same instant, a name that sorts before the asker's) (#230)", () => {
+  const soup = { who: "scopesoup", machine: "laptop-a", agent: true };
+  const ada = { who: "Ada", machine: "laptop-a" };
+  const t = "2026-11-18T10:00:00Z";
+  // Named by `to`: it folds before the question (Ada sorts before scopesoup) and still closes it.
+  assert.equal(fold(jsonl({ at: t, by: soup, kind: "question", question: "Go?" }, { at: t, by: ada, kind: "answer", answer: "Yes", to: t, toBy: soup })).openQuestions.length, 0);
+  // Without `to`: it takes the newest question open at the end of its instant.
+  const two = fold(jsonl({ at: "2026-11-18T09:00:00Z", by: soup, kind: "question", question: "Older?" }, { at: t, by: soup, kind: "question", question: "Newer?" }, { at: t, by: ada, kind: "answer", answer: "Yes" }));
+  assert.deepEqual(two.openQuestions.map((line) => line.question), ["Older?"]);
+});

@@ -40,7 +40,8 @@ function ticksSince(memo: Record<string, unknown>, key: string, holds: boolean, 
   return table[key]!;
 }
 
-const ROLE_LANE: Record<string, string> = { triage: "backlog", implement: "in-progress", review: "in-review" };
+// A triage runs in To do, or in Backlog when a person asked for one there (#221).
+const roleLane = (role: string, item: ItemObs["item"]): string => (role === "triage" ? (item.backlog ? "backlog" : "todo") : role === "implement" ? "in-progress" : "in-review");
 
 export const RULES: Rule[] = [
   // --- A. One truth ---
@@ -57,11 +58,14 @@ export const RULES: Rule[] = [
         if (!card) return null;
         if (i.w.kind === "session" && !i.w.settling) {
           if (card.actor !== "agent") return `${i.id}: a ${i.w.role} session runs, but the card's actor is ${card.actor}`;
-          if (lane !== ROLE_LANE[i.w.role]) return `${i.id}: a ${i.w.role} session runs, but the card is in ${lane}`;
+          if (lane !== roleLane(i.w.role, i.item)) return `${i.id}: a ${i.w.role} session runs, but the card is in ${lane}`;
         }
         if (i.w.kind === "blocker" && lane !== "blocked") return `${i.id} waits for ${i.w.on.join(", ")} but is in ${lane}, not Blocked`;
-        if (i.w.kind === "person" && i.w.why !== "holds" && i.w.why !== "merge" && lane !== stageLane(i.job)) return `${i.id}: W is ${wText(i.w)}, so its lane is ${stageLane(i.job)} (decision 2), but the card is in ${lane}`;
+        if (i.w.kind === "person" && i.w.why !== "holds" && i.w.why !== "merge" && lane !== stageLane(i.item, i.job)) return `${i.id}: W is ${wText(i.w)}, so its lane is ${stageLane(i.item, i.job)} (decision 2), but the card is in ${lane}`;
         if (i.w.kind === "nothing" && i.item.state === "done" && lane !== "done") return `${i.id} is done but in ${lane}`;
+        // The words of the cause (decision 3): the two timed waits have their own.
+        if (i.w.kind === "start" && i.w.cause === "text" && !/read back/.test(card.reason)) return `${i.id} waits for its written text to be read back, but the card says "${card.reason}"`;
+        if (i.w.kind === "start" && i.w.cause === "timer" && !/(tries again|resumes|starts) in /.test(card.reason)) return `${i.id} waits for a timer, but the card says "${card.reason}"`;
         return null;
       });
     },
@@ -82,9 +86,16 @@ export const RULES: Rule[] = [
   {
     id: "A3",
     why: "One count of what is asked: the job's open asks and the host's open question lines agree; none open unless a person is asked (#194, #209).",
-    check(o) {
+    check(o, prev, memo) {
+      // After a lost store a job is rebuilt from the Item's log by the first tick whose store has the Item: until then nothing is parked here.
+      const rebuild = (memo.rebuild ??= {}) as Record<string, true>;
+      if (o.action.kind === "lose-store") for (const i of prev?.items ?? []) rebuild[i.key] = true;
+      if (isTick(o)) for (const i of o.items) delete rebuild[i.key];
       return first(o.items, (i) => {
         if (!i.host || isClosed(i)) return null;
+        if (rebuild[i.key] && !i.job) return null;
+        // A person's hold comes first in W, but the questions the job is parked on still wait for an answer under it.
+        if (i.w.kind === "person" && i.w.why === "holds" && i.job?.parked) return null;
         const open = (i.host.openQuestions ?? []).filter((q) => !q.proposal).length;
         const personAsk = i.w.kind === "person" && i.w.why !== "holds";
         if (personAsk && !asks(i.w) && open > 1) return `${i.id} has ${open} open question lines on the host, but W is ${wText(i.w)}, which asks one thing`;
@@ -717,11 +728,14 @@ export const RULES: Rule[] = [
   {
     id: "J3",
     why: "Nothing an agent creates lands in To do; new Items land in Backlog unless a person files them in To do (#221).",
-    check(o, prev) {
+    check(o, prev, memo) {
+      // New: never seen in the run before (an Item the store lost and read back from the host is not new).
+      const seen = ((memo.seen ??= {}) as Record<string, true>);
+      for (const i of prev?.items ?? []) seen[i.key] = true;
       const todo = todoLane(o);
       if (!todo || !prev) return null;
       return first(o.items, (i) => {
-        if (prevOf(prev, i.key) || i.card?.lane !== todo) return null;
+        if (seen[i.key] || i.card?.lane !== todo) return null;
         const filed = o.requests.some((r) => r.status === 200 && r.path === "/api/items" && r.body.todo === true);
         return filed ? null : `${i.id} is new and landed in To do`;
       });

@@ -99,6 +99,18 @@ describe("each rule fires on a bad state built by hand", { concurrency: 1 }, () 
     const parked = obs({ items: [item("A-1", { kind: "person", why: "answer", n: 1 }, { card: card("A-1", { lane: "queued", actor: "anyone" }) })] });
     assert.match(fires("A1", parked) ?? "", /queued lane/);
     assert.equal(fires("A1", obs({ items: [item("A-1", { kind: "queue" }, { card: card("A-1", { lane: "queued", actor: "queue" }) })] })), null);
+    // A review runs on an Item whose change the store has not read yet: In review, not To do (#230).
+    assert.match(fires("A1", obs({ items: [item("A-1", { kind: "session", role: "review" }, { card: card("A-1", { lane: "todo" }) })] })) ?? "", /card is in todo/);
+    // A question at implement, with a commit: In progress (decision 2).
+    const asked = item("A-1", { kind: "person", why: "answer", n: 1 }, { job: job("A-1", { step: "implement", head: "1".repeat(40) }), card: card("A-1", { lane: "todo", actor: "anyone" }) });
+    assert.match(fires("A1", obs({ items: [asked] })) ?? "", /its lane is in-progress/);
+  });
+  it("A1", "a timed wait whose card says another cause (decision 3, #230)", () => {
+    const at = (cause: "text" | "timer", reason: string) => obs({ items: [item("A-1", { kind: "start", role: "implement", cause }, { card: card("A-1", { lane: "todo", reason }) })] });
+    assert.match(fires("A1", at("timer", "ready; waiting for a free agent slot")) ?? "", /waits for a timer/);
+    assert.equal(fires("A1", at("timer", "the implement step failed once; it tries again in 30 s")), null);
+    assert.match(fires("A1", at("text", "ready; waiting for a free agent slot")) ?? "", /read back/);
+    assert.equal(fires("A1", at("text", "waits until the description written at a person's Accept is read back from metaBranch (at most 29 min more)")), null);
   });
   it("A2", "a person's turn while a session works on it (#194)", () => {
     assert.match(fires("A2", obs({ items: [item("A-1", { kind: "session", role: "implement" }, { card: card("A-1", { lane: "in-progress", actor: "anyone" }) })] })) ?? "", /person's turn/);
@@ -313,15 +325,24 @@ describe("each rule fires on a bad state built by hand", { concurrency: 1 }, () 
   });
 });
 
-/** A run the simulator shrank, replayed: it fails the rule on today's code. When the code is fixed, the test is turned round. */
-async function failsOn(id: string, options: Omit<RunOptions, "items" | "level" | "slots"> & { items: number; level: number; slots: number }, actions: Action[]): Promise<void> {
+type Shrunk = Omit<RunOptions, "items" | "level" | "slots"> & { items: number; level: number; slots: number };
+
+/** A run the simulator shrank, replayed: it fails the rule on today's code. When the code is fixed, the test is turned round (`holdsOn`). */
+async function failsOn(id: string, options: Shrunk, actions: Action[]): Promise<void> {
   const result = await play(1, options as RunOptions, actions, RULES.filter((each) => each.id === id));
   assert.ok(result.failures.some((f) => f.rule === id), `${id} held on the pasted steps`);
 }
 
+/** A shrunk run whose failure was fixed: the rule holds on it now. */
+async function holdsOn(id: string, options: Shrunk, actions: Action[]): Promise<void> {
+  const result = await play(1, options as RunOptions, actions, RULES.filter((each) => each.id === id));
+  assert.deepEqual(result.failures.filter((f) => f.rule === id), [], `${id} failed on the pasted steps`);
+}
+
 describe("runs the simulator shrank, failing on today's code (known.ts)", { concurrency: 1 }, () => {
-  test("A3: an answer to a not-ready triage leaves its question open on the host", async () => {
-    await failsOn("A3", { items: 6, level: 4, slots: 2, steps: 80, profile: "normal" }, [
+  // Fixed (#230): the answer, in the same second as the question and from a name that sorts first, folded before it.
+  test("A3: an answer to a not-ready triage closes its question on the host", async () => {
+    await holdsOn("A3", { items: 6, level: 4, slots: 2, steps: 80, profile: "normal" }, [
       { kind: "tick" },
       { kind: "end", item: "A-1", v: 781588 },
       { kind: "tick" },

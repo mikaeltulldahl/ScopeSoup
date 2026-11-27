@@ -122,7 +122,8 @@ export async function observe(world: SimWorld, seed: number, action: Action, pre
   const onMain = (head: string | undefined): boolean => !!head && world.git.contains(head, world.git.main) === true;
   // The paths an Item's work is known by: what its triage named (#187 compares these; what the branch changes is not looked at).
   const pathsOf = (job: Job): string[] => [...new Set(job.triage?.paths ?? [])];
-  const busy = Object.values(jobs).filter((job) => isBusy(job, onMain(job.head)) && open.has(refKey(job.item))).map((job) => ({ key: refKey(job.item), paths: pathsOf(job), conflicts: (job.triage?.links ?? []).filter((l) => l.type === "conflictsWith").map((l) => l.item.replace(/^#/, "")) }));
+  // A change the merge queue pushed is on main before the tick reads the queue's notice: until then it is busy, as the tick sees it.
+  const busy = Object.values(jobs).filter((job) => isBusy(job, job.parked?.as !== "queued" && onMain(job.head)) && open.has(refKey(job.item))).map((job) => ({ key: refKey(job.item), paths: pathsOf(job), conflicts: (job.triage?.links ?? []).filter((l) => l.type === "conflictsWith").map((l) => l.item.replace(/^#/, "")) }));
   const claimant = "scopesoup@laptop-a";
   const itemObs: ItemObs[] = [];
   for (const item of items) {

@@ -103,7 +103,7 @@ export function waitsFor(input: WaitInput): W {
 export function isBusy(job: Job, onMain: boolean): boolean {
   if (job.merged || onMain) return false;
   if (job.parked) return job.parked.as === "queued" || job.parked.as === "handed-over" || !!job.head || !!job.queued;
-  return job.step === "review" || (job.step === "implement" && (!!job.sessionId || !!job.head || !!job.implement || !!job.agentSession || !!job.resumeWith || job.failures > 0));
+  return job.step === "review" || (job.step === "implement" && (!!job.sessionId || !!job.head || !!job.implement || !!job.agentSession || !!job.resumeWith || !!job.resume || job.failures > 0));
 }
 
 export function wText(w: W): string {
@@ -121,10 +121,9 @@ export function wText(w: W): string {
   }
 }
 
-/** The lane a person's wait is in under decision 2 (a): the stage the work is at. */
-export function stageLane(job: Job | undefined): string {
-  if (!job) return "backlog";
-  if (job.step === "review" || job.reviewedHead) return "in-review";
-  if (job.head || job.step === "implement" && job.implement) return "in-progress";
-  return "backlog";
+/** The lane a person's wait is in under decision 2 (a): the stage the work is at; with no change yet, To do (or Backlog, #221). */
+export function stageLane(item: WorkItem, job: Job | undefined): string {
+  if (job && (job.step === "review" || job.reviewedHead)) return "in-review";
+  if (job && (job.head || (job.step === "implement" && job.implement))) return "in-progress";
+  return item.backlog ? "backlog" : "todo";
 }

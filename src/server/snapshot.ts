@@ -1,9 +1,11 @@
 // Reads everything the board needs from the store in one go.
 
-import type { Snapshot, RunnerState, SyncState } from "../core/snapshot.ts";
+import type { JobStage, Snapshot, RunnerState, SyncState } from "../core/snapshot.ts";
 import type { Batch, Change, CreatedPart, ProposedPart, Ref, Parked, ParkedQuestion, Run, Session, WorkItem } from "../model/types.ts";
 import { refKey } from "../model/types.ts";
-import { loadJobs, jobQuestions, resumesStep } from "../orchestrator/jobs.ts";
+import type { Job } from "../orchestrator/jobs.ts";
+import { loadJobs, jobQuestions, resumesStep, WRITING_WAIT_MS } from "../orchestrator/jobs.ts";
+import { itemTextHash } from "../core/answerReuse.ts";
 import { busyItems, sameFilesWait } from "../orchestrator/candidates.ts";
 import { markedParts, partLinked } from "../orchestrator/restructure.ts";
 import { readQueueHealth } from "../orchestrator/queueHealth.ts";
@@ -67,6 +69,7 @@ export function loadSnapshot(store: Store): Snapshot {
       });
       return [{ subject: job.item, as: job.parked.as, reason: job.parked.reason, at: job.parked.at, ...(resumesStep(job) ? { canStartOver: true } : {}), ...(decision && !proposal ? { decision } : {}), ...(proposal ? { proposal } : {}), ...(questions.length > 0 ? { questions } : {}), ...(rewrite ? { rewrite: { original: rewrite.original, text: rewrite.text, round: rewrite.round, questions: rewrite.questions.map(({ question, options, recommendation, context, multiSelect, stopsOn, closesOther }) => ({ question, options, recommendation, ...(context ? { context } : {}), ...(multiSelect ? { multiSelect } : {}), ...(stopsOn ? { stopsOn } : {}), ...(closesOther ? { closesOther } : {}) })), ...(rewrite.labels ? { labels: rewrite.labels } : {}), ...(rewrite.droppedLabels ? { droppedLabels: rewrite.droppedLabels } : {}) } } : {}) }];
     }),
+    jobs: Object.values(loadJobs(store)).map((job) => jobStage(job, store.get<WorkItem>(job.item))),
     // The triage's typed links, for the Item page.
     links: Object.values(loadJobs(store)).flatMap((job) => (job.triage?.links?.length ? [{ subject: job.item, links: job.triage.links }] : [])),
     merged: Object.values(loadJobs(store)).filter((job) => job.merged !== undefined).map((job) => job.item),
@@ -84,6 +87,14 @@ export function loadSnapshot(store: Store): Snapshot {
     answers: knownAnswers(store),
     sync: parse<SyncState>(store.getValue(KEYS.sync), {}, (value) => typeof value === "object" && value !== null && !Array.isArray(value)),
   };
+}
+
+/** Where a job is, for the board (decision 2: a person's wait shows in the lane of the stage its work is at). */
+export function jobStage(job: Job, item: WorkItem | null): JobStage {
+  const stage: JobStage["stage"] = job.parked?.as === "queued" ? "queue" : job.step === "review" || job.reviewedHead ? "review" : job.head || (job.step === "implement" && job.implement) ? "implement" : "start";
+  const text = job.writing && item && itemTextHash(item) === job.writing.from ? new Date(Date.parse(job.writing.at) + WRITING_WAIT_MS).toISOString() : undefined;
+  const timer = job.notBefore ? { until: job.notBefore, ...(job.failures > 0 ? { failures: job.failures } : {}) } : undefined;
+  return { subject: job.item, stage, step: job.step, ...(text ? { text } : {}), ...(timer ? { timer } : {}) };
 }
 
 /** The parts of an item's restructuring that exist on its host, found by their part lines; a child is `linked` when it is a sub-issue of the item. */
