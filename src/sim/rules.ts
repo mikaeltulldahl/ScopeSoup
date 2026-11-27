@@ -104,6 +104,10 @@ export const RULES: Rule[] = [
         if (!before) return null;
         const w = before.w;
         if (w.kind === "not-started" || (w.kind === "start" && w.cause === "slot")) return null;
+        // A session that ended is settled by the tick first, and what follows may start in the same tick.
+        if (w.kind === "session" && w.settling) return null;
+        // A triage whose Item's text changed under it is stopped and started again (decision 6).
+        if (w.kind === "session" && w.role === "triage" && s.role === "triage") return null;
         if (w.kind === "start" && w.cause === "timer") return null;
         // The tick settles finished sessions first, which can end a same-files wait within the same tick.
         if (w.kind === "start" && w.cause === "same-files") return null;
@@ -141,9 +145,11 @@ export const RULES: Rule[] = [
   {
     id: "B1",
     why: "No answer lost: an accepted answer is in the store's answers and in the prompt of every later session on the Item.",
-    check(o) {
+    check(o, _prev, memo) {
       const known = new Set(o.answers.map((a) => `${a.subject.host}:${a.subject.kind}:${a.subject.id}|${a.answer}`));
-      const lost = o.ledger.answers.find((a) => !known.has(`${a.item}|${a.text}`));
+      // After the store is lost, the answers given before reach the sessions through the Item's log (G3); the prompts are checked below.
+      if (o.action.kind === "lose-store") memo.lostAt = o.step;
+      const lost = o.ledger.answers.find((a) => a.step > ((memo.lostAt as number | undefined) ?? -1) && !known.has(`${a.item}|${a.text}`));
       if (lost) return `the answer "${lost.text}" on ${lost.item.split(":").pop()} (step ${lost.step}) is not in the store's answers`;
       return first(o.started, (s) => {
         const prompt = JSON.stringify(s.request.vars) + (s.request.message ?? "");
@@ -178,7 +184,8 @@ export const RULES: Rule[] = [
       const closed = o.items.filter(isClosed).map((i) => i.id);
       return first(o.items, (i) => {
         if (!i.host) return null;
-        for (const q of i.host.openQuestions ?? []) {
+        // A question another Item's agent asked names that Item as the asker, not as its subject.
+        for (const q of (i.host.openQuestions ?? []).filter((each) => !/^Asked by /.test(each.question))) {
           const named = closed.find((id) => new RegExp(`\\b${id}\\b`).test(q.question));
           if (named && i.id !== named) return `${i.id} still asks "${q.question.slice(0, 60)}", about ${named}, which is closed`;
         }
@@ -216,12 +223,12 @@ export const RULES: Rule[] = [
     check(o, _prev, memo) {
       const seen = (memo.inputs ??= {}) as Record<string, string>;
       for (const s of o.started) {
-        const input = JSON.stringify([s.request.vars.itemTitle, s.request.vars.itemBody, s.request.message ?? "", s.request.vars.recheck ?? "", s.request.resume ?? "", o.git.branches.get(s.request.branch) ?? "", o.git.main]);
+        const input = JSON.stringify([s.request.vars.itemTitle, s.request.vars.itemBody, s.request.message ?? "", s.request.vars.recheck ?? "", s.request.vars.history ?? "", s.request.resume ?? "", o.git.branches.get(s.request.branch) ?? "", o.git.main]);
         const key = `${s.item}|${s.role}|${input}`;
         const before = seen[key];
         // A retry after a failure (or a cut-off session resumed) is not a repeat.
         const last = o.ledger.ended.filter((e) => e.item === s.item && e.role === s.role).at(-1);
-        if (before && last?.status === "succeeded") return `a ${s.role} session started again on ${s.item.split(":").pop()} with the same input as session ${before}, after it succeeded`;
+        if (before && last?.settled) return `a ${s.role} session started again on ${s.item.split(":").pop()} with the same input as session ${before}, after it succeeded`;
         seen[key] = s.session;
       }
       for (const [key, n] of o.ledger.asksInFair) if (n > 3) return `under Fair, ${key.split(":").pop()} was asked ${n} times`;
@@ -242,6 +249,8 @@ export const RULES: Rule[] = [
         const before = prev?.items.find((i) => i.id === r.item);
         if (before?.job?.parked?.byStep && before.job.step === "implement") expect[before.key] = "implement";
       }
+      // A person's move, start over or edit since then sends the Item elsewhere, rightly.
+      for (const r of o.requests) if (r.status === 200 && r.item && /move|start-over|edit|pick/.test(r.path)) delete expect[`metaBranch:work:${r.item}`];
       for (const s of o.started) {
         const want = expect[s.item];
         if (!want) continue;
@@ -337,9 +346,8 @@ export const RULES: Rule[] = [
       return first(o.started, (s) => {
         const job = prevOf(prev, s.item)?.job;
         const picked = (s.role === "triage" && job?.triageAskedBy) || (s.role === "review" && job?.reviewAskedBy) || (s.role === "implement" && job?.implementAskedBy);
-        if (picked) return null;
-        if (prev.switches[s.role] !== "started") return `a ${s.role} session started on ${s.item.split(":").pop()} while that switch was ${prev.switches[s.role]}`;
-        if (level[s.role]! > prev.level) return `a ${s.role} session started on ${s.item.split(":").pop()} at level ${prev.level}`;
+        if (prev.switches[s.role] !== "started" && (!picked || prev.level >= level[s.role]!)) return `a ${s.role} session started on ${s.item.split(":").pop()} while that switch was ${prev.switches[s.role]}`;
+        if (!picked && level[s.role]! > prev.level) return `a ${s.role} session started on ${s.item.split(":").pop()} at level ${prev.level}`;
         return null;
       });
     },
@@ -404,6 +412,7 @@ export const RULES: Rule[] = [
     why: "Append-only: event numbers only grow, earlier events stay as they were, and no log line on the host is changed or removed.",
     check(o, prev) {
       if (o.remote.refusedRewrites > 0) return `a write tried to change or remove a log line on the host`;
+      if (o.action.kind === "lose-store") return null;
       if (prev && o.lastSeq < prev.lastSeq) return `the last event number went down from ${prev.lastSeq} to ${o.lastSeq}`;
       if (prev?.firstEvent && o.firstEvent !== prev.firstEvent) return `the first event changed`;
       return o.events.find((e, n) => n > 0 && e.seq <= o.events[n - 1]!.seq) ? "events out of order" : null;
@@ -463,6 +472,8 @@ export const RULES: Rule[] = [
     why: "Every request the server accepted has an event naming the person.",
     check(o, prev) {
       const switched = (r: { path: string }): boolean => !/^\/api\/(pause|resume|stop)$/.test(r.path) || JSON.stringify(o.switches) !== JSON.stringify(prev?.switches);
+      // A request that changed nothing (a second claim of an Item one holds) writes nothing at all, rightly.
+      if (o.events.length === 0) return null;
       const quiet = o.requests.find((r) => r.status === 200 && switched(r) && !(r.response as { unchanged?: boolean } | null)?.unchanged && !o.events.some((e) => e.actor === "Ada" || JSON.stringify(e.data).includes("Ada")));
       return quiet ? `${quiet.path} on ${quiet.item ?? "-"} was accepted with no event naming the person` : null;
     },

@@ -86,7 +86,8 @@ export function waitsFor(input: WaitInput): W {
     if (input.busy.some((other) => other.paths.some((p) => paths.includes(p)) || mine.includes(other.key.split(":").pop()!) || other.conflicts.includes(id))) return start("same-files");
   }
   const picked = (role === "triage" && job.triageAskedBy) || (role === "review" && job.reviewAskedBy) || (role === "implement" && job.implementAskedBy);
-  if (input.switches[role] !== "started" && !picked) return start("switch");
+  // A pick runs whatever the level, but from the level that shows the role's switch the switch decides (decision 104).
+  if (input.switches[role] !== "started" && (!picked || input.level >= STEP_LEVEL[role])) return start("switch");
   if (STEP_LEVEL[role] > input.level && !picked) return start("level");
   if (input.usageReserve) return start("usage");
   if (job.notBefore && job.notBefore > input.now) return start("timer");

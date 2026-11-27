@@ -82,7 +82,7 @@ export interface Ledger {
   /** The last text a person wrote or accepted, by key. */
   texts: Map<string, { title: string; body: string }>;
   /** Each session the simulator ended: what it returned. */
-  ended: { step: number; item: string; role: string; session: string; status: SessionStatus; merged?: "told" | "untold" }[];
+  ended: { step: number; item: string; role: string; session: string; status: SessionStatus; merged?: "told" | "untold"; /** A well-formed result that settles the step (not a failure, a refusal or "not done"). */ settled: boolean }[];
   /** Answers the server accepted: item key and the text. */
   answers: { step: number; item: string; text: string }[];
   /** How many times each item was asked something (an answer step found something offered), in the fair tail. */
@@ -482,7 +482,7 @@ export class SimWorld {
     this.runner.live.clear();
     const firstId = this.store.list("session").length + 1;
     this.runner = this.makeRunner(firstId);
-    this.queue = this.makeQueue();
+    // The merge queue keeps its state in the store, so it survives a restart.
     this.server = this.makeServer();
     pauseAtStartup(this.store, this.now());
   }
@@ -534,7 +534,9 @@ export class SimWorld {
           : { verdict: "approve", findings: [{ severity: "should", text: "Tidy the name." }] };
     }
     this.runner.end(sessionId, status, output, extra);
-    this.ledger.ended.push({ step: this.step, item: this.key(id), role, session: sessionId, status, ...(merged ? { merged } : {}) });
+    const out = output as { done?: boolean; nonsense?: boolean } | undefined;
+    const settled = status === "succeeded" && !!out && !out.nonsense && (role !== "implement" || out.done === true);
+    this.ledger.ended.push({ step: this.step, item: this.key(id), role, session: sessionId, status, ...(merged ? { merged } : {}), settled });
     this.count(`ended-${role}`);
   }
 
@@ -595,7 +597,7 @@ export class SimWorld {
     if (roll < 12) {
       const head = commit();
       let merged: "told" | "untold" | undefined;
-      if ((told && (this.fair || r.chance(0.9))) || (!told && r.chance(0.03))) {
+      if ((told && (this.fair || r.chance(0.75))) || (!told && r.chance(0.03))) {
         this.git.mergeToMain(head, told ? "session told" : "session untold", this.key(id));
         merged = told ? "told" : "untold";
       }

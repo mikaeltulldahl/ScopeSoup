@@ -11,8 +11,6 @@ import { wText } from "./waits.ts";
 import type { Action, WorldOptions } from "./world.ts";
 import { SimWorld } from "./world.ts";
 
-export const TIMES = { apply: 0, observe: 0, check: 0 };
-
 export type Profile = "calm" | "normal" | "rough";
 
 export interface RunOptions extends WorldOptions {
@@ -43,6 +41,8 @@ export interface RunResult {
   waits: Set<string>;
   events: string[];
   steps: number;
+  /** Changes merged to main (by a session, the queue or a person's merge of an Item's branch). */
+  merges: number;
 }
 
 /** The options a seed plays with: 3 to 6 Items (up to 12 in the long run), a level from 2 to 4, 1 to 3 slots, and a profile. */
@@ -187,18 +187,12 @@ export async function play(seed: number, options: RunOptions, given?: Action[], 
     world.step = actions.length;
     actions.push(action);
     const before = world.runner.requests.length;
-    let t = performance.now();
     await world.apply(action);
-    TIMES.apply += performance.now() - t;
-    t = performance.now();
     const o = await observe(world, seed, action, prev, before);
-    TIMES.observe += performance.now() - t;
-    t = performance.now();
     recent.push(`${o.step} ${actionText(action)}`);
     if (recent.length > 8) recent.shift();
     if (options.trace) console.log(`seed ${seed} step ${o.step}: ${actionText(action)} | ${o.items.map((i) => `${i.id} ${wText(i.w)}`).join(" · ")}`);
     check(o);
-    TIMES.check += performance.now() - t;
     prev = o;
   };
   if (given) {
@@ -210,7 +204,8 @@ export async function play(seed: number, options: RunOptions, given?: Action[], 
     for (let i = 0; i < options.steps; i++) await run(draw(world, rnd, options));
     await run({ kind: "fair" });
     // The tail: N rounds, or until every Item is at an end.
-    const rounds = 6 + 4 * options.items;
+    // Two ticks a round: about 40 ticks plus 25 per Item, as the issue starts N at.
+    const rounds = 20 + 12 * options.items;
     for (let round = 0; round < rounds; round++) {
       for (const action of fairRound(world, round)) await run(action);
       if (world.items().every((i) => i.state === "done" || i.state === "abandoned")) break;
@@ -221,7 +216,8 @@ export async function play(seed: number, options: RunOptions, given?: Action[], 
     check(final, "H1");
   }
   const events = world.store.eventsAfter(0, 1_000_000).map((e) => JSON.stringify([e.kind, e.subject ?? "", e.actor, e.data]).replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g, "uuid"));
-  return { seed, options, actions, failures, reports, seen: world.ledger.seen, waits, events, steps: actions.length };
+  const merges = world.git.mainMoves.filter((m) => m.item).length;
+  return { seed, options, actions, failures, reports, seen: world.ledger.seen, waits, events, steps: actions.length, merges };
 }
 
 export function actionText(action: Action): string {
