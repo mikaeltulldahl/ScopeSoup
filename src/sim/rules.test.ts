@@ -515,6 +515,24 @@ async function holdsOn(id: string, options: Shrunk, actions: Action[]): Promise<
 }
 
 describe("runs the simulator shrank, held since their fix", { concurrency: 1 }, () => {
+  // The checker's W fixed (#268): an implement step whose session a limit cut off has begun, so it waits for its timer, not the same files.
+  test("A1: an implement session cut off by the limit resumes on its timer, held by no same-files wait", async () => {
+    await holdsOn("A1", {items: 9, level: 2, slots: 1, steps: 600, profile: "calm", ageing: true}, [
+      {kind: "tick"},
+      {kind: "end", item: "A-1", v: 995829},
+      {kind: "tick"},
+      {kind: "end", item: "A-2", v: 686222},
+      {kind: "answer", item: "A-1", v: 715631},
+      {kind: "tick"},
+      {kind: "answer", item: "A-2", v: 298307},
+      {kind: "tick"},
+      {kind: "clock", ms: 1000},
+      {kind: "tick"},
+      {kind: "end", item: "A-1", v: 996598},
+      {kind: "tick"},
+    ]);
+  });
+
   // Fixed (#268): a lost store does not hand over a change approved before the work was dropped and triaged again.
   test("A1: approved, put back in To do, triaged blocked, then the store is lost: no hand-over is rebuilt", async () => {
     await holdsOn("A1", {items: 7, level: 2, slots: 3, steps: 600, profile: "rough", ageing: true}, [

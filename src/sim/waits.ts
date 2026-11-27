@@ -94,7 +94,7 @@ export function waitsFor(input: WaitInput): W {
   if (item.backlog && role === "implement" && !job.implementAskedBy && !job.head && !job.resumeWith && !at.resume) return start("backlog");
   const writing = at.writing;
   if (writing && writing.from === itemTextHash(item) && Date.parse(input.now) - Date.parse(writing.at) < 30 * 60_000) return start("text");
-  const begun = !!(job.head || job.implement);
+  const begun = implementBegun(job);
   if (role === "implement" && !begun) {
     const paths = job.triage?.paths ?? [];
     const mine = (job.triage?.links ?? []).filter((l) => l.type === "conflictsWith").map((l) => l.item.replace(/^#/, ""));
@@ -113,6 +113,15 @@ export function waitsFor(input: WaitInput): W {
   // New work waits while too much waits for a person; a person's pick does not (decision 133).
   if (input.workCapped && newWork(job) && !job.implementAskedBy) return start("cap");
   return start("slot");
+}
+
+/**
+ * Something of the implement step has begun, as the product counts it (#268): a change, an answer, a session to resume (one a limit cut
+ * off), a failed attempt, an approval to merge. Only a first implement step waits for the same files; work under way has its files in hand.
+ */
+export function implementBegun(job: Job): boolean {
+  const at = where(job);
+  return !!(job.head || job.implement || job.agentSession || at?.resume || job.resumeWith !== undefined || job.failures > 0 || at?.merge);
 }
 
 /**

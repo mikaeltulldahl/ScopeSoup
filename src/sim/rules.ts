@@ -7,7 +7,7 @@
 
 import type { ItemObs, Observation } from "./observe.ts";
 import type { W } from "./waits.ts";
-import { isBusy, newWork, personHolds, stageLane, wText } from "./waits.ts";
+import { implementBegun, isBusy, newWork, personHolds, stageLane, wText } from "./waits.ts";
 import { where } from "../orchestrator/jobs.ts";
 
 export interface Rule {
@@ -544,7 +544,7 @@ export const RULES: Rule[] = [
       return first(o.started, (s) => {
         if (s.role !== "implement") return null;
         const before = prevOf(prev, s.item);
-        if (!before?.job || before.job.head || before.job.implement || before.job.implementAskedBy) return null;
+        if (!before?.job || implementBegun(before.job) || before.job.implementAskedBy) return null;
         const paths = before.paths;
         // Busy before the tick and still busy after it: a session that ended in this tick and merged its change is over, and the start
         // that follows in the same tick is rightly let go.
