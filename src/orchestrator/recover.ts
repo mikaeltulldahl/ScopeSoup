@@ -241,8 +241,13 @@ export function recoverFromLogs(ctx: Context, items: readonly WorkItem[]): void 
     const job = onHost ? jobFromHost(item) : jobFromLog(item);
     if (!job) continue;
     // Backlog is no work (decision 121): a step that would start again there is not rebuilt, as a move to Backlog drops it (the
-    // move's drop may have been lost with the store). What waits for a person there still waits.
-    if (item.backlog && !where(job).parked) continue;
+    // move's drop may have been lost with the store). What waits for a person there still waits. Said with an event, as an owed
+    // hand-over of approved work is not made either (a GitHub Item whose To do label was taken off, say).
+    if (item.backlog && !where(job).parked) {
+      const what = where(job).owes ? "the hand-over of its reviewed change is not made" : `its ${where(job).step} step does not start again`;
+      ctx.commit("orchestrator.recover_skipped", `Not rebuilt from the item's ${onHost ? `comments on ${item.ref.host}` : "log"}: ${item.ref.id} is in Backlog, so ${what}. A person moves it to To do to start it again.`, key, { step: where(job).step, ...(where(job).owes ? { owes: where(job).owes } : {}) });
+      continue;
+    }
     ctx.jobs[key] = job;
     const at = where(job);
     const said = at.parked ? `parked as "${at.parked.as}": ${at.parked.reason}` : at.owes ? "reviewed and not merged: the hand-over is done again" : `the ${at.step} step starts again`;

@@ -150,6 +150,7 @@ describe("recovery from GitHub", () => {
     // Issue 1's log says its implement step comes next, but it has no To do label: in Backlog no step is rebuilt (#268).
     assert.ok(logOf("1").length > 0);
     assert.equal(jobs[key("1")], undefined);
+    assert.ok(events.some((each) => /^orchestrator\.recover_skipped: Not rebuilt from the item's comments on github: 1 is in Backlog, so its implement step does not start again/.test(each)), events.join("\n"));
     assert.equal(job.head, "c".repeat(40));
     assert.equal(job.branch, "scopesoup/4");
     assert.equal(job.triage?.size, "small");
