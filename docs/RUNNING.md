@@ -523,9 +523,9 @@ Git worktrees do not work well with submodules. When the project's repository is
 
 The board has two lanes for work not started (decision 120). **Backlog** holds what a person has not chosen yet: no agent triages, implements or counts it (not a candidate, not in same-files waits or busy Items), and the status line says "To do is empty" when nothing else is there. **To do** holds what agents may start; triage runs when an Item comes there. A person moves an Item with the State menu (Backlog, To do); To do on an Item with work under way drops that work, and Backlog drops it too. An Item a triage parks as not ready stays where it is.
 
-- **New Items land in Backlog**: drafts approved, follow-ups and overturns an agent files, and a person's New item. "Create in To do" in the New item dialog (or `item new --todo`) files it in To do; `item new --claim` does too, since the person took it. A restructuring's parts go where their Item is.
+- **New Items land in Backlog**: drafts approved, follow-ups an agent files, and a person's New item; a person's overturn rework goes to To do. "Create in To do" in the New item dialog files it in To do (only on the board: the item commands, which agents' sessions may run too, have no such flag); `item new --claim` files in To do, since the person took it. A person's claim, hand-back or Implement anyway on a Backlog Item moves it to To do: work under way is never in Backlog, and moving an Item to Backlog drops its work (or is refused, as To do's drop would be). A restructuring's parts go where their Item is.
 - **Triage on a Backlog card** runs one triage, at any level, for its questions and a size; the Item stays in Backlog, and its implement step waits until a person moves it to To do.
-- **Hosts.** Meta branch: a `lane: backlog` line in `item.md`'s header (no line, or `lane: todo`, is To do; an Item that is taken, done or abandoned loses the line). GitHub: the label `scopesoup:todo`, which the board sets and removes; an open issue without it is in Backlog. Jira: the status named by `host.transitions.backlog` (default "Backlog", in the To Do category) is Backlog, and Scope Soup moves an issue there with the transition of that name (or to that status); To do is `host.transitions.todo` as before. A Jira workflow with no such status puts every Item in To do, and a new Item's outcome says it could not go to Backlog.
+- **Hosts.** Meta branch: a `lane: backlog` line in `item.md`'s header (no line, or `lane: todo`, is To do; an Item that is taken, done or abandoned loses the line). GitHub: the label `scopesoup:todo`, which the board sets and removes; an open issue without it is in Backlog. Jira: the status named by `host.transitions.backlog` (default "Backlog", in the To Do category) is Backlog, and Scope Soup moves an issue there with the transition of that name (or to that status); To do is `host.transitions.todo` as before. On a Jira project with no such status a new Item is refused, with the reason, before anything is made (Create in To do still works); a status the workflow offers no transition to from its first status is said in the new Item's outcome.
 
 ## How Items are ordered
 
@@ -568,7 +568,7 @@ The script prints the command to start Scope Soup on it, for PowerShell and Git 
 A person, or an interactive Claude Code session working for one, files and claims items with a command line. It is `scopesoup item <verb>` (or `pnpm --dir <Scope Soup> item <verb>`), run in the project's repository, which finds this machine's config for it ("Which config a command reads"); from anywhere else give the project's configuration with `--config <file>` or `SCOPESOUP_CONFIG`:
 
 ```
-pnpm --dir <Scope Soup> item new --title "..." [--body-file notes.md | --body "..."] [--priority blocker|critical|major|minor] [--label bug] [--todo] [--claim]
+pnpm --dir <Scope Soup> item new --title "..." [--body-file notes.md | --body "..."] [--priority blocker|critical|major|minor] [--label bug] [--claim]
 pnpm --dir <Scope Soup> item claim A-12 [--as "Name"]
 pnpm --dir <Scope Soup> item handback A-12 [--note "..."]
 pnpm --dir <Scope Soup> item release A-12 [--note "..."]

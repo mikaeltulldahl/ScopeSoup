@@ -395,6 +395,11 @@ export function routeWrite(state: FakeWriteState, method: string, rest: string, 
     return answer(had ? 200 : 201);
   }
 
+  // The project's statuses per issue type [known: GET /project/{key}/statuses]: every type has the fake workflow's statuses.
+  if (method === "GET" && rest === `/project/${state.project}/statuses`) {
+    return answer(200, Object.keys(ISSUE_TYPES).map((name) => ({ name, statuses: Object.values(FAKE_STATUSES) })));
+  }
+
   if (method === "GET" && rest === "/user/assignable/search") {
     if (query.get("project") !== state.project) return refuse(404, "No project could be found with key.");
     return answer(200, state.assignable ?? state.people);

@@ -39,9 +39,9 @@ type Env = Record<string, string | undefined>;
 
 export const USAGE = `Usage: pnpm item <verb> [options]
 
-  new --title TEXT [--body-file FILE | --body TEXT] [--priority blocker|critical|major|minor] [--label NAME]... [--todo] [--claim]
-      File an item, in Backlog: agents start nothing there. With --todo it goes straight to To do, where agents may start it.
-      With --claim you hold it from the start, in one write, so Scope Soup cannot pick it up first.
+  new --title TEXT [--body-file FILE | --body TEXT] [--priority blocker|critical|major|minor] [--label NAME]... [--claim]
+      File an item, in Backlog: agents start nothing there until a person moves it to To do on the board. With --claim you hold
+      it from the start (in To do), in one write, so Scope Soup cannot pick it up first.
   claim ID [--as NAME]
       You hold the item. Scope Soup does not start it; it refuses when an agent holds it.
   handback ID [--note TEXT]
@@ -188,7 +188,7 @@ function serverDoer(deps: CliDeps, base: string, who: string): Doer {
     return { message: json.message ?? `Done (${json.ref ?? "ok"}).${json.problem ? ` Note: ${json.problem}` : ""}` };
   };
   return {
-    create: (input) => said("/api/items", { title: input.title, ...(input.todo ? { todo: true } : {}), ...(input.claim ? { claim: true } : {}), ...(input.from ? { from: input.from } : {}), ...(input.body ? { body: input.body } : {}), ...(input.priority ? { priority: input.priority } : {}), ...(input.labels?.length ? { labels: input.labels } : {}) }),
+    create: (input) => said("/api/items", { title: input.title, ...(input.claim ? { claim: true } : {}), ...(input.from ? { from: input.from } : {}), ...(input.body ? { body: input.body } : {}), ...(input.priority ? { priority: input.priority } : {}), ...(input.labels?.length ? { labels: input.labels } : {}) }),
     claim: (id, from) => said("/api/item/claim", { id, ...(from ? { from } : {}) }),
     handback: (id, input) => said("/api/item/handback", { id, ...input }),
     release: (id, note) => said("/api/item/release", { id, ...(note ? { note } : {}) }),
@@ -283,7 +283,6 @@ const OPTIONS = {
   server: { type: "string" },
   "no-server": { type: "boolean" },
   claim: { type: "boolean" },
-  todo: { type: "boolean" },
   mine: { type: "boolean" },
   free: { type: "boolean" },
   all: { type: "boolean" },
@@ -342,7 +341,7 @@ export async function runItemCli(argv: string[], deps: CliDeps): Promise<number>
             throw new Refused(`Cannot read ${values["body-file"]}: ${error instanceof Error ? error.message : String(error)}`);
           }
         }
-        deps.out((await doer.create({ title: values.title ?? "", ...(body ? { body } : {}), ...(values.priority ? { priority: values.priority } : {}), ...(values.label?.length ? { labels: values.label } : {}), ...(values.todo ? { todo: true } : {}), ...(values.claim ? { claim: true, ...(from ? { from } : {}) } : {}) })).message);
+        deps.out((await doer.create({ title: values.title ?? "", ...(body ? { body } : {}), ...(values.priority ? { priority: values.priority } : {}), ...(values.label?.length ? { labels: values.label } : {}), ...(values.claim ? { claim: true, ...(from ? { from } : {}) } : {}) })).message);
         break;
       }
       case "claim":

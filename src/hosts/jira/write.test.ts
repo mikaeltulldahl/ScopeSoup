@@ -46,6 +46,19 @@ for (const deployment of ["cloud", "datacenter"] as const) {
       assert.equal(fake.issues.get(backlog.work.id)!.fields.status?.name, "To Do");
       await write.editWork!(todo.work, { lane: "backlog" });
       assert.equal(fake.issues.get(todo.work.id)!.fields.status?.name, "Backlog");
+      // A reopen into To do: the state's transition first, then the lane.
+      await write.editWork!(backlog.work, { state: "done" });
+      await write.editWork!(backlog.work, { state: "todo", lane: "todo" });
+      assert.equal(fake.issues.get(backlog.work.id)!.fields.status?.name, "To Do");
+    });
+
+    test("a project without the Backlog status: a new Item is refused before anything is made, To do still works", async () => {
+      const { fake, write } = writable(deployment, { transitions: { backlog: "Icebox" } });
+      const before = fake.issues.size;
+      await assert.rejects(write.createWork!({ title: "Tide graph" }), /has no status "Icebox"/);
+      assert.equal(fake.issues.size, before);
+      await write.createWork!({ title: "Tide graph", lane: "todo" });
+      assert.equal(fake.issues.size, before + 1);
     });
 
     test("a split's child is a Sub-task under its parent; a hierarchy the project refuses gives an issue of its own, not linked", async () => {

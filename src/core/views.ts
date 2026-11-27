@@ -571,7 +571,7 @@ export interface ItemPage {
    */
   remote?: {
     machine?: string;
-    request?: { who: string; at: string; for: string; steps: { kind: string; to?: string; state?: string }[]; state: "pending" | "done" | "refused" | "lapsed"; why?: string };
+    request?: { who: string; at: string; for: string; steps: { kind: string; to?: string; state?: string; lane?: string }[]; state: "pending" | "done" | "refused" | "lapsed"; why?: string };
   };
 }
 

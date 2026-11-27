@@ -5046,6 +5046,29 @@ test("Implement anyway runs the implement step below level 2, even at level 0, w
   }
 });
 
+test("Backlog (decision 120): work a person put under way never stalls there; Implement anyway, then review findings, then the second implement runs", async () => {
+  // The board moves the Item to To do at Implement anyway; this is the safety net if that edit has not been read back yet.
+  const w = world(config({ level: 3 }), [item("1", { backlog: true })]);
+  w.store.addUsageSample(usage(0.1, 0.1));
+  saveJobs(w.store, { [refKey(ref("1"))]: overruled("1", { triage: { ...TRIAGE_OK, hidesDecision: false } }) });
+  await w.run();
+  assert.deepEqual(roles(w), ["implement"]);
+  await step(w, "1", "succeeded", IMPLEMENT_OK);
+  assert.deepEqual(roles(w), ["implement", "review"]);
+  assert.equal(w.job("1")?.implementAskedBy, undefined);
+  assert.ok(w.job("1")?.head, "the first implement step left a revision");
+  await step(w, "1", "succeeded", REVIEW_CHANGES);
+  assert.deepEqual(roles(w), ["implement", "review", "implement"]);
+});
+
+test("Backlog (decision 120): a job with a revision (a person's hand-back sent back by review) goes on to implement", async () => {
+  const w = world(config({ level: 3 }), [item("1", { backlog: true })]);
+  w.store.addUsageSample(usage(0.1, 0.1));
+  saveJobs(w.store, { [refKey(ref("1"))]: overruled("1", { implementAskedBy: undefined, head: "a".repeat(40), triage: { ...TRIAGE_OK, hidesDecision: false } }) });
+  await w.run();
+  assert.deepEqual(roles(w), ["implement"]);
+});
+
 test("the implementor's model by triage's size, and one step stronger after two send-backs by review, said in the start line", async () => {
   const roles = { implement: { model: "sonnet", modelBySize: { small: "haiku", large: "opus" } } };
   const started = async (over: Record<string, unknown>, cfg: Record<string, unknown> = { roles }) => {

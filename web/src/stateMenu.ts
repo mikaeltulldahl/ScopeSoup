@@ -159,7 +159,7 @@ export function requestNote(page: MenuPage, theme: ThemeWords, now: number): str
   const request = page.remote?.request;
   if (!request || request.state === "done" || now - Date.parse(request.at) > 60 * 60_000) return "";
   const step = request.steps.find((each) => each.kind === "move" || each.kind === "state");
-  const key = (step?.kind === "move" ? (step.to === "implement" ? "in-progress" : step.to) : step?.kind === "state" && step.state === "abandoned" ? "abandoned" : step?.kind === "state" && step.state === "done" ? "done" : "todo") as StateKey;
+  const key = (request.steps.some((each) => each.kind === "lane" && each.lane === "backlog") ? "backlog" : step?.kind === "move" ? (step.to === "implement" ? "in-progress" : step.to) : step?.kind === "state" && step.state === "abandoned" ? "abandoned" : step?.kind === "state" && step.state === "done" ? "done" : "todo") as StateKey;
   const picked = `${request.who}'s ${stateLabel(key, theme)}`;
   if (request.state === "pending") return `${picked} waits for ${request.for} (at its next fetch, within a minute)`;
   if (request.state === "refused") return `${request.for} refused ${picked}: ${request.why ?? "no reason given"}`;

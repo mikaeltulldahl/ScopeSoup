@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createGitHubHost } from "./adapter.ts";
-import { answerBody, answersBody, claimBody, liveClaims, readMarker, readReplies, readReply, readThread, withMarker, writeMarker } from "./conventions.ts";
+import { answerBody, answersBody, applyThread, claimBody, liveClaims, readMarker, readReplies, readReply, readThread, withMarker, writeMarker } from "./conventions.ts";
 import { FAKE_API, fakeGitHub } from "./fakeFetch.ts";
 import { R, REPO, issue } from "./fixtures.ts";
 import type { RestComment } from "./rest.ts";
@@ -79,6 +79,13 @@ test("claims: only the token's own claim markers count; the lowest live one wins
   assert.deepEqual(liveClaims(thread.claims, Date.parse("2026-11-10T08:30:00Z")).map((each) => each.id), [1, 4]);
   // laptop-a's claim ran out at 09:00: laptop-c's is the live one.
   assert.deepEqual(liveClaims(thread.claims, Date.parse("2026-11-10T09:30:00Z")).map((each) => each.id), [4]);
+});
+
+test("an agent's live claim makes a Backlog Item doing, and it is no longer in Backlog (decision 120: Backlog is only state todo)", () => {
+  const item = { ref: { host: "github", kind: "work" as const, id: "7" }, title: "Tide graph", state: "todo" as const, hostState: "open", labels: [], blockedBy: [], openChildren: 0, updatedAt: "2026-11-27T10:00:00Z", backlog: true as const };
+  const thread = { openQuestions: [], answers: [], rewrites: [], log: null, waiting: null, merged: null, claims: [{ id: 1, machine: "laptop-a", until: "2099-01-01T00:00:00Z", released: false }], assumptions: [] };
+  const after = applyThread({ ...item }, thread, () => false, Date.parse("2026-11-27T10:00:00Z"));
+  assert.deepEqual([after.state, after.backlog], ["doing", undefined]);
 });
 
 test("an answer comment marked migrated still counts as given at its own at; nothing writes the mark any more", () => {

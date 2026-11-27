@@ -655,9 +655,9 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
       }
       continue;
     }
-    // In Backlog (decision 120) the implement step waits until a person moves it to To do; a triage, or a review of a person's
-    // hand-back, is a person's asking.
-    if (item.backlog && job.step === "implement" && job.implementAskedBy === undefined) {
+    // Backlog is no work (decision 120): a person's moves take an Item with work under way to To do. Left is a person's one-off
+    // triage there, whose implement step waits for To do; a job that has a session, a revision or something to resume never waits.
+    if (item.backlog && job.step === "implement" && job.implementAskedBy === undefined && job.head === undefined && !job.resumeWith && !job.resume) {
       reasons.push(`${item.ref.id} ${BACKLOG_REASON} before its ${job.step} step`);
       continue;
     }

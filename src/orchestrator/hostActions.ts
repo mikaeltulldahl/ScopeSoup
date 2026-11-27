@@ -390,6 +390,8 @@ export function createHostActions(deps: HostActionsDeps): Actions {
           const created = await write.createWork!({
             title: inertText(made.title), body: inertText(made.body), verification: inertText(made.verification),
             ...(aiLabel ? { labels: [aiLabel] } : {}),
+            // A person's overturn is a person's decision: the rework is in To do (decision 120), unlike an agent's draft.
+            lane: "todo",
             // The rework waits for the change it reworks (metaBranch: a blocker in the item; GitHub: the issue dependency below).
             ...(onLog && !made.merged ? { blockedBy: [item] } : {}),
             ...(onLog ? { log: [{ kind: "created", by: { who: by, agent: false } }] } : {}),

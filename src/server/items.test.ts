@@ -22,6 +22,8 @@ let server: ScopeSoupServer;
 let readOnly: ScopeSoupServer;
 let base: string;
 let readOnlyBase: string;
+let agentsBase: string;
+let agents: ScopeSoupServer;
 let tick = 0;
 const clock = (): string => new Date(Date.parse("2026-11-18T09:00:00Z") + 60_000 * tick++).toISOString();
 
@@ -33,6 +35,9 @@ before(async () => {
   const sync = createSync({ store, hosts: [host], intervalMs: 60_000, useWatch: false });
   server = createServer({ store, port: 0, items: { host: "metaBranch", write: host.write! }, syncNow: () => sync.refreshNow() });
   readOnly = createServer({ store, port: 0 });
+  // The same Items on a server that runs agents (a configuration, level 3): the moves of the State menu.
+  agents = createServer({ store, port: 0, items: { host: "metaBranch", write: host.write! }, syncNow: () => sync.refreshNow(), configFile: "scopesoup.config.json", planning: () => ({ bugLabels: [], level: 3 }) });
+  agentsBase = (await agents.start()).url;
   base = (await server.start()).url;
   readOnlyBase = (await readOnly.start()).url;
 });
@@ -40,6 +45,7 @@ before(async () => {
 after(async () => {
   await server.stop();
   await readOnly.stop();
+  await agents.stop();
   await host.stop();
   store.close();
   repo.cleanup();
@@ -151,4 +157,36 @@ test("Abandoned picked over a running session marks its job for the tick to end 
   assert.equal(picked.status, 200, JSON.stringify(picked.body));
   assert.deepEqual([loadJobs(store)[ref]?.interrupt?.by, loadJobs(store)[ref]?.interrupt?.to], ["Ada", "abandoned"]);
   assert.match(String((store.eventsOfKinds(["person.moved"], 5)[0]?.data as { reason?: string }).reason), /the implementor's session is ended now/);
+});
+
+test("Backlog and To do (decision 120): a new Item is in Backlog, Create in To do is not; Backlog drops the work; Implement anyway moves it to To do", async () => {
+  const backlog = await post("/api/items", { title: "Tide graph" });
+  const now = await post("/api/items", { title: "Tide graph now", todo: true });
+  const pageOf = (ref: unknown) => getJson<ItemPage>(`/api/item?ref=${String(ref)}`);
+  assert.deepEqual([(await pageOf(backlog.body.ref)).lane, (await pageOf(now.body.ref)).lane], ["backlog", "todo"]);
+  assert.match(repo.git(["cat-file", "-p", `refs/scopesoup/meta:items/${String(backlog.body.ref).split(":")[2]}/item.md`]), /lane: backlog/);
+
+  // To do with a job (a triage nobody asked for in person): Backlog drops it first, then writes the lane.
+  const ref = now.body.ref as string;
+  const page = await pageOf(ref);
+  saveJobs(store, { [ref]: { item: page.item.ref, workspace: "w", branch: "scopesoup/x", step: "triage", failures: 0, fixRounds: 0, startedAt: "2026-11-18T09:00:00Z" } });
+  const moved = await post("/api/item/pick", { ref, seen: page.item.updatedAt, steps: [{ kind: "move", to: "todo" }, { kind: "lane", lane: "backlog" }] }, undefined, agentsBase);
+  assert.equal(moved.status, 200, JSON.stringify(moved.body));
+  assert.equal(loadJobs(store)[ref]?.dropAskedBy, "Ada");
+  assert.equal((await pageOf(ref)).lane, "backlog");
+  // The lane edit alone drops a job too.
+  const other = backlog.body.ref as string;
+  const otherPage = await pageOf(other);
+  saveJobs(store, { ...loadJobs(store), [other]: { item: otherPage.item.ref, workspace: "w2", branch: "scopesoup/y", step: "triage", failures: 0, fixRounds: 0, startedAt: "2026-11-18T09:00:00Z" } });
+  assert.equal((await post("/api/item/edit", { ref: other, lane: "todo" }, undefined, agentsBase)).status, 200);
+  assert.equal((await post("/api/item/edit", { ref: other, lane: "backlog" }, undefined, agentsBase)).status, 200);
+  assert.equal(loadJobs(store)[other]?.dropAskedBy, "Ada");
+
+  // Implement anyway on a Backlog Item: work under way, so it moves to To do.
+  saveJobs(store, { [other]: { item: otherPage.item.ref, workspace: "w2", branch: "scopesoup/y", step: "triage", failures: 0, fixRounds: 0, startedAt: "2026-11-18T09:00:00Z", parked: { as: "not-ready", reason: "Triage: not ready.", at: "2026-11-18T09:00:00Z", verdict: true } } });
+  const anyway = await post("/api/item/move", { ref: other, to: "implement" }, undefined, agentsBase);
+  assert.equal(anyway.status, 200, JSON.stringify(anyway.body));
+  assert.equal(loadJobs(store)[other]?.implementAskedBy, "Ada");
+  assert.equal((await pageOf(other)).lane, "todo");
+  assert.match(String((store.eventsOfKinds(["person.moved"], 5)[0]?.data as { reason?: string }).reason), /moved from Backlog to To do: Ada's Implement anyway/);
 });

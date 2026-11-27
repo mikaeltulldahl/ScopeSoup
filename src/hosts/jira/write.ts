@@ -308,8 +308,22 @@ export function createJiraWrite(deps: JiraWriteDeps): WritePort {
     }
   }
 
+  /** The project's statuses have the Backlog one (`host.transitions.backlog`); asked once, refused with the reason when not. */
+  let backlogStatusSeen = false;
+  async function checkBacklogStatus(): Promise<void> {
+    if (backlogStatusSeen) return;
+    const types = await client.get<{ statuses?: { name?: string }[] }[]>(`${api}/project/${encodeURIComponent(scope.project)}/statuses`);
+    const names = new Set((types ?? []).flatMap((type) => type.statuses ?? []).map((status) => (status.name ?? "").toLowerCase()));
+    if (!names.has(settings.transitions.backlog.toLowerCase())) {
+      throw new Error(`Jira project ${scope.project} has no status "${settings.transitions.backlog}", so a new Item could not wait in Backlog and agents would start it (decision 120). Add a Backlog status to the workflow, or name it in host.transitions.backlog.`);
+    }
+    backlogStatusSeen = true;
+  }
+
   const write: WritePort = {
     async createWork(input) {
+      // A new Item lands in Backlog (decision 120): without that status it would be startable at once, so the create is refused.
+      if ((input.state ?? "todo") === "todo" && (input.lane ?? "backlog") === "backlog") await checkBacklogStatus();
       const body = input.body ?? "";
       const markdown = input.verification !== undefined ? spliceBody(body, { verification: input.verification }) : body.trim();
       const labels = input.labels ?? [];
@@ -343,6 +357,7 @@ export function createJiraWrite(deps: JiraWriteDeps): WritePort {
       if (input.blockedBy && input.blockedBy.length > 0) await setBlockers(work, input.blockedBy.filter((each) => each.host === scope.host), true);
       if (input.state && input.state !== "todo" && input.state !== "waiting") await transitionTo(work, input.state, input.state === "done" ? settings.resolutions.done : input.state === "abandoned" ? settings.resolutions.abandoned : undefined);
       // New Items land in Backlog (decision 120), To do only when a person picked it: the workflow's first status may be either.
+      // The project has the Backlog status (checked above); a transition the workflow does not offer from the first status is said.
       let laneProblem: string | undefined;
       if ((input.state ?? "todo") === "todo") {
         const lane = input.lane ?? "backlog";
@@ -398,12 +413,15 @@ export function createJiraWrite(deps: JiraWriteDeps): WritePort {
       if (Object.keys(fields).length > 0 || Object.keys(update).length > 0) await client.put(path(subject), { ...(Object.keys(fields).length > 0 ? { fields } : {}), ...(Object.keys(update).length > 0 ? { update } : {}) });
       if (patch.blockedBy !== undefined) await setBlockers(subject, patch.blockedBy.filter((each) => each.host === scope.host), false);
       const state = stateOf(scope, issue.fields.status, issue.fields.resolution?.name);
-      // Backlog and To do are two statuses of the To Do category (decision 120).
-      const inBacklog = state === "todo" && same(issue.fields.status?.name ?? "", settings.transitions.backlog);
-      if (patch.lane !== undefined && (patch.state ?? state) === "todo" && (patch.lane === "backlog") !== inBacklog) await transitionTo(subject, patch.lane);
       if (patch.state !== undefined && patch.state !== state) {
         const resolution = patch.state === "done" ? settings.resolutions.done : patch.state === "abandoned" ? (patch.duplicateOf ? settings.resolutions.duplicate : settings.resolutions.abandoned) : undefined;
         await transitionTo(subject, patch.state, resolution);
+      }
+      // Backlog and To do are two statuses of the To Do category (decision 120), moved to after the state.
+      if (patch.lane !== undefined && (patch.state ?? state) === "todo") {
+        const now = patch.state !== undefined && patch.state !== state ? await issueOf(subject) : issue;
+        const inBacklog = same(now.fields.status?.name ?? "", settings.transitions.backlog);
+        if ((patch.lane === "backlog") !== inBacklog) await transitionTo(subject, patch.lane);
       }
       // Once: a retry finds the link there already.
       if (patch.duplicateOf && !linkedTo(await issueOf(subject), settings.duplicateLink, patch.duplicateOf.id)) await link(settings.duplicateLink, subject.id, patch.duplicateOf.id);

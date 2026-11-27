@@ -349,6 +349,20 @@ describe("a pick for an Item whose work runs on another machine (decision 104)",
     assert.equal((await pageA()).remote?.request?.state, "done");
   });
 
+  test("Backlog is one request, the work dropped then the lane, and nothing changes here (decision 120)", async () => {
+    saveJobs(storeB, { [key]: job({ sessionId: "s1" }) });
+    const before = await pageA();
+    const count = lines.length;
+    const asked = await pickA({ ref: key, seen: before.item.updatedAt, steps: [{ kind: "move", to: "todo" }, { kind: "lane", lane: "backlog" }] });
+    assert.equal(asked.status, 202);
+    const line = JSON.parse(lines[count]!) as Record<string, unknown>;
+    assert.deepEqual([line.seen, line.steps], [before.item.updatedAt, [{ kind: "move", to: "todo" }, { kind: "lane", lane: "backlog" }]]);
+    assert.equal((await pageA()).item.updatedAt, before.item.updatedAt, "the lane is written there, after the drop");
+    // That machine drops the work first; the lane edit then needs a writable host there (none in this test), so it is refused there.
+    assert.equal(await serverB.carryOutRequests(), 1);
+    assert.equal(loadJobs(storeB)[key]?.dropAskedBy, "mira");
+  });
+
   test("a pick that machine refuses is written back with why; one nobody answered in time lapses and is never carried out", async () => {
     saveJobs(storeB, { [key]: job({ head: "abc" }) });
     const asked = await pickA({ ref: key, seen: held.updatedAt, steps: [{ kind: "move", to: "merge-queue" }] });

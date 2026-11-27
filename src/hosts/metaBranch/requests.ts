@@ -73,8 +73,14 @@ function asStep(value: unknown): RequestStep | null {
   return null;
 }
 
-/** Whether a board's pick may go to another machine as a request: one move, or Abandoned. */
-export const requestable = (steps: readonly unknown[]): boolean => steps.length === 1 && asStep(steps[0]) !== null;
+/** Backlog for work on another machine: the work dropped there, then the lane written there (decision 120). */
+const isBacklogPick = (steps: readonly unknown[]): boolean => {
+  const [drop, lane] = steps as Record<string, unknown>[];
+  return steps.length === 2 && drop?.kind === "move" && drop.to === "todo" && lane?.kind === "lane" && lane.lane === "backlog";
+};
+
+/** Whether a board's pick may go to another machine as a request: one move, Abandoned, or Backlog (drop, then the lane). */
+export const requestable = (steps: readonly unknown[]): boolean => (steps.length === 1 && asStep(steps[0]) !== null) || isBacklogPick(steps);
 
 const str = (value: unknown): string | undefined => (typeof value === "string" && value.length > 0 && value.length <= 300 ? value : undefined);
 
@@ -88,7 +94,8 @@ function asRequest(entry: LogEntry): PickRequest | null {
   const seen = str(data.seen);
   const steps = Array.isArray(data.steps) ? data.steps : [];
   if (!id || !item || !target || !seen || !requestable(steps)) return null;
-  return { id, at: entry.at, who: entry.by.who, ...(entry.by.machine ? { from: entry.by.machine } : {}), item, for: target, seen, steps: [asStep(steps[0])!] };
+  const typed: RequestStep[] = isBacklogPick(steps) ? [{ kind: "move", to: "todo" }, { kind: "lane", lane: "backlog" }] : [asStep(steps[0])!];
+  return { id, at: entry.at, who: entry.by.who, ...(entry.by.machine ? { from: entry.by.machine } : {}), item, for: target, seen, steps: typed };
 }
 
 /** Every request in the lines, oldest first, each with the first answer written for it. Lines of other shapes are skipped. */

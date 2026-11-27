@@ -793,6 +793,11 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
       return result;
     });
     if (!done.ok) return sendError(response, 409, "REFUSED", `${work.ref.id}: ${done.why}.`);
+    // Implement anyway is work under way, which is never in Backlog (decision 120): the Item moves to To do.
+    if (to === "implement" && work.backlog) {
+      const moved = await inProcess(editItem, { ref, lane: "todo" });
+      store.appendEvent({ kind: "person.moved", subject: ref, actor: who, data: { to: "todo", reason: moved.status < 400 ? `${work.ref.id} moved from Backlog to To do: ${who}'s Implement anyway puts work under way.` : `${work.ref.id} could not be moved from Backlog to To do for ${who}'s Implement anyway: ${moved.message ?? `the server answered ${moved.status}`}`, via: "board" } }, now().toISOString());
+    }
     // Implement anyway overrules the not-ready question the log still holds open: it is answered there, so the card stops asking.
     const write = items?.write;
     const asked = to === "implement" && write?.appendLog && work.ref.host === items!.host && !(options.questions && work.ref.host === options.questions.host) ? work.openQuestions ?? [] : [];
@@ -879,16 +884,11 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
     const elsewhere = loadJobs(store)[ref] ? undefined : workElsewhere(work);
     const typed = steps as PickStep[];
     if (elsewhere && typed.some((step) => step.kind === "move" || (step.kind === "state" && step.state === "abandoned"))) {
-      // Backlog or To do is the Item's own field, written here; the rest goes to that machine.
-      const asked = typed.filter((step) => step.kind !== "lane");
-      if (!requestable(asked)) return sendError(response, 409, "REFUSED", `${work.ref.id}'s work runs on ${elsewhere}: pick one state at a time for it.`);
-      const lane = typed.filter((step) => step.kind === "lane");
-      if (lane.length > 0) {
-        const result = await runPick(ref, lane, undefined);
-        if (!result.ok) return sendError(response, result.status, "STEP_REFUSED", result.message);
-      }
+      // Backlog (the work dropped, then the lane) goes there whole: that machine drops the work and writes the lane, so nothing
+      // changes here before it does, and nothing at all when the request cannot be written.
+      if (!requestable(typed)) return sendError(response, 409, "REFUSED", `${work.ref.id}'s work runs on ${elsewhere}: pick one state at a time for it.`);
       const id = randomUUID();
-      const written = await options.requests!.write({ kind: "pick", by: { who: by().who, agent: false }, fields: { id, item: ref, for: elsewhere, seen, steps: asked } });
+      const written = await options.requests!.write({ kind: "pick", by: { who: by().who, agent: false }, fields: { id, item: ref, for: elsewhere, seen, steps: typed } });
       if (!written.ok) return sendError(response, 502, "NOT_WRITTEN", `The pick could not be written for ${elsewhere}: ${written.error}`);
       store.appendEvent({ kind: "person.moved", subject: ref, actor: by().who, data: { to: typed.map((step) => (step.kind === "move" ? step.to : step.kind === "state" ? step.state : step.kind)).join(", "), reason: `${by().who} asked ${elsewhere}, where ${work.ref.id}'s work runs, to carry out their pick at its next fetch.`, via: "board", request: id, for: elsewhere } }, now().toISOString());
       options.onRefresh?.();
@@ -1691,12 +1691,14 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
         if (running) throw new Refused(running);
         const from = text(body.from);
         const done = await claimItem(backend, ref.id, from ? { from } : {});
+        if (done.movedToTodo) store.appendEvent({ kind: "person.moved", subject: refKey(done.ref), actor: who, data: { to: "todo", reason: `${done.ref.id} moved from Backlog to To do: ${who} took it.`, via: "board" } }, now().toISOString());
         return written(response, { work: done.ref, shared: done.shared, conflict: false }, done.message);
       }
       if (verb === "handback") {
         // No branch or commit is given: Scope Soup reads the Item's branch from the remote.
         const note = text(body.note);
         const done = await handBackItem(backend, ref.id, note ? { note } : {});
+        if (done.movedToTodo) store.appendEvent({ kind: "person.moved", subject: refKey(done.ref), actor: who, data: { to: "todo", reason: `${done.ref.id} moved from Backlog to To do: ${who} handed it back.`, via: "board" } }, now().toISOString());
         return written(response, { work: done.ref, shared: done.shared, conflict: false }, done.message);
       }
       const note = text(body.note);
@@ -1951,6 +1953,24 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
       if (body.lane !== "backlog" && body.lane !== "todo") return bad("lane", "backlog or todo");
       // A closed Item keeps no lane on GitHub and Jira: the pick that reopens it writes the lane it goes to.
       if (body.lane !== (current.backlog ? "backlog" : "todo") || current.state !== "todo") (patch.lane = body.lane), changed.push("lane");
+    }
+    // Backlog is no work (decision 120): a job on the Item here is dropped first, as To do drops it, or the move is refused.
+    if (patch.lane === "backlog") {
+      const key = refKey(current.ref);
+      const lane = buildItemPage(loadSnapshot(store), key, now())?.lane ?? null;
+      const at = now().toISOString();
+      const who = by().who;
+      const dropped = store.tx(() => {
+        const jobs = loadJobs(store);
+        const job = jobs[key];
+        if (!job || job.dropAskedBy) return { ok: true as const };
+        const result = applyMove(jobs, key, "todo", { ...moveInput(current, lane), job }, who, at);
+        if (!result.ok) return result;
+        saveJobs(store, jobs);
+        store.appendEvent({ kind: "person.moved", subject: key, actor: who, data: { to: "backlog", reason: `${result.reason} It goes to Backlog.`, via: "board" } }, at);
+        return result;
+      });
+      if (!dropped.ok) return sendError(response, 409, "REFUSED", `${current.ref.id} cannot go to Backlog: ${dropped.why}.`);
     }
     if (body.verification !== undefined) {
       if (typeof body.verification !== "string") return bad("verification", "text");

@@ -53,12 +53,13 @@ test("metaBranch: new --claim is one commit that holds the item from its first s
   assert.deepEqual(readiness.ready, []);
   assert.match(readiness.held[0]!.reason, /held by Ada on laptop-a/);
   // Without --claim the item is nobody's and the same single commit holds `created`; it waits in Backlog (decision 120), and
-  // with --todo it is ready.
+  // moved to To do it is ready.
   await createItem(backend, { title: "Chart the harbour" });
   assert.equal(repo.git(["rev-list", "--count", META_REF]), "2");
   const backlog = readyItems([(await host.work.getWork({ host: "metaBranch", kind: "work", id: "A-2" }))!], [], {}, "2026-11-20T09:05:00Z");
   assert.deepEqual([backlog.ready.length, backlog.held[0]?.reason], [0, "is in Backlog: it waits for a person to move it to To do"]);
-  await createItem(backend, { title: "Sound the bay", todo: true });
+  await createItem(backend, { title: "Sound the bay" });
+  await backend.write.editWork!({ host: "metaBranch", kind: "work", id: "A-3" }, { lane: "todo" });
   const free = readyItems([(await host.work.getWork({ host: "metaBranch", kind: "work", id: "A-3" }))!], [], {}, "2026-11-20T09:05:00Z");
   assert.equal(free.ready.length, 1);
 });
