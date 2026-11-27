@@ -526,6 +526,20 @@ async function holdsOn(id: string, options: Shrunk, actions: Action[]): Promise<
 }
 
 describe("runs the simulator shrank, held since their fix", { concurrency: 1 }, () => {
+  // Fixed (#268): the dropped result's event is committed after the job's change, so a paused tick keeps the change.
+  test("G1: Triage picked over a running implement session, then a restart: the first tick drops its result once, for good", async () => {
+    await holdsOn("G1", {items: 6, level: 3, slots: 3, steps: 600, profile: "calm", ageing: true}, [
+      {kind: "tick"},
+      {kind: "end", item: "A-3", v: 784039},
+      {kind: "tick"},
+      {kind: "clock", ms: 1000},
+      {kind: "tick"},
+      {kind: "move", item: "A-3", v: 164546},
+      {kind: "restart"},
+      {kind: "tick"},
+    ]);
+  });
+
   // Fixed (#268): a rewrite rejected whose read-back is lost: the store's stale question of the settled park asks nothing on the card.
   test("A1: a rewrite rejected whose read-back did not come: the card says the next step, not that it needs a decision", async () => {
     await holdsOn("A1", {items: 12, level: 2, slots: 3, steps: 600, profile: "calm", ageing: true}, [

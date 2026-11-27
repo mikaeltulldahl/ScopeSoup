@@ -178,12 +178,12 @@ function interrupted(ctx: Context, key: string, job: Job, item: WorkItem | null)
     if (Date.parse(ctx.at) - Date.parse(asked.at) <= INTERRUPT_WAIT_MS) return true;
     ctx.commit("orchestrator.interrupt_failed", `The ${session.role} session ${session.ref.id} on ${item?.ref.id ?? key} is still there ${Math.round(INTERRUPT_WAIT_MS / 60_000)} minutes after ${asked.by}'s pick ended it; the job goes on as the pick left it, and nothing starts on the Item while that session runs.`, key, { by: asked.by, session: session.ref.id });
   }
-  else if (own && where(job).sessionId) {
-    // The session was over before the pick reached it: its result, not yet read, is not taken, and that is a change of the job.
-    ctx.commit("orchestrator.result_dropped", `${asked.by} picked ${PICK_WORDS[asked.to] ?? asked.to} for ${item?.ref.id ?? key} on the board: the result of its ${own.role} session ${own.ref.id}, which had ended, is not taken.`, key, { by: asked.by, step: stepAt(job) });
-  }
+  const dropped = !session && own && where(job).sessionId ? own : undefined;
   delete job.interrupt;
   setWhere(job, { sessionId: undefined, resume: undefined });
+  // The session was over before the pick reached it: its result, not yet read, is not taken, and that is a change of the job. Committed
+  // after the change, so the job is saved with its event even when nothing else in this tick commits (#268).
+  if (dropped) ctx.commit("orchestrator.result_dropped", `${asked.by} picked ${PICK_WORDS[asked.to] ?? asked.to} for ${item?.ref.id ?? key} on the board: the result of its ${dropped.role} session ${dropped.ref.id}, which had ended, is not taken.`, key, { by: asked.by, step: stepAt(job) });
   return false;
 }
 
@@ -204,12 +204,12 @@ function stopForClosed(ctx: Context, key: string, job: Job, item: WorkItem | nul
     if (stopped > 0) ctx.commit("orchestrator.stopped", reason, key, { role: session.role, session: session.ref.id });
     const after = store.get<Session>(session.ref);
     if (after && isLive(after)) return true;
-  } else if (own && where(job).sessionId) {
-    if (takeEnded) return false;
-    ctx.commit("orchestrator.result_dropped", `${item ? `${item.ref.id} is ${item.state}` : `${key} is no longer in the store`}: the result of its ${own.role} session ${own.ref.id} is not taken.`, key, { step: stepAt(job) });
-  }
+  } else if (own && where(job).sessionId && takeEnded) return false;
+  const dropped = !session && own && where(job).sessionId ? own : undefined;
   delete job.interrupt;
   setWhere(job, { sessionId: undefined, resume: undefined });
+  // Committed after the change, so the job is saved with its event (#268).
+  if (dropped) ctx.commit("orchestrator.result_dropped", `${item ? `${item.ref.id} is ${item.state}` : `${key} is no longer in the store`}: the result of its ${dropped.role} session ${dropped.ref.id} is not taken.`, key, { step: stepAt(job) });
   return false;
 }
 
