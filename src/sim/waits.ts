@@ -7,7 +7,7 @@ import { itemTextHash } from "../core/answerReuse.ts";
 
 export type Role = "triage" | "implement" | "review";
 export type PersonWait = "answer" | "rewrite" | "restructuring" | "not-ready" | "escalated" | "merge" | "holds";
-export type StartCause = "switch" | "level" | "usage" | "timer" | "text" | "same-files" | "claim" | "slot";
+export type StartCause = "backlog" | "switch" | "level" | "usage" | "timer" | "text" | "same-files" | "claim" | "slot";
 
 export type W =
   | { kind: "nothing" }
@@ -77,6 +77,9 @@ export function waitsFor(input: WaitInput): W {
   if (blockers.length > 0) return { kind: "blocker", on: [...new Set(blockers)] };
   if (!job) return { kind: "not-started" };
   const start = (cause: StartCause): W => ({ kind: "start", role, cause });
+  // In Backlog after a person's one-off triage, the implement step waits for a person to move it to To do (decision 121); work with a
+  // revision or something to resume is never held there.
+  if (item.backlog && role === "implement" && !job.implementAskedBy && !job.head && !job.resumeWith && !job.resume) return start("backlog");
   if (job.writing && job.writing.from === itemTextHash(item) && Date.parse(input.now) - Date.parse(job.writing.at) < 30 * 60_000) return start("text");
   const begun = !!(job.head || job.implement);
   if (role === "implement" && !begun) {

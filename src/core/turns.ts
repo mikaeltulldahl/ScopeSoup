@@ -181,7 +181,9 @@ function waitsInBacklogTurn(situation: Situation, ctx: TurnContext): Draft {
   if (item.openChildren > 0) return umbrellaTurn(item);
   if ((item.children ?? 0) > 0) return allPartsDoneTurn(item);
   if (item.holder && holdStands(item.holder, ctx.now.getTime()) && !item.holder.actor.bot) return heldTurn(item, ctx);
-  return { actor: "nobody", tone: "waiting", reason: "in Backlog: waits for a person to move it to To do" };
+  const backlog: Draft = { actor: "nobody", tone: "waiting", reason: "in Backlog: waits for a person to move it to To do" };
+  // A person's one-off triage (or the triage again after their answer) runs there: its timer is said.
+  return ctx.index.jobByWork.get(refKey(item.ref))?.step === "triage" ? nextStepTurn(situation, ctx, backlog) : backlog;
 }
 
 function todoTurn(situation: Situation, ctx: TurnContext): Draft {

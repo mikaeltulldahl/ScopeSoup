@@ -28,6 +28,17 @@ const first = <T>(list: T[], f: (each: T) => string | null): string | null => {
   }
   return null;
 };
+/**
+ * The Items whose job a lost store took and no tick has rebuilt from the Item's log yet (the first tick whose store has the Item does):
+ * until then the board reads them from the host alone.
+ */
+function toRebuild(o: Observation, prev: Observation | undefined, memo: Record<string, unknown>): Record<string, true> {
+  const rebuild = (memo.rebuild ??= {}) as Record<string, true>;
+  if (o.action.kind === "lose-store") for (const i of prev?.items ?? []) if (i.job) rebuild[i.key] = true;
+  if (isTick(o)) for (const i of o.items) delete rebuild[i.key];
+  return rebuild;
+}
+
 /** Counts ticks since a condition first held for a key; returns the count (0 on the first). Clears when it stops holding. */
 function ticksSince(memo: Record<string, unknown>, key: string, holds: boolean, o: Observation): number {
   const table = (memo.since ??= {}) as Record<string, number>;
@@ -48,11 +59,12 @@ export const RULES: Rule[] = [
   {
     id: "A1",
     why: "Views follow W: the card's lane and actor are the ones W gives (#185, #198, #207, #194).",
-    check(o) {
+    check(o, prev, memo) {
+      const rebuild = toRebuild(o, prev, memo);
       return first(o.items, (i) => {
         const card = i.card;
         const lane = card?.lane;
-        if (lane === "queued" || lane === "checking") {
+        if ((lane === "queued" || lane === "checking") && !(rebuild[i.key] && !i.job)) {
           if (i.w.kind !== "queue" && i.w.kind !== "nothing") return `${i.id} is in the ${lane} lane, but W is ${wText(i.w)}`;
         }
         if (!card) return null;
@@ -87,10 +99,7 @@ export const RULES: Rule[] = [
     id: "A3",
     why: "One count of what is asked: the job's open asks and the host's open question lines agree; none open unless a person is asked (#194, #209).",
     check(o, prev, memo) {
-      // After a lost store a job is rebuilt from the Item's log by the first tick whose store has the Item: until then nothing is parked here.
-      const rebuild = (memo.rebuild ??= {}) as Record<string, true>;
-      if (o.action.kind === "lose-store") for (const i of prev?.items ?? []) rebuild[i.key] = true;
-      if (isTick(o)) for (const i of o.items) delete rebuild[i.key];
+      const rebuild = toRebuild(o, prev, memo);
       return first(o.items, (i) => {
         if (!i.host || isClosed(i)) return null;
         if (rebuild[i.key] && !i.job) return null;
