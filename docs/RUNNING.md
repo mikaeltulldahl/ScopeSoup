@@ -115,8 +115,8 @@ The overview starts with **Your turn**: everything that waits for a person (ques
 | Lane | What is in it |
 |---|---|
 | Backlog | Not chosen yet; no agent starts it ("Backlog and To do") |
-| Blocked | In To do, but waits on another open Item |
 | To do | Agents may start it, in the order of "How Items are ordered"; triage runs here |
+| Blocked | In To do, but waits on another open Item |
 | In progress | Being implemented, or held by a person |
 | In review | Being reviewed, or handed over for a person to merge (a pull request) |
 | Merge queue | Level 4 (hidden below it while empty): queued, or in the check of a batch |

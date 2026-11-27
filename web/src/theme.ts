@@ -66,7 +66,7 @@ export interface ThemeWords {
   undo: string;
 }
 
-export const LANE_KEYS = ["backlog", "blocked", "todo", "in-progress", "in-review", "queued", "checking", "done"] as const;
+export const LANE_KEYS = ["backlog", "todo", "blocked", "in-progress", "in-review", "queued", "checking", "done"] as const;
 export type LaneKey = (typeof LANE_KEYS)[number];
 
 const NO_ICONS: Readonly<Record<LaneKey, string>> = { backlog: "", blocked: "", todo: "", "in-progress": "", "in-review": "", queued: "", checking: "", done: "" };
