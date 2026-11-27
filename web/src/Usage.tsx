@@ -219,7 +219,7 @@ function Meter({ window, now, saver, picked, pick, hint, dismissHint }: { window
     <div class="usage-meter">
       <div class="usage-meter-head">
         <b>{TITLE[window.kind]}</b>
-        <span class="muted" title={`Resets ${clockTime(current.resetsAt, now)}`}>{resetsIn > 0 ? `resets in ${spanWords(resetsIn)}` : "reset due"}</span>
+        <span class="muted" title={`Resets ${clockTime(current.resetsAt, now)}`}>{current.reset ? `reset ${clockTime(current.resetsAt, now)}` : `resets in ${spanWords(resetsIn)}`}</span>
       </div>
       <div class={`usage-bar${forecastLow ? " two-rows" : ""}`} ref={track}>
         <div class="usage-track" role="meter" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(used * 100)} aria-label={`${TITLE[window.kind]} used`}>
@@ -263,6 +263,7 @@ function Meter({ window, now, saver, picked, pick, hint, dismissHint }: { window
           </span>
         )}
       </div>
+      {current.reset && <p class="muted">0 % used by Scope Soup since the reset. A new window starts with the next session; use outside Scope Soup is not known until the next reading.</p>}
     </div>
   );
 }

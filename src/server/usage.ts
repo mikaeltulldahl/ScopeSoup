@@ -95,8 +95,11 @@ export function buildUsageView(store: Store, snapshot: Snapshot, span: { span: s
     if (reserve) view.reserve = reserve[kind];
     if (latest && reading?.utilization !== undefined) {
       const forecast = forecastWindow(samples, kind, now, load) ?? undefined;
-      view.current = { utilization: reading.utilization, resetsAt: reading.resetsAt, at: latest.at, ...(forecast ? { forecast } : {}) };
-      view.forecastLine = forecastLine(Date.parse(latest.at), reading.utilization, Date.parse(reading.resetsAt), forecast);
+      // A window whose reset has passed with no newer reading has reset: nothing of Scope Soup's is in the new one.
+      const reset = Date.parse(reading.resetsAt) <= to;
+      const utilization = reset ? 0 : reading.utilization;
+      view.current = { utilization, resetsAt: reading.resetsAt, at: latest.at, ...(reset ? { reset: true as const } : {}), ...(forecast ? { forecast } : {}) };
+      view.forecastLine = reset ? [] : forecastLine(Date.parse(latest.at), utilization, Date.parse(reading.resetsAt), forecast);
     }
     return view;
   });

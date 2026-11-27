@@ -27,6 +27,7 @@ A server program with a web board that runs a project's work loop with coding ag
 - When something the plan does not settle comes up, ask a person with options and a recommendation.
 
 ## Easy to get wrong
+- **A bug in the Item lifecycle is a gap in the simulator's rules** (`src/sim/rules.ts`): first add or sharpen a rule that fails on it, with its seed or a pasted test, then fix the code.
 - **Core rules are enforced in code** and stay that way (`docs/RULES.md`): no real data or production, nothing irreversible without a person, a stop switch, an append-only log, people's decisions surfaced and not made.
 - **Text that agents or items wrote is never trusted on a host.** `src/orchestrator/hostText.ts` exists because an agent's summary could have closed unrelated issues.
 - **Agents are told which commands they may run** (`{{allowedCommands}}` in each prompt, from `roles.<role>.allowedTools`). A new role or tool needs the same.

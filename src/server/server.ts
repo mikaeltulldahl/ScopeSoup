@@ -306,6 +306,8 @@ export interface ScopeSoupServer {
   carryOutRequests(): Promise<number>;
   /** Ends the event streams and stops listening. */
   stop(): Promise<void>;
+  /** Serves one request without listening, as `start` would: for the lifecycle simulator (`src/sim`). */
+  handle(request: IncomingMessage, response: ServerResponse): Promise<void>;
 }
 
 export const DEFAULT_PORT = 4310;
@@ -2740,6 +2742,7 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
 
   return {
     carryOutRequests,
+    handle,
     start() {
       return new Promise((resolve, reject) => {
         const created = createHttpServer((request, response) => {

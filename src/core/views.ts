@@ -244,6 +244,8 @@ export interface UsageWindowView {
   /** 0 to 1; absent when the agent did not report it. */
   utilization?: number;
   resetsAt: string;
+  /** True when `resetsAt` has passed with no newer reading: the window has reset and `utilization` is 0 (use outside Scope Soup is not known until the next reading). */
+  reset?: true;
   /** Where it is heading at the recent rate; absent with too few readings. */
   forecast?: { outcome: "used_up" | "lasts"; at?: string; words: string };
 }
@@ -426,7 +428,7 @@ export interface StatusView {
   batches: { name: string; status: BatchStatus; words: string; members: string[]; progress: string }[];
   queue: StatusLine["queue"];
   runners: { name: string; words: string }[];
-  usage: { kind: UsageWindowKind; utilization?: number; resetsAt: string; forecast?: { outcome: "used_up" | "lasts"; at?: string; words: string } }[];
+  usage: { kind: UsageWindowKind; utilization?: number; resetsAt: string; reset?: true; forecast?: { outcome: "used_up" | "lasts"; at?: string; words: string } }[];
   sync: StatusLine["sync"];
   share?: ShareState;
   alerts: string[];
@@ -715,7 +717,7 @@ export type CommitView =
 /** One usage window on the Usage page. */
 export interface UsagePageWindow extends UsageAttribution {
   /** The newest reading, with the status line's forecast; absent before the first reading. */
-  current?: { utilization: number; resetsAt: string; at: string; forecast?: UsageForecast };
+  current?: { utilization: number; resetsAt: string; at: string; reset?: true; forecast?: UsageForecast };
   /** The share kept for people's own use: Scope Soup starts nothing once the window is at 1 minus this. Absent without a configuration. */
   reserve?: number;
   /** How full the window got over the span, split by role. */
