@@ -15,7 +15,7 @@ import { persistenceLimits } from "../config/persistence.ts";
 import type { Context } from "./context.ts";
 import { ACTOR, errorText } from "./context.ts";
 import type { Ask, AskedText, Decision, ItemLinkAnswer, Job, JobParked, Rewrite, JobStep, ParkedAs, ReviewAnswer, TakenDecision, TriageAnswer, Finding } from "./jobs.ts";
-import { ASK_PERSON, answerIn, askedInLog, jobQuestions, nextPark, parkSet, asImplement, asReview, asTriage, formatFindings, hasMarkup, recoverFields, keepsRecommendations, picks, questionsSettled, releaseIn, parkedRewrite, changedRewrite, sameText, atStep, stepAt, parkedOf, mergeApproved, shouldRoundOf, parkJob, editParked, release, nextStep, endSession, wait, oweHandOver, handOverTaken, markMerged, toTriage, dropMark, pickDone, pickedFor, askOf, answeredOf, takeSettled, rewritePosted, postRewrite } from "./jobs.ts";
+import { ASK_PERSON, answerIn, askedInLog, jobQuestions, nextPark, parkSet, asImplement, asReview, asTriage, formatFindings, hasMarkup, recoverFields, keepsRecommendations, picks, questionsSettled, releaseIn, parkedRewrite, changedRewrite, sameText, atStep, stepAt, parkedOf, mergeApproved, shouldRoundOf, parkJob, editParked, release, nextStep, endSession, wait, oweHandOver, handOverTaken, markMerged, toTriage, dropMark, pickDone, pickedFor, askOf, answeredOf, takeSettled, rewritePosted, notePosted } from "./jobs.ts";
 import { providerFor } from "./providers/index.ts";
 import type { Actions, ClaimResult, SessionResultRecord } from "./ports.ts";
 import { CLAIM_EXPIRY_MINUTES } from "./ports.ts";
@@ -251,7 +251,7 @@ async function rewriteOnHost(ctx: Context, job: Job, rewrite: Rewrite): Promise<
     }
   }
   editParked(job, postedParked(parkedOf(job)!));
-  postRewrite(job, { id, questions: ids, ...(ids.length > 0 ? { texts: textsOf(rewrite.questions, numbers) } : {}), ...(askedAt ? { askedAt } : {}) });
+  notePosted(job, { id, questions: ids, ...(ids.length > 0 ? { texts: textsOf(rewrite.questions, numbers) } : {}), ...(askedAt ? { askedAt } : {}) });
   ctx.commit("orchestrator.rewrite_posted", `Posted the triage's rewrite of round ${rewrite.round} on ${job.item.host} (comment ${id})${ids.length > 0 ? ` with ${ids.length} question${ids.length > 1 ? "s" : ""}` : ""}.`, key, { rewrite: id, questions: ids });
   return true;
 }
@@ -322,7 +322,7 @@ export async function followRewrite(ctx: Context, job: Job, item: WorkItem): Pro
   const answers = given.map((answer) => answer!.answer);
   const settle = ctx.deps.actions.settleQuestions;
   if (keepsRecommendations(rewrite, answers)) {
-    postRewrite(job, { ...posted, answered: true });
+    notePosted(job, { ...posted, answered: true });
     ctx.commit("orchestrator.rewrite_questions_answered", `The questions of the triage's rewrite (round ${rewrite.round}) were answered on ${job.item.host} with the recommendations: the rewrite waits for a person to accept, edit or reject it.`, key, { round: rewrite.round });
     return false;
   }

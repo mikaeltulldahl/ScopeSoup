@@ -681,7 +681,7 @@ export function recordAnswers(job: Job, answered: Answered[]): void {
 }
 
 /** The rewrite the job is parked on is (or its questions are answered) on the host as `posted`. A job asking no rewrite has none. */
-export function postRewrite(job: Job, posted: RewritePosted): void {
+export function notePosted(job: Job, posted: RewritePosted): void {
   const at = job.at;
   if (at.kind === "parked" && at.ask?.is === "rewrite") job.at = { ...at, ask: { ...at.ask, posted } };
 }
