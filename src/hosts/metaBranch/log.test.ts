@@ -138,7 +138,7 @@ test("fold: an empty log is an empty picture", () => {
 
 const at = (minute: number): string => `2026-11-18T09:${String(minute).padStart(2, "0")}:00Z`;
 
-test("fold: the file's order does not matter; the order is `at`, then `by`, then the place in the file", () => {
+test("fold: the file's order across machines does not matter; the order is `at`, then the machine (or `by` without one), then the place in the file", () => {
   const claimed = { at: at(0), by: robin, kind: "claimed", until: at(30) };
   const released = { at: at(5), by: robin, kind: "released" };
   assert.equal(fold(jsonl(released, claimed)).holder, undefined);
@@ -147,7 +147,7 @@ test("fold: the file's order does not matter; the order is `at`, then `by`, then
   const early = { at: "2026-11-18T09:00:30+00:00", by: sam, kind: "claimed", until: at(50) };
   const late = { at: at(1), by: robin, kind: "claimed", until: at(50) };
   assert.equal(fold(jsonl(late, early)).holder?.by.who, "sam");
-  // The same instant: `by` as text decides, not the file.
+  // The same instant, different machines (here none, so the whole `by`): their text decides, not the file.
   const a = { at: at(2), by: { who: "a" }, kind: "claimed", until: at(50) };
   const b = { at: at(2), by: { who: "b" }, kind: "claimed", until: at(50) };
   assert.equal(fold(jsonl(b, a)).holder?.by.who, "a");
@@ -248,7 +248,8 @@ test("log: a new set of questions from Scope Soup replaces the set still open (d
     { at: t, by: soup, kind: "question", question: "Second of two?", parked: "needs-decision", set: "2" },
     { at: t, by: robin, kind: "question", question: "A person's own?" },
   ));
-  assert.deepEqual(picture.openQuestions.map((line) => line.question), ["A person's own?", "First of two?", "Second of two?"]);
+  // One machine's lines of an instant fold in file order (#270).
+  assert.deepEqual(picture.openQuestions.map((line) => line.question), ["First of two?", "Second of two?", "A person's own?"]);
 });
 
 test("log: an answer to one of several questions asked in the same instant closes that one only (#230)", () => {
@@ -286,4 +287,69 @@ test("log: the same question of a set written twice (a retried write) is one que
   assert.equal(fold(jsonl(ask("2026-11-18T10:00:00Z"), ask("2026-11-18T10:01:00Z"))).openQuestions.length, 1);
   const answered = { at: "2026-11-18T10:01:00Z", by: { who: "Ada", machine: "laptop-a" }, kind: "answer", answer: "Yes", to: "2026-11-18T10:00:00Z", toBy: soup, toQuestion: "Go?" };
   assert.equal(fold(jsonl(ask("2026-11-18T10:00:00Z"), answered, ask("2026-11-18T10:01:00Z"))).openQuestions.length, 0);
+});
+
+test("log: one machine's lines of one second keep their file order, so questions asked after a close and a reopen stay open (#270)", () => {
+  const soup = { who: "scopesoup", machine: "laptop-a", agent: true };
+  const t = "2026-11-18T10:00:00Z";
+  // A person on laptop-a closes and reopens, then Scope Soup on laptop-a parks on two questions, all in one second.
+  const picture = fold(jsonl(
+    { at: t, by: robin, kind: "edited", changed: ["state"], state: "abandoned" },
+    { at: t, by: robin, kind: "edited", changed: ["state"], state: "todo" },
+    { at: t, by: soup, kind: "question", question: "First?", set: "1" },
+    { at: t, by: soup, kind: "question", question: "Second?", set: "1" },
+  ));
+  assert.deepEqual(picture.openQuestions.map((line) => line.question), ["First?", "Second?"]);
+  // Written before the close on the same machine: ended.
+  const before = fold(jsonl({ at: t, by: soup, kind: "question", question: "Before?" }, { at: t, by: robin, kind: "edited", changed: ["state"], state: "done" }));
+  assert.equal(before.openQuestions.length, 0);
+});
+
+test("log: a question of another machine in the close's second is ended, wherever it sits in the file (#270)", () => {
+  const t = "2026-11-18T10:00:00Z";
+  const close = { at: t, by: robin, kind: "edited", changed: ["state"], state: "abandoned" };
+  const question = (by: object) => ({ at: t, by, kind: "question", question: "Other machine?" });
+  // laptop-b sorts after laptop-a, so its question folds after the close: still ended, the file's order across machines is not trusted.
+  assert.equal(fold(jsonl(close, question(sam))).openQuestions.length, 0);
+  assert.equal(fold(jsonl(question(sam), close)).openQuestions.length, 0);
+  // laptop-0 sorts before laptop-a: it folds before the close and is ended there.
+  assert.equal(fold(jsonl(close, question({ who: "kim", machine: "laptop-0" }))).openQuestions.length, 0);
+});
+
+test("log: a question that folds while the Item is closed is ended, until a reopen (#270)", () => {
+  const soup = { who: "scopesoup", machine: "laptop-a", agent: true };
+  const t = "2026-11-18T10:00:00Z";
+  const close = { at: t, by: robin, kind: "edited", changed: ["state"], state: "abandoned" };
+  // A park committed right after a close, the same machine and second, no reopen (the orchestrator read the Item before the close).
+  assert.equal(fold(jsonl(close, { at: t, by: soup, kind: "question", question: "Late park?", set: "1" })).openQuestions.length, 0);
+  // A later second too.
+  assert.equal(fold(jsonl(close, { at: "2026-11-18T10:00:05Z", by: soup, kind: "question", question: "Later?" })).openQuestions.length, 0);
+  // Another edit is not a reopen; a state that is not closed is.
+  const later = (state: object) => fold(jsonl(close, { at: t, by: robin, kind: "edited", changed: ["labels"], ...state }, { at: t, by: soup, kind: "question", question: "After?" }));
+  assert.equal(later({}).openQuestions.length, 0);
+  assert.equal(later({ state: "todo" }).openQuestions.length, 1);
+});
+
+test("log: lines without `machine` are each their own writer: a close ends that writer's later questions of its second (#270)", () => {
+  const t = "2026-11-18T10:00:00Z";
+  const kim = { who: "kim" };
+  const picture = fold(jsonl(
+    { at: t, by: kim, kind: "edited", changed: ["state"], state: "done" },
+    { at: t, by: kim, kind: "edited", changed: ["state"], state: "todo" },
+    { at: t, by: kim, kind: "question", question: "Reopened and asked?" },
+  ));
+  assert.equal(picture.openQuestions.length, 0);
+});
+
+test("log: a person's claim folds after Scope Soup's release of the same machine and second when written after it (#270)", () => {
+  const soup = { who: "scopesoup", machine: "laptop-a", agent: true };
+  const t = "2026-11-18T10:00:00Z";
+  const lines = [
+    { at: "2026-11-18T09:59:00Z", by: soup, kind: "claimed", until: "2026-11-18T11:00:00Z" },
+    { at: t, by: soup, kind: "released" },
+    { at: t, by: robin, kind: "claimed", until: "2026-11-19T10:00:00Z" },
+  ];
+  assert.equal(fold(jsonl(...lines)).holder?.by.who, "robin");
+  // Written the other way round, robin's claim came while Scope Soup held it: refused, then the release frees the Item.
+  assert.equal(fold(jsonl(lines[0]!, lines[2]!, lines[1]!)).holder, undefined);
 });
