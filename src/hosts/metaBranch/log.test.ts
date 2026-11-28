@@ -315,3 +315,41 @@ test("log: a question of another machine in the close's second is ended, whereve
   // laptop-0 sorts before laptop-a: it folds before the close and is ended there.
   assert.equal(fold(jsonl(close, question({ who: "kim", machine: "laptop-0" }))).openQuestions.length, 0);
 });
+
+test("log: a question that folds while the Item is closed is ended, until a reopen (#270)", () => {
+  const soup = { who: "scopesoup", machine: "laptop-a", agent: true };
+  const t = "2026-11-18T10:00:00Z";
+  const close = { at: t, by: robin, kind: "edited", changed: ["state"], state: "abandoned" };
+  // A park committed right after a close, the same machine and second, no reopen (the orchestrator read the Item before the close).
+  assert.equal(fold(jsonl(close, { at: t, by: soup, kind: "question", question: "Late park?", set: "1" })).openQuestions.length, 0);
+  // A later second too.
+  assert.equal(fold(jsonl(close, { at: "2026-11-18T10:00:05Z", by: soup, kind: "question", question: "Later?" })).openQuestions.length, 0);
+  // Another edit is not a reopen; a state that is not closed is.
+  const later = (state: object) => fold(jsonl(close, { at: t, by: robin, kind: "edited", changed: ["labels"], ...state }, { at: t, by: soup, kind: "question", question: "After?" }));
+  assert.equal(later({}).openQuestions.length, 0);
+  assert.equal(later({ state: "todo" }).openQuestions.length, 1);
+});
+
+test("log: lines without `machine` are each their own writer: a close ends that writer's later questions of its second (#270)", () => {
+  const t = "2026-11-18T10:00:00Z";
+  const kim = { who: "kim" };
+  const picture = fold(jsonl(
+    { at: t, by: kim, kind: "edited", changed: ["state"], state: "done" },
+    { at: t, by: kim, kind: "edited", changed: ["state"], state: "todo" },
+    { at: t, by: kim, kind: "question", question: "Reopened and asked?" },
+  ));
+  assert.equal(picture.openQuestions.length, 0);
+});
+
+test("log: a person's claim folds after Scope Soup's release of the same machine and second when written after it (#270)", () => {
+  const soup = { who: "scopesoup", machine: "laptop-a", agent: true };
+  const t = "2026-11-18T10:00:00Z";
+  const lines = [
+    { at: "2026-11-18T09:59:00Z", by: soup, kind: "claimed", until: "2026-11-18T11:00:00Z" },
+    { at: t, by: soup, kind: "released" },
+    { at: t, by: robin, kind: "claimed", until: "2026-11-19T10:00:00Z" },
+  ];
+  assert.equal(fold(jsonl(...lines)).holder?.by.who, "robin");
+  // Written the other way round, robin's claim came while Scope Soup held it: refused, then the release frees the Item.
+  assert.equal(fold(jsonl(lines[0]!, lines[2]!, lines[1]!)).holder, undefined);
+});

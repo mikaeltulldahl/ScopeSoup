@@ -259,6 +259,8 @@ export function foldLog(log: ParsedLog): LogPicture {
   };
   // Closes by their instant and writer: at the end of that instant they also end the questions of other writers asked in it.
   const closes: { at: number; by: LogActor }[] = [];
+  // Whether the log's newest state line closed the Item: a question that folds while it is closed asks nothing.
+  let closed = false;
   const answerNewest = (before: number): void => {
     while (newestAnswers.length > 0 && newestAnswers[0]! < before) {
       newestAnswers.shift();
@@ -386,6 +388,11 @@ export function foldLog(log: ParsedLog): LogPicture {
           markAnswered(line);
           break;
         }
+        // Written while the Item is closed (a park that read the Item before the close): it asks nothing, also after a reopen.
+        if (closed) {
+          markAnswered(line);
+          break;
+        }
         picture.openQuestions.push(line);
         break;
       }
@@ -446,14 +453,15 @@ export function foldLog(log: ParsedLog): LogPicture {
         if (!Array.isArray(data.changes)) bad("a settings line needs `changes`, a list of { key, from?, to? }");
         break;
       case "edited":
-        // Closing an Item ends what it asked: a question open when it was closed stays closed, also after a reopen. Another machine's
-        // question of the same instant is ended too wherever it folds (the file's order across machines is not trusted); the close's own
-        // machine's later lines are after it (a reopen, then a new park).
+        // Closing an Item ends what it asked: a question open when it was closed, or written while it is closed, stays closed, also after
+        // a reopen (a line with another state). Another machine's question of the same instant is ended too wherever it folds (the file's
+        // order across machines is not trusted); the close's own machine's later lines are after it (a reopen, then a new park).
         if (data.state === "done" || data.state === "abandoned") {
           for (const question of picture.openQuestions) markAnswered(question);
           picture.openQuestions = [];
           closes.push({ at: Date.parse(at), by });
-        }
+          closed = true;
+        } else if (typeof data.state === "string") closed = false;
         break;
       case "created":
       case "session":

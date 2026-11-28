@@ -94,7 +94,8 @@ export type MergedLog = { ok: true; text: string } | { ok: false; problem: strin
 /**
  * Both sets of lines: the other side's log as it is (it may already be pushed, so it is never
  * rewritten), then the lines this side added since the base that the other side does not have, in
- * the order this side wrote them. The fold orders lines by `at` and `by` whatever the file's order.
+ * the order this side wrote them, so each machine's own lines keep their order: the fold orders lines by `at`, then the
+ * machine, then the place in the file (decision 138).
  * Refused when this side's own change removed or changed a line.
  */
 export function mergeLogs(base: string, ours: string, theirs: string): MergedLog {
