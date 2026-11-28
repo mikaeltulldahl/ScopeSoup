@@ -11,6 +11,7 @@ import { readRequests } from "../hosts/metaBranch/requests.ts";
 import { serializeLogLine } from "../hosts/metaBranch/serialize.ts";
 import { refKey } from "../model/types.ts";
 import type { RecordedAnswer, ScopeSoupEvent, WorkItem } from "../model/types.ts";
+import { WriteLater } from "../ports/host.ts";
 import type { PickRequestPort } from "../server/server.ts";
 import { knownAnswers } from "../store/answers.ts";
 import { FakeGit, GitOrigin } from "./git.ts";
@@ -72,7 +73,7 @@ export class RemoteLink {
   }
 
   swap(expected: number, next: ReadonlyMap<string, MetaFiles>): boolean {
-    if (this.down > 0) throw new Error("the remote did not answer");
+    if (this.down > 0) throw new WriteLater("the remote did not answer");
     if (this.races > 0 && this.racer) {
       this.races--;
       this.racer();
@@ -81,7 +82,7 @@ export class RemoteLink {
   }
 
   read(): { version: number; files: ReadonlyMap<string, MetaFiles> } {
-    if (this.down > 0) throw new Error("the remote did not answer");
+    if (this.down > 0) throw new WriteLater("the remote did not answer");
     return this.shared.read();
   }
 }

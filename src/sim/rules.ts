@@ -856,6 +856,20 @@ export const RULES: Rule[] = [
     },
   },
   {
+    id: "G4",
+    why: "No move throws behind a catch: a thrown error in a tick (the loop's tick_failed), a claim renewal, or the merge queue is a bug; the host being down or refusing is not (those are typed host errors).",
+    check(o) {
+      // The catches mark a caught error that is not a typed host error with `thrown: true` (`thrownData`, `src/orchestrator/context.ts`).
+      for (const e of o.events) {
+        const data = e.data as { reason?: unknown; thrown?: unknown };
+        const reason = String(data.reason ?? "").slice(0, 160);
+        if (e.kind === "orchestrator.tick_failed") return `the loop would write tick_failed: ${reason}`;
+        if ((e.kind === "orchestrator.claim_lost" || e.kind === "orchestrator.queue_problem") && data.thrown === true) return `${e.kind} from a thrown error: ${reason}`;
+      }
+      return null;
+    },
+  },
+  {
     id: "G3",
     why: "The store is lost: after the read-back no done Item starts again and every open question is open again (long run only).",
     check(o, prev) {
