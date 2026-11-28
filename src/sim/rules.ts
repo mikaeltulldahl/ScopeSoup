@@ -797,6 +797,12 @@ export const RULES: Rule[] = [
     id: "F3",
     why: "A quiet tick is quiet: a tick run again at once with no input writes no event and changes no job.",
     check(o, prev, memo) {
+      // The remote's refused swaps at this machine's last two observations, kept also when `prev` is withheld (another machine acted in
+      // between): how many swaps the tick before had refused (other machines' pushes got in first; the count is the remote's).
+      const refused = (memo.refused ??= []) as number[];
+      const refusedBefore = refused.length >= 2 ? refused[refused.length - 1]! - refused[refused.length - 2]! : 0;
+      refused.push(o.remote.retries);
+      if (refused.length > 2) refused.shift();
       // The last reason of each standing-condition line (what `say` writes), by kind and subject. A line that says something new
       // (the tick before started sessions, so now "2 sessions are running") is news, not noise; the same words again are noise.
       const lastSaid = (memo.said ??= {}) as Record<string, string>;
@@ -820,13 +826,15 @@ export const RULES: Rule[] = [
       // A start whose claim read the Item from the host found it closed or in Backlog on another machine (#243): that read is the
       // input, and the next tick gives the job up.
       const readAtClaim = new Set(prev.events.filter((e) => e.kind === "orchestrator.claim_lost").map((e) => e.subject));
-      // So is a claim that could not be written (other machines' pushes kept getting in first): the next tick claims and starts it, and
-      // the session it starts is that Item's.
-      const sessionOf = (e: { kind: string; data?: unknown }): string | undefined => {
-        const subject = e.kind === "session.created" ? (e.data as { subject?: { host: string; kind: string; id: string } } | undefined)?.subject : undefined;
+      // The tick before gave its claim up after 5 swaps other machines' pushes refused, so nothing started: the next tick, with the remote
+      // quiet, claims and starts it. The product is right: a start needs its claim shared first, and the race was the input. Only the
+      // session record of that Item's start is excused; anything else it writes is checked as before.
+      const raced = refusedBefore >= 5;
+      const startedFor = (e: { kind: string; data?: unknown }): string | undefined => {
+        const subject = raced && e.kind === "session.created" ? (e.data as { subject?: { host: string; kind: string; id: string } } | undefined)?.subject : undefined;
         return subject ? `${subject.host}:${subject.kind}:${subject.id}` : undefined;
       };
-      const loud = o.events.find((e) => (wrote(e) || e.kind.startsWith("change.")) && !readAtClaim.has(e.subject) && !readAtClaim.has(sessionOf(e)));
+      const loud = o.events.find((e) => (wrote(e) || e.kind.startsWith("change.")) && !readAtClaim.has(e.subject) && !readAtClaim.has(startedFor(e)));
       if (loud) return `a tick right after a tick wrote ${loud.kind}${loud.subject ? ` about ${loud.subject.split(":").pop()}` : ""}`;
       const changed = o.items.find((i) => !readAtClaim.has(i.key) && JSON.stringify(i.job ?? null) !== JSON.stringify(prevOf(prev, i.key)?.job ?? null));
       return changed ? `a tick right after a tick changed ${changed.id}'s job` : null;
@@ -993,9 +1001,14 @@ export const RULES: Rule[] = [
       // So did the usage check: at the budget, or one session at a time while every window of the last reading has reset (a day
       // passing in the fake world, #217): the room was the usage check's, not the slot's.
       if (o.tick.budgetHeld) return null;
-      // Another machine (its Scope Soup or a person there) let the Item go at a time later than this machine's clock (clocks apart): this
-      // machine's claim folds before that release, so it does not take until its clock passes it. A wait for answers lets go at every park (#271).
-      const releasedLater = (i: ItemObs): boolean => (o.items.find((each) => each.key === i.key)?.host?.log ?? []).some((line) => line.kind === "released" && !!o.machine && line.by.machine !== o.machine && Date.parse(line.at) > Date.parse(o.at));
+      // Nobody holds the Item, and the last release its log folds was written on another machine (its Scope Soup or a person
+      // there) at a time later than this machine's clock. The product is right: the fold orders by time, so this machine's claim, dated
+      // before that release, folds before it and does not take until its clock passes it (the claim's read-back says so, decision 130).
+      const releasedLater = (i: ItemObs): boolean => {
+        const host = o.items.find((each) => each.key === i.key)?.host;
+        const release = (host?.log ?? []).filter((line) => line.kind === "released").at(-1);
+        return !!o.machine && !host?.holder && !!release && !!release.by.machine && release.by.machine !== o.machine && Date.parse(release.at) > Date.parse(o.at);
+      };
       const waiting = prev.items.find((i) => i.w.kind === "start" && i.w.cause === "slot" && !overlaps(i) && !releasedLater(i) && !o.started.some((s) => s.item === i.key) && (() => { const now = o.items.find((each) => each.key === i.key)?.w; return now?.kind === "start" && now.cause === "slot"; })());
       return waiting ? `${waiting.id} waited only for a slot, a slot was free, and the tick did not start it (now ${wText(o.items.find((each) => each.key === waiting.key)!.w)})` : null;
     },
