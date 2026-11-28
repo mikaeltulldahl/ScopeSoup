@@ -4,7 +4,7 @@ import type { JobStage, Snapshot, RunnerState, SyncState } from "../core/snapsho
 import type { Batch, Change, CreatedPart, ProposedPart, Ref, Parked, ParkedQuestion, Run, Session, WorkItem } from "../model/types.ts";
 import { refKey } from "../model/types.ts";
 import type { Job } from "../orchestrator/jobs.ts";
-import { loadJobs, jobQuestions, resumesStep, parkedOf, stepAt } from "../orchestrator/jobs.ts";
+import { loadJobs, jobQuestions, resumesStep, parkedOf, stepAt, askOf, answeredOf } from "../orchestrator/jobs.ts";
 import { phaseOf, pickOf } from "../orchestrator/phase.ts";
 import { busyItems, sameFilesWait } from "../orchestrator/candidates.ts";
 import { markedParts, partLinked } from "../orchestrator/restructure.ts";
@@ -54,18 +54,19 @@ export function loadSnapshot(store: Store): Snapshot {
       const parked = parkedOf(job);
       if (!parked) return [];
       const asked = parked.as === "needs-decision";
+      const ask = asked ? askOf(job) : undefined;
       // A rewrite's questions are shown with the rewrite, not as the parked state's one decision.
-      const rewrite = asked && job.rewrite && !job.rewrite.settled ? job.rewrite : undefined;
-      const decision = asked && !rewrite ? job.decision ?? (stepAt(job) === "triage" ? job.triage?.decision : undefined) : undefined;
+      const rewrite = ask?.is === "rewrite" ? ask.rewrite : undefined;
+      const decision = ask?.is === "question" ? ask.decision : ask?.is === "questions" ? ask.list[0] : undefined;
       // A job stored with a proposed rewrite (removed) has no parts; the tick releases it.
-      const stored = asked && job.proposal?.parts?.length ? job.proposal : undefined;
+      const stored = ask?.is === "restructuring" && ask.proposal.parts?.length ? ask.proposal : undefined;
       // On GitHub each question is a comment, and its answer is read from there.
       const onHost = parked.questions;
       // There a restructuring's parts are the items that carry its part lines; they are not stored.
       const proposal = stored && onHost ? { ...stored, created: hostParts(store, job.item, stored) } : stored;
       const hostAnswers = onHost ? store.get<WorkItem>(job.item)?.answers ?? [] : [];
       const questions = jobQuestions(job).map((each, index): ParkedQuestion => {
-        const answer = onHost ? hostAnswers.find((given) => given.to !== undefined && given.to === onHost[index])?.answer : job.answered?.find((given) => given.index === index)?.answer;
+        const answer = onHost ? hostAnswers.find((given) => given.to !== undefined && given.to === onHost[index])?.answer : answeredOf(job).find((given) => given.index === index)?.answer;
         return { ...each, ...(answer !== undefined ? { answer } : {}) };
       });
       return [{ subject: job.item, as: parked.as, reason: parked.reason, at: parked.at, ...(resumesStep(job) ? { canStartOver: true } : {}), ...(decision && !proposal ? { decision } : {}), ...(proposal ? { proposal } : {}), ...(questions.length > 0 ? { questions } : {}), ...(rewrite ? { rewrite: { original: rewrite.original, text: rewrite.text, round: rewrite.round, questions: rewrite.questions.map(({ question, options, recommendation, context, multiSelect, stopsOn }) => ({ question, options, recommendation, ...(context ? { context } : {}), ...(multiSelect ? { multiSelect } : {}), ...(stopsOn ? { stopsOn } : {}) })), ...(rewrite.labels ? { labels: rewrite.labels } : {}), ...(rewrite.droppedLabels ? { droppedLabels: rewrite.droppedLabels } : {}) } } : {}) }];

@@ -33,7 +33,7 @@ import type { Store } from "../store/store.ts";
 import type { UsageCheckDecision } from "./usageCheck.ts";
 import type { Job, Jobs, PickTo, Recheck } from "./jobs.ts";
 import type { RetriageBudget } from "../core/retriage.ts";
-import { adoptStored, changedMeanwhile, dropUnreadable, loadJobs, NO_DECISIONS, takenText, WRITING_WAIT_MS, atStep, stepAt, sessionIdOf, parkedOf, mergeApproved, shouldRoundOf, writingOf, waitingOf, endSession, markMerged, awaitText, startSession, pickedFor, pickDone, endingOver, STEP_PICK } from "./jobs.ts";
+import { adoptStored, changedMeanwhile, dropUnreadable, loadJobs, NO_DECISIONS, takenText, WRITING_WAIT_MS, atStep, stepAt, sessionIdOf, parkedOf, mergeApproved, shouldRoundOf, writingOf, waitingOf, endSession, markMerged, awaitText, startSession, pickedFor, pickDone, endingOver, STEP_PICK, settledOf } from "./jobs.ts";
 import { workBranch, workspaceKey } from "./paths.ts";
 import { adoptHandbacks } from "./handback.ts";
 import { recoverFromLogs } from "./recover.ts";
@@ -694,7 +694,7 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
     }
     // Questions other Items' agents asked made this job, a person answered them otherwise than recommended, and the Item is in Backlog:
     // its triage does not run again there (decision 121), as `afterRewrite` closes it after answers that keep the recommendations.
-    if (item && !over && item.backlog && job.othersAsked && !pickedFor(job, "triage") && waitingStep(phaseOf(job)) === "triage" && job.rewrite === undefined) {
+    if (item && !over && item.backlog && job.othersAsked && !pickedFor(job, "triage") && waitingStep(phaseOf(job)) === "triage" && settledOf(job) === undefined) {
       delete jobs[key];
       ctx.commit("orchestrator.job_closed", `A person answered what other Items' agents asked about ${item.ref.id}, which is in Backlog: nothing runs on it until a person moves it to To do, and its triage then has the answers.`, key);
       await ctx.act("remove the worktree", key, () => runner.releaseWorkspace(job.workspace));

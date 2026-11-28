@@ -8,7 +8,7 @@
 import type { ItemObs, Observation } from "./observe.ts";
 import type { W } from "./waits.ts";
 import { implementBegun, isBusy, newWork, personHolds, stageLane, wText } from "./waits.ts";
-import { parkedOf, pickedFor, sessionIdOf, stepAt, STEP_PICK, waitingOf, writingOf } from "../orchestrator/jobs.ts";
+import { askOf, parkedOf, pickedFor, sessionIdOf, stepAt, STEP_PICK, waitingOf, writingOf } from "../orchestrator/jobs.ts";
 import type { Job, JobStep } from "../orchestrator/jobs.ts";
 
 /** The person who picked the step `role` runs (Triage, In review, Implement anyway), if the job carries that pick. */
@@ -340,7 +340,8 @@ export const RULES: Rule[] = [
       }
       for (const [key, n] of o.ledger.asksInFair) if (n > 3) return `under Fair, ${key.split(":").pop()} was asked ${n} times`;
       return first(o.items, (i) => {
-        const rewrite = i.w.kind === "person" && i.w.why === "rewrite" ? i.job?.rewrite : undefined;
+        const asked = askOf(i.job);
+        const rewrite = i.w.kind === "person" && i.w.why === "rewrite" && asked?.is === "rewrite" ? asked.rewrite : undefined;
         // Questions (or label changes) come with the description unchanged, as its own text: that is no rewrite to accept. A rewrite
         // that differs from the description only in whitespace is dropped in every case, and a rewrite alone that equals it is none.
         if (rewrite && squash(rewrite.text) === squash(i.item.body ?? "")) {

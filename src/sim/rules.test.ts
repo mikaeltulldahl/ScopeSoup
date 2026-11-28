@@ -173,7 +173,7 @@ describe("each rule fires on a bad state built by hand", { concurrency: 1 }, () 
     assert.match(fires("B7", obs({ ledger: ledger({ asksInFair: new Map([[key("A-1"), 4]]) }) })) ?? "", /asked 4 times/);
     const shown = (text: string, body: string, questions: number): string | null => {
       const rewrite = { original: body.trim(), text, questions: Array.from({ length: questions }, () => ({ question: "?", options: [], recommendation: "" })), round: 1 };
-      const parked = job("A-1", { at: { kind: "parked", step: "triage", parked: { as: "needs-decision", reason: "", at: AT } }, rewrite } as never);
+      const parked = job("A-1", { at: { kind: "parked", step: "triage", parked: { as: "needs-decision", reason: "", at: AT }, ask: { is: "rewrite", rewrite } } });
       return fires("B7", obs({ items: [item("A-1", { kind: "person", why: "rewrite" }, { item: workItem("A-1", { body }), job: parked })] }));
     };
     assert.match(shown("Do it.", "Do it.", 0) ?? "", /equals its description/);

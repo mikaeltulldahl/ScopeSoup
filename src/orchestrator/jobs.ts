@@ -63,20 +63,44 @@ export interface Rewrite {
   labels?: LabelChange;
   /** Labels the triage named that the repository does not have: dropped and noted. */
   droppedLabels?: string[];
-  /** A person settled the rewrite: the next tick goes on from triage's other verdicts (split, not ready, implement). */
-  settled?: "accepted" | "edited" | "rejected";
-  /** With `settled`: an answer picked a question's `stopsOn` (close as a duplicate, hold for a conflict). */
-  stop?: string;
-  /** With `stop`, the Item a person said this one duplicates. */
-  duplicateOf?: Ref;
-  /** With `stop`, the Item a person said to hold this one for: it becomes blocked by that Item. */
-  holdFor?: Ref;
   /**
    * The rewrite and questions came from agents working on other Items (`aboutOthers`), named here ("triage of A-3"). Once a
    * person settles them, this Item is triaged again with the answers.
    */
   askedBy?: string[];
 }
+
+/** A rewrite a person settled (`as`): the next tick goes on from triage's other verdicts (split, not ready, implement). */
+export interface SettledRewrite {
+  rewrite: Rewrite;
+  as: "accepted" | "edited" | "rejected";
+  /**
+   * An answer picked a question's `stopsOn` (`answer`): close as a duplicate of `duplicateOf`, or hold until `holdFor` is done (it
+   * becomes blocked by that Item).
+   */
+  stop?: { answer: string; duplicateOf?: Ref; holdFor?: Ref };
+}
+
+/** An answer to one of several questions: `index` is the question's place in their list. */
+export interface Answered {
+  index: number;
+  answer: string;
+  at: string;
+}
+
+/**
+ * What a job parked for a person's decision asks (#211 section 4): one value, kept with the parked state it belongs to, so answers to an
+ * earlier ask cannot count for this one. Parked on a decision without one, the parked reason is the question.
+ */
+export type Ask =
+  /** One question: a triage's only one, an implementor's, the fence's split. */
+  | { is: "question"; decision: Decision }
+  /** Triage's questions, two or more, each answered on its own (`answered` so far); the last answer releases the job. */
+  | { is: "questions"; list: Decision[]; answered?: Answered[] }
+  /** The triage's rewrite of the description with its questions, answered together with Accept, Edit or Reject. */
+  | { is: "rewrite"; rewrite: Rewrite }
+  /** A restructuring triage proposed. */
+  | { is: "restructuring"; proposal: Proposal };
 
 const squash = (text: string): string => text.replace(/\s+/g, " ").trim();
 
@@ -249,12 +273,6 @@ export interface Job {
   triage?: TriageAnswer;
   /** How many times a recorded answer was reused for a question an implementer or fixer asked again (capped, so a step cannot loop). */
   reusedAnswers?: number;
-  /** The question the job is parked on, when an implementer or fixer asked it (a triage question is in `triage.decision`). */
-  decision?: Decision;
-  /** The restructuring triage proposed; the job parked until a person decides. */
-  proposal?: Proposal;
-  /** The triage's rewrite description and its questions, parked for a person, or settled and about to go on. */
-  rewrite?: Rewrite;
   /** Rounds of the rewrite loop so far on this job: each new rewrite counts up from it. */
   rewriteRounds?: number;
   implement?: ImplementAnswer;
@@ -302,11 +320,6 @@ export interface Job {
   shouldSent?: string[];
   /** The change a person saw at the fence and let go on (its paths and lines): the fence is widened to it. */
   fence?: FenceSeen;
-  /**
-   * The answers so far to the job's open questions (`jobQuestions`), while it is parked on several of them.
-   * `index` is the question's place in that list. The job is released once every question has one.
-   */
-  answered?: { index: number; answer: string; at: string }[];
   /** The branch's head as last written to the item's log in a `revision` line. */
   head?: string;
   /** Level 4: the head of the branch that was handed to the queue. */
@@ -420,15 +433,19 @@ export type TextWritten = { from: string; at: string };
  * and running, owed and parked, merged at a step with a session) cannot be stored.
  */
 export type JobAt =
-  /** `recheck`: the triage runs again, told why and what changed since the one before. */
-  | { kind: "triage"; run: StepRun; recheck?: Recheck }
+  /**
+   * `recheck`: the triage runs again, told why and what changed since the one before. `settled`: a person settled the rewrite it parked
+   * on; the next tick goes on from it without a session.
+   */
+  | { kind: "triage"; run: StepRun; recheck?: Recheck; settled?: SettledRewrite }
   /**
    * `merge`: level 3, the reviewer approved, so this step merges (the implementor's session resumed, or a fresh one told to). `shouldRound`:
    * this round is for the review's `should` findings, and one that commits nothing goes on to the merge.
    */
   | { kind: "implement"; run: StepRun; merge?: true; shouldRound?: true }
   | { kind: "review"; run: StepRun }
-  | { kind: "parked"; step: JobStep; parked: JobParked; merge?: true; shouldRound?: true; writing?: TextWritten }
+  /** `ask`: what it asks a person, parked on a decision (kept while posting it is tried again, or escalated). */
+  | { kind: "parked"; step: JobStep; parked: JobParked; ask?: Ask; merge?: true; shouldRound?: true; writing?: TextWritten }
   /** `merge`: the reviewer approved it at level 3, so an answer to a failed hand-over resumes the implementor to merge. */
   | { kind: "hand-over"; step: JobStep; merge?: true; writing?: TextWritten }
   /**
@@ -479,6 +496,28 @@ export function shouldRoundOf(job: Job): boolean {
 export function owesHandOver(job: Job | null | undefined): boolean {
   const at = job?.at;
   return at?.kind === "hand-over" || (at !== undefined && isStepCase(at) && at.run.is === "running" && at.run.owes !== undefined);
+}
+
+/** What the parked job asks a person, if it parked on a decision. */
+export function askOf(job: Job | null | undefined): Ask | undefined {
+  return job?.at.kind === "parked" ? job.at.ask : undefined;
+}
+
+/** The rewrite a person settled, which the next tick goes on from, if the job is at that triage. */
+export function settledOf(job: Job | null | undefined): SettledRewrite | undefined {
+  return job?.at.kind === "triage" ? job.at.settled : undefined;
+}
+
+/** The triage's rewrite the job is parked on, or one a person settled that the next tick goes on from. */
+export function rewriteOf(job: Job | null | undefined): Rewrite | undefined {
+  const ask = askOf(job);
+  return ask?.is === "rewrite" ? ask.rewrite : settledOf(job)?.rewrite;
+}
+
+/** The answers so far to the job's several questions. */
+export function answeredOf(job: Job | null | undefined): Answered[] {
+  const ask = askOf(job);
+  return ask?.is === "questions" ? ask.answered ?? [] : [];
 }
 
 /** The description Scope Soup wrote that the next step waits to read back, if any. */
@@ -542,7 +581,7 @@ function marksOf(at: JobAt): { merge?: true; shouldRound?: true } {
 function stepCase(step: JobStep, run: StepRun, from?: JobAt, marks: { merge?: true; shouldRound?: true } = {}): StepCase {
   switch (step) {
     case "triage":
-      return { kind: "triage", run, ...(from?.kind === "triage" && from.recheck ? { recheck: from.recheck } : {}) };
+      return { kind: "triage", run, ...(from?.kind === "triage" && from.recheck ? { recheck: from.recheck } : {}), ...(from?.kind === "triage" && from.settled ? { settled: from.settled } : {}) };
     case "implement":
       return { kind: "implement", run, ...(from?.kind === "implement" ? marksOf(from) : {}), ...marks };
     case "review":
@@ -592,16 +631,22 @@ export function wait(job: Job, notBefore: string, resume?: string): void {
   job.at = stepCase(at.kind, waitingRun(at.run.writing, notBefore, resume), at);
 }
 
-/** Parks the job at its step, ending its session. A merged job keeps what it is parked as beside the merge. */
-export function parkJob(job: Job, parked: JobParked): void {
-  job.at = parkedFrom(job.at, parked);
+/**
+ * Parks the job at its step, ending its session, asking `ask` (what a park on a decision asks; it replaces what it asked before). A
+ * merged job keeps what it is parked as beside the merge, and asks nothing.
+ */
+export function parkJob(job: Job, parked: JobParked, ask?: Ask): void {
+  job.at = parkedFrom(job.at, parked, ask);
 }
 
-function parkedFrom(at: JobAt, parked: JobParked): JobAt {
+function parkedFrom(at: JobAt, parked: JobParked, ask: Ask | undefined): JobAt {
   switch (at.kind) {
     case "merged":
-    case "parked":
       return { ...at, parked };
+    case "parked": {
+      const { ask: _ask, ...rest } = at;
+      return { ...rest, parked, ...(ask ? { ask } : {}) };
+    }
     case "hand-over":
       return impossible("parkJob", at);
     case "triage":
@@ -610,7 +655,7 @@ function parkedFrom(at: JobAt, parked: JobParked): JobAt {
       // A session a person's Merge queue is ending, still there while the tick waits for it to go (a lost claim parks it then): the
       // hand-over it asked for is owed now.
       if (at.run.is === "running" && at.run.owes) return handOverCase(at.kind, at, at.run.writing);
-      return { kind: "parked", step: at.kind, parked, ...marksOf(at), ...(at.run.writing ? { writing: at.run.writing } : {}) };
+      return { kind: "parked", step: at.kind, parked, ...(ask ? { ask } : {}), ...marksOf(at), ...(at.run.writing ? { writing: at.run.writing } : {}) };
   }
 }
 
@@ -618,6 +663,30 @@ function parkedFrom(at: JobAt, parked: JobParked): JobAt {
 export function editParked(job: Job, parked: JobParked): void {
   if (job.at.kind !== "parked") impossible("editParked", job.at);
   job.at = { ...job.at, parked };
+}
+
+/** The answers so far to the parked job's several questions. */
+export function recordAnswers(job: Job, answered: Answered[]): void {
+  const at = job.at;
+  if (at.kind !== "parked" || at.ask?.is !== "questions") return impossible("recordAnswers", at);
+  job.at = { ...at, ask: { ...at.ask, answered } };
+}
+
+/** A person settled the rewrite the job is parked on: its triage waits, and the next tick goes on from `settled` without a session. */
+export function settleAsked(job: Job, settled: SettledRewrite): void {
+  const at = job.at;
+  if (at.kind !== "parked" || at.ask?.is !== "rewrite") return impossible("settleAsked", at);
+  const back = backAtStep(at);
+  job.at = back.kind === "triage" ? { ...back, settled } : back;
+}
+
+/** The rewrite a person settled, taken up by the tick (or no longer to go on from): the triage waits for nothing more of it. */
+export function takeSettled(job: Job): SettledRewrite | undefined {
+  const at = job.at;
+  if (at.kind !== "triage" || !at.settled) return undefined;
+  const { settled, ...rest } = at;
+  job.at = rest;
+  return settled;
 }
 
 /**
@@ -654,7 +723,8 @@ export function toTriage(job: Job, recheck?: Recheck): void {
     return;
   }
   const waiting = waitingStep(at, "toTriage");
-  job.at = { kind: "triage", run: waitingRun(waiting.run.writing), ...(recheck ? { recheck } : {}) };
+  const settled = waiting.kind === "triage" ? waiting.settled : undefined;
+  job.at = { kind: "triage", run: waitingRun(waiting.run.writing), ...(recheck ? { recheck } : {}), ...(settled ? { settled } : {}) };
 }
 
 /**
@@ -924,7 +994,6 @@ export function releaseIn(jobs: Jobs, key: string, actor: string, startOver = fa
   } else if (!startOver && resumesStep(job)) {
     // The step that asked runs again, as a new attempt of the same round.
     release(job);
-    delete job.decision;
     job.failures = 0;
     job.answerArrived = was.at;
   } else delete jobs[key];
@@ -960,8 +1029,9 @@ export function questionsSettled(job: Job, item: Pick<WorkItem, "openQuestions" 
 export function jobQuestions(job: Job): Decision[] {
   // A rewrite's questions are answered together with the rewrite (`POST /api/rewrite`), not one by one; questions not posted yet not at all.
   const phase = phaseOf(job);
-  if (phase.at !== "asked" || phase.ask.is !== "questions" || phase.posting) return [];
-  return (job.triage?.decisions ?? []).filter((decision) => decision.question.trim());
+  const ask = askOf(job);
+  if (phase.at !== "asked" || ask?.is !== "questions" || phase.posting) return [];
+  return ask.list;
 }
 
 /** Why an answer to one of several questions is refused: no such set (any more), the parked state is not the one the page read, or the question already has an answer. */
@@ -976,7 +1046,7 @@ export function answerRefusal(job: Job | undefined, index: number, parkedAt: str
   const questions = job ? jobQuestions(job) : [];
   if (!job || !Number.isInteger(index) || index < 0 || index >= questions.length) return "no-questions";
   if (parkedAt !== undefined && Date.parse(parkedAt) !== Date.parse(parkedOf(job)!.at)) return "parked-changed";
-  if ((job.answered ?? []).some((each) => each.index === index)) return "answered";
+  if (answeredOf(job).some((each) => each.index === index)) return "answered";
   return null;
 }
 
@@ -1008,10 +1078,10 @@ export function answerIn(jobs: Jobs, key: string, index: number, answer: string,
   const refused = answerRefusal(job, index, parkedAt);
   if (refused || !job) return { refused: refused ?? "no-questions" };
   const questions = jobQuestions(job);
-  const answered = [...(job.answered ?? []).filter((each) => each.index < questions.length), { index, answer, at }].sort((a, b) => a.index - b.index);
+  const answered = [...answeredOf(job).filter((each) => each.index < questions.length), { index, answer, at }].sort((a, b) => a.index - b.index);
   const open = questions.length - answered.length;
   if (open > 0) {
-    job.answered = answered;
+    recordAnswers(job, answered);
     return { open, reason: `A person answered question ${index + 1} of ${questions.length}; ${open} still open.` };
   }
   const reason = `A person answered all ${questions.length} questions: ${answered.map((each) => `${each.index + 1}. ${questions[each.index]!.question} Answered: ${each.answer}`).join(" ")}`;
@@ -1037,10 +1107,11 @@ const sameWriter = (a: { who: string; machine?: string }, b: { who: string; mach
 export function askedInLog(job: Job, item: Pick<WorkItem, "log" | "openQuestions">): LogQuestion[] | null {
   const parked = parkedOf(job);
   const log = item.log;
-  if (!parked || !log || parked.questions || parked.retry === "post" || job.proposal) return null;
+  const ask = askOf(job);
+  if (!parked || !log || parked.questions || parked.retry === "post" || ask?.is === "restructuring") return null;
   if (parked.as !== "needs-decision" && parked.as !== "not-ready" && parked.as !== "escalated") return null;
   // Only lines that ask what this park asks: an earlier park of a job made again may have had the same set (#248).
-  const texts = new Set([parked.reason, job.decision?.question, job.triage?.decision?.question, ...jobQuestions(job).map((each) => each.question)].filter((text): text is string => !!text?.trim()));
+  const texts = new Set([parked.reason, ask?.is === "question" ? ask.decision.question : undefined, ...jobQuestions(job).map((each) => each.question)].filter((text): text is string => !!text?.trim()));
   const lines = log.filter((line) => line.kind === "question" && line.by.agent && typeof line.fields.question === "string" && texts.has(line.fields.question));
   const ofSet = (set: unknown, by?: { who: string; machine?: string }): LogRecord[] => lines.filter((line) => line.fields.set === set && (!by || sameWriter(line.by, by)));
   const own = ofSet(parkSet(job));
@@ -1074,7 +1145,8 @@ export type RewriteRefusal = "no-rewrite" | "parked-changed" | "answers";
 /** The rewrite this job is parked on, unsettled. */
 export function parkedRewrite(job: Job | undefined): Rewrite | undefined {
   const phase = job ? phaseOf(job) : undefined;
-  return phase?.at === "asked" && phase.ask.is === "rewrite" && phase.from === "triage" && !phase.posting ? job!.rewrite : undefined;
+  const ask = askOf(job);
+  return phase?.at === "asked" && ask?.is === "rewrite" && phase.from === "triage" && !phase.posting ? ask.rewrite : undefined;
 }
 
 /** Whether `answers` (one per question, in order) may be given to the rewrite parked on this job now; null when they may. */
@@ -1107,32 +1179,28 @@ export function keepsRecommendations(rewrite: Rewrite, answers: readonly string[
  * duplicate, hold for a conflict) is kept with it. Any other answer sends the item back to its triage, which runs again with
  * the answers in its prompt (the caller records them). No round cap.
  */
-export function settleRewrite(store: Store, item: Ref, answers: readonly string[], action: "accept" | "edit" | "reject", actor: string, at: string, parkedAt: string, written: readonly string[] = [], onHost = false): { refused: RewriteRefusal } | { rerun: true } | { settled: NonNullable<Rewrite["settled"]> } {
+export function settleRewrite(store: Store, item: Ref, answers: readonly string[], action: "accept" | "edit" | "reject", actor: string, at: string, parkedAt: string, written: readonly string[] = [], onHost = false): { refused: RewriteRefusal } | { rerun: true } | { settled: SettledRewrite["as"] } {
   const jobs = loadJobs(store);
   const key = refKey(item);
   const job = jobs[key];
   const refused = rewriteRefusal(job, parkedAt, answers);
   if (refused || !job) return { refused: refused ?? "no-rewrite" };
-  const rewrite = job.rewrite!;
-  release(job);
+  const rewrite = parkedRewrite(job)!;
   job.failures = 0;
   if (!keepsRecommendations(rewrite, answers)) {
-    delete job.rewrite;
+    release(job);
     const changed = rewrite.questions.map((question, index) => ({ question, answer: answers[index]! })).filter((each) => !picks(each.answer, each.question.recommendation));
     saveJobs(store, jobs);
     store.appendEvent({ kind: "orchestrator.rewrite_answered", subject: key, actor, data: { reason: `A person answered round ${rewrite.round} of the triage otherwise than recommended (${changed.map((each) => `${each.question.question} Answered: ${each.answer}`).join(" ")}); the triage runs again with the answers.`, round: rewrite.round } }, at);
     return { rerun: true };
   }
   const settled = action === "accept" ? "accepted" : action === "edit" ? "edited" : "rejected";
-  rewrite.settled = settled;
+  const stop = rewrite.questions.find((question, index) => question.stopsOn !== undefined && picks(answers[index], question.stopsOn));
+  settleAsked(job, { rewrite, as: settled, ...(stop?.stopsOn ? { stop: { answer: stop.stopsOn, ...(stop.duplicateOf ? { duplicateOf: stop.duplicateOf } : {}), ...(stop.holdFor ? { holdFor: stop.holdFor } : {}) } } : {}) });
   if (settled !== "rejected" && written.length > 0) {
     if (job.triaged) job.triaged = adoptWritten(job.triaged, written);
     if (onHost) awaitWritten(store, job, item, written, at);
   }
-  const stop = rewrite.questions.find((question, index) => question.stopsOn !== undefined && picks(answers[index], question.stopsOn));
-  if (stop) rewrite.stop = stop.stopsOn;
-  if (stop?.duplicateOf) rewrite.duplicateOf = stop.duplicateOf;
-  if (stop?.holdFor) rewrite.holdFor = stop.holdFor;
   const said = stop?.stopsOn ?? "";
   saveJobs(store, jobs);
   store.appendEvent({ kind: `orchestrator.rewrite_${settled}`, subject: key, actor, data: { reason: `A person ${settled} the triage's rewrite (round ${rewrite.round}).${said ? ` Answered: ${said}.` : ""}`, round: rewrite.round, original: rewrite.original, text: rewrite.text } }, at);

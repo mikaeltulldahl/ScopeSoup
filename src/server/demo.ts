@@ -293,9 +293,11 @@ export function seedDemo(store: Store, now: Date, dir?: string): void {
     step("t-41", 41, "triage", "opus", 40, 4);
     job(41, {
       triage: { ready: true, size: "small", paths: ["src/week"], hidesDecision: true, decision: REWRITE_QUESTION, decisions: [REWRITE_QUESTION], rewrite: REWRITE_TEXT },
-      rewrite: { original: REWRITE_ORIGINAL, text: REWRITE_TEXT, questions: [REWRITE_QUESTION], round: 1 },
       rewriteRounds: 1,
-      at: { kind: "parked", step: "triage", parked: { as: "needs-decision", reason: `Triage, round 1: a rewrite of the description and 1 question wait for an answer: 1. ${REWRITE_QUESTION.question}`, at: at(-36) } },
+      at: {
+        kind: "parked", step: "triage", parked: { as: "needs-decision", reason: `Triage, round 1: a rewrite of the description and 1 question wait for an answer: 1. ${REWRITE_QUESTION.question}`, at: at(-36) },
+        ask: { is: "rewrite", rewrite: { original: REWRITE_ORIGINAL, text: REWRITE_TEXT, questions: [REWRITE_QUESTION], round: 1 } },
+      },
     });
     item(52, "Chart datum and the first test harbours", {
       body: "Harbours publish heights against different datums, and the first data set needs a few harbours to test against.",
@@ -303,7 +305,7 @@ export function seedDemo(store: Store, now: Date, dir?: string): void {
     step("t-52", 52, "triage", "opus", 30, 5);
     job(52, {
       triage: { ready: true, size: "small", paths: [], hidesDecision: true, decision: DEMO_QUESTIONS[0]!, decisions: DEMO_QUESTIONS },
-      at: { kind: "parked", step: "triage", parked: { as: "needs-decision", reason: `The triage asks ${DEMO_QUESTIONS.length} questions.`, at: at(-25) } },
+      at: { kind: "parked", step: "triage", parked: { as: "needs-decision", reason: `The triage asks ${DEMO_QUESTIONS.length} questions.`, at: at(-25) }, ask: { is: "questions", list: DEMO_QUESTIONS } },
     });
     // A triage proposes to restructure item 53: it keeps one part, one becomes a sub-item, one goes into item 82, one stands on its own.
     item(53, "Favourite harbours, shared by link and kept offline", {
@@ -311,8 +313,7 @@ export function seedDemo(store: Store, now: Date, dir?: string): void {
     });
     step("t-53", 53, "triage", "opus", 20, 4);
     job(53, {
-      proposal: DEMO_RESTRUCTURING,
-      at: { kind: "parked", step: "triage", parked: { as: "needs-decision", reason: `${DEMO_RESTRUCTURING.reason} Accept, edit or reject it on the item page.`, at: at(-16) } },
+      at: { kind: "parked", step: "triage", parked: { as: "needs-decision", reason: `${DEMO_RESTRUCTURING.reason} Accept, edit or reject it on the item page.`, at: at(-16) }, ask: { is: "restructuring", proposal: DEMO_RESTRUCTURING } },
     });
     // Triage found item 46 too large and proposed no split: a person may split it, or press Implement anyway (decision 105).
     item(46, "Tide alerts for every harbour", { body: "Push an alert before each high tide, for any harbour, with per-harbour thresholds and quiet hours." });

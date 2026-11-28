@@ -17,7 +17,7 @@ import type { Context } from "./context.ts";
 import { createLog } from "./context.ts";
 import { createHostActions } from "./hostActions.ts";
 import type { Jobs } from "./jobs.ts";
-import { loadJobs, saveJobs, stepAt, parkedOf } from "./jobs.ts";
+import { loadJobs, saveJobs, stepAt, parkedOf, rewriteOf } from "./jobs.ts";
 import { recoverFromLogs } from "./recover.ts";
 
 const at = "2026-11-22T09:00:00Z";
@@ -185,7 +185,7 @@ describe("recovery from GitHub", () => {
     const rewriteId = String(comments.filter((comment) => readMarker(comment.body)?.kind === "rewrite").at(-1)!.id);
     assert.equal(stepAt(job), "triage");
     assert.equal(job.rewriteRounds, 2);
-    assert.deepEqual(job.rewrite, { original: "Show the tides.", text: REWRITE, questions: [QUESTION], round: 2 });
+    assert.deepEqual(rewriteOf(job), { original: "Show the tides.", text: REWRITE, questions: [QUESTION], round: 2 });
     assert.equal(parkedOf(job)?.as, "needs-decision");
     assert.equal(parkedOf(job)?.rewrite?.id, rewriteId);
     assert.equal(parkedOf(job)?.rewrite?.questions.length, 1);
@@ -229,7 +229,7 @@ describe("recovery from GitHub", () => {
     issue.updated_at = fake.clock;
     const { jobs } = await deletedStore();
     const job = jobs[key("6")]!;
-    assert.deepEqual(job.rewrite, { original: "Show the tides, edited by a person.", text: "Show the tides, kindly.", questions: [], round: 1 });
+    assert.deepEqual(rewriteOf(job), { original: "Show the tides, edited by a person.", text: "Show the tides, kindly.", questions: [], round: 1 });
     assert.match(parkedOf(job)?.reason ?? "", /The description the rewrite read is no longer known: the current one is shown as the original\.$/);
   });
 });

@@ -39,7 +39,7 @@ test("on a meta branch host, accepting makes each part where it goes, closes the
     const proposal = { id: "abc12345", reason, original: "keeps" as const, parts, carried: CARRIED };
     await host.write!.appendLog!(item, { kind: "question", by: { who: "scopesoup", agent: true }, fields: { question: reason, proposal, parked: "needs-decision" } });
     await sync.refreshNow();
-    saveJobs(store, { [`metaBranch:work:${item.id}`]: { item, workspace: "w", branch: `scopesoup/${item.id}`, failures: 0, fixRounds: 0, startedAt: clock(), proposal, at: { kind: "parked", step: "triage", parked: { as: "needs-decision", reason, at: clock() } } } });
+    saveJobs(store, { [`metaBranch:work:${item.id}`]: { item, workspace: "w", branch: `scopesoup/${item.id}`, failures: 0, fixRounds: 0, startedAt: clock(), at: { kind: "parked", step: "triage", parked: { as: "needs-decision", reason, at: clock() }, ask: { is: "restructuring", proposal } } } });
     const shown = (await (await fetch(`${url}/api/item?ref=metaBranch:work:${item.id}`)).json()) as ItemPage;
     assert.deepEqual(shown.proposal?.parts, parts);
     assert.match(shown.decision.words, /proposed restructuring/);

@@ -9,6 +9,7 @@ import type { ItemPage } from "../core/views.ts";
 import type { Change, CreatedPart, OriginalFate, ProposedPart, Ref, WorkItem } from "../model/types.ts";
 import type { Job } from "../orchestrator/jobs.ts";
 import { loadJobs, saveJobs, parkedOf } from "../orchestrator/jobs.ts";
+import { restructuringOf } from "../orchestrator/restructure.ts";
 import type { NewWork, WorkPatch, WriteOutcome, WritePort } from "../ports/host.ts";
 import { loadAnswers } from "../store/answers.ts";
 import type { Store } from "../store/store.ts";
@@ -35,7 +36,7 @@ function parent(over: Partial<WorkItem> = {}): WorkItem {
 function proposalJob(created?: CreatedPart[], parts: ProposedPart[] = PARTS, original: OriginalFate = "umbrella"): Job {
   return {
     item: PARENT, workspace: "w", branch: "scopesoup/7", failures: 0, fixRounds: 0, startedAt: AT,
-    proposal: { id: ID, reason: "Triage proposes to restructure the Item.", original, parts, carried: CARRIED, ...(created ? { created } : {}) }, at: { kind: "parked", step: "triage", parked: { as: "needs-decision", reason: "Triage proposes to restructure the Item.", at: AT } }
+    at: { kind: "parked", step: "triage", parked: { as: "needs-decision", reason: "Triage proposes to restructure the Item.", at: AT }, ask: { is: "restructuring", proposal: { id: ID, reason: "Triage proposes to restructure the Item.", original, parts, carried: CARRIED, ...(created ? { created } : {}) } } }
   };
 }
 
@@ -179,7 +180,7 @@ describe("a proposed restructuring on a writable host", { concurrency: 4 }, () =
       // The item parked as an umbrella, with what was made; the answer is kept for the sessions.
       const job = loadJobs(store)[KEY]!;
       assert.equal(parkedOf(job)?.as, "not-ready");
-      assert.equal(job.proposal, undefined);
+      assert.equal(restructuringOf(job), undefined);
       assert.match(parkedOf(job)?.reason ?? "", /^Restructured into 101 \(a new sub-item of 7\), 102 .*; the work happens there\.$/);
       assert.match(loadAnswers(store)[0]!.answer, /Accepted the proposed restructuring: 101 .* 7 is an umbrella/);
       const done = store.eventsAfter(0, 1000).filter((event) => event.kind === "orchestrator.restructure_done");
@@ -303,7 +304,7 @@ describe("a proposed restructuring on a writable host", { concurrency: 4 }, () =
       assert.equal((rejected.body.error as { code: string }).code, "PARTS_CREATED");
       const halfway = loadJobs(store)[KEY]!;
       assert.equal(parkedOf(halfway)?.as, "needs-decision", "still waiting on the restructuring");
-      assert.deepEqual(halfway.proposal?.created, [{ part: 0, ref: { host: "fake", kind: "work", id: "101" }, linked: true }]);
+      assert.deepEqual(restructuringOf(halfway)?.created, [{ part: 0, ref: { host: "fake", kind: "work", id: "101" }, linked: true }]);
 
       // An edit after a part exists is refused, not set aside: Accept finishes the same parts.
       const edit = await board.post({ ref: KEY, action: "edit", original: "umbrella", parts: [{ title: "Something else", description: "", verification: "", goes: "child" }] });
@@ -329,7 +330,7 @@ describe("a proposed restructuring on a writable host", { concurrency: 4 }, () =
       const first = await board.post({ ref: KEY, action: "accept" });
       assert.equal(first.status, 502, JSON.stringify(first.body));
       assert.match(message(first.body), /2 of 3 parts exist; part 2 failed: The link call failed\./);
-      assert.deepEqual(loadJobs(store)[KEY]!.proposal?.created?.map((each) => [each.ref.id, each.linked]), [["101", true], ["102", false]]);
+      assert.deepEqual(restructuringOf(loadJobs(store)[KEY])?.created?.map((each) => [each.ref.id, each.linked]), [["101", true], ["102", false]]);
 
       const again = await board.post({ ref: KEY, action: "accept" });
       assert.equal(again.status, 200, JSON.stringify(again.body));
@@ -478,7 +479,7 @@ describe("a proposed restructuring on a writable host", { concurrency: 4 }, () =
       const first = await board.post({ ref: KEY, action: "accept" });
       assert.equal(first.status, 502, JSON.stringify(first.body));
       assert.match(message(first.body), /the description of 9 does not show the added text/);
-      assert.deepEqual(loadJobs(store)[KEY]!.proposal?.created?.map((each) => each.ref.id), ["101"]);
+      assert.deepEqual(restructuringOf(loadJobs(store)[KEY])?.created?.map((each) => each.ref.id), ["101"]);
       const again = await board.post({ ref: KEY, action: "accept" });
       assert.equal(again.status, 200, JSON.stringify(again.body));
       assert.match(host.bodies.get("9")!, /^A person's new text\.\n\n## Added from fake:work:7: Old files readable/);
@@ -603,7 +604,7 @@ describe("a proposed restructuring on a writable host", { concurrency: 4 }, () =
       assert.match(text, /### 2\. Write the new format[^]*### 3\. Switch over[^]*Then: 7 becomes an umbrella over its sub-items\.$/);
       const job = loadJobs(store)[KEY]!;
       assert.equal(parkedOf(job)?.as, "not-ready");
-      assert.equal(job.proposal, undefined);
+      assert.equal(restructuringOf(job), undefined);
       assert.match(parkedOf(job)?.reason ?? "", /stopped the restructuring with 1 of 3 parts made \(101\)/);
       assert.match(loadAnswers(store)[0]!.answer, /^Stopped the proposed restructuring with 1 of 3 parts made \(101\)/);
       assert.equal(host.made.length, 1);

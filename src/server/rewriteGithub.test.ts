@@ -12,7 +12,7 @@ import type { Ref, WorkItem } from "../model/types.ts";
 import { itemTextHash } from "../core/answerReuse.ts";
 import { createHostActions } from "../orchestrator/hostActions.ts";
 import type { Job } from "../orchestrator/jobs.ts";
-import { loadJobs, saveJobs, writingOf } from "../orchestrator/jobs.ts";
+import { loadJobs, saveJobs, writingOf, rewriteOf, settledOf } from "../orchestrator/jobs.ts";
 import type { Store } from "../store/store.ts";
 import { openStore } from "../store/store.ts";
 import type { ScopeSoupServer } from "./server.ts";
@@ -77,7 +77,7 @@ function parkedJob(id: string, hostId = "github"): string {
   const job: Job = {
     item: ref, workspace: "w", branch: `scopesoup/${id}`, failures: 0, fixRounds: 0, startedAt: at,
     triage: { ready: true, size: "small", paths: [], hidesDecision: true, decisions: [question], rewrite: "Show the tide table in metres." },
-    rewrite: { original: "Tide table units.", text: "Show the tide table in metres.", questions: [question], round: 1 }, rewriteRounds: 1, at: { kind: "parked", step: "triage", parked: { as: "needs-decision", reason: "Triage, round 1.", at } }
+    rewriteRounds: 1, at: { kind: "parked", step: "triage", parked: { as: "needs-decision", reason: "Triage, round 1.", at }, ask: { is: "rewrite", rewrite: { original: "Tide table units.", text: "Show the tide table in metres.", questions: [question], round: 1 } } }
 };
   store.tx(() => saveJobs(store, { ...loadJobs(store), [key]: job }));
   return key;
@@ -150,7 +150,7 @@ describe("a triage rewrite on a GitHub Item", () => {
     assert.equal(last.question, "Triage rewrite, round 1");
     assert.match(last.answer, /could not write it to the issue \(.*403.*\)/);
     assert.match(last.answer, /Use this description instead of the one written above:\nShow the tide table in metres\.$/);
-    assert.equal(loadJobs(store)[key]?.rewrite?.settled, "accepted");
+    assert.equal(settledOf(loadJobs(store)[key])?.as, "accepted");
     const events = store.eventsAfter(0, 10_000).filter((event) => event.kind === "orchestrator.host_write_failed" && event.subject === key);
     assert.equal(events.length, 1);
     // Nothing was written, so nothing is waited for.
@@ -183,7 +183,7 @@ describe("a triage rewrite on a GitHub Item", () => {
       const key = parkedJob("18");
       const response = await fetch(`${url}/api/rewrite`, { method: "POST", headers: { "Content-Type": "application/json", "X-ScopeSoup-Person": "Ada" }, body: JSON.stringify({ ref: key, parkedAt: at, answers: ["Metric"], action: "accept" }) });
       assert.equal(response.status, 200);
-      assert.equal(loadJobs(store)[key]?.rewrite?.settled, "accepted");
+      assert.equal(settledOf(loadJobs(store)[key])?.as, "accepted");
       assert.equal(writingOf(loadJobs(store)[key]), undefined);
       assert.equal(waitEvents(key), 0);
     } finally {

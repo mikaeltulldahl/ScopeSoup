@@ -2,7 +2,7 @@
 // from the job's data (whether the implement step has begun, what a parked job asks) and nothing stored twice.
 
 import type { Ask, From, Phase, Pick, Run } from "../core/phase.ts";
-import type { Job, JobParked, JobStep, StepRun } from "./jobs.ts";
+import type { Ask as JobAsk, Job, JobParked, JobStep, StepRun } from "./jobs.ts";
 import { STEP_PICK, stepAt } from "./jobs.ts";
 
 export function phaseOf(job: Job): Phase {
@@ -13,9 +13,9 @@ export function phaseOf(job: Job): Phase {
     case "hand-over":
       return { at: "hand-over" };
     case "parked":
-      return parkedPhase(job, at.step, at.parked);
+      return parkedPhase(at.step, at.parked, at.ask);
     case "triage":
-      return { at: "triage", run: runOf(job, at.run), why: job.rewrite?.settled ? "settled" : at.recheck ? "again" : "first" };
+      return { at: "triage", run: runOf(job, at.run), why: at.settled ? "settled" : at.recheck ? "again" : "first" };
     case "implement":
       return { at: "implement", run: runOf(job, at.run), why: begun(job, at.run, at.merge) ? "again" : "first" };
     case "review":
@@ -23,13 +23,13 @@ export function phaseOf(job: Job): Phase {
   }
 }
 
-function parkedPhase(job: Job, step: JobStep, parked: JobParked): Phase {
+function parkedPhase(step: JobStep, parked: JobParked, asks: JobAsk | undefined): Phase {
   const from: From = step === "triage" ? "triage" : parked.byStep && step === "implement" ? "implement" : step === "review" ? "review" : "change";
   if (parked.retry === "hand-over") return { at: "stuck", from: "hand-over" };
   // What could not be posted is asked all the same: a not-ready or escalated reason as one question.
   if (parked.retry === "post") {
     const asked = parked.postingAs === undefined || parked.postingAs === "needs-decision";
-    return { at: "asked", from, ask: asked ? askOf(job, step) : { is: "question" }, posting: true };
+    return { at: "asked", from, ask: asked ? askPhase(asks) : { is: "question" }, posting: true };
   }
   switch (parked.as) {
     case "queued":
@@ -41,7 +41,7 @@ function parkedPhase(job: Job, step: JobStep, parked: JobParked): Phase {
     case "escalated":
       return { at: "stuck", from };
     case "needs-decision":
-      return { at: "asked", from, ask: askOf(job, step), posting: false };
+      return { at: "asked", from, ask: askPhase(asks), posting: false };
   }
 }
 
@@ -70,9 +70,16 @@ function runOf(job: Job, run: StepRun): Run {
   };
 }
 
-function askOf(job: Job, step: JobStep): Ask {
-  if (job.proposal) return { is: "restructuring" };
-  if (job.rewrite && !job.rewrite.settled) return { is: "rewrite" };
-  const n = step === "triage" && !job.decision && !job.rewrite ? (job.triage?.decisions ?? []).filter((decision) => decision.question.trim()).length : 0;
-  return n > 1 ? { is: "questions", n, answered: (job.answered ?? []).length } : { is: "question" };
+function askPhase(asks: JobAsk | undefined): Ask {
+  switch (asks?.is) {
+    case undefined:
+    case "question":
+      return { is: "question" };
+    case "questions":
+      return { is: "questions", n: asks.list.length, answered: (asks.answered ?? []).length };
+    case "rewrite":
+      return { is: "rewrite" };
+    case "restructuring":
+      return { is: "restructuring" };
+  }
 }

@@ -12,7 +12,7 @@ import type { Ref, WorkItem } from "../model/types.ts";
 import { refKey } from "../model/types.ts";
 import { createHostActions } from "../orchestrator/hostActions.ts";
 import type { Decision, Job } from "../orchestrator/jobs.ts";
-import { loadJobs, saveJobs, parkedOf, atStep } from "../orchestrator/jobs.ts";
+import { loadJobs, saveJobs, parkedOf, atStep, answeredOf, rewriteOf, settledOf } from "../orchestrator/jobs.ts";
 import { loadAnswers } from "../store/answers.ts";
 import type { Store } from "../store/store.ts";
 import { openStore } from "../store/store.ts";
@@ -61,7 +61,7 @@ async function parkedJob(id: string): Promise<string[]> {
   saveJobs(store, {
     ...loadJobs(store),
     [key(id)]: jobFor(ref(id), ({
-      at: { kind: "parked", step: "triage", parked: { as: "needs-decision", reason: "Two questions.", at, questions: asked!.ids, askedAt: asked!.at } },
+      at: { kind: "parked", step: "triage", parked: { as: "needs-decision", reason: "Two questions.", at, questions: asked!.ids, askedAt: asked!.at }, ask: { is: "questions", list: DECISIONS } },
       triage: { ready: true, size: "small", paths: [], hidesDecision: true, decision: DECISIONS[0]!, decisions: DECISIONS },
     })),
   });
@@ -124,9 +124,12 @@ describe("answers sent together on GitHub", () => {
     saveJobs(store, {
       ...loadJobs(store),
       [key("3")]: jobFor(ref("3"), ({
-        at: { kind: "parked", step: "triage", parked: { as: "needs-decision", reason: "Triage, round 1.", at, rewrite: { id: rewrite!.id, questions: asked!.ids } } },
+        at: {
+          kind: "parked", step: "triage", parked: { as: "needs-decision", reason: "Triage, round 1.", at, rewrite: { id: rewrite!.id, questions: asked!.ids } },
+          ask: { is: "rewrite", rewrite: { original: fake.issues.get("3")!.body ?? "", text: "Show the tides in metres.", questions: [question], round: 1 } },
+        },
         triage: { ready: true, size: "small", paths: [], hidesDecision: true, decisions: [question], rewrite: "Show the tides in metres." },
-        rewrite: { original: fake.issues.get("3")!.body ?? "", text: "Show the tides in metres.", questions: [question], round: 1 }, rewriteRounds: 1,
+        rewriteRounds: 1,
       })),
     });
     fake.clear();
@@ -137,7 +140,7 @@ describe("answers sent together on GitHub", () => {
     assert.equal(posted.length, 1);
     const entries = readMarker(posted[0]!)!.data.answers as { to: number; answer: string; proposal?: string }[];
     assert.deepEqual(entries.map((each) => [each.to, each.proposal ?? null]), [[Number(asked!.ids[0]), null], [Number(rewrite!.id), "rejected"]]);
-    assert.equal(loadJobs(store)[key("3")]?.rewrite?.settled, "rejected");
+    assert.equal(settledOf(loadJobs(store)[key("3")])?.as, "rejected");
   });
 });
 
@@ -150,7 +153,7 @@ describe("answers sent together in Scope Soup's store", () => {
     const item = work(id, { title: "Mend the fence" });
     store.put(item, "sync", T0);
     const k = refKey(item.ref);
-    saveJobs(store, { ...loadJobs(store), [k]: jobFor(item.ref, ({ at: { kind: "parked", step: "triage", parked: { as: "needs-decision", reason: "Two questions.", at: T0 } }, triage: { ready: true, size: "small", paths: [], hidesDecision: true, decision: DECIDE[0]!, decisions: DECIDE } })) });
+    saveJobs(store, { ...loadJobs(store), [k]: jobFor(item.ref, ({ at: { kind: "parked", step: "triage", parked: { as: "needs-decision", reason: "Two questions.", at: T0 }, ask: { is: "questions", list: DECIDE } }, triage: { ready: true, size: "small", paths: [], hidesDecision: true, decision: DECIDE[0]!, decisions: DECIDE } })) });
     return k;
   };
 
@@ -170,6 +173,6 @@ describe("answers sent together in Scope Soup's store", () => {
     const refused = await post("/api/answers", { ref: k, parkedAt: T0, answers: [{ question: 1, answer: "north" }, { question: 0, answer: "stain" }] });
     assert.equal(refused.status, 409);
     assert.deepEqual(loadAnswers(store).filter((each) => refKey(each.subject) === k).map((each) => each.answer), ["paint"]);
-    assert.deepEqual(loadJobs(store)[k]?.answered?.map((each) => each.index), [0]);
+    assert.deepEqual(answeredOf(loadJobs(store)[k])?.map((each) => each.index), [0]);
   });
 });

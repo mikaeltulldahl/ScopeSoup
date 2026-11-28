@@ -11,13 +11,13 @@ import type { LogLineInput, NewWork, WorkPatch } from "../ports/host.ts";
 import type { Store } from "../store/store.ts";
 import { inertText } from "./hostText.ts";
 import type { Job, Proposal } from "./jobs.ts";
-import { loadJobs, releaseIn, saveJobs, parkJob, parkedOf } from "./jobs.ts";
+import { askOf, loadJobs, releaseIn, saveJobs, parkJob, parkedOf } from "./jobs.ts";
 import { plural } from "../model/plural.ts";
 
 /** The restructuring this job is parked on, if it parked on one. */
 export function restructuringOf(job: Job | undefined): Proposal | undefined {
-  const proposal = parkedOf(job)?.as === "needs-decision" ? job!.proposal : undefined;
-  return proposal?.parts && proposal.parts.length > 0 ? proposal : undefined;
+  const ask = parkedOf(job)?.as === "needs-decision" ? askOf(job) : undefined;
+  return ask?.is === "restructuring" && ask.proposal.parts?.length ? ask.proposal : undefined;
 }
 
 /** The restructuring the item parked on now, as stored (a copy). */
@@ -164,8 +164,6 @@ export function finishRestructuring(store: Store, item: Ref, actor: string, at: 
     if (!job || !proposal) return false;
     const created = proposal.created ?? [];
     const original = proposal.original;
-    delete job.proposal;
-    delete job.answered;
     parkJob(job, { as: "not-ready", reason, at });
     if (release) releaseIn(jobs, key, actor);
     saveJobs(store, jobs);
@@ -186,8 +184,6 @@ export function stopRestructuring(store: Store, item: Ref, actor: string, at: st
     const proposal = restructuringOf(job);
     if (!job || !proposal) return false;
     const created = proposal.created ?? [];
-    delete job.proposal;
-    delete job.answered;
     parkJob(job, { as: "not-ready", reason, at });
     saveJobs(store, jobs);
     store.appendEvent({ kind: "orchestrator.restructure_stopped", subject: key, actor, data: { reason, created: created.map((each) => refKey(each.ref)) } }, at);

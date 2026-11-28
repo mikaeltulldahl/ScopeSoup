@@ -4,7 +4,7 @@
 import type { Job } from "../orchestrator/jobs.ts";
 import type { WorkItem } from "../model/types.ts";
 import { itemTextHash } from "../core/answerReuse.ts";
-import { mergeApproved, parkedOf, pickedFor, sessionIdOf, stepAt, STEP_PICK, waitingOf, writingOf } from "../orchestrator/jobs.ts";
+import { askOf, mergeApproved, parkedOf, pickedFor, sessionIdOf, stepAt, STEP_PICK, waitingOf, writingOf } from "../orchestrator/jobs.ts";
 
 export type Role = "triage" | "implement" | "review";
 export type PersonWait = "answer" | "rewrite" | "restructuring" | "not-ready" | "escalated" | "merge" | "holds";
@@ -74,10 +74,11 @@ export function waitsFor(input: WaitInput): W {
     if (parked.as === "handed-over") return { kind: "person", why: "merge" };
     if (parked.as === "not-ready") return { kind: "person", why: "not-ready" };
     if (parked.as === "escalated") return { kind: "person", why: "escalated" };
-    if (job.proposal) return { kind: "person", why: "restructuring" };
-    if (job.rewrite && !job.rewrite.settled) return { kind: "person", why: "rewrite" };
-    const asked = job.triage?.decisions?.length && stepAt(job) === "triage" ? job.triage.decisions.length : job.decision ? 1 : 1;
-    const answered = job.answered?.length ?? 0;
+    const ask = askOf(job);
+    if (ask?.is === "restructuring") return { kind: "person", why: "restructuring" };
+    if (ask?.is === "rewrite") return { kind: "person", why: "rewrite" };
+    const asked = ask?.is === "questions" ? ask.list.length : 1;
+    const answered = ask?.is === "questions" ? ask.answered?.length ?? 0 : 0;
     return { kind: "person", why: "answer", n: Math.max(0, asked - answered) };
   }
   // In Backlog with no work under way, nothing starts until a person moves it to To do, whatever else holds it back (decision 121): the
