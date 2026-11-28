@@ -82,11 +82,7 @@ export interface SettledRewrite {
 }
 
 /** An answer to one of several questions: `index` is the question's place in their list. */
-export interface Answered {
-  index: number;
-  answer: string;
-  at: string;
-}
+export type Answered = { index: number; answer: string; at: string };
 
 /**
  * What a job parked for a person's decision asks (#211 section 4): one value, kept with the parked state it belongs to, so answers to an
@@ -362,11 +358,7 @@ export type PickTo = "triage" | "implement" | "in-review" | "merge-queue" | "han
  * (or one picked before it still is to be ended), the moment of that pick: the tick ends the session at once, the way Stop does, and
  * does not settle its result; then the job goes on as the pick left it.
  */
-export interface JobPick {
-  by: string;
-  to: PickTo;
-  ending?: string;
-}
+export type JobPick = { by: string; to: PickTo; ending?: string };
 
 /** An Item's text as a triage read it: its hash (`itemTextHash`) and the text, each part clipped. */
 export interface TriagedText {
