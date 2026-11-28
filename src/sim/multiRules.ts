@@ -243,7 +243,7 @@ export const MULTI_RULES: MultiRule[] = [
   },
   {
     id: "M9",
-    why: "A wait for a person's answers belongs to no machine, and one machine goes on after the answer (#271): no machine holds a live claim on an Item while its job there only waits for a person's answers (its questions posted), once it has ticked with the remote up since; and between one person's input on an Item (an answer, or any request about it on any board) and the next, sessions on it start on one machine only, unless that machine's claim ran out before the other's claim was written.",
+    why: "A wait for a person's answers belongs to no machine, and one machine goes on after the answer (#271): no machine holds a live claim on an Item while its job there only waits for a person's answers (its questions posted), once it has ticked with the remote up since; and between one person's input on an Item (an answer, or any request about it on any board) and the next, sessions on it start on one machine only, unless that machine's claim ran out before the other's claim was written or it has no job on the Item any more (it let it go: blocked, dropped).",
     check(o, memo) {
       // 1. No claim on a wait for answers. The tick that parks lets the claim go; a tick that could not write (offline, or other
       // machines' pushes kept getting in first) leaves it to the next one, so a claim is wrong once the machine ticked online since.
@@ -265,7 +265,9 @@ export const MULTI_RULES: MultiRule[] = [
         }
       }
       // 2. One machine goes on after a person's input. Input on any board starts a new turn; the first machine to start a session after
-      // it goes on, and another may start one only once that machine's claim ran out unrenewed (offline, as M3 allows).
+      // it goes on, and another may start one only once that machine's claim ran out unrenewed (offline, as M3 allows) or it has no job
+      // on the Item any more (a triage that found it blocked lets it go). A job there that waits for a person's answers is not gone: the
+      // Item waits for a person, and a machine that starts on it acts on the same input again.
       const done = (memo.started ??= {}) as Record<string, number>;
       const goesOn = (memo.goesOn ??= {}) as Record<string, { machine: string; since: number }>;
       const inputs = new Map<string, number>();
@@ -295,7 +297,8 @@ export const MULTI_RULES: MultiRule[] = [
           const theirs = before ? lastClaim(key, before.machine) : undefined;
           const mine = lastClaim(key, m.name);
           const lapsed = !!theirs && !!mine && mine.at >= theirs.until;
-          if (before && before.since === since && before.machine !== m.name && !lapsed) {
+          const gone = !!before && !o.machines.find((each) => each.name === before.machine)?.jobs[key];
+          if (before && before.since === since && before.machine !== m.name && !lapsed && !gone) {
             return `${idOf(key)}: ${before.machine} went on after the last person's input on it (step ${since}), and ${m.name} started a ${s.request.role} session on it too, at step ${s.step}`;
           }
           goesOn[key] = { machine: m.name, since };

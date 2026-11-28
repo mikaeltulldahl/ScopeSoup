@@ -25,7 +25,7 @@ import type { Context, TickDeps } from "./context.ts";
 import type { ClaimResult } from "./ports.ts";
 import { CLAIM_EXPIRY_MINUTES } from "./ports.ts";
 import { createLog, errorText, thrownData } from "./context.ts";
-import { afterRewrite, backToImplement, emptyBranch, followLog, followRewrite, followQuestions, keptBranch, overturnsBack, park, queueOffBelowLevel4, retryHandOver, retryPost, reviewOffAtLevel2, settle, withdrawSettledDuplicates, writeAboutOthers } from "./cycle.ts";
+import { afterRewrite, backToImplement, dropForOther, emptyBranch, followLog, followRewrite, followQuestions, goesOnElsewhere, holdFor, keptBranch, outOfDate, overturnsBack, park, queueOffBelowLevel4, retryHandOver, retryPost, reviewOffAtLevel2, settle, withdrawSettledDuplicates, writeAboutOthers } from "./cycle.ts";
 import { loadOwnBlockers, withOwnBlockers } from "../store/blockers.ts";
 import { decide } from "./usageCheck.ts";
 import { allowanceDecision } from "./allowance.ts";
@@ -33,7 +33,7 @@ import type { Store } from "../store/store.ts";
 import type { UsageCheckDecision } from "./usageCheck.ts";
 import type { Job, Jobs, PickTo, Recheck } from "./jobs.ts";
 import type { RetriageBudget } from "../core/retriage.ts";
-import { adoptStored, changedMeanwhile, dropUnreadable, loadJobs, NO_DECISIONS, takenText, WRITING_WAIT_MS, atStep, stepAt, sessionIdOf, parkedOf, mergeApproved, shouldRoundOf, writingOf, waitingOf, endSession, markMerged, awaitText, startSession, pickedFor, pickDone, endingOver, STEP_PICK, settledOf, rewritePosted } from "./jobs.ts";
+import { adoptStored, changedMeanwhile, dropUnreadable, loadJobs, NO_DECISIONS, takenText, WRITING_WAIT_MS, atStep, stepAt, sessionIdOf, parkedOf, mergeApproved, shouldRoundOf, writingOf, waitingOf, endSession, markMerged, awaitText, startSession, pickedFor, pickDone, endingOver, STEP_PICK, settledOf, rewritePosted, parkSet } from "./jobs.ts";
 import { workBranch, workspaceKey } from "./paths.ts";
 import { adoptHandbacks } from "./handback.ts";
 import { recoverFromLogs } from "./recover.ts";
@@ -51,7 +51,7 @@ import { pacer, runningByRole, usageBudget, waitingCaps, waitingForPerson, write
 import { waitingCapWait } from "../core/waitingCaps.ts";
 import { plural } from "../model/plural.ts";
 import { firstImplement, waitingStep } from "../core/phase.ts";
-import { phaseOf } from "./phase.ts";
+import { phaseOf, waitsForAnswer } from "./phase.ts";
 
 export type { TickDeps } from "./context.ts";
 
@@ -215,10 +215,10 @@ function stopForClosed(ctx: Context, key: string, job: Job, item: WorkItem | nul
 }
 
 /**
- * A claim of this machine's on an Item with no job here that holds one (none, or one whose change merged) and no session
- * of Scope Soup's on it holds the Item for nothing: its job closed (the Item was closed), the store was lost with the job in it, or a
- * release failed (the host did not answer). A claim that ran out counts too: the host shows it until it is let go. It is released, as
- * the job would have, again on each tick until that works.
+ * A claim of this machine's on an Item with no job here that holds one (none, one whose change merged, or one that only waits for a
+ * person's answers) and no session of Scope Soup's on it holds the Item for nothing: its job closed (the Item was closed) or parked on
+ * questions it posted (#271), the store was lost with the job in it, or a release failed (the host did not answer). A claim that ran out
+ * counts too: the host shows it until it is let go. It is released, again on each tick until that works.
  */
 async function releaseClaimsHeldForNothing(ctx: Context, items: readonly WorkItem[]): Promise<void> {
   const { actions, store } = ctx.deps;
@@ -229,12 +229,17 @@ async function releaseClaimsHeldForNothing(ctx: Context, items: readonly WorkIte
     const item = store.get<WorkItem>(listed.ref) ?? listed;
     const key = refKey(item.ref);
     const holder = item.holder;
-    // Every job holds its claim for as long as it is here (#243): a session runs, its next step waits to start, it is parked for a
-    // person, or its change is queued or handed over. A merged one holds nothing: what is left is closing the Item.
+    // A job holds its claim while its work is under way here (#243): a session runs, its next step waits to start, or its change is
+    // queued or handed over. A merged one holds nothing (what is left is closing the Item), nor does a wait for a person's answers: every
+    // machine reads those in the Item's log, and the machine that wins the claim after the answer goes on (#271).
     const job = ctx.jobs[key];
-    const holds = !!job && phaseOf(job).at !== "merged";
+    const holds = !!job && phaseOf(job).at !== "merged" && !waitsForAnswer(job);
     if (!holder || holder.actor.id !== actions.claimant || holds || live.has(key)) continue;
-    const reason = `${item.ref.id} has no work under way here${item.state === "done" || item.state === "abandoned" ? ` (it is ${item.state})` : ""}: this machine's claim on it goes back.`;
+    // A wait names its park (`parkSet`): the meta log's fold drops a line identical to an earlier one, so the release after a second
+    // park in the same second as the first must not be the first park's line again.
+    const reason = job && waitsForAnswer(job)
+      ? `${item.ref.id} waits for a person's answers (park ${parkSet(job)}): no machine holds it while it waits, and the one that wins the claim after the answer goes on.`
+      : `${item.ref.id} has no work under way here${item.state === "done" || item.state === "abandoned" ? ` (it is ${item.state})` : ""}: this machine's claim on it goes back.`;
     try {
       await actions.release(item.ref, reason);
       ctx.commit("orchestrator.claim_released", reason, key);
@@ -242,6 +247,30 @@ async function releaseClaimsHeldForNothing(ctx: Context, items: readonly WorkIte
       ctx.commit("orchestrator.action_failed", `Could not release the claim: ${errorText(error)}`, key);
     }
   }
+}
+
+/**
+ * A job rebuilt from the Item's log whose newest revision main holds already: it merged while no store here knew (the merge queue
+ * pushed it before its notice was taken, then the store was lost). It is merged, whoever put it there (decision 129): the merge is
+ * written and the Item closed, rather than built and merged again.
+ */
+async function mergedMeanwhile(ctx: Context, key: string): Promise<void> {
+  const { actions, runner } = ctx.deps;
+  const job = ctx.jobs[key];
+  if (!job?.head || !actions.closesItself || parkedOf(job) || job.at.kind === "merged") return;
+  const head = job.head;
+  let tip: string;
+  try {
+    tip = (await runner.fetchMain(job.branch)).main;
+    if ((await runner.contains(job.branch, head, tip)) !== true) return;
+  } catch (error) {
+    ctx.say("orchestrator.main_unread", `Could not tell whether ${job.branch}, rebuilt from the item's log, is merged: ${errorText(error)}`, key);
+    return;
+  }
+  markMerged(job, head);
+  ctx.commit("orchestrator.merged", `${job.branch} is on ${ctx.config.mainBranch} of ${ctx.config.remote} as ${head.slice(0, 7)}: it merged while no store here knew.`, key, { sha: head, main: tip, by: "recovered" });
+  await ctx.act("write the merge to the item's log", key, () => actions.appendLog(job.item, "merged", { sha: head, target: ctx.config.mainBranch }));
+  await closeMerged(ctx, job, head);
 }
 
 /** Removes, or reports, what agents of closed Items left in Scope Soup's clone; the work under way here is left alone. */
@@ -350,8 +379,9 @@ async function dropAsked(ctx: Context, jobs: Jobs, key: string, job: Job, item: 
 
 /**
  * A claim lapses `CLAIM_EXPIRY_MINUTES` after its last line, and a session may run longer than that. So an
- * item this machine holds and has a job on (a session, a next step waiting to start, parked for a person, or a change waiting for a
- * person or the queue) is claimed again once less than half the time is left. One line per half period, not per tick.
+ * item this machine holds and has work under way on (a session, a next step waiting to start, or a change waiting for a person or the
+ * queue) is claimed again once less than half the time is left. One line per half period, not per tick. A wait for a person's answers
+ * is not renewed: it holds no claim (#271).
  *
  * A claim that is lost (the renewal is not won, or another machine's live claim holds the Item while work runs here: two machines
  * both took it) stops this machine's work on the Item: its session is stopped and the job parked as escalated, for a person to look
@@ -375,8 +405,8 @@ async function renewClaims(ctx: Context, itemByKey: Map<string, WorkItem>): Prom
   for (const [key, job] of Object.entries(ctx.jobs)) {
     const item = itemByKey.get(key);
     if (!item || item.state === "done" || item.state === "abandoned") continue;
-    // Merged: nothing is held for it any more (`releaseClaimsHeldForNothing`).
-    if (job.at.kind === "merged") continue;
+    // Merged, or only waiting for a person's answers: nothing is held for it (`releaseClaimsHeldForNothing`).
+    if (job.at.kind === "merged" || waitsForAnswer(job)) continue;
     const holder = item.holder;
     // A job waiting to start its next step (a slot, a timer, a paused switch) keeps its claim too (#243): let go between steps, another
     // machine could take the Item and work on it beside this one.
@@ -631,8 +661,9 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
   const itemByKey = new Map(items.map((item) => [refKey(item.ref), item]));
   // An Item that waited for blockers and now waits for fewer, or none, says so: what an Item waits for changed.
   noteBlockersChanged(ctx, seq0);
-  // A new store (data/ deleted): jobs and answers come back from the items' logs (meta branch).
-  recoverFromLogs(ctx, items);
+  // A new store (data/ deleted): jobs and answers come back from the items' logs (meta branch). One whose change main holds already
+  // merged while nothing here knew (the merge queue pushed it before its notice was taken, then the store was lost).
+  for (const key of recoverFromLogs(ctx, items)) await mergedMeanwhile(ctx, key);
   // A person handed an item back with a branch: the cycle goes on from the review (docs/PEOPLE.md).
   const handbacksWaiting = await adoptHandbacks(ctx, items, store.list<Change>("change"));
 
@@ -714,9 +745,19 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
       // Settled away (a triage dropped because its Item was closed meanwhile): its job, workspace and branch are seen to already.
       if (!jobs[key]) continue;
     }
+    // Another machine went on with the Item and asks a person about it now (#271; its claim ran out here while a session ran, say): the
+    // job here is out of date and goes, without acting.
+    if (item && !over && outOfDate(ctx, job, item)) {
+      await dropForOther(ctx, job, `Another machine's Scope Soup went on with ${item.ref.id} and asks a person about it now`);
+      continue;
+    }
     // A person settled the triage's rewrite: triage's other verdicts follow, without a session.
     const settled = phaseOf(job);
-    if (settled.at === "triage" && settled.why === "settled" && settled.run.is === "waiting") await afterRewrite(ctx, job);
+    // The rewrite's wait held no claim (#271): this machine claims the Item before it acts on the settle, or another machine goes on.
+    if (settled.at === "triage" && settled.why === "settled" && settled.run.is === "waiting") {
+      if (!(await holdFor(ctx, job))) continue;
+      await afterRewrite(ctx, job);
+    }
     // Below level 2 nothing is built, so nothing is handed over either: the hand-over waits for the level to come back.
     if (phaseOf(job).at === "hand-over" && merging && config.level >= 2 && item && item.state !== "done" && item.state !== "abandoned") {
       // The item holds no clone: it was parked for a person and the clone was freed (a failed hand-over a person retries), or the record was rebuilt from
@@ -738,11 +779,14 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
           continue;
         }
       }
-      await retryHandOver(ctx, job, item);
+      // An answer to a failed hand-over came from a wait that held no claim (#271): the Item is claimed before the hand-over again.
+      if (await holdFor(ctx, job)) await retryHandOver(ctx, job, item);
       continue;
     }
     // A duplicate question parked here about a pair a person settled on the other Item is withdrawn (decision 119).
     if (item && item.state !== "done" && item.state !== "abandoned" && (await withdrawSettledDuplicates(ctx, job))) continue;
+    // Another machine's Scope Soup won the claim the withdrawal needed and goes on: the job here is gone.
+    if (!jobs[key]) continue;
     // The question comments it is parked on were answered or deleted on GitHub.
     if (parkedOf(job)?.questions && item && (await followQuestions(ctx, job, item))) continue;
     // The rewrite's question comments were answered by replies, or deleted.
@@ -764,7 +808,8 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
         // still the base, or in it, is no work done, not a person's merge. Without a base, only the revision the reviewer approved
         // counts (#268).
         const ownWork = !handOverStuck || (job.base !== undefined ? head !== job.base && (await runner.contains(job.branch, head, job.base)) !== true : head === job.reviewedHead);
-        if (ownWork && (await runner.contains(job.branch, head, tip)) === true) {
+        // A failed hand-over's wait held no claim (#271): the Item is claimed before the merge is written and the Item closed.
+        if (ownWork && (await runner.contains(job.branch, head, tip)) === true && (!handOverStuck || (await holdFor(ctx, job)))) {
           markMerged(job, head);
           ctx.commit("orchestrator.merged", `${job.branch} is on ${config.mainBranch} of ${config.remote} as ${head.slice(0, 7)}: a person merged it.`, key, { sha: head, main: tip, by: "person" });
           await ctx.act("write the merge to the item's log", key, () => ctx.deps.actions.appendLog(job.item, "merged", { sha: head, target: config.mainBranch }));
@@ -773,6 +818,7 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
       } catch (error) {
         ctx.say("orchestrator.main_unread", `Could not tell whether ${job.branch} is merged: ${errorText(error)}`, key);
       }
+      if (!jobs[key]) continue;
     }
     // A merged change whose Item could not be closed on the host (it did not answer): the close is tried again.
     const owed = job.at.kind === "merged" ? job.at.closeOwed : undefined;
@@ -782,7 +828,8 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
     }
     // Questions or a rewrite that could not be posted for a reason that can change are posted again, without waiting for a person.
     if (repost && !sessionIdOf(job) && !over && parkedOf(job)?.retry === "post") {
-      await retryPost(ctx, job);
+      // No machine posts questions for an Item it does not hold (#271): a claim that ran out while the post failed is taken again.
+      if (await holdFor(ctx, job)) await retryPost(ctx, job);
       continue;
     }
     const finished = ["merged", "queued", "with-person"].includes(phaseOf(job).at);
@@ -813,9 +860,6 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
     if (item && queueLeft && phaseOf(job).at === "queued" && job.queued !== undefined) queueOffBelowLevel4(ctx, job);
   }
 
-  // This machine's claim on an Item it has no work under way for (its job closed, or the store was lost) goes back.
-  await releaseClaimsHeldForNothing(ctx, items);
-
   // Questions agents asked about other Items are written on each that is free now, before anything starts on it.
   await writeAboutOthers(ctx);
 
@@ -834,6 +878,10 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
 
   // Level 4 merges through the merge queue: the queue is driven now that finished sessions are settled.
   if (config.level >= 4) await driveQueue(ctx, items);
+
+  // This machine's claim on an Item it has no work under way for goes back: its job closed, the store was lost, or it parked on
+  // questions in this tick (step 1b, the questions about other Items, a lost claim, the queue) and only waits for a person (#271).
+  await releaseClaimsHeldForNothing(ctx, items);
 
   const reasons: string[] = [];
   let queuedCount = 0;
@@ -939,8 +987,9 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
       continue;
     }
     // Backlog is no work (decision 121): a person's moves take an Item with work under way to To do. Left is a person's one-off
-    // triage there, whose implement step waits for To do; a job that has a session, a revision or something to resume never waits.
-    if (item.backlog && stepAt(job) === "implement" && pickedFor(job, "implement") === undefined && job.head === undefined && !job.resumeWith && !waitingOf(job)?.resume) {
+    // triage there, whose implement step waits for To do; work begun (a revision, an implementor's result or session, something to
+    // resume, a failed attempt, an approval to merge) never waits, as the board's W says (`firstImplement`, #271).
+    if (item.backlog && firstImplement(phaseOf(job)) && pickedFor(job, "implement") === undefined) {
       reasons.push(`${item.ref.id} ${BACKLOG_REASON} before its ${stepAt(job)} step`);
       continue;
     }
@@ -1198,16 +1247,22 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
           reasons.push(reason);
           ctx.say("orchestrator.claim_lost", `${label} does not start: ${claimed.why}.`, key);
           if (!entry.job) await ctx.act("free the workspace of an item held elsewhere", key, () => runner.releaseWorkspace(job.workspace, reason));
+          // Work under way here, and another machine's Scope Soup won the Item (after a person's answer, or once this machine's claim
+          // ran out): that machine goes on, and the job here is dropped without acting (#271).
+          else await goesOnElsewhere(ctx, job);
           continue;
         }
         // The claim read the Item from the host: another machine may have closed it or moved it to Backlog since this tick's read
         // (#243). Nothing starts; the claim goes back, and a job here is given up by the next tick.
         const read = store.get<WorkItem>(entry.item.ref);
+        // Work under way here, while another machine went on with it and parked on questions since (#271): this job is out of date.
+        const stale = !!entry.job && !!read && outOfDate(ctx, job, read);
         const gone = !read ? "it is no longer in the store"
           : read.state === "done" || read.state === "abandoned" ? `it is ${read.state}`
           : read.backlog && (!entry.job || !mayWorkInBacklog(job)) ? "it is in Backlog (moved there on another machine)"
           // New here, and another machine's work on it waits for a person's answer (its claim went back when it parked).
           : !entry.job && read.needsDecision ? "it waits for a decision by a person"
+          : stale ? "another machine's Scope Soup went on with it and asks a person about it now"
           : null;
         if (gone) {
           const reason = `${entry.item.ref.id} is not started here: ${gone}`;
@@ -1215,6 +1270,7 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
           ctx.say("orchestrator.claim_lost", `${label} does not start: ${gone}.`, key);
           await ctx.act("release the claim", key, () => deps.actions.release(job.item, reason));
           if (!entry.job) await ctx.act("free the workspace of an item that does not start", key, () => runner.releaseWorkspace(job.workspace, reason));
+          else if (stale) await dropForOther(ctx, job, `Another machine's Scope Soup went on with ${entry.item.ref.id} and asks a person about it now`);
           continue;
         }
       }

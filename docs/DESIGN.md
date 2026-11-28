@@ -313,7 +313,7 @@ An agent can stop for a person in these ways. Every one always goes to a person;
 
 On a host that keeps a log per item (meta branch), the local store is never the only copy of where an item stands. The orchestrator writes:
 
-- `claimed` and `released` for its own sessions, when the meta branch has writes on and a remote to share it with. A person's claim is written by `scopesoup item claim` and the hand-back by a `revision` line with `handback: true` and a `released` line ([`RUNNING.md`](RUNNING.md), "Item commands").
+- `claimed` and `released` for its own work, when the meta branch has writes on and a remote to share it with. A claim is held while work is under way on this machine (a session, a next step waiting to start, a change queued or with a person) and let go once the Item only waits for a person's answers to questions it posted: every machine reads those here, a machine that first sees the Item free rebuilds the wait as its own, and whichever machine wins the claim after the answer goes on; one that loses it drops its job without acting (decision 138). A person's claim is written by `scopesoup item claim` and the hand-back by a `revision` line with `handback: true` and a `released` line ([`RUNNING.md`](RUNNING.md), "Item commands").
 - `session` when a session ends, with `next`, the step the item goes to now. No transcript.
 - `question` when it puts the item down for a person, with `parked` (why) and the options and recommendation for a decision; for a proposed restructuring, `proposal`. When triage lists several decisions, each is its own `question` line, and an answer from the board names its line (`to`).
 - `revision` when the branch has a new head after implement, and `review` with the verdict and findings on that head.

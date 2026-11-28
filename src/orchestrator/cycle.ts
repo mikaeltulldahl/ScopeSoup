@@ -13,9 +13,9 @@ import { blockersOnHost, loadOwnBlockers, setOwnBlockers } from "../store/blocke
 import { answersText, knownAnswers } from "../store/answers.ts";
 import { persistenceLimits } from "../config/persistence.ts";
 import type { Context } from "./context.ts";
-import { ACTOR, errorText } from "./context.ts";
+import { ACTOR, errorText, thrownData } from "./context.ts";
 import type { Ask, AskedText, Decision, ItemLinkAnswer, Job, JobParked, Rewrite, JobStep, ParkedAs, ReviewAnswer, TakenDecision, TriageAnswer, Finding } from "./jobs.ts";
-import { ASK_PERSON, answerIn, askedInLog, jobQuestions, nextPark, parkSet, asImplement, asReview, asTriage, formatFindings, hasMarkup, recoverFields, keepsRecommendations, picks, questionsSettled, releaseIn, parkedRewrite, changedRewrite, sameText, atStep, stepAt, parkedOf, mergeApproved, shouldRoundOf, parkJob, editParked, release, nextStep, endSession, wait, oweHandOver, handOverTaken, markMerged, toTriage, dropMark, pickDone, pickedFor, askOf, answeredOf, takeSettled, rewritePosted, notePosted } from "./jobs.ts";
+import { ASK_PERSON, answerIn, askedInLog, jobQuestions, nextPark, parkSet, asImplement, asReview, asTriage, formatFindings, hasMarkup, recoverFields, keepsRecommendations, picks, questionsSettled, releaseIn, parkedRewrite, changedRewrite, sameText, atStep, stepAt, parkedOf, mergeApproved, shouldRoundOf, parkJob, editParked, release, nextStep, endSession, wait, oweHandOver, handOverTaken, markMerged, toTriage, dropMark, pickDone, pickedFor, askOf, answeredOf, takeSettled, rewritePosted, notePosted, sessionIdOf } from "./jobs.ts";
 import { providerFor } from "./providers/index.ts";
 import type { Actions, ClaimResult, SessionResultRecord } from "./ports.ts";
 import { CLAIM_EXPIRY_MINUTES } from "./ports.ts";
@@ -42,6 +42,10 @@ import { workBranch, workspaceKey } from "./paths.ts";
 import { plural } from "../model/plural.ts";
 import { stepOf } from "../core/phase.ts";
 import { phaseOf } from "./phase.ts";
+import { readAgain } from "./recover.ts";
+import { SCOPESOUP } from "./hostActions.ts";
+
+const SCOPESOUP_WHO = SCOPESOUP.who;
 
 
 const CONTINUE_MS = 1000;
@@ -78,8 +82,82 @@ export async function park(ctx: Context, job: Job, as: ParkedAs, reason: string,
   ctx.commit(PARK_EVENT[as], reason, key, { step: stepAt(job) });
   const { runner } = ctx.deps;
   if (ask) await tellPeople(ctx, job, as, reason, ask, retry);
-  // The claim stays while the job does (#243): let go here, another machine took the Item and worked on it beside this parked job.
-  // It goes back when the job closes or is dropped.
+  // A wait for a person's answers holds no claim (#271): the tick lets it go once its questions are posted (`waitsForAnswer`), and
+  // whichever machine wins the claim after the answer goes on (`holdFor`). Work handed on (queued, with a person) keeps it.
+  await ctx.act("remove the worktree", key, () => runner.releaseWorkspace(job.workspace));
+}
+
+/**
+ * This machine holds the Item before it acts on it (#271). A wait for a person's answers belongs to no machine, so work that goes on
+ * after one claims the Item first. True when claims are not shared, when this machine holds a live claim, or when it wins one now.
+ * Another machine's Scope Soup that holds it goes on with it: the job here is dropped without acting (`goesOnElsewhere`). A person's
+ * hold, or a claim that could not be written, leaves the job as it is for a later tick.
+ */
+export async function holdFor(ctx: Context, job: Job): Promise<boolean> {
+  const { actions, store } = ctx.deps;
+  if (!actions.claims || !actions.claimant) return true;
+  const key = refKey(job.item);
+  const held = store.get<WorkItem>(job.item)?.holder;
+  const live = !!held && (held.until === undefined || Date.parse(held.until) > Date.parse(ctx.at));
+  if (live && held!.actor.id === actions.claimant) return true;
+  // A person's hold as the store read it last: Scope Soup leaves the Item alone until it is let go. Another machine's claim may have
+  // been let go since the store read it: the claim reads the host.
+  if (live && !held!.actor.bot) return false;
+  let claimed: ClaimResult;
+  try {
+    claimed = await actions.claim(job.item, new Date(Date.parse(ctx.at) + CLAIM_EXPIRY_MINUTES * 60_000).toISOString(), ctx.at);
+  } catch (error) {
+    ctx.say("orchestrator.claim_lost", `${job.item.id} waits: the claim could not be written: ${errorText(error)}.`, key, thrownData(error));
+    return false;
+  }
+  if (claimed.won) {
+    // The claim read the Item from the host: another machine went on with it and waits for a person's answers itself.
+    const read = store.get<WorkItem>(job.item);
+    if (!read || !outOfDate(ctx, job, read)) return true;
+    const why = `Another machine's Scope Soup went on with ${job.item.id} and asks a person about it now`;
+    await ctx.act("release the claim", key, () => actions.release(job.item, `${why}: this machine's claim on it goes back.`));
+    await dropForOther(ctx, job, why);
+    return false;
+  }
+  ctx.say("orchestrator.claim_lost", `${job.item.id} waits: ${claimed.why}.`, key);
+  await goesOnElsewhere(ctx, job);
+  return false;
+}
+
+/**
+ * Another machine's Scope Soup holds the Item (its claim as the store read it last, a claim's read-back included) and goes on with it
+ * (#271): the job here is dropped without acting, its workspace goes back (the branch stays), and the Item's log is read again once it
+ * is free (`readAgain`). True when it was dropped.
+ */
+export async function goesOnElsewhere(ctx: Context, job: Job): Promise<boolean> {
+  const { actions, store } = ctx.deps;
+  const holder = store.get<WorkItem>(job.item)?.holder;
+  if (!holder?.actor.bot || holder.actor.id === actions.claimant || (holder.until !== undefined && Date.parse(holder.until) <= Date.parse(ctx.at))) return false;
+  await dropForOther(ctx, job, `${holder.actor.name} holds ${job.item.id} and goes on with it`, { holder: holder.actor.id });
+  return true;
+}
+
+/**
+ * The job waits here at a step, or owes its hand-over, while questions another machine's Scope Soup posted on the Item are open (meta
+ * branch, where a question names its machine): that machine went on with the Item since this job last waited, and now waits for a
+ * person's answers itself, so this job is out of date (#271).
+ */
+export function outOfDate(ctx: Context, job: Job, item: WorkItem): boolean {
+  const claimant = ctx.deps.actions.claimant;
+  const at = job.at.kind;
+  const here = at === "hand-over" || ((at === "triage" || at === "implement" || at === "review") && !sessionIdOf(job));
+  return here && !!claimant && (item.openQuestions ?? []).some((question) => question.by.agent && question.by.who === SCOPESOUP_WHO && question.by.machine !== undefined && `${question.by.who}@${question.by.machine}` !== claimant);
+}
+
+/** The job here is dropped without acting, for another machine goes on with the Item (#271); its log is read again once it is free. */
+export async function dropForOther(ctx: Context, job: Job, why: string, data: Record<string, unknown> = {}): Promise<void> {
+  const { store, runner } = ctx.deps;
+  const key = refKey(job.item);
+  store.tx(() => {
+    delete ctx.jobs[key];
+    readAgain(store, key);
+    ctx.commit("orchestrator.job_dropped", `${why}: the job here is dropped without acting (the branch stays), and the Item's log is read again once it is free.`, key, data);
+  });
   await ctx.act("remove the worktree", key, () => runner.releaseWorkspace(job.workspace));
 }
 
@@ -1533,7 +1611,8 @@ function rewriteReason(rewrite: Rewrite): string {
  * effect, `duplicatePairSettled`) are withdrawn, each with an event: answering them could only contradict that answer, and the
  * recommended one may close the one Item left (decision 119). Their comments on the host are withdrawn and what is left is asked
  * again; with nothing left (no other question, a rewrite that changes nothing, no labels), the Item goes on from triage's other
- * verdicts as if the question were answered "Keep both". True when the job is no longer parked as it was.
+ * verdicts as if the question were answered "Keep both". True when the job is no longer parked as it was. The wait holds no claim, so
+ * this machine claims the Item first (`holdFor`, #271).
  */
 export async function withdrawSettledDuplicates(ctx: Context, job: Job): Promise<boolean> {
   const rewrite = parkedRewrite(job);
@@ -1541,13 +1620,15 @@ export async function withdrawSettledDuplicates(ctx: Context, job: Job): Promise
   const { store } = ctx.deps;
   const answers = knownAnswers(store);
   const key = refKey(job.item);
-  const withdrawn = rewrite.questions.filter((question) => {
-    const settled = question.duplicateOf && duplicatePairSettled(store, job.item, question.duplicateOf, answers);
-    if (!settled) return false;
-    ctx.commit("orchestrator.question_withdrawn", `A person answered which of ${job.item.id} and ${question.duplicateOf!.id} closes at ${settled.at} ("${clipText(settled.answer.trim(), 300)}"): the duplicate question on ${job.item.id} is withdrawn.`, key, { duplicateOf: refKey(question.duplicateOf!) });
-    return true;
+  const pairs = rewrite.questions.flatMap((question) => {
+    const answer = question.duplicateOf && duplicatePairSettled(store, job.item, question.duplicateOf, answers);
+    return answer ? [{ question, answer }] : [];
   });
-  if (withdrawn.length === 0) return false;
+  if (pairs.length === 0 || !(await holdFor(ctx, job))) return false;
+  for (const { question, answer } of pairs) {
+    ctx.commit("orchestrator.question_withdrawn", `A person answered which of ${job.item.id} and ${question.duplicateOf!.id} closes at ${answer.at} ("${clipText(answer.answer.trim(), 300)}"): the duplicate question on ${job.item.id} is withdrawn.`, key, { duplicateOf: refKey(question.duplicateOf!) });
+  }
+  const withdrawn = pairs.map((each) => each.question);
   rewrite.questions = rewrite.questions.filter((question) => !withdrawn.includes(question));
   if ((rewritePosted(job)?.questions.length ?? 0) > 0) await questionsDeleted(ctx, job.item, []);
   if (rewrite.questions.length > 0 || !sameText(rewrite.text, rewrite.original) || (rewrite.labels && !isEmptyChange(rewrite.labels))) {
@@ -1735,9 +1816,11 @@ export async function writeAboutOthers(ctx: Context): Promise<void> {
       ctx.say("orchestrator.about_other_wait", `Questions from ${[...new Set(entries.map((each) => each.askedBy))].join(" and ")} wait for ${item.ref.id}: ${busy}.`, key);
       continue;
     }
-    // No job here: the questions make one, which holds this machine's claim as every job does (#243). The claim reads the Item from
-    // the host first, so one another machine works on (its claim not read here yet) is not taken from it.
+    // No job here: the questions make one, and this machine claims the Item to write them, as every job does before it acts (#243,
+    // #271). The claim reads the Item from the host first, so one another machine works on (its claim not read here yet) is not taken
+    // from it. A job here waiting for a person's answers holds no claim, so it claims too (`holdFor`).
     const { actions } = ctx.deps;
+    if (existing && !(await holdFor(ctx, existing))) continue;
     if (!existing && actions.claims) {
       const until = new Date(Date.parse(ctx.at) + CLAIM_EXPIRY_MINUTES * 60_000).toISOString();
       let claimed: ClaimResult;

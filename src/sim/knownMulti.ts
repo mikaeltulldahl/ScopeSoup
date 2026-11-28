@@ -5,10 +5,6 @@
 
 import type { Known } from "./known.ts";
 
-export const KNOWN_MULTI: Known[] = [
-  // Cross-machine leftovers (#261). Seed 16 stopped failing long ago, and seed 39 once a settled rewrite no longer outlived the Item's
-  // close (#211); the rule-only match hid seed 1, which fails on main too.
-  { rule: "A3", seed: 1, long: true, what: "a question line folded as open while its asker's job has moved on, the log ordered by skewed clocks (it holds with no skew) (#261)" },
-  // Hidden the same way, fails on main too: needs a decision on whose a park is once its claim ran out.
-  { rule: "A3", seed: 32, long: true, what: "a machine with a new store rebuilds another machine's park as its own job once that machine's claim ran out (#271)" },
-];
+// None now. Long seed 1's A3 (#261, a question line folded as open while its asker's job had moved on, the log ordered by skewed
+// clocks) is no longer reached since a wait for answers lets its claim go (#271): the run plays differently, the cause is not fixed.
+export const KNOWN_MULTI: Known[] = [];

@@ -21,6 +21,7 @@
 
 import type { LogRecord, OpenQuestion, RecordedAnswer, Session, WorkItem } from "../model/types.ts";
 import { refKey } from "../model/types.ts";
+import type { Store } from "../store/store.ts";
 import type { Context } from "./context.ts";
 import { SCOPESOUP } from "./hostActions.ts";
 import type { Ask, Decision, Finding, Job, JobStep, ParkedAs } from "./jobs.ts";
@@ -52,10 +53,21 @@ export function jobFromLog(item: WorkItem): Job | null {
     const set = as === "needs-decision" && !asked.proposal ? questionSet(log, open, lineOf) : [];
     // Triage asked several questions (park writes one log line each): all of them wait again, in log order.
     if (set.length > 1) return parkOnDecisions(job, set);
-    parkJob(job, { as, reason: asked.question, at: asked.at, ...(line?.fields.retry === "hand-over" ? { retry: "hand-over" as const } : {}) }, as === "needs-decision" ? askedOne(job, asked) : undefined);
+    parkJob(job, { as, reason: asked.question, at: fromSet(job, asked), ...(line?.fields.retry === "hand-over" ? { retry: "hand-over" as const } : {}) }, as === "needs-decision" ? askedOne(job, asked) : undefined);
     return job;
   }
   return resumeFromLines(job, log, sessions, newest, review);
+}
+
+/**
+ * The park a question's set names (`<n>@<time>`, written by `parkSet`): the rebuilt job takes its number and time, so it is that park
+ * again, and an answer given on this machine's board names that set (#271). A question without one keeps its own time.
+ */
+function fromSet(job: Job, question: OpenQuestion): string {
+  const named = /^(\d+)@(.+)$/.exec(question.set ?? "");
+  if (!named || Number.isNaN(Date.parse(named[2]!))) return question.at;
+  job.parks = Number(named[1]);
+  return named[2]!;
 }
 
 /**
@@ -149,7 +161,7 @@ function fromLines(item: WorkItem, log: readonly LogRecord[], startedAt: string)
 /** Several questions wait again, in order, so the first answer does not release the item. The parked state's time is the first one's (`parkedAt`). */
 function parkOnDecisions(job: Job, set: readonly OpenQuestion[]): Job {
   const decisions: Decision[] = set.map(decisionOf);
-  parkJob(job, { as: "needs-decision", reason: `Triage found ${decisions.length} decisions for a person before the work can start: ${decisions.map((d, i) => `${i + 1}. ${d.question}`).join(" ")}`, at: set[0]!.at }, { is: "questions", list: decisions });
+  parkJob(job, { as: "needs-decision", reason: `Triage found ${decisions.length} decisions for a person before the work can start: ${decisions.map((d, i) => `${i + 1}. ${d.question}`).join(" ")}`, at: fromSet(job, set[0]!) }, { is: "questions", list: decisions });
   job.triage ??= { ready: true, size: "medium", paths: [], hidesDecision: true };
   job.triage.hidesDecision = true;
   return job;
@@ -210,23 +222,42 @@ function questionSet(log: readonly LogRecord[], open: readonly OpenQuestion[], l
   });
 }
 
-/** Rebuilds jobs for items seen for the first time in this store. Their answers are read from the logs on every read (`knownAnswers`). */
-export function recoverFromLogs(ctx: Context, items: readonly WorkItem[]): void {
-  const { store } = ctx.deps;
-  let seen: string[];
+function readSeen(store: Store): string[] {
   try {
     const value: unknown = JSON.parse(store.getValue(SEEN_KEY) ?? "[]");
-    seen = Array.isArray(value) ? value.filter((each): each is string => typeof each === "string") : [];
+    return Array.isArray(value) ? value.filter((each): each is string => typeof each === "string") : [];
   } catch {
-    seen = [];
+    return [];
   }
-  const known = new Set(seen);
-  // An item another machine holds is its work: its log is not taken over here. It is triaged again once the claim is gone.
+}
+
+/**
+ * The Item's log is read again, as at first sight, once no other machine holds it: its job here was dropped because another machine
+ * goes on with it (#271), so what this machine knew of it is old.
+ */
+export function readAgain(store: Store, key: string): void {
+  const seen = readSeen(store);
+  if (seen.includes(key)) store.setValue(SEEN_KEY, JSON.stringify(seen.filter((each) => each !== key)));
+}
+
+/**
+ * Rebuilds jobs for items seen for the first time in this store, or seen again after another machine's Scope Soup held them, and
+ * returns their keys. Their answers are read from the logs on every read (`knownAnswers`).
+ */
+export function recoverFromLogs(ctx: Context, items: readonly WorkItem[]): string[] {
+  const { store } = ctx.deps;
+  const seen = readSeen(store);
+  // An item another machine holds is its work: its log is not taken over here. It is read again once the claim is gone, so a wait
+  // for a person's answers that machine posted (it holds no claim, #271) is a wait here too, and the claim decides who goes on.
   const claimant = ctx.deps.actions.claimant;
   const heldElsewhere = (item: WorkItem): boolean =>
     !!claimant && !!item.holder && item.holder.actor.id !== claimant && (item.holder.until === undefined || Date.parse(item.holder.until) > Date.parse(ctx.at));
+  const takenElsewhere = new Set(items.filter((item) => heldElsewhere(item) && item.holder!.actor.bot === true && !ctx.jobs[refKey(item.ref)]).map((item) => refKey(item.ref)));
+  if (seen.some((key) => takenElsewhere.has(key))) store.setValue(SEEN_KEY, JSON.stringify(seen.filter((key) => !takenElsewhere.has(key))));
+  const known = new Set(seen.filter((key) => !takenElsewhere.has(key)));
   const fresh = items.filter((item) => !known.has(refKey(item.ref)) && !heldElsewhere(item));
-  if (fresh.length === 0) return;
+  const rebuilt: string[] = [];
+  if (fresh.length === 0) return rebuilt;
   for (const item of fresh) {
     const key = refKey(item.ref);
     if (ctx.jobs[key]) continue;
@@ -244,11 +275,15 @@ export function recoverFromLogs(ctx: Context, items: readonly WorkItem[]): void 
       ctx.commit("orchestrator.recover_skipped", `Not rebuilt from the item's ${onHost ? `comments on ${item.ref.host}` : "log"}: ${item.ref.id} is in Backlog, so ${what}. A person moves it to To do to start it again.`, key, { step: stepAt(job), ...(owes ? { owes: "hand-over" } : {}) });
       continue;
     }
+    // Rebuilt on an Item in To do: seen there, so a move to Backlog on another machine gives it up (`readInBacklog`, decision 121).
+    if (!item.backlog) job.seenInTodo = true;
     ctx.jobs[key] = job;
+    rebuilt.push(key);
     const parked = parkedOf(job);
     const said = parked ? `parked as "${parked.as}": ${parked.reason}` : owesHandOver(job) ? "reviewed and not merged: the hand-over is done again" : `the ${stepAt(job)} step starts again`;
     ctx.commit("orchestrator.recovered", `Rebuilt from the item's ${onHost ? `comments on ${item.ref.host}` : "log"}: ${said}`, key, { step: stepAt(job) });
   }
-  store.setValue(SEEN_KEY, JSON.stringify([...seen, ...fresh.map((item) => refKey(item.ref))]));
+  store.setValue(SEEN_KEY, JSON.stringify([...known, ...fresh.map((item) => refKey(item.ref))]));
+  return rebuilt;
 }
 

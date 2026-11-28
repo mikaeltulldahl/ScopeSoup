@@ -91,9 +91,9 @@ export function waitsFor(input: WaitInput): W {
   // A job a person put back (To do, Backlog) is dropped by the next tick: nothing of it waits.
   if (!job || pickedFor(job, "todo")) return { kind: "not-started" };
   const start = (cause: StartCause): W => ({ kind: "start", role, cause });
-  // In Backlog after a person's one-off triage, the implement step waits for a person to move it to To do (decision 121); work with a
-  // revision or something to resume is never held there.
-  if (item.backlog && role === "implement" && !pickedFor(job, "implement") && !job.head && !job.resumeWith && !waitingOf(job)?.resume) return start("backlog");
+  // In Backlog after a person's one-off triage, the implement step waits for a person to move it to To do (decision 121); work begun
+  // (a revision, an implementor's result or session, something to resume, a failed attempt, an approval to merge) is never held there.
+  if (item.backlog && role === "implement" && !pickedFor(job, "implement") && newWork(job)) return start("backlog");
   const writing = writingOf(job);
   if (writing && writing.from === itemTextHash(item) && Date.parse(input.now) - Date.parse(writing.at) < 30 * 60_000) return start("text");
   const begun = implementBegun(job);

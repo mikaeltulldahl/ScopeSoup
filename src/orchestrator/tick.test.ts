@@ -2813,6 +2813,82 @@ test("claims across machines: a claim lost at renewal stops the Item's session a
   }
 });
 
+test("a store lost after the queue pushed an Item's change: the job rebuilt from the log is merged and the Item closed, not built again (decision 129)", async () => {
+  const by = { who: "scopesoup", machine: "laptop-a", agent: true };
+  const log = [
+    { at: "2026-11-18T09:00:00.000Z", by, kind: "session", fields: { role: "implement", outcome: "succeeded", next: "review" } },
+    { at: "2026-11-18T09:01:00.000Z", by, kind: "revision", fields: { sha: HEAD, branch: "scopesoup/1" } },
+  ];
+  const w = world(config(), [item("1", { log })]);
+  w.closesItself = true;
+  w.runner.main = MAIN_MERGED;
+  await w.run();
+  assert.equal(w.job("1")?.at.kind, "merged");
+  assert.deepEqual(roles(w), []);
+  assert.match(w.reasons("orchestrator.merged")[0] ?? "", /it merged while no store here knew/);
+  assert.ok(w.calls.includes(`appendLog 1 merged ${JSON.stringify({ sha: HEAD, target: "main" })}`));
+  assert.deepEqual(w.closes, [`1 ${HEAD} -`]);
+  // Not on main yet: it goes on as before, unmerged.
+  const v = world(config(), [item("1", { log })]);
+  v.closesItself = true;
+  await v.run();
+  assert.deepEqual([v.job("1")?.at.kind === "merged", v.reasons("orchestrator.merged"), v.closes], [false, [], []]);
+});
+
+test("claims across machines: a wait for a person's answers holds no claim; the step after the answer claims, and a job another machine won is dropped here without acting (#271)", async () => {
+  const mine = { id: "scopesoup@laptop-a", name: "scopesoup on laptop-a", bot: true };
+  const other = { id: "scopesoup@laptop-b", name: "scopesoup on laptop-b", bot: true };
+  for (const winner of ["here", "laptop-b"] as const) {
+    const w = world(config(), [item("1")]);
+    w.claimant = mine.id;
+    w.claims = true;
+    const at = new Date(T0).toISOString();
+    // Parked on the implementor's question, which is in the Item's log; this machine still holds the claim it worked under.
+    saveJobs(w.store, { [refKey(ref("1"))]: pickedReview("1", { pick: undefined, triage: { ready: true, size: "small", paths: [], hidesDecision: false }, at: { kind: "parked", step: "implement", parked: { as: "needs-decision", reason: "Metres or feet?", at, byStep: true } } }) });
+    w.store.put(item("1", { holder: { actor: mine, until: new Date(w.clock.ms + 50 * 60_000).toISOString() } }), "sync", at);
+    await w.run();
+    // Let go, not renewed (50 minutes left would renew a claim of work under way).
+    assert.deepEqual(w.calls.filter((call) => call.startsWith("claim") || call.startsWith("release")), ["release 1"], winner);
+    assert.match(w.reasons("orchestrator.claim_released")[0] ?? "", /^1 waits for a person's answers \(park 0@/);
+    w.store.put(item("1"), "sync", at);
+    await w.run();
+    assert.equal(w.calls.filter((call) => call.startsWith("claim") || call.startsWith("release")).length, 1, "nothing more while it waits");
+    // A person answers; whichever machine wins the claim goes on.
+    assert.ok(releaseJob(w.store, ref("1"), "Ada", at, "Ada answered: metres."));
+    if (winner === "laptop-b") {
+      w.claim = { won: false, why: "held by scopesoup on laptop-b" };
+      w.store.put(item("1", { holder: { actor: other, until: new Date(w.clock.ms + 120 * 60_000).toISOString() } }), "sync", at);
+    }
+    w.clock.ms += 1000;
+    await w.run();
+    if (winner === "here") {
+      assert.deepEqual(roles(w), ["implement"]);
+      assert.equal(w.calls.filter((call) => call.startsWith("claim")).length, 1);
+    } else {
+      assert.deepEqual(roles(w), []);
+      assert.equal(w.job("1"), undefined);
+      assert.match(w.reasons("orchestrator.job_dropped")[0] ?? "", /^scopesoup on laptop-b holds 1 and goes on with it: the job here is dropped without acting/);
+      assert.ok(w.runner.released.includes(workspaceKey(ref("1"))));
+      assert.equal(w.events("orchestrator.tick_failed").length, 0);
+    }
+  }
+});
+
+test("claims across machines: a job waiting at a step while another machine's questions are open on the Item is out of date and dropped without acting (#271)", async () => {
+  const w = world(config(), [item("1")]);
+  w.claimant = "scopesoup@laptop-a";
+  w.claims = true;
+  const at = new Date(T0).toISOString();
+  saveJobs(w.store, { [refKey(ref("1"))]: pickedReview("1", { pick: undefined, head: undefined, triage: { ready: true, size: "small", paths: [], hidesDecision: false }, at: atStep("implement") }) });
+  const asked = { at, by: { who: "scopesoup", machine: "laptop-b", agent: true }, question: "Metres or feet?", options: [], set: `1@${at}` };
+  w.store.put(item("1", { openQuestions: [asked], needsDecision: true }), "sync", at);
+  await w.run();
+  assert.deepEqual(roles(w), []);
+  assert.equal(w.job("1"), undefined);
+  assert.match(w.reasons("orchestrator.job_dropped")[0] ?? "", /^Another machine's Scope Soup went on with 1 and asks a person about it now/);
+  assert.equal(w.calls.filter((call) => call.startsWith("claim")).length, 0, "nothing is claimed for it");
+});
+
 test("claims across machines: a claim lost on an owed hand-over is only reported, as for a change queued or handed over", async () => {
   const mine = { id: "scopesoup@laptop-a", name: "scopesoup on laptop-a", bot: true };
   const w = world(config({ level: 4, ...MERGES }), [item("1")]);

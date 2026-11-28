@@ -156,11 +156,13 @@ export function createHostActions(deps: HostActionsDeps): Actions {
         deps.store.put(read!, "sync", new Date().toISOString());
         return { won: false, why: `held by ${before.actor.name}` };
       }
-      // Nobody holds it after the write: the line did not take. A claim written in the same second as an earlier identical one (a
-      // release and a claim again within one tick) is that line again, which the fold drops (#243). It is written once more with an
-      // `until` one second later, which makes it a line of its own.
+      // A claim written in the same second as an earlier identical one (a release and a claim again within one tick, which every wait
+      // for a person's answers makes, #271) is that line again, which the fold drops (#243). So its `until` is set past this machine's
+      // claims written since (each `until` this far out was written this second or later), which makes it a line of its own. Nobody
+      // holding it after the write is tried once more one second later.
+      const since = (read?.log ?? []).filter((line) => line.kind === "claimed" && line.by.agent && line.by.machine === host.info.machine && typeof line.fields.until === "string" && Date.parse(line.fields.until) >= Date.parse(until)).length;
       for (let attempt = 0; attempt < 2; attempt++) {
-        const lasts = attempt === 0 ? until : new Date(Date.parse(until) + 1000).toISOString();
+        const lasts = new Date(Date.parse(until) + (since + attempt) * 1000).toISOString();
         const outcome = await write.appendLog(item, { kind: "claimed", by: SCOPESOUP, fields: { until: lasts } });
         // Other machines see the claim only once it is shared; one that is not shared protects nothing.
         if (outcome.shared === "pending") return { won: false, why: `the claim could not be shared with the other machines${outcome.problem ? ` (${outcome.problem})` : ""}` };

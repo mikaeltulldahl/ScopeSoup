@@ -45,6 +45,15 @@ function parkedPhase(step: JobStep, parked: JobParked, asks: JobAsk | undefined)
   }
 }
 
+/**
+ * The job only waits for a person's answers to what it posted: asked (posted), not ready, or stuck (escalated, or its hand-over failed).
+ * Such a wait belongs to no machine (#271): every machine reads its questions in the Item's log, so it holds no claim.
+ */
+export function waitsForAnswer(job: Job): boolean {
+  const phase = phaseOf(job);
+  return (phase.at === "asked" && !phase.posting) || phase.at === "not-ready" || phase.at === "stuck";
+}
+
 /** The person's pick the job carries out, if any: a drop, the pick of the step it is at, or the queue. */
 export function pickOf(job: Job): Pick | undefined {
   const picked = job.pick;

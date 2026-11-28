@@ -61,17 +61,22 @@ function ticksSince(memo: Record<string, unknown>, key: string, holds: boolean, 
 }
 
 /**
- * The answers a person on another machine's board gave to the newest set of questions this machine's Scope Soup asked in the Item's
- * log, as this copy of the Item reads (an answer names its question by `to`, the line's time, or `toSet`, its set), each as its time
- * and text. None on a single machine.
+ * The answers a person on another machine's board gave to the set of questions this machine's job is parked on (the question line of
+ * its park's time, which may be another machine's: a wait is rebuilt from the log on any machine, #271), or else to the newest set
+ * this machine's Scope Soup asked, in the Item's log as this copy of the Item reads (an answer names its question by `to`, the line's
+ * time, or `toSet`, its set), each as its time and text. None on a single machine.
  */
-function answersElsewhere(item: ItemObs["item"], machine: string | undefined): string[] {
+function answersElsewhere(item: ItemObs["item"], machine: string | undefined, job?: Job): string[] {
   if (!machine) return [];
   const log = item.log ?? [];
-  const asked = log.filter((line) => line.kind === "question" && line.by.agent && line.by.machine === machine);
-  const set = asked[asked.length - 1]?.fields.set;
+  const questions = log.filter((line) => line.kind === "question" && line.by.agent);
+  const parkedAt = parkedOf(job)?.at;
+  const mine = questions.filter((line) => line.by.machine === machine);
+  const ofPark = parkedAt === undefined ? undefined : questions.find((line) => line.fields.set === `${job!.parks ?? 0}@${parkedAt}`) ?? questions.find((line) => Date.parse(line.at) === Date.parse(parkedAt));
+  const newest = ofPark ?? mine[mine.length - 1];
+  const set = newest?.fields.set;
   if (set === undefined) return [];
-  const ofSet = asked.filter((line) => line.fields.set === set);
+  const ofSet = questions.filter((line) => line.fields.set === set && line.by.machine === newest!.by.machine);
   return log.filter((line) => line.kind === "answer" && !line.by.agent && !!line.by.machine && line.by.machine !== machine
     && (line.fields.toSet === set || (typeof line.fields.to === "string" && ofSet.some((q) => Date.parse(q.at) === Date.parse(line.fields.to as string)))))
     .map((line) => `${line.at} ${String(line.fields.answer)}`);
@@ -117,7 +122,10 @@ export const RULES: Rule[] = [
           if (card.actor !== "agent") return `${i.id}: a ${i.w.role} session runs, but the card's actor is ${card.actor}`;
           if (lane !== roleLane(i.w.role, i.item)) return `${i.id}: a ${i.w.role} session runs, but the card is in ${lane}`;
         }
-        if (i.w.kind === "blocker" && lane !== "blocked") return `${i.id} waits for ${i.w.on.join(", ")} but is in ${lane}, not Blocked`;
+        // The store's copy still has a question the host shows answered (a person answered it on this board; the server asks for a sync
+        // then, which the simulator plays as a step of its own): an Item that waits for an answer stays in To do until that read.
+        const behind = i.item.needsDecision === true && !!i.host && i.host.needsDecision !== true;
+        if (i.w.kind === "blocker" && lane !== "blocked" && !behind) return `${i.id} waits for ${i.w.on.join(", ")} but is in ${lane}, not Blocked`;
         if (i.w.kind === "person" && i.w.why !== "holds" && i.w.why !== "merge" && lane !== stageLane(i.item, i.job)) return `${i.id}: W is ${wText(i.w)}, so its lane is ${stageLane(i.item, i.job)} (decision 2), but the card is in ${lane}`;
         if (i.w.kind === "nothing" && i.item.state === "done" && lane !== "done") return `${i.id} is done but in ${lane}`;
         // The words of the cause (decision 3): the two timed waits have their own. Read after a tick: between ticks the card is the
@@ -152,8 +160,9 @@ export const RULES: Rule[] = [
         if (rebuild[i.key] && !i.job) return null;
         // A person's hold comes first in W, but the questions the job is parked on still wait for an answer under it.
         if (i.w.kind === "person" && i.w.why === "holds" && parkedOf(i.job)) return null;
-        // Another machine's Scope Soup asked it: that machine's job waits for it, not this one's (the multiplayer profile).
-        const elsewhere = (q: { by: { agent?: boolean; machine?: string } }): boolean => !!q.by.agent && !!o.machine && !!q.by.machine && q.by.machine !== o.machine;
+        // Another machine's Scope Soup asked it: that machine's job waits for it, not this one's (the multiplayer profile), unless this
+        // machine rebuilt the wait from the log too, as any machine may (#271).
+        const elsewhere = (q: { by: { agent?: boolean; machine?: string } }): boolean => !parkedOf(i.job) && !!q.by.agent && !!o.machine && !!q.by.machine && q.by.machine !== o.machine;
         const open = (i.host.openQuestions ?? []).filter((q) => !q.proposal && !elsewhere(q)).length;
         const personAsk = i.w.kind === "person" && i.w.why !== "holds";
         if (personAsk && !asks(i.w) && open > 1) return `${i.id} has ${open} open question lines on the host, but W is ${wText(i.w)}, which asks one thing`;
@@ -162,8 +171,8 @@ export const RULES: Rule[] = [
           // Answered on another machine's board (#248): this machine reads it at whatever step syncs (a tick's own sync too), and the
           // next tick that starts with it read settles the job.
           const before = prevOf(prev, i.key)?.item;
-          const read = before ? answersElsewhere(before, o.machine) : [];
-          const given = answersElsewhere(i.host, o.machine);
+          const read = before ? answersElsewhere(before, o.machine, i.job) : [];
+          const given = answersElsewhere(i.host, o.machine, i.job);
           if (given.length > 0 && (!isTick(o) || given.some((answer) => !read.includes(answer)))) return null;
           // Closed on another machine, which ends its questions: this machine's job closes once it reads the close.
           if (o.machine && (i.host.state === "done" || i.host.state === "abandoned")) return null;
@@ -438,6 +447,9 @@ export const RULES: Rule[] = [
       // So do questions other Items' agents asked about it, written before the implementor resumed: once answered, it is triaged again
       // with the answers, and the implementor's work waits for that (#264).
       for (const e of o.events) if (e.kind === "orchestrator.about_other_written" && e.subject) delete expect[e.subject];
+      // A Merge queue pick hands over only the revision the reviewer approved: the branch moved since (a session the pick ended had
+      // committed), so the change goes to review first (decision 104).
+      for (const e of o.events) if (e.kind === "orchestrator.step" && e.subject && /Merge queue pick is not carried out/.test(String((e.data as { reason?: unknown } | undefined)?.reason ?? ""))) delete expect[e.subject];
       for (const s of o.started) {
         const want = expect[s.item];
         if (!want) continue;
@@ -840,7 +852,7 @@ export const RULES: Rule[] = [
         const asked = o.events.some((e) => (e.kind === "orchestrator.about_other_written" || e.kind === "orchestrator.restart_limit") && e.subject === i.key);
         if (asked) return null;
         // A person on another machine's board answered what it waited for (#248): the first tick settles it from the log.
-        if (w.kind === "person" && answersElsewhere(i.item, o.machine).length > 0) return null;
+        if (w.kind === "person" && answersElsewhere(i.item, o.machine, prevOf(prev, i.key)?.job).length > 0) return null;
         // The level was lowered below the step while its session or the queue's run was in flight: once that ends (a restart ends it),
         // the implementor merges instead (a review at level 2, a queued change below level 4), as it would have without the restart (#264).
         const lowered = (w.kind === "session" && w.role === "review" && o.level < 3) || (w.kind === "queue" && o.level < 4);
@@ -964,7 +976,10 @@ export const RULES: Rule[] = [
       // So did the usage check: at the budget, or one session at a time while every window of the last reading has reset (a day
       // passing in the fake world, #217): the room was the usage check's, not the slot's.
       if (o.tick.budgetHeld) return null;
-      const waiting = prev.items.find((i) => i.w.kind === "start" && i.w.cause === "slot" && !overlaps(i) && !o.started.some((s) => s.item === i.key) && (() => { const now = o.items.find((each) => each.key === i.key)?.w; return now?.kind === "start" && now.cause === "slot"; })());
+      // Another machine let the Item go at a time later than this machine's clock (clocks apart): this machine's claim folds before that
+      // release, so it does not take until its clock passes it. A wait for a person's answers lets go at every park (#271).
+      const releasedLater = (i: ItemObs): boolean => (o.items.find((each) => each.key === i.key)?.host?.log ?? []).some((line) => line.kind === "released" && line.by.agent && !!o.machine && line.by.machine !== o.machine && Date.parse(line.at) > Date.parse(o.at));
+      const waiting = prev.items.find((i) => i.w.kind === "start" && i.w.cause === "slot" && !overlaps(i) && !releasedLater(i) && !o.started.some((s) => s.item === i.key) && (() => { const now = o.items.find((each) => each.key === i.key)?.w; return now?.kind === "start" && now.cause === "slot"; })());
       return waiting ? `${waiting.id} waited only for a slot, a slot was free, and the tick did not start it (now ${wText(o.items.find((each) => each.key === waiting.key)!.w)})` : null;
     },
   },

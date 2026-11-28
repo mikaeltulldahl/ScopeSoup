@@ -80,14 +80,19 @@ describe("M9: a wait for answers belongs to no machine, and one machine goes on 
     assert.match(fires(first, second) ?? "", /laptop-a went on after the last person's input on it \(step 2\), and laptop-b started a triage session on it too/);
   });
 
-  it("holds when a person's input comes between, or the first machine's claim ran out", () => {
+  it("holds when a person's input comes between, the first machine's claim ran out, or it let the Item go", () => {
     const once = ledger({ answers: [{ step: 2, item: KEY, text: "This one." }] });
     const twice = ledger({ answers: [...once.answers, { step: 4, item: KEY, text: "That one." }] });
     const log = [claimed(0, "laptop-a")];
-    const first = obs([machine("laptop-a", { ledger: once, started: [started(3)] }), machine("laptop-b")], log, 3);
-    const after = obs([machine("laptop-a", { ledger: twice, started: [started(3)] }), machine("laptop-b", { started: [started(5)] })], [...log, claimed(4, "laptop-b")], 5);
+    const a = (over: Partial<MachineObs> = {}) => machine("laptop-a", { ledger: once, started: [started(3)], jobs: { [KEY]: waiting }, ...over });
+    const first = obs([a(), machine("laptop-b")], log, 3);
+    const after = obs([a({ ledger: twice }), machine("laptop-b", { started: [started(5)] })], [...log, claimed(4, "laptop-b")], 5);
     assert.equal(fires(first, after), null, "an answer at step 4 is a new turn");
-    const lapsed = obs([machine("laptop-a", { ledger: once, started: [started(3)] }), machine("laptop-b", { started: [started(5)] })], [...log, claimed(130, "laptop-b")], 5);
-    assert.equal(fires(obs([machine("laptop-a", { ledger: once, started: [started(3)] }), machine("laptop-b")], log, 3), lapsed), null, "laptop-a's claim ran out unrenewed");
+    const lapsed = obs([a(), machine("laptop-b", { started: [started(5)] })], [...log, claimed(130, "laptop-b")], 5);
+    assert.equal(fires(first, lapsed), null, "laptop-a's claim ran out unrenewed");
+    const gone = obs([a({ jobs: {} }), machine("laptop-b", { started: [started(5)] })], [...log, line(4, "laptop-a", "released"), claimed(5, "laptop-b")], 5);
+    assert.equal(fires(first, gone), null, "laptop-a's triage found it blocked and let it go");
+    const still = obs([a(), machine("laptop-b", { started: [started(5)] })], [...log, claimed(5, "laptop-b")], 5);
+    assert.match(fires(first, still) ?? "", /laptop-b started a triage session on it too/);
   });
 });
