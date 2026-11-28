@@ -201,15 +201,24 @@ function texts(value: unknown): string[] {
 
 const later = (a: string | undefined, b: string): string => (a === undefined || Date.parse(b) > Date.parse(a) ? b : a);
 
-/** The order lines are folded in: the instant, then the writer's text, then the place in the file. */
+/**
+ * The writer whose own lines keep their file order: the machine. Everything one machine writes (its people and its agents) goes
+ * through its one meta ref, one compare-and-swap at a time, and a merge keeps the order of each side's lines (`mergeLogs`).
+ * A line without `machine` has no known writer: its whole `by`.
+ */
+const writerText = (actor: LogActor): string => (actor.machine !== undefined ? JSON.stringify(actor.machine) : actorText(actor));
+const sameWriter = (a: LogActor, b: LogActor): boolean => a.machine !== undefined && a.machine === b.machine;
+
+/** The order lines are folded in: the instant, then the writer as text, then the place in the file. */
 function foldOrder(a: LogEntry, b: LogEntry): number {
-  return Date.parse(a.at) - Date.parse(b.at) || byCodeUnits(actorText(a.by), actorText(b.by)) || a.line - b.line;
+  return Date.parse(a.at) - Date.parse(b.at) || byCodeUnits(writerText(a.by), writerText(b.by)) || a.line - b.line;
 }
 
 /**
- * Folds the entries. The file's order does not matter (two laptops' logs may be merged by keeping
- * both sets of lines): lines are put in the order of `at` as an instant, then `by` as text, then
- * their place in the file, and a line identical to an earlier one (same content) is dropped.
+ * Folds the entries. The file's order across machines does not matter (two laptops' logs may be merged by keeping
+ * both sets of lines): lines are put in the order of `at` as an instant, then the writer (the machine, or the whole `by`
+ * without one) as text, then their place in the file, so one machine's lines of an instant keep its order. A line
+ * identical to an earlier one (same content) is dropped.
  * Rules:
  * - `claimed` needs `until`. It takes the item when nobody holds it, when the holder claims again
  *   (renewal), or when an agent holder's `until` has passed by this line's `at`. Otherwise the earlier
@@ -239,7 +248,7 @@ export function foldLog(log: ParsedLog): LogPicture {
   // Answers that named a set of questions not folded yet.
   const setAnswers: { set: string; toQuestion?: string }[] = [];
   // Answers without `to`, by their instant: each takes the newest open question once its instant is folded, so a question of the same
-  // instant that folds after it (an earlier `by` as text) is the one it answers.
+  // instant that folds after it (another machine that sorts later) is the one it answers.
   const newestAnswers: number[] = [];
   // The questions of a set that were answered: the same question of that set written again later (a retried write) stays answered.
   const answered = new Set<string>();
@@ -248,16 +257,18 @@ export function foldLog(log: ParsedLog): LogPicture {
     const key = question ? answeredKey(question) : null;
     if (key) answered.add(key);
   };
-  const closesAt: number[] = [];
+  // Closes by their instant and writer: at the end of that instant they also end the questions of other writers asked in it.
+  const closes: { at: number; by: LogActor }[] = [];
   const answerNewest = (before: number): void => {
     while (newestAnswers.length > 0 && newestAnswers[0]! < before) {
       newestAnswers.shift();
       markAnswered(picture.openQuestions.pop());
     }
-    while (closesAt.length > 0 && closesAt[0]! < before) {
-      closesAt.shift();
-      for (const question of picture.openQuestions) markAnswered(question);
-      picture.openQuestions = [];
+    while (closes.length > 0 && closes[0]!.at < before) {
+      const close = closes.shift()!;
+      const ended = (question: QuestionLine): boolean => Date.parse(question.at) === close.at && !sameWriter(question.by, close.by);
+      for (const question of picture.openQuestions.filter(ended)) markAnswered(question);
+      picture.openQuestions = picture.openQuestions.filter((question) => !ended(question));
     }
   };
   for (const entry of ordered) {
@@ -358,7 +369,7 @@ export function foldLog(log: ParsedLog): LogPicture {
         }
         // A new set of questions from the same writer replaces the set still open (decision 1 of #211).
         if (set) picture.openQuestions = picture.openQuestions.filter((open) => !(open.set !== undefined && open.set !== set && sameActor(open.by, by)));
-        // An answer naming this question may fold before it: the same instant with an earlier `by` as text, or another clock.
+        // An answer naming this question may fold before it: the same instant from a machine that sorts earlier, or another clock.
         const early = earlyAnswers.findIndex((answer) => answer.to === Date.parse(at) && (answer.toBy === undefined || sameActor(by, answer.toBy)) && (answer.toQuestion === undefined || answer.toQuestion === question) && (answer.toSet === undefined || set === undefined || answer.toSet === set));
         if (early >= 0) {
           earlyAnswers.splice(early, 1);
@@ -435,9 +446,14 @@ export function foldLog(log: ParsedLog): LogPicture {
         if (!Array.isArray(data.changes)) bad("a settings line needs `changes`, a list of { key, from?, to? }");
         break;
       case "edited":
-        // Closing an Item ends what it asked: a question open when it was closed stays closed, also after a reopen. At the end of the
-        // close's instant, so a question of the same instant that folds after it (an earlier `by` as text) is ended too.
-        if (data.state === "done" || data.state === "abandoned") closesAt.push(Date.parse(at));
+        // Closing an Item ends what it asked: a question open when it was closed stays closed, also after a reopen. Another machine's
+        // question of the same instant is ended too wherever it folds (the file's order across machines is not trusted); the close's own
+        // machine's later lines are after it (a reopen, then a new park).
+        if (data.state === "done" || data.state === "abandoned") {
+          for (const question of picture.openQuestions) markAnswered(question);
+          picture.openQuestions = [];
+          closes.push({ at: Date.parse(at), by });
+        }
         break;
       case "created":
       case "session":

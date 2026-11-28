@@ -17,6 +17,4 @@ export function isKnown(list: readonly Known[], rule: string, seed: number, long
 }
 
 export const KNOWN: Known[] = [
-  // Reached when #268 changed the long run's draws; it waits for a decision on the meta branch's fold.
-  { rule: "A3", seed: 92, long: true, what: "questions parked after a close and a reopen in the same second read as closed by the close (#270)" },
 ];
