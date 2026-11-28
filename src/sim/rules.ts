@@ -108,6 +108,10 @@ export const RULES: Rule[] = [
     why: "Views follow W: the product's own W is the checker's, and the card's lane and actor are the ones W gives (#185, #198, #207, #194).",
     check(o, prev, memo) {
       const rebuild = toRebuild(o, prev, memo);
+      // Items a person answered on this board since this machine last synced: the store's copy may still hold the questions.
+      const answered = (memo.answered ??= {}) as Record<string, true>;
+      if (o.action.kind === "sync") for (const key of Object.keys(answered)) delete answered[key];
+      for (const r of o.requests) if (r.status === 200 && r.item && (r.path.startsWith("/api/answer") || r.path === "/api/rewrite")) answered[`metaBranch:work:${r.item}`] = true;
       return first(o.items, (i) => {
         // One W: the one the product's views and tick read agrees with the checker's.
         const differs = productDiffers(i);
@@ -122,9 +126,10 @@ export const RULES: Rule[] = [
           if (card.actor !== "agent") return `${i.id}: a ${i.w.role} session runs, but the card's actor is ${card.actor}`;
           if (lane !== roleLane(i.w.role, i.item)) return `${i.id}: a ${i.w.role} session runs, but the card is in ${lane}`;
         }
-        // The store's copy still has a question the host shows answered (a person answered it on this board; the server asks for a sync
-        // then, which the simulator plays as a step of its own): an Item that waits for an answer stays in To do until that read.
-        const behind = i.item.needsDecision === true && !!i.host && i.host.needsDecision !== true;
+        // A person answered it on this board since the last sync, and the store's copy still has the question the host shows answered (the
+        // server asks for a sync then, which the simulator plays as a step of its own): until that read the card shows the lane of an Item
+        // that waits for an answer, its stage's.
+        const behind = !!answered[i.key] && i.item.needsDecision === true && !!i.host && i.host.needsDecision !== true && lane === stageLane(i.item, i.job);
         if (i.w.kind === "blocker" && lane !== "blocked" && !behind) return `${i.id} waits for ${i.w.on.join(", ")} but is in ${lane}, not Blocked`;
         if (i.w.kind === "person" && i.w.why !== "holds" && i.w.why !== "merge" && lane !== stageLane(i.item, i.job)) return `${i.id}: W is ${wText(i.w)}, so its lane is ${stageLane(i.item, i.job)} (decision 2), but the card is in ${lane}`;
         if (i.w.kind === "nothing" && i.item.state === "done" && lane !== "done") return `${i.id} is done but in ${lane}`;
@@ -160,9 +165,12 @@ export const RULES: Rule[] = [
         if (rebuild[i.key] && !i.job) return null;
         // A person's hold comes first in W, but the questions the job is parked on still wait for an answer under it.
         if (i.w.kind === "person" && i.w.why === "holds" && parkedOf(i.job)) return null;
-        // Another machine's Scope Soup asked it: that machine's job waits for it, not this one's (the multiplayer profile), unless this
-        // machine rebuilt the wait from the log too, as any machine may (#271).
-        const elsewhere = (q: { by: { agent?: boolean; machine?: string } }): boolean => !parkedOf(i.job) && !!q.by.agent && !!o.machine && !!q.by.machine && q.by.machine !== o.machine;
+        // Another machine's Scope Soup asked it: that machine's job waits for it, not this one's (the multiplayer profile), unless they
+        // are the set this machine's job is parked on: a wait rebuilt from the log, as any machine may (#271). Other sets stay apart, so
+        // two parks open at once still show.
+        const parked = parkedOf(i.job);
+        const parkSet = parked ? `${i.job!.parks ?? 0}@${parked.at}` : undefined;
+        const elsewhere = (q: { by: { agent?: boolean; machine?: string }; set?: string }): boolean => !!q.by.agent && !!o.machine && !!q.by.machine && q.by.machine !== o.machine && (parkSet === undefined || q.set !== parkSet);
         const open = (i.host.openQuestions ?? []).filter((q) => !q.proposal && !elsewhere(q)).length;
         const personAsk = i.w.kind === "person" && i.w.why !== "holds";
         if (personAsk && !asks(i.w) && open > 1) return `${i.id} has ${open} open question lines on the host, but W is ${wText(i.w)}, which asks one thing`;
@@ -447,14 +455,17 @@ export const RULES: Rule[] = [
       // So do questions other Items' agents asked about it, written before the implementor resumed: once answered, it is triaged again
       // with the answers, and the implementor's work waits for that (#264).
       for (const e of o.events) if (e.kind === "orchestrator.about_other_written" && e.subject) delete expect[e.subject];
-      // A Merge queue pick hands over only the revision the reviewer approved: the branch moved since (a session the pick ended had
-      // committed), so the change goes to review first (decision 104).
-      for (const e of o.events) if (e.kind === "orchestrator.step" && e.subject && /Merge queue pick is not carried out/.test(String((e.data as { reason?: unknown } | undefined)?.reason ?? ""))) delete expect[e.subject];
       for (const s of o.started) {
         const want = expect[s.item];
         if (!want) continue;
         delete expect[s.item];
-        if (want === "hand-over") return `${s.item.split(":").pop()} was picked for the merge queue, but a ${s.role} session started before its hand-over`;
+        // A Merge queue pick hands over only the revision the reviewer approved (decision 104): with the branch moved past it (a session
+        // the pick ended had committed), the change is reviewed first.
+        const job = prevOf(prev, s.item)?.job;
+        const head = job ? (prev?.git.branches.get(job.branch) ?? o.git.branches.get(job.branch)) : undefined;
+        const moved = s.role === "review" && !!job && head !== undefined && head !== job.reviewedHead;
+        if (want === "hand-over" && !moved) return `${s.item.split(":").pop()} was picked for the merge queue, but a ${s.role} session started before its hand-over`;
+        if (want === "hand-over") continue;
         if (s.role !== want) return `${s.item.split(":").pop()} was answered at its implement step, but the next session is ${s.role}`;
       }
       for (const i of o.items) if (isClosed(i) || (i.job === undefined && i.w.kind !== "session")) delete expect[i.key];

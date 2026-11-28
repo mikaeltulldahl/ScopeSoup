@@ -789,8 +789,10 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
     if (!jobs[key]) continue;
     // The question comments it is parked on were answered or deleted on GitHub.
     if (parkedOf(job)?.questions && item && (await followQuestions(ctx, job, item))) continue;
+    if (!jobs[key]) continue;
     // The rewrite's question comments were answered by replies, or deleted.
     if (rewritePosted(job) && item && (await followRewrite(ctx, job, item))) continue;
+    if (!jobs[key]) continue;
     // The questions it is parked on in the item's log were answered on another machine's board (#248).
     if (parkedOf(job) && parkedOf(job) === parkedBefore && !sessionIdOf(job) && item && !over && followLog(ctx, job, item)) continue;
     // A person merged the branch handed over to them, and nothing but Scope Soup closes an Item here: done once main holds the head.

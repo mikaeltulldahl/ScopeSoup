@@ -243,7 +243,7 @@ export const MULTI_RULES: MultiRule[] = [
   },
   {
     id: "M9",
-    why: "A wait for a person's answers belongs to no machine, and one machine goes on after the answer (#271): no machine holds a live claim on an Item while its job there only waits for a person's answers (its questions posted), once it has ticked with the remote up since; and between one person's input on an Item (an answer, or any request about it on any board) and the next, sessions on it start on one machine only, unless that machine's claim ran out before the other's claim was written or it has no job on the Item any more (it let it go: blocked, dropped).",
+    why: "A wait for a person's answers belongs to no machine, and one machine goes on after the answer (#271): no machine holds a live claim on an Item while its job there only waits for a person's answers (its questions posted), once it has ticked with the remote up since; and between one person's input on an Item (an answer, or a pick that changes its job, on any board) and the next, one machine only acts on it (starts a session, or writes a line of Scope Soup's to its log: a question, a revision, a merge, a close), unless that machine's claim ran out before the other's claim was written or it has no job on the Item any more (it let it go: blocked, dropped).",
     check(o, memo) {
       // 1. No claim on a wait for answers. The tick that parks lets the claim go; a tick that could not write (offline, or other
       // machines' pushes kept getting in first) leaves it to the next one, so a claim is wrong once the machine ticked online since.
@@ -264,20 +264,28 @@ export const MULTI_RULES: MultiRule[] = [
           if (m.onlineTicks > seen[id]!) return `${idOf(key)} only waits for a person's answers on ${m.name} (${parked!.as}), which still holds a claim on it until ${holder!.until}`;
         }
       }
-      // 2. One machine goes on after a person's input. Input on any board starts a new turn; the first machine to start a session after
-      // it goes on, and another may start one only once that machine's claim ran out unrenewed (offline, as M3 allows) or it has no job
-      // on the Item any more (a triage that found it blocked lets it go). A job there that waits for a person's answers is not gone: the
-      // Item waits for a person, and a machine that starts on it acts on the same input again.
+      // 2. One machine goes on after a person's input: an answer, or a pick that changes the job (a move, a pick asked of another
+      // machine, start over), on any board; questions other Items' agents wrote on it count as input too. The first machine to act on
+      // the Item after it goes on: it starts a session, or writes a line of Scope Soup's to the Item's log (a session's end, a question
+      // posted, a revision, a merge, a close). Another may act only once that machine's claim ran out unrenewed (offline, as M3 allows)
+      // or it has no job on the Item any more (a triage that found it blocked lets it go). A job there that waits for a person's answers
+      // is not gone: the Item waits for a person, and a machine that acts on it acts on the same input again.
       const done = (memo.started ??= {}) as Record<string, number>;
+      const read = (memo.lines ??= {}) as Record<string, number>;
+      const written = (memo.written ??= {}) as Record<string, number>;
       const goesOn = (memo.goesOn ??= {}) as Record<string, { machine: string; since: number }>;
-      const inputs = new Map<string, number>();
-      const note = (key: string, step: number): void => void inputs.set(key, Math.max(inputs.get(key) ?? 0, step));
+      const inputs = (memo.inputs ??= {}) as Record<string, number>;
+      const note = (key: string, step: number): void => void (inputs[key] = Math.max(inputs[key] ?? 0, step));
       for (const m of o.machines) {
         for (const a of m.ledger.answers) note(a.item, a.step);
         for (const r of m.ledger.requests) {
-          const item = r.item && (r.status === 200 || r.status === 202) ? m.items.find((each) => each.ref.id === r.item) : undefined;
+          if (!r.item || (r.status !== 200 && r.status !== 202) || !/^\/api\/(item\/move|item\/pick|start-over)$/.test(r.path)) continue;
+          const item = m.items.find((each) => each.ref.id === r.item);
           if (item) note(refKey(item.ref), r.step);
         }
+        const asked = m.events.filter((e) => e.kind === "orchestrator.about_other_written" && e.subject);
+        for (const e of asked.slice(written[m.name] ?? 0)) note(e.subject!, o.step);
+        written[m.name] = asked.length;
       }
       const lastClaim = (key: string, machine: string): { at: number; until: number } | undefined => {
         let last: { at: number; until: number } | undefined;
@@ -287,22 +295,32 @@ export const MULTI_RULES: MultiRule[] = [
         }
         return last;
       };
+      const acts: { key: string; machine: string; what: string; step: number }[] = [];
       for (const m of o.machines) {
         const from = done[m.name] ?? 0;
         done[m.name] = m.started.length;
-        for (const s of m.started.slice(from)) {
-          const key = refKey(s.request.subject);
-          const since = inputs.get(key) ?? 0;
-          const before = goesOn[key];
-          const theirs = before ? lastClaim(key, before.machine) : undefined;
-          const mine = lastClaim(key, m.name);
-          const lapsed = !!theirs && !!mine && mine.at >= theirs.until;
-          const gone = !!before && !o.machines.find((each) => each.name === before.machine)?.jobs[key];
-          if (before && before.since === since && before.machine !== m.name && !lapsed && !gone) {
-            return `${idOf(key)}: ${before.machine} went on after the last person's input on it (step ${since}), and ${m.name} started a ${s.request.role} session on it too, at step ${s.step}`;
-          }
-          goesOn[key] = { machine: m.name, since };
+        for (const s of m.started.slice(from)) acts.push({ key: refKey(s.request.subject), machine: m.name, what: `started a ${s.request.role} session`, step: s.step });
+      }
+      for (const [id, files] of o.remote) {
+        const key = refKey({ host: "metaBranch", kind: "work", id });
+        const entries = parseLog(files.log).entries;
+        for (const entry of entries.slice(read[id] ?? 0)) {
+          if (!entry.by.agent || !entry.by.machine || entry.kind === "claimed" || entry.kind === "released") continue;
+          acts.push({ key, machine: entry.by.machine, what: `wrote a ${entry.kind} line`, step: o.step });
         }
+        read[id] = entries.length;
+      }
+      for (const act of acts) {
+        const since = inputs[act.key] ?? 0;
+        const before = goesOn[act.key];
+        if (before && before.since === since && before.machine !== act.machine) {
+          const theirs = lastClaim(act.key, before.machine);
+          const mine = lastClaim(act.key, act.machine);
+          const lapsed = !!theirs && !!mine && mine.at >= theirs.until;
+          const gone = !o.machines.find((each) => each.name === before.machine)?.jobs[act.key];
+          if (!lapsed && !gone) return `${idOf(act.key)}: ${before.machine} went on after the last person's input on it (step ${since}), and ${act.machine} ${act.what} on it too, at step ${act.step}`;
+        }
+        goesOn[act.key] = { machine: act.machine, since };
       }
       return null;
     },

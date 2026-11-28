@@ -342,7 +342,8 @@ async function rewriteOnHost(ctx: Context, job: Job, rewrite: Rewrite): Promise<
  */
 export async function followQuestions(ctx: Context, job: Job, item: WorkItem): Promise<boolean> {
   const settled = questionsSettled(job, item);
-  if (!settled) return false;
+  // The wait held no claim: only the machine that wins it goes on and writes to the host (#271).
+  if (!settled || !(await holdFor(ctx, job))) return false;
   const key = refKey(job.item);
   const ids = parkedOf(job)?.questions ?? [];
   const texts = parkedOf(job)?.texts ?? [];
@@ -391,6 +392,8 @@ export async function followRewrite(ctx: Context, job: Job, item: WorkItem): Pro
   const given = posted.questions.map((id) => (item.answers ?? []).find((answer) => answer.to === id));
   const gone = posted.questions.flatMap((id, index) => (!open.has(id) && !given[index] ? [posted.texts?.[index] ?? { question: rewrite.questions[index]?.question ?? "" }] : []));
   if (gone.length > 0) {
+    // The wait held no claim: only the machine that wins it goes on and writes to the host (#271).
+    if (!(await holdFor(ctx, job))) return false;
     const was = releaseIn(ctx.jobs, key, ACTOR, true);
     if (!was) return false;
     ctx.commit("orchestrator.job_released", `A question comment of the triage's rewrite (round ${rewrite.round}) was deleted on ${job.item.host}: the Item is no longer parked, and it starts again at its triage.`, key, { was });
@@ -405,6 +408,7 @@ export async function followRewrite(ctx: Context, job: Job, item: WorkItem): Pro
     ctx.commit("orchestrator.rewrite_questions_answered", `The questions of the triage's rewrite (round ${rewrite.round}) were answered on ${job.item.host} with the recommendations: the rewrite waits for a person to accept, edit or reject it.`, key, { round: rewrite.round });
     return false;
   }
+  if (!(await holdFor(ctx, job))) return false;
   const changed = rewrite.questions.map((question, index) => ({ question, answer: answers[index]! })).filter((each) => !picks(each.answer, each.question.recommendation));
   release(job);
   job.failures = 0;

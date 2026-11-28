@@ -6,5 +6,6 @@
 import type { Known } from "./known.ts";
 
 // None now. Long seed 1's A3 (#261, a question line folded as open while its asker's job had moved on, the log ordered by skewed
-// clocks) is no longer reached since a wait for answers lets its claim go (#271): the run plays differently, the cause is not fixed.
+// clocks) is no longer reached since a wait for answers lets its claim go (#271): the run plays differently, the cause is not fixed,
+// and #261 stays open.
 export const KNOWN_MULTI: Known[] = [];

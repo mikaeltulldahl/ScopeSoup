@@ -80,6 +80,15 @@ describe("M9: a wait for answers belongs to no machine, and one machine goes on 
     assert.match(fires(first, second) ?? "", /laptop-a went on after the last person's input on it \(step 2\), and laptop-b started a triage session on it too/);
   });
 
+  it("fires when a second machine writes to the Item's log after the same input (a hand-over's merge), and an edit is no new input", () => {
+    const answered = ledger({ answers: [{ step: 2, item: KEY, text: "Try again." }] });
+    const log = [claimed(3, "laptop-a")];
+    const first = obs([machine("laptop-a", { ledger: answered, started: [started(3)], jobs: { [KEY]: waiting } }), machine("laptop-b", { jobs: { [KEY]: waiting } })], log, 3);
+    const edited = ledger({ requests: [{ step: 4, path: "/api/item/edit", body: {}, status: 200, response: {}, item: "A-1" }] });
+    const merged = obs([machine("laptop-a", { ledger: answered, started: [started(3)], jobs: { [KEY]: waiting } }), machine("laptop-b", { ledger: edited, jobs: { [KEY]: waiting } })], [...log, line(5, "laptop-b", "merged", { sha: "a".repeat(40) })], 5);
+    assert.match(fires(first, merged) ?? "", /laptop-a went on after the last person's input on it \(step 2\), and laptop-b wrote a merged line on it too/);
+  });
+
   it("holds when a person's input comes between, the first machine's claim ran out, or it let the Item go", () => {
     const once = ledger({ answers: [{ step: 2, item: KEY, text: "This one." }] });
     const twice = ledger({ answers: [...once.answers, { step: 4, item: KEY, text: "That one." }] });
