@@ -161,7 +161,7 @@ const decisions = ["Should it do part 1?", "Should it do part 2?"].map((question
 const parkedJob = (several: boolean): Job => ({
   item: { host: "metaBranch", kind: "work", id: "A-1" }, workspace: "w", branch: "scopesoup/A-1", failures: 0, fixRounds: 0, startedAt: ASKED_AT, parks: 2,
     triage: { ready: true, size: "small", paths: [], hidesDecision: true, decision: decisions[0]!, ...(several ? { decisions } : {}) },
-  at: { kind: "parked", step: "triage", parked: { as: "needs-decision", reason: several ? "Triage found 2 decisions" : decisions[0]!.question, at: ASKED_AT } },
+  at: { kind: "parked", step: "triage", parked: { as: "needs-decision", reason: several ? "Triage found 2 decisions" : decisions[0]!.question, at: ASKED_AT }, ask: several ? { is: "questions", list: decisions } : { is: "question", decision: decisions[0]! } },
 });
 const question = (text: string, set: string, at = ASKED_AT): LogRecord => ({ at, by: B, kind: "question", fields: { question: text, parked: "needs-decision", set } });
 const answer = (text: string, fields: Record<string, unknown>): LogRecord => ({ at: "2026-11-18T10:00:30.000Z", by: { who: "Ada", machine: "laptop-a", agent: false }, kind: "answer", fields: { answer: text, ...fields } });

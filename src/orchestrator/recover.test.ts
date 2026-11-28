@@ -22,11 +22,16 @@ import { openStore } from "../store/store.ts";
 import type { Store } from "../store/store.ts";
 import { createSync } from "../sync/index.ts";
 import { createHostActions } from "./hostActions.ts";
-import { loadJobs, owesHandOver, parkedOf, stepAt } from "./jobs.ts";
+import { askOf, jobQuestions, loadJobs, owesHandOver, parkedOf, stepAt } from "./jobs.ts";
+import type { Job } from "./jobs.ts";
+import { restructuringOf } from "./restructure.ts";
 import type { AgentRunner, SessionRequest } from "./ports.ts";
 import { jobFromLog } from "./recover.ts";
 import { sessionResultKey } from "./runner.ts";
 import { tick } from "./tick.ts";
+
+/** The one question a parked job asks, if it asks one. */
+const askedDecision = (job: Job | null | undefined) => { const ask = askOf(job); return ask?.is === "question" ? ask.decision : undefined; };
 
 const repos: TestRepo[] = [];
 const hosts: MetaBranchHost[] = [];
@@ -278,7 +283,7 @@ test("three open triage questions all wait again after a deleted store; the firs
   assert.equal(second.requests.length, 0);
   const job = loadJobs(second.store)[key];
   assert.equal(parkedOf(job)?.as, "needs-decision");
-  assert.deepEqual(job?.triage?.decisions?.map((each) => each.question), decisions.map((each) => each.question));
+  assert.deepEqual(jobQuestions(job!).map((each) => each.question), decisions.map((each) => each.question));
   const parked = loadSnapshot(second.store).parked?.find((each) => refKey(each.subject) === key);
   assert.deepEqual(parked?.questions?.map((each) => each.question), decisions.map((each) => each.question));
   assert.equal(parked?.at, parkedOf(job)?.at);
@@ -364,9 +369,9 @@ test("a parked decision read back from the log keeps its options as { label, des
   };
   const job = jobFromLog(item);
   assert.equal(parkedOf(job)?.as, "needs-decision");
-  assert.deepEqual(job?.triage?.decision, { question: "Keep it?", options, recommendation: "Keep", context: "Also check the budget line." });
+  assert.deepEqual(askedDecision(job), { question: "Keep it?", options, recommendation: "Keep", context: "Also check the budget line." });
   const plain = jobFromLog({ ...item, openQuestions: [{ at, by, question: "Keep it?", options: ["Keep", "Drop"] }] });
-  assert.deepEqual(plain?.triage?.decision, { question: "Keep it?", options: ["Keep", "Drop"], recommendation: "" });
+  assert.deepEqual(askedDecision(plain), { question: "Keep it?", options: ["Keep", "Drop"], recommendation: "" });
 });
 
 test("an item left parked on an old proposed rewrite (removed) is not held by it: a new store starts it at triage", async () => {
@@ -398,8 +403,8 @@ test("a proposed restructuring waits across a deleted store, with its parts and 
   const second = start(host);
   await second.run();
   assert.equal(second.requests.length, 0, "nothing is started while the restructuring waits");
-  assert.deepEqual(loadJobs(second.store)[key]?.proposal?.parts, parts);
-  assert.equal(loadJobs(second.store)[key]?.proposal?.original, "keeps");
+  assert.deepEqual(restructuringOf(loadJobs(second.store)[key])?.parts, parts);
+  assert.equal(restructuringOf(loadJobs(second.store)[key])?.original, "keeps");
   assert.deepEqual(second.store.get<WorkItem>(item)?.openQuestions?.[0]?.proposal?.parts, parts);
 });
 

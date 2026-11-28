@@ -11,7 +11,7 @@ import { knownAnswers } from "../store/answers.ts";
 import type { Store } from "../store/store.ts";
 import type { Context } from "./context.ts";
 import type { AboutOther, Decision, Job } from "./jobs.ts";
-import { changedRewrite, sameText, parkedOf } from "./jobs.ts";
+import { askOf, changedRewrite, rewriteOf, sameText, parkedOf } from "./jobs.ts";
 import type { ProposedRewriteView } from "../core/snapshot.ts";
 import { plural } from "../model/plural.ts";
 import { changeHandedOn, sessionOf, stepOf } from "../core/phase.ts";
@@ -129,7 +129,8 @@ export function askedBefore(ctx: Context, other: WorkItem, question: Decision): 
   const same = (each: Decision) => sameDecision(asked, { question: each.question, options: optionTexts(each.options) });
   if ((readWaitingAbouts(ctx.deps.store)[key] ?? []).some((entry) => entry.questions.some(same))) return "it already waits to be asked there";
   const job = ctx.jobs[key];
-  if (parkedOf(job)?.as === "needs-decision" && job!.rewrite?.questions.some(same)) return "it is open there";
+  const ask = parkedOf(job)?.as === "needs-decision" ? askOf(job) : undefined;
+  if (ask?.is === "rewrite" && ask.rewrite.questions.some(same)) return "it is open there";
   const answers = knownAnswers(ctx.deps.store);
   const hash = itemTextHash(other);
   const found = reusableAnswer(answers, other, question)
@@ -140,7 +141,8 @@ export function askedBefore(ctx: Context, other: WorkItem, question: Decision): 
 /** Who already proposed this rewrite of `other`'s description (whitespace aside), or null: its own triage, or another Item's. */
 function proposedThere(store: Store, job: Job | undefined, other: WorkItem, rewrite: string): string | null {
   const key = refKey(other.ref);
-  if (job?.rewrite && sameText(job.rewrite.text, rewrite)) return job.rewrite.askedBy ? `${job.rewrite.askedBy.join(" and ")} proposed` : "its own triage proposed";
+  const own = rewriteOf(job);
+  if (own && sameText(own.text, rewrite)) return own.askedBy ? `${own.askedBy.join(" and ")} proposed` : "its own triage proposed";
   const proposed = readProposedRewrites(store)[key];
   if (proposed && sameText(proposed.text, rewrite)) return `${proposed.askedBy} proposed`;
   const waiting = (readWaitingAbouts(store)[key] ?? []).find((entry) => entry.rewrite !== undefined && sameText(entry.rewrite, rewrite));

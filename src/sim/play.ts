@@ -10,7 +10,7 @@ import { random } from "./random.ts";
 import { wText } from "./waits.ts";
 import type { Action, WorldOptions } from "./world.ts";
 import { SimWorld } from "./world.ts";
-import { owesHandOver, parkedOf } from "../orchestrator/jobs.ts";
+import { owesHandOver, parkedOf, pickedFor } from "../orchestrator/jobs.ts";
 import { readProposedRewrites } from "../orchestrator/aboutOthers.ts";
 import { mergeQueueOn, switchState } from "../store/control.ts";
 
@@ -96,7 +96,7 @@ export function draw(world: SimWorld, rnd: Rng, options: RunOptions): Action {
   // again, or for the merge queue, also while that review runs again (a Merge queue pick over a review on an approved head, #211 step 3).
   const approved = open.filter((i) => {
     const job = jobs[`metaBranch:work:${i.ref.id}`];
-    return job?.review?.verdict === "approve" && job.head !== undefined && job.reviewedHead === job.head && parkedOf(job)?.as !== "queued" && job.at.kind !== "merged" && job.queueAskedBy === undefined;
+    return job?.review?.verdict === "approve" && job.head !== undefined && job.reviewedHead === job.head && parkedOf(job)?.as !== "queued" && job.at.kind !== "merged" && pickedFor(job, "merge-queue") === undefined;
   }).map((i) => i.ref.id);
   const reviewing = approved.filter((id) => [...world.runner.live.values()].some((l) => l.session.subject.id === id && l.session.role === "review"));
   // The person watches the board: while such a moment lasts (a proposed rewrite on a busy Item, an approved change), they act sooner.

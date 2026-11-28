@@ -2,8 +2,8 @@
 // from the job's data (whether the implement step has begun, what a parked job asks) and nothing stored twice.
 
 import type { Ask, From, Phase, Pick, Run } from "../core/phase.ts";
-import type { Job, JobParked, JobStep, StepRun } from "./jobs.ts";
-import { stepAt } from "./jobs.ts";
+import type { Ask as JobAsk, Job, JobParked, JobStep, StepRun } from "./jobs.ts";
+import { STEP_PICK, stepAt } from "./jobs.ts";
 
 export function phaseOf(job: Job): Phase {
   const at = job.at;
@@ -13,9 +13,9 @@ export function phaseOf(job: Job): Phase {
     case "hand-over":
       return { at: "hand-over" };
     case "parked":
-      return parkedPhase(job, at.step, at.parked);
+      return parkedPhase(at.step, at.parked, at.ask);
     case "triage":
-      return { at: "triage", run: runOf(job, at.run), why: job.rewrite?.settled ? "settled" : at.recheck ? "again" : "first" };
+      return { at: "triage", run: runOf(job, at.run), why: at.settled ? "settled" : at.recheck ? "again" : "first" };
     case "implement":
       return { at: "implement", run: runOf(job, at.run), why: begun(job, at.run, at.merge) ? "again" : "first" };
     case "review":
@@ -23,13 +23,13 @@ export function phaseOf(job: Job): Phase {
   }
 }
 
-function parkedPhase(job: Job, step: JobStep, parked: JobParked): Phase {
+function parkedPhase(step: JobStep, parked: JobParked, asks: JobAsk | undefined): Phase {
   const from: From = step === "triage" ? "triage" : parked.byStep && step === "implement" ? "implement" : step === "review" ? "review" : "change";
   if (parked.retry === "hand-over") return { at: "stuck", from: "hand-over" };
   // What could not be posted is asked all the same: a not-ready or escalated reason as one question.
   if (parked.retry === "post") {
     const asked = parked.postingAs === undefined || parked.postingAs === "needs-decision";
-    return { at: "asked", from, ask: asked ? askOf(job, step) : { is: "question" }, posting: true };
+    return { at: "asked", from, ask: asked ? askPhase(asks) : { is: "question" }, posting: true };
   }
   switch (parked.as) {
     case "queued":
@@ -41,17 +41,18 @@ function parkedPhase(job: Job, step: JobStep, parked: JobParked): Phase {
     case "escalated":
       return { at: "stuck", from };
     case "needs-decision":
-      return { at: "asked", from, ask: askOf(job, step), posting: false };
+      return { at: "asked", from, ask: askPhase(asks), posting: false };
   }
 }
 
-/** The person's pick the job carries out, if any: a drop first, then the pick of the step it is at, then the queue. */
+/** The person's pick the job carries out, if any: a drop, the pick of the step it is at, or the queue. */
 export function pickOf(job: Job): Pick | undefined {
-  if (job.dropAskedBy !== undefined) return { by: job.dropAskedBy, to: "drop" };
+  const picked = job.pick;
+  if (!picked) return undefined;
   const step = stepAt(job);
-  const own = step === "triage" ? job.triageAskedBy : step === "implement" ? job.implementAskedBy : job.reviewAskedBy;
-  if (own !== undefined) return { by: own, to: step };
-  if (job.queueAskedBy !== undefined) return { by: job.queueAskedBy, to: "queue" };
+  if (picked.to === "todo") return { by: picked.by, to: "drop" };
+  if (picked.to === STEP_PICK[step]) return { by: picked.by, to: step };
+  if (picked.to === "merge-queue") return { by: picked.by, to: "queue" };
   return undefined;
 }
 
@@ -69,9 +70,16 @@ function runOf(job: Job, run: StepRun): Run {
   };
 }
 
-function askOf(job: Job, step: JobStep): Ask {
-  if (job.proposal) return { is: "restructuring" };
-  if (job.rewrite && !job.rewrite.settled) return { is: "rewrite" };
-  const n = step === "triage" && !job.decision && !job.rewrite ? (job.triage?.decisions ?? []).filter((decision) => decision.question.trim()).length : 0;
-  return n > 1 ? { is: "questions", n, answered: (job.answered ?? []).length } : { is: "question" };
+function askPhase(asks: JobAsk | undefined): Ask {
+  switch (asks?.is) {
+    case undefined:
+    case "question":
+      return { is: "question" };
+    case "questions":
+      return { is: "questions", n: asks.list.length, answered: (asks.answered ?? []).length };
+    case "rewrite":
+      return { is: "rewrite" };
+    case "restructuring":
+      return { is: "restructuring" };
+  }
 }

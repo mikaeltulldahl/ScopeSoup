@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import type { Job, JobAt, JobParked, JobStep } from "./jobs.ts";
+import type { Ask, Job, JobAt, JobParked, JobStep } from "./jobs.ts";
 import { phaseOf, pickOf } from "./phase.ts";
 import { atStep } from "./jobs.ts";
 
@@ -9,7 +9,7 @@ const job = (at: JobAt, more: Partial<Job> = {}): Job => ({ ...base, ...more, at
 const why = (j: Job): string | undefined => (phaseOf(j) as { why?: string }).why;
 const ask = (j: Job): unknown => (phaseOf(j) as { ask?: unknown }).ask;
 const parked = (as: JobParked["as"], more: Partial<JobParked> = {}): JobParked => ({ as, reason: "r", at: "2026-01-01T00:00:00Z", ...more });
-const parkedAt = (step: JobStep, as: JobParked["as"], more: Partial<JobParked> = {}): JobAt => ({ kind: "parked", step, parked: parked(as, more) });
+const parkedAt = (step: JobStep, as: JobParked["as"], more: Partial<JobParked> = {}, ask?: Ask): JobAt => ({ kind: "parked", step, parked: parked(as, more), ...(ask ? { ask } : {}) });
 
 describe("phaseOf: where the job is, read as one phase", { concurrency: 4 }, () => {
   it("a step waiting or running", () => {
@@ -47,25 +47,25 @@ describe("phaseOf: where the job is, read as one phase", { concurrency: 4 }, () 
 
   it("what a parked job asks", () => {
     const q = { question: "Q?", options: [], recommendation: "" };
-    const triage = { ready: true, size: "small" as const, paths: [], hidesDecision: true, decision: q, decisions: [q, { ...q, question: "R?" }] };
-    assert.deepEqual(phaseOf(job(parkedAt("triage", "needs-decision"), { triage, answered: [{ index: 0, answer: "a", at: "t" }] })), { at: "asked", from: "triage", ask: { is: "questions", n: 2, answered: 1 }, posting: false });
-    assert.deepEqual(phaseOf(job(parkedAt("implement", "needs-decision", { byStep: true }), { decision: q })), { at: "asked", from: "implement", ask: { is: "question" }, posting: false });
-    assert.deepEqual(ask(job(parkedAt("triage", "needs-decision"), { rewrite: { original: "o", text: "t", questions: [], round: 1 } })), { is: "rewrite" });
+    const several = { is: "questions" as const, list: [q, { ...q, question: "R?" }], answered: [{ index: 0, answer: "a", at: "t" }] };
+    assert.deepEqual(phaseOf(job(parkedAt("triage", "needs-decision", {}, several))), { at: "asked", from: "triage", ask: { is: "questions", n: 2, answered: 1 }, posting: false });
+    assert.deepEqual(phaseOf(job(parkedAt("implement", "needs-decision", { byStep: true }, { is: "question", decision: q }))), { at: "asked", from: "implement", ask: { is: "question" }, posting: false });
+    assert.deepEqual(ask(job(parkedAt("triage", "needs-decision", {}, { is: "rewrite", rewrite: { original: "o", text: "t", questions: [], round: 1 } }))), { is: "rewrite" });
     // A post retried is the parked state it could not post.
     assert.deepEqual(phaseOf(job(parkedAt("triage", "escalated", { retry: "post", postingAs: "needs-decision" }))), { at: "asked", from: "triage", ask: { is: "question" }, posting: true });
   });
 
   it("a settled rewrite or a recheck is a triage of its own kind", () => {
-    assert.equal(why(job(atStep("triage"), { rewrite: { original: "o", text: "t", questions: [], round: 1, settled: "accepted" } })), "settled");
+    assert.equal(why(job({ kind: "triage", run: { is: "waiting" }, settled: { rewrite: { original: "o", text: "t", questions: [], round: 1 }, as: "accepted" } })), "settled");
     assert.equal(why(job({ kind: "triage", run: { is: "waiting" }, recheck: { reasons: [], previous: { ready: true, size: "small", paths: [], hidesDecision: false }, previousAt: "t", commits: [], commitCount: 0, finished: [] } })), "again");
   });
 });
 
 describe("pickOf", () => {
   it("a drop first, then the pick of the step it is at, then the queue", () => {
-    assert.deepEqual(pickOf(job(atStep("triage"), { dropAskedBy: "p", triageAskedBy: "q" })), { by: "p", to: "drop" });
-    assert.deepEqual(pickOf(job(atStep("triage"), { triageAskedBy: "q" })), { by: "q", to: "triage" });
-    assert.equal(pickOf(job(atStep("implement"), { triageAskedBy: "q" })), undefined);
-    assert.deepEqual(pickOf(job(atStep("review"), { queueAskedBy: "r" })), { by: "r", to: "queue" });
+    assert.deepEqual(pickOf(job(atStep("triage"), { pick: { by: "p", to: "todo" as const } })), { by: "p", to: "drop" });
+    assert.deepEqual(pickOf(job(atStep("triage"), { pick: { by: "q", to: "triage" as const } })), { by: "q", to: "triage" });
+    assert.equal(pickOf(job(atStep("implement"), { pick: { by: "q", to: "triage" as const } })), undefined);
+    assert.deepEqual(pickOf(job(atStep("review"), { pick: { by: "r", to: "merge-queue" as const } })), { by: "r", to: "queue" });
   });
 });

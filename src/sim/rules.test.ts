@@ -167,13 +167,13 @@ describe("each rule fires on a bad state built by hand", { concurrency: 1 }, () 
     assert.equal(fires("B7", obs({ started: [started("A-1", "triage")] }), obs({ ledger: older, started: [started("A-1", "triage")] })), null);
     // A person picked the review again on a change reviewed before: their ask is new input (#268).
     const reviewed = ledger({ ended: [{ step: 1, item: key("A-1"), role: "review", session: "s-A-1", status: "succeeded", settled: true }] });
-    const picked = obs({ ledger: reviewed, items: [item("A-1", SLOT, { job: job("A-1", { at: atStep("review"), reviewAskedBy: "Ada" }) })] });
+    const picked = obs({ ledger: reviewed, items: [item("A-1", SLOT, { job: job("A-1", { at: atStep("review"), pick: { by: "Ada", to: "in-review" as const } }) })] });
     assert.equal(fires("B7", obs({ started: [started("A-1", "review")] }), picked, obs({ ledger: reviewed, started: [started("A-1", "review")] })), null);
     assert.match(fires("B7", obs({ started: [started("A-1", "review")] }), obs({ ledger: reviewed, started: [started("A-1", "review")] })) ?? "", /same input/);
     assert.match(fires("B7", obs({ ledger: ledger({ asksInFair: new Map([[key("A-1"), 4]]) }) })) ?? "", /asked 4 times/);
     const shown = (text: string, body: string, questions: number): string | null => {
       const rewrite = { original: body.trim(), text, questions: Array.from({ length: questions }, () => ({ question: "?", options: [], recommendation: "" })), round: 1 };
-      const parked = job("A-1", { at: { kind: "parked", step: "triage", parked: { as: "needs-decision", reason: "", at: AT } }, rewrite } as never);
+      const parked = job("A-1", { at: { kind: "parked", step: "triage", parked: { as: "needs-decision", reason: "", at: AT }, ask: { is: "rewrite", rewrite } } });
       return fires("B7", obs({ items: [item("A-1", { kind: "person", why: "rewrite" }, { item: workItem("A-1", { body }), job: parked })] }));
     };
     assert.match(shown("Do it.", "Do it.", 0) ?? "", /equals its description/);
@@ -372,7 +372,7 @@ describe("each rule fires on a bad state built by hand", { concurrency: 1 }, () 
     assert.equal(fires("G1", queued, obs({ action: { kind: "restart" }, switches: paused, items: queued.items }), merges), null);
     assert.match(fires("G1", queued, obs({ action: { kind: "restart" }, switches: paused, items: queued.items }), { ...merges, level: 4 }) ?? "", /was queue before the restart/);
     // A person picked Triage over the running implement session: after the restart the triage comes next, not the implement step (#268).
-    const interrupted = job("A-1", { at: atStep("triage", { is: "running", session: "s1" }), interrupt: { by: "Ada", at: AT, to: "triage" } });
+    const interrupted = job("A-1", { at: atStep("triage", { is: "running", session: "s1" }), pick: { by: "Ada", to: "triage", ending: AT } });
     const implementing = obs({ items: [item("A-1", { kind: "session", role: "implement" }, { job: interrupted })] });
     const triageNext = obs({ action: tick, switches: paused, items: [item("A-1", { kind: "start", role: "triage", cause: "switch" })] });
     const restarted = obs({ action: { kind: "restart" }, switches: paused, items: implementing.items });

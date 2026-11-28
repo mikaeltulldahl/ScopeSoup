@@ -31,9 +31,9 @@ import { decide } from "./usageCheck.ts";
 import { allowanceDecision } from "./allowance.ts";
 import type { Store } from "../store/store.ts";
 import type { UsageCheckDecision } from "./usageCheck.ts";
-import type { Job, Jobs, Recheck } from "./jobs.ts";
+import type { Job, Jobs, PickTo, Recheck } from "./jobs.ts";
 import type { RetriageBudget } from "../core/retriage.ts";
-import { adoptStored, changedMeanwhile, dropUnreadable, loadJobs, NO_DECISIONS, takenText, WRITING_WAIT_MS, atStep, stepAt, sessionIdOf, parkedOf, mergeApproved, shouldRoundOf, writingOf, waitingOf, endSession, markMerged, awaitText, startSession } from "./jobs.ts";
+import { adoptStored, changedMeanwhile, dropUnreadable, loadJobs, NO_DECISIONS, takenText, WRITING_WAIT_MS, atStep, stepAt, sessionIdOf, parkedOf, mergeApproved, shouldRoundOf, writingOf, waitingOf, endSession, markMerged, awaitText, startSession, pickedFor, pickDone, endingOver, STEP_PICK, settledOf, rewritePosted } from "./jobs.ts";
 import { workBranch, workspaceKey } from "./paths.ts";
 import { adoptHandbacks } from "./handback.ts";
 import { recoverFromLogs } from "./recover.ts";
@@ -140,26 +140,26 @@ function recordConfigChanges(ctx: Context, config: ProjectConfig): void {
   });
 }
 
-/** The words of a pick (`interrupt.to`) in the event that ends a session for it. */
 /** The store's session of that id, if one is named. */
 function sessionNamed(store: Store, id: string | undefined): Session | undefined {
   return id ? store.get<Session>({ host: "scopesoup", kind: "session", id }) ?? undefined : undefined;
 }
 
-const PICK_WORDS: Record<string, string> = { triage: "Triage", todo: "To do", "in-review": "In review", "merge-queue": "Merge queue", abandoned: "Abandoned" };
+/** The words of a pick in the event that ends a session for it. */
+const PICK_WORDS: Record<PickTo, string> = { triage: "Triage", todo: "To do", "in-review": "In review", "merge-queue": "Merge queue", abandoned: "Abandoned", implement: "Implement anyway", "hand-over": "Try again" };
 
 /** How long the tick waits for a session a pick ended to be over before it gives up waiting (decision 104). */
 const INTERRUPT_WAIT_MS = 2 * 60_000;
 
 /**
- * A person's pick replaced the step that runs on the Item (decision 104, `interrupt` on the job): its step session is ended at
+ * A person's pick replaced the step that runs on the Item (decision 104, the pick's `ending`): its step session is ended at
  * once, the way Stop ends sessions (the runner kills the process tree), and its result is not settled. A person's chat turn on
  * the Item is left alone. True while that session is still there (the job waits for it, at most `INTERRUPT_WAIT_MS`); false once
  * it is over, with the job left as the pick made it.
  */
 function interrupted(ctx: Context, key: string, job: Job, item: WorkItem | null): boolean {
   const { store, runner } = ctx.deps;
-  const asked = job.interrupt!;
+  const asked = { ...job.pick!, at: job.pick!.ending! };
   const isLive = (each: Session): boolean => !OVER.includes(each.status) && !each.finishedAt;
   const own = sessionNamed(store, sessionIdOf(job));
   // A step session the runner stored before the tick saved its id counts too; a chat turn does not.
@@ -171,16 +171,17 @@ function interrupted(ctx: Context, key: string, job: Job, item: WorkItem | null)
     // Ended at once (its process is gone): the job goes on as the pick left it in this tick, and its slot is free.
     const after = store.get<Session>(session.ref);
     if (!after || !isLive(after)) {
-      delete job.interrupt;
+      endingOver(job);
       endSession(job);
       return false;
     }
     if (Date.parse(ctx.at) - Date.parse(asked.at) <= INTERRUPT_WAIT_MS) return true;
-    ctx.commit("orchestrator.interrupt_failed", `The ${session.role} session ${session.ref.id} on ${item?.ref.id ?? key} is still there ${Math.round(INTERRUPT_WAIT_MS / 60_000)} minutes after ${asked.by}'s pick ended it; the job goes on as the pick left it, and nothing starts on the Item while that session runs.`, key, { by: asked.by, session: session.ref.id });
   }
   const dropped = !session && own && sessionIdOf(job) ? own : undefined;
-  delete job.interrupt;
+  endingOver(job);
   endSession(job);
+  // Committed after the change, so the job is saved with its event even when nothing else in this tick commits.
+  if (session) ctx.commit("orchestrator.interrupt_failed", `The ${session.role} session ${session.ref.id} on ${item?.ref.id ?? key} is still there ${Math.round(INTERRUPT_WAIT_MS / 60_000)} minutes after ${asked.by}'s pick ended it; the job goes on as the pick left it, and nothing starts on the Item while that session runs.`, key, { by: asked.by, session: session.ref.id });
   // The session was over before the pick reached it: its result, not yet read, is not taken, and that is a change of the job. Committed
   // after the change, so the job is saved with its event even when nothing else in this tick commits (#268).
   if (dropped) ctx.commit("orchestrator.result_dropped", `${asked.by} picked ${PICK_WORDS[asked.to] ?? asked.to} for ${item?.ref.id ?? key} on the board: the result of its ${dropped.role} session ${dropped.ref.id}, which had ended, is not taken.`, key, { by: asked.by, step: stepAt(job) });
@@ -206,7 +207,7 @@ function stopForClosed(ctx: Context, key: string, job: Job, item: WorkItem | nul
     if (after && isLive(after)) return true;
   } else if (own && sessionIdOf(job) && takeEnded) return false;
   const dropped = !session && own && sessionIdOf(job) ? own : undefined;
-  delete job.interrupt;
+  endingOver(job);
   endSession(job);
   // Committed after the change, so the job is saved with its event (#268).
   if (dropped) ctx.commit("orchestrator.result_dropped", `${item ? `${item.ref.id} is ${item.state}` : `${key} is no longer in the store`}: the result of its ${dropped.role} session ${dropped.ref.id} is not taken.`, key, { step: stepAt(job) });
@@ -260,7 +261,7 @@ async function sweep(ctx: Context, subject?: string): Promise<void> {
  * what follows, or work a person put under way whose move to To do the store has not read yet), or a person's Triage pick.
  */
 function mayWorkInBacklog(job: Job): boolean {
-  return !job.seenInTodo || job.triageAskedBy !== undefined;
+  return !job.seenInTodo || pickedFor(job, "triage") !== undefined;
 }
 
 /**
@@ -338,10 +339,11 @@ function noteBlockersChanged(ctx: Context, since: number): void {
 async function dropAsked(ctx: Context, jobs: Jobs, key: string, job: Job, item: WorkItem | null): Promise<void> {
   const { actions, runner } = ctx.deps;
   delete jobs[key];
-  const reason = job.dropAskedBy !== undefined
-    ? `${job.dropAskedBy} put ${item?.ref.id ?? key} back in To do on the board: the work under way is dropped (the branch stays).`
+  const by = pickedFor(job, "todo");
+  const reason = by !== undefined
+    ? `${by} put ${item?.ref.id ?? key} back in To do on the board: the work under way is dropped (the branch stays).`
     : `${item?.ref.id ?? key} is in Backlog (moved there on another machine): the work under way here is dropped (the branch stays), and nothing runs on it until a person moves it to To do.`;
-  ctx.commit("orchestrator.job_dropped", reason, key, job.dropAskedBy !== undefined ? { by: job.dropAskedBy } : { backlog: true });
+  ctx.commit("orchestrator.job_dropped", reason, key, by !== undefined ? { by } : { backlog: true });
   if (actions.claims && actions.claimant && item?.holder?.actor.id === actions.claimant) await ctx.act("release the claim", key, () => actions.release(job.item, reason));
   await ctx.act("remove the worktree", key, () => runner.releaseWorkspace(job.workspace));
 }
@@ -660,7 +662,7 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
       continue;
     }
     // A person's pick replaced the step that runs: its session is ended, and its result is not settled (decision 104).
-    if (job.interrupt && interrupted(ctx, key, job, item)) {
+    if (job.pick?.ending && interrupted(ctx, key, job, item)) {
       running++;
       continue;
     }
@@ -671,7 +673,7 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
     }
     // A person put the Item back in To do on the board (src/server/moves.ts): once its session is over (its result is not
     // taken), the job goes with this machine's claim and workspace. The branch stays; the Item starts again at triage.
-    if (job.dropAskedBy && !over) {
+    if (pickedFor(job, "todo") && !over) {
       const session = sessionNamed(store, sessionIdOf(job));
       if (session && !OVER.includes(session.status) && !session.finishedAt) {
         running++;
@@ -693,7 +695,7 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
     }
     // Questions other Items' agents asked made this job, a person answered them otherwise than recommended, and the Item is in Backlog:
     // its triage does not run again there (decision 121), as `afterRewrite` closes it after answers that keep the recommendations.
-    if (item && !over && item.backlog && job.othersAsked && !job.triageAskedBy && waitingStep(phaseOf(job)) === "triage" && job.rewrite === undefined) {
+    if (item && !over && item.backlog && job.othersAsked && !pickedFor(job, "triage") && waitingStep(phaseOf(job)) === "triage" && settledOf(job) === undefined) {
       delete jobs[key];
       ctx.commit("orchestrator.job_closed", `A person answered what other Items' agents asked about ${item.ref.id}, which is in Backlog: nothing runs on it until a person moves it to To do, and its triage then has the answers.`, key);
       await ctx.act("remove the worktree", key, () => runner.releaseWorkspace(job.workspace));
@@ -744,7 +746,7 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
     // The question comments it is parked on were answered or deleted on GitHub.
     if (parkedOf(job)?.questions && item && (await followQuestions(ctx, job, item))) continue;
     // The rewrite's question comments were answered by replies, or deleted.
-    if (parkedOf(job)?.rewrite && item && (await followRewrite(ctx, job, item))) continue;
+    if (rewritePosted(job) && item && (await followRewrite(ctx, job, item))) continue;
     // The questions it is parked on in the item's log were answered on another machine's board (#248).
     if (parkedOf(job) && parkedOf(job) === parkedBefore && !sessionIdOf(job) && item && !over && followLog(ctx, job, item)) continue;
     // A person merged the branch handed over to them, and nothing but Scope Soup closes an Item here: done once main holds the head.
@@ -805,7 +807,7 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
     if (item && (waits === "implement" || waits === "review")) overturnsBack(ctx, job);
     // A job at the review step at level 2 (the level was lowered while it waited for a reviewer): nobody reviews at this level, and
     // the implementor merges. Its own session is resumed to merge it, as level 2 does after a build.
-    if (item && config.level === 2 && waitingStep(phaseOf(job)) === "review" && !job.reviewAskedBy) reviewOffAtLevel2(ctx, job);
+    if (item && config.level === 2 && waitingStep(phaseOf(job)) === "review" && !pickedFor(job, "in-review")) reviewOffAtLevel2(ctx, job);
     // A change in the merge queue when the level was lowered below 4: the queue is not driven there, and the implementor merges, once
     // nothing of the queue's is in flight for it (`settleQueueBelowLevel4`).
     if (item && queueLeft && phaseOf(job).at === "queued" && job.queued !== undefined) queueOffBelowLevel4(ctx, job);
@@ -879,7 +881,7 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
   // A triage, review or implement step a person picked (decisions 104, 105) runs whatever the level, held only by the switches a
   // person can see.
   const personAsked = (job: Job | null | undefined, step: SessionRole): boolean =>
-    ((step === "review" && job?.reviewAskedBy !== undefined) || (step === "triage" && job?.triageAskedBy !== undefined) || (step === "implement" && job?.implementAskedBy !== undefined)) && switchOnFor(store, step, level);
+    pickedFor(job, STEP_PICK[step]) !== undefined && switchOnFor(store, step, level);
   const personWork = Object.values(jobs).some((job) => waitingStep(phaseOf(job)) !== null && personAsked(job, stepAt(job)));
   const control = Object.fromEntries(ROLES.map((role) => [role, switchState(store, role)])) as Record<SessionRole, SwitchState>;
   const stoppedRoles = ROLES.filter((role) => control[role] === "stopped");
@@ -918,6 +920,9 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
     const item = itemByKey.get(key);
     // A job that owes its hand-over has no session to start: the next tick repeats the hand-over.
     if (!item || waitingStep(phaseOf(job)) === null) continue;
+    // A rewrite a person settled after this tick passed the job, read into the map with another job's save: the next tick goes on from
+    // it without a session (`afterRewrite`). A triage started now would drop it, or be overruled by it afterwards.
+    if (settledOf(job)) continue;
     if (runner.busy?.(job.item)) {
       reasons.push(`${item.ref.id} waits: a person is talking to one of its sessions`);
       continue;
@@ -926,22 +931,22 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
     if (item.holder && !item.holder.actor.bot && (item.holder.until === undefined || Date.parse(item.holder.until) > Date.parse(at))) {
       reasons.push(`${item.ref.id} is held by ${item.holder.actor.name}`);
       // Implement anyway meant "now": a person who took the Item since has it, and after their release the level decides again.
-      const asker = job.implementAskedBy;
+      const asker = pickedFor(job, "implement");
       if (asker !== undefined) {
-        delete job.implementAskedBy;
+        pickDone(job, "implement");
         ctx.commit("orchestrator.step", `${asker}'s Implement anyway on ${item.ref.id} lapses: ${item.holder.actor.name} holds it now. After it is released, its implement step goes as the level says.`, key);
       }
       continue;
     }
     // Backlog is no work (decision 121): a person's moves take an Item with work under way to To do. Left is a person's one-off
     // triage there, whose implement step waits for To do; a job that has a session, a revision or something to resume never waits.
-    if (item.backlog && stepAt(job) === "implement" && job.implementAskedBy === undefined && job.head === undefined && !job.resumeWith && !waitingOf(job)?.resume) {
+    if (item.backlog && stepAt(job) === "implement" && pickedFor(job, "implement") === undefined && job.head === undefined && !job.resumeWith && !waitingOf(job)?.resume) {
       reasons.push(`${item.ref.id} ${BACKLOG_REASON} before its ${stepAt(job)} step`);
       continue;
     }
     // An open blocker holds the next step of work under way, as it holds a new Item (decision 3): a person may have added it, or a
     // person's Triage pick looked at a blocked Item and found it ready. Only that pick runs on a blocked Item (#243).
-    if (!(stepAt(job) === "triage" && job.triageAskedBy !== undefined)) {
+    if (!(stepAt(job) === "triage" && pickedFor(job, "triage") !== undefined)) {
       const open = (blockedNow.get(key) ?? []).filter((blocker) => openWork.has(refKey(blocker)));
       if (open.length > 0) {
         reasons.push(`${item.ref.id} is blocked by ${open.map((blocker) => blocker.id).join(", ")} before its ${stepAt(job)} step`);
@@ -1086,7 +1091,7 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
       again = entry.retriage.reasons.join("; ");
     }
     // Implement anyway (decision 105) goes with triage's notes as they are: no triage again first.
-    if (entry.job && step === "implement" && awaitsImplement(entry.job) && entry.job.implementAskedBy === undefined) {
+    if (entry.job && step === "implement" && awaitsImplement(entry.job) && pickedFor(entry.job, "implement") === undefined) {
       const recheck = await staleTriage(ctx, entry.job, entry.item, items);
       // Its triage is taken again first, and triage is paused: it waits for triage.
       if (recheck && control.triage !== "started") {

@@ -131,7 +131,7 @@ const INTERRUPTS: readonly StateKey[] = ["triage", "backlog", "todo", "in-review
 
 /**
  * What the pick does to work under way, for the toast, in a few words; "" for nothing. A pick that replaces the step that runs
- * ends its session at once (`interrupt` in the tick); Done lets it finish its step, then closes the job. When the work runs on
+ * ends its session at once (`interrupted` in the tick); Done lets it finish its step, then closes the job. When the work runs on
  * another machine, the pick goes there as a request, carried out at that machine's next fetch of the meta branch (once a minute).
  */
 export function effectNote(key: StateKey, page: MenuPage, theme: ThemeWords): string {

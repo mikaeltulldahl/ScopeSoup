@@ -56,7 +56,7 @@ async function parkedJob(id: string): Promise<Job> {
   assert.ok(asked);
   const job: Job = {
     item: ref(id), workspace: `/srv/clone-${id}`, branch: `scopesoup/${id}`, failures: 0, fixRounds: 0, startedAt: at,
-    triage: { ready: true, size: "small", paths: [], hidesDecision: true, decision: DECISIONS[0]!, decisions: DECISIONS }, at: { kind: "parked", step: "triage", parked: { as: "needs-decision", reason: "Two questions.", at, questions: asked.ids, askedAt: asked.at } }
+    triage: { ready: true, size: "small", paths: [], hidesDecision: true, decision: DECISIONS[0]!, decisions: DECISIONS }, at: { kind: "parked", step: "triage", parked: { as: "needs-decision", reason: "Two questions.", at, questions: asked.ids, askedAt: asked.at }, ask: { is: "questions", list: DECISIONS } }
   };
   saveJobs(store, { ...loadJobs(store), [key(id)]: job });
   return job;

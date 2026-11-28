@@ -23,7 +23,7 @@ import type { LogRecord, OpenQuestion, RecordedAnswer, Session, WorkItem } from 
 import { refKey } from "../model/types.ts";
 import type { Context } from "./context.ts";
 import { SCOPESOUP } from "./hostActions.ts";
-import type { Decision, Finding, Job, JobStep, ParkedAs } from "./jobs.ts";
+import type { Ask, Decision, Finding, Job, JobStep, ParkedAs } from "./jobs.ts";
 import { formatFindings, atStep, editParked, owesHandOver, parkJob, parkedOf, stepAt } from "./jobs.ts";
 import { workBranch, workspaceKey } from "./paths.ts";
 
@@ -52,8 +52,7 @@ export function jobFromLog(item: WorkItem): Job | null {
     const set = as === "needs-decision" && !asked.proposal ? questionSet(log, open, lineOf) : [];
     // Triage asked several questions (park writes one log line each): all of them wait again, in log order.
     if (set.length > 1) return parkOnDecisions(job, set);
-    parkJob(job, { as, reason: asked.question, at: asked.at, ...(line?.fields.retry === "hand-over" ? { retry: "hand-over" as const } : {}) });
-    if (as === "needs-decision") parkOnQuestion(job, asked);
+    parkJob(job, { as, reason: asked.question, at: asked.at, ...(line?.fields.retry === "hand-over" ? { retry: "hand-over" as const } : {}) }, as === "needs-decision" ? askedOne(job, asked) : undefined);
     return job;
   }
   return resumeFromLines(job, log, sessions, newest, review);
@@ -80,16 +79,20 @@ export function jobFromHost(item: WorkItem): Job | null {
     const questions = rewrite.questions.map(decisionOf);
     job.triage ??= { ready: true, size: "medium", paths: [], hidesDecision: false };
     job.triage.hidesDecision = questions.length > 0;
-    job.rewrite = { original: (item.body ?? "").trim(), text: rewrite.text, questions, round: rewrite.round, ...(rewrite.labels ? { labels: rewrite.labels } : {}) };
+    const ids = rewrite.questions.flatMap((question) => (question.id ? [question.id] : []));
+    const askedAt = rewrite.questions[rewrite.questions.length - 1]?.at;
+    const asks: Ask = {
+      is: "rewrite",
+      rewrite: { original: (item.body ?? "").trim(), text: rewrite.text, questions, round: rewrite.round, ...(rewrite.labels ? { labels: rewrite.labels } : {}) },
+      posted: { id: rewrite.id, questions: ids, ...(askedAt ? { askedAt } : {}) },
+    };
     // The rounds so far are the rewrite comments.
     job.rewriteRounds = Math.max(record!.rewriteRounds, rewrite.round);
     const said = questions.length > 0
       ? `Triage, round ${rewrite.round}: a rewrite of the description and ${questions.length === 1 ? "1 question waits" : `${questions.length} questions wait`} for an answer: ${questions.map((each, index) => `${index + 1}. ${each.question}`).join(" ")}`
       : `Triage, round ${rewrite.round}: a rewrite of the description waits for a person to accept, edit or reject.`;
     const note = rewrite.bodyKnown ? "" : " The description the rewrite read is no longer known: the current one is shown as the original.";
-    const ids = rewrite.questions.flatMap((question) => (question.id ? [question.id] : []));
-    const askedAt = rewrite.questions[rewrite.questions.length - 1]?.at;
-    parkJob(job, { as: "needs-decision", reason: `${said}${note}`, at: rewrite.at, rewrite: { id: rewrite.id, questions: ids, ...(askedAt ? { askedAt } : {}) } });
+    parkJob(job, { as: "needs-decision", reason: `${said}${note}`, at: rewrite.at }, asks);
     return job;
   }
 
@@ -97,10 +100,7 @@ export function jobFromHost(item: WorkItem): Job | null {
   if (asked) {
     const set = asked.proposal ? [] : open.filter((question) => !question.proposal && question.question.trim() !== "");
     if (set.length > 1) parkOnDecisions(job, set);
-    else {
-      parkJob(job, { as: "needs-decision", reason: asked.question, at: asked.at });
-      parkOnQuestion(job, asked);
-    }
+    else parkJob(job, { as: "needs-decision", reason: asked.question, at: asked.at }, askedOne(job, asked));
     const ids = (set.length > 1 ? set : [asked]).flatMap((question) => (question.id ? [question.id] : []));
     editParked(job, { ...parkedOf(job)!, questions: ids, askedAt: asked.at });
     return job;
@@ -149,23 +149,19 @@ function fromLines(item: WorkItem, log: readonly LogRecord[], startedAt: string)
 /** Several questions wait again, in order, so the first answer does not release the item. The parked state's time is the first one's (`parkedAt`). */
 function parkOnDecisions(job: Job, set: readonly OpenQuestion[]): Job {
   const decisions: Decision[] = set.map(decisionOf);
-  parkJob(job, { as: "needs-decision", reason: `Triage found ${decisions.length} decisions for a person before the work can start: ${decisions.map((d, i) => `${i + 1}. ${d.question}`).join(" ")}`, at: set[0]!.at });
+  parkJob(job, { as: "needs-decision", reason: `Triage found ${decisions.length} decisions for a person before the work can start: ${decisions.map((d, i) => `${i + 1}. ${d.question}`).join(" ")}`, at: set[0]!.at }, { is: "questions", list: decisions });
   job.triage ??= { ready: true, size: "medium", paths: [], hidesDecision: true };
   job.triage.hidesDecision = true;
-  job.triage.decision = decisions[0];
-  job.triage.decisions = decisions;
   return job;
 }
 
-/** One question waits: a proposed restructuring, or a decision with options. */
-function parkOnQuestion(job: Job, asked: OpenQuestion): void {
-  if (asked.proposal) {
-    // A proposed restructuring is still waiting for a person.
-    job.proposal = { ...asked.proposal };
-  } else if (asked.options.length > 0) {
-    job.triage ??= { ready: true, size: "medium", paths: [], hidesDecision: true };
-    job.triage.decision = decisionOf(asked);
-  }
+/** What one waiting question asks: a proposed restructuring, a decision with options, or (none) its text alone. */
+function askedOne(job: Job, asked: OpenQuestion): Ask | undefined {
+  // A proposed restructuring is still waiting for a person.
+  if (asked.proposal) return { is: "restructuring", proposal: { ...asked.proposal } };
+  if (asked.options.length === 0) return undefined;
+  job.triage ??= { ready: true, size: "medium", paths: [], hidesDecision: true };
+  return { is: "question", decision: decisionOf(asked) };
 }
 
 /** When the store has nothing parked: the step the last session named starts again, or a reviewed change that has not merged is handed over again. */

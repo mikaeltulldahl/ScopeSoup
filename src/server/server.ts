@@ -35,7 +35,7 @@ import { explainOrder, voteForPlace, voteLimits } from "../orchestrator/score.ts
 import { setVote, voteInStore } from "../store/votes.ts";
 import { isSha } from "../orchestrator/history.ts";
 import { readMergeQueueNote } from "../orchestrator/mergeQueueLease.ts";
-import { parkSet, adoptWritten, answerQuestion, awaitWritten, answerRefusal, rewriteRefusal, keepsRecommendations, loadJobs, questionsSettled, releaseJob, parkedRewrite, resumesStep, saveJobs, settleRewrite, parkedOf, sessionIdOf, stepAt } from "../orchestrator/jobs.ts";
+import { parkSet, adoptWritten, answerQuestion, awaitWritten, answerRefusal, rewriteRefusal, keepsRecommendations, loadJobs, questionsSettled, releaseJob, parkedRewrite, resumesStep, saveJobs, settleRewrite, parkedOf, sessionIdOf, stepAt, pick, pickedFor, rewritePosted } from "../orchestrator/jobs.ts";
 import { readProposedRewrites, writeProposedRewrites } from "../orchestrator/aboutOthers.ts";
 import { applyMove, isMove, MOVES, moveWhys, ROLE_WORDS, runningRole } from "./moves.ts";
 import { voteToPlace } from "./place.ts";
@@ -857,7 +857,7 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
       const role = runningRole({ job, ...(live ? { liveRole: live.role } : {}) });
       if (!role) return;
       const at = now().toISOString();
-      job.interrupt = { by: who, at, to: "abandoned" };
+      pick(job, who, "abandoned", at);
       saveJobs(store, jobs);
       store.appendEvent({ kind: "person.moved", subject: ref, actor: who, data: { to: "abandoned", reason: `${who} abandoned ${job.item.id}: ${ROLE_WORDS[role] ?? "the agent"}'s session is ended now; its result is not taken.`, via: "board" } }, at);
     });
@@ -1255,7 +1255,7 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
       ? { add: [...new Set([...(proposedLabels?.add ?? []), aiLabel])], remove: (proposedLabels?.remove ?? []).filter((name) => name.toLowerCase() !== aiLabel.toLowerCase()) }
       : proposedLabels;
     // A rewrite posted on GitHub is answered there.
-    const posted = options.questions && subject.host === options.questions.host ? parkedOf(job)!.rewrite : undefined;
+    const posted = options.questions && subject.host === options.questions.host ? rewritePosted(job) : undefined;
     if (posted) return rewriteOnHost(response, item, rewrite, posted, answers, action, newText, parkedAt, labelChange);
     const write = items?.write;
     const writable = !!write?.editWork && subject.host === items!.host;
@@ -2155,7 +2155,7 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
       const who = by().who;
       // As a move: the open questions are answered first, and a log that does not take them leaves the Item where it is (#230).
       const before = loadJobs(store)[key];
-      const offered = before && !before.dropAskedBy ? moveWhys({ ...moveInput(current, lane), job: before }).todo : undefined;
+      const offered = before && !pickedFor(before, "todo") ? moveWhys({ ...moveInput(current, lane), job: before }).todo : undefined;
       if (offered && !offered.why) {
         const problem = await answerByMove(current, "Put back in Backlog");
         if (problem) return sendError(response, 502, "WRITE_REFUSED", `${current.ref.id} is not moved to Backlog: its open question could not be answered in its log (${problem}). Try again.`);
@@ -2163,7 +2163,7 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
       const dropped = store.tx(() => {
         const jobs = loadJobs(store);
         const job = jobs[key];
-        if (!job || job.dropAskedBy) return { ok: true as const };
+        if (!job || pickedFor(job, "todo")) return { ok: true as const };
         const result = applyMove(jobs, key, "todo", { ...moveInput(current, lane), job }, who, at);
         if (!result.ok) return result;
         saveJobs(store, jobs);

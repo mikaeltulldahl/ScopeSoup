@@ -17,7 +17,7 @@ import type { Store } from "../store/store.ts";
 import type { Actions } from "./ports.ts";
 import { inertText } from "./hostText.ts";
 import { isOwnLabel } from "../model/labels.ts";
-import { loadJobs } from "./jobs.ts";
+import { loadJobs, rewriteOf } from "./jobs.ts";
 import type { Git } from "./process.ts";
 
 export interface HostActionsDeps {
@@ -255,7 +255,7 @@ export function createHostActions(deps: HostActionsDeps): Actions {
           if (!mine(item)) return false;
           const was = wasSha(item);
           await write.editWork!(item, { body: inertText(text) });
-          const round = loadJobs(deps.store)[refKey(item)]?.rewrite?.round;
+          const round = rewriteOf(loadJobs(deps.store)[refKey(item)])?.round;
           await logOnHost(item, "edited", { changed: ["description"], via: round ? `triage, round ${round}` : "triage", wasSha: was });
           return true;
         },
@@ -368,7 +368,7 @@ export function createHostActions(deps: HostActionsDeps): Actions {
             }
           }
           if (done.added.length > 0 || done.removed.length > 0) {
-            const round = loadJobs(deps.store)[refKey(item)]?.rewrite?.round;
+            const round = rewriteOf(loadJobs(deps.store)[refKey(item)])?.round;
             await logOnHost(item, "edited", { changed: ["labels"], via: round ? `triage, round ${round}` : "triage", ...(done.added.length > 0 ? { added: done.added } : {}), ...(done.removed.length > 0 ? { removed: done.removed } : {}) });
           }
           await reread(item);

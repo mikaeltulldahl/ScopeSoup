@@ -4,7 +4,7 @@
 import type { Job } from "../orchestrator/jobs.ts";
 import type { WorkItem } from "../model/types.ts";
 import { itemTextHash } from "../core/answerReuse.ts";
-import { mergeApproved, parkedOf, sessionIdOf, stepAt, waitingOf, writingOf } from "../orchestrator/jobs.ts";
+import { askOf, mergeApproved, parkedOf, pickedFor, sessionIdOf, stepAt, STEP_PICK, waitingOf, writingOf } from "../orchestrator/jobs.ts";
 
 export type Role = "triage" | "implement" | "review";
 export type PersonWait = "answer" | "rewrite" | "restructuring" | "not-ready" | "escalated" | "merge" | "holds";
@@ -74,10 +74,11 @@ export function waitsFor(input: WaitInput): W {
     if (parked.as === "handed-over") return { kind: "person", why: "merge" };
     if (parked.as === "not-ready") return { kind: "person", why: "not-ready" };
     if (parked.as === "escalated") return { kind: "person", why: "escalated" };
-    if (job.proposal) return { kind: "person", why: "restructuring" };
-    if (job.rewrite && !job.rewrite.settled) return { kind: "person", why: "rewrite" };
-    const asked = job.triage?.decisions?.length && stepAt(job) === "triage" ? job.triage.decisions.length : job.decision ? 1 : 1;
-    const answered = job.answered?.length ?? 0;
+    const ask = askOf(job);
+    if (ask?.is === "restructuring") return { kind: "person", why: "restructuring" };
+    if (ask?.is === "rewrite") return { kind: "person", why: "rewrite" };
+    const asked = ask?.is === "questions" ? ask.list.length : 1;
+    const answered = ask?.is === "questions" ? ask.answered?.length ?? 0 : 0;
     return { kind: "person", why: "answer", n: Math.max(0, asked - answered) };
   }
   // In Backlog with no work under way, nothing starts until a person moves it to To do, whatever else holds it back (decision 121): the
@@ -85,14 +86,14 @@ export function waitsFor(input: WaitInput): W {
   if (!job && item.backlog) return { kind: "not-started" };
   const blockers = [...item.blockedBy.map((ref) => `${ref.host}:${ref.kind}:${ref.id}`), ...input.ownBlockers].filter((key) => input.open.has(key));
   // A person's Triage pick runs on a blocked Item too (decision 104): they asked for a look at it as it is, blockers and all (#243, A4).
-  const pickedTriage = role === "triage" && job?.triageAskedBy !== undefined;
+  const pickedTriage = role === "triage" && pickedFor(job, "triage") !== undefined;
   if (blockers.length > 0 && !pickedTriage) return { kind: "blocker", on: [...new Set(blockers)] };
   // A job a person put back (To do, Backlog) is dropped by the next tick: nothing of it waits.
-  if (!job || job.dropAskedBy) return { kind: "not-started" };
+  if (!job || pickedFor(job, "todo")) return { kind: "not-started" };
   const start = (cause: StartCause): W => ({ kind: "start", role, cause });
   // In Backlog after a person's one-off triage, the implement step waits for a person to move it to To do (decision 121); work with a
   // revision or something to resume is never held there.
-  if (item.backlog && role === "implement" && !job.implementAskedBy && !job.head && !job.resumeWith && !waitingOf(job)?.resume) return start("backlog");
+  if (item.backlog && role === "implement" && !pickedFor(job, "implement") && !job.head && !job.resumeWith && !waitingOf(job)?.resume) return start("backlog");
   const writing = writingOf(job);
   if (writing && writing.from === itemTextHash(item) && Date.parse(input.now) - Date.parse(writing.at) < 30 * 60_000) return start("text");
   const begun = implementBegun(job);
@@ -102,7 +103,7 @@ export function waitsFor(input: WaitInput): W {
     const id = item.ref.id;
     if (input.busy.some((other) => other.paths.some((p) => paths.includes(p)) || mine.includes(other.key.split(":").pop()!) || other.conflicts.includes(id))) return start("same-files");
   }
-  const picked = (role === "triage" && job.triageAskedBy) || (role === "review" && job.reviewAskedBy) || (role === "implement" && job.implementAskedBy);
+  const picked = pickedFor(job, STEP_PICK[role]);
   // A pick runs whatever the level, but from the level that shows the role's switch the switch decides (decision 104).
   if (input.switches[role] !== "started" && (!picked || input.level >= STEP_LEVEL[role])) return start("switch");
   if (STEP_LEVEL[role] > input.level && !picked) return start("level");
@@ -113,7 +114,7 @@ export function waitsFor(input: WaitInput): W {
   const holder = item.holder;
   if (holder && holder.actor.bot === true && holder.actor.id !== input.claimant && (!holder.until || holder.until > input.now)) return start("claim");
   // New work waits while too much waits for a person; a person's pick does not (decision 133).
-  if (input.workCapped && newWork(job) && !job.implementAskedBy) return start("cap");
+  if (input.workCapped && newWork(job) && !pickedFor(job, "implement")) return start("cap");
   return start("slot");
 }
 

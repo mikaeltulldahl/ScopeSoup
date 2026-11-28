@@ -58,7 +58,7 @@ test("score: started means code written; an answer or a past session is not a st
   const key = refKey(work(2).ref);
   const base = { triage: { size: "medium", ready: true, paths: [], hidesDecision: false } };
   const items = [work(1, { priority: "major", ...TRIAGED }), work(2, { ...TRIAGED, answers: [{ at: "2026-03-03T10:00:00.000Z", by: { who: "a" }, text: "yes" }] } as never)];
-  const answered = { ...job(1), [key]: asJob("triage", { ...base, answerArrived: "x", answered: [{ index: 0, answer: "yes", at: "x" }] }, { is: "waiting", resume: "s" }) } as unknown as Jobs;
+  const answered = { ...job(1), [key]: asJob("triage", { ...base, answerArrived: "x" }, { is: "waiting", resume: "s" }) } as unknown as Jobs;
   assert.deepEqual(order(items, answered), ["1", "2"]);
   // A branch head that differs from main is code written.
   const ahead = { ...job(1), [key]: asJob("triage", { ...base, head: "bbb", base: "aaa" }) } as unknown as Jobs;
