@@ -330,6 +330,26 @@ test("log: a question that folds while the Item is closed is ended, until a reop
   assert.equal(later({ state: "todo" }).openQuestions.length, 1);
 });
 
+test("log: a reopen from another machine whose clock is behind the close does not leave later questions ended (#271)", () => {
+  const soup = { who: "scopesoup", machine: "laptop-b", agent: true };
+  const picture = fold(jsonl(
+    { at: "2026-11-20T15:00:02Z", by: robin, kind: "edited", changed: ["state"], state: "done" },
+    // Written after the close, on laptop-c, whose clock is 10 s behind: it folds before the close.
+    { at: "2026-11-20T14:59:52Z", by: { who: "kim", machine: "laptop-c" }, kind: "edited", changed: ["state"], state: "todo" },
+    { at: "2026-11-20T15:00:15Z", by: soup, kind: "question", question: "Should it do part 30?", set: `1@2026-11-20T15:00:15.000Z` },
+  ));
+  assert.deepEqual(picture.openQuestions.map((line) => line.question), ["Should it do part 30?"]);
+});
+
+test("log: the closing machine's own question after its close is still ended, in a later second too (#270, #271)", () => {
+  const soup = { who: "scopesoup", machine: "laptop-a", agent: true };
+  const close = { at: "2026-11-18T10:00:00Z", by: robin, kind: "edited", changed: ["state"], state: "done" };
+  assert.equal(fold(jsonl(close, { at: "2026-11-18T10:00:13Z", by: soup, kind: "question", question: "Late park?" })).openQuestions.length, 0);
+  // Another machine's question in a later second is not the close's to end: only one of its own second is (the file's order across
+  // machines is not trusted, and neither is their clocks' order).
+  assert.equal(fold(jsonl(close, { at: "2026-11-18T10:00:13Z", by: sam, kind: "question", question: "Other machine?" })).openQuestions.length, 1);
+});
+
 test("log: lines without `machine` are each their own writer: a close ends that writer's later questions of its second (#270)", () => {
   const t = "2026-11-18T10:00:00Z";
   const kim = { who: "kim" };
