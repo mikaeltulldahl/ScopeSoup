@@ -919,6 +919,9 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
     const item = itemByKey.get(key);
     // A job that owes its hand-over has no session to start: the next tick repeats the hand-over.
     if (!item || waitingStep(phaseOf(job)) === null) continue;
+    // A rewrite a person settled after this tick passed the job, read into the map with another job's save: the next tick goes on from
+    // it without a session (`afterRewrite`). A triage started now would drop it, or be overruled by it afterwards.
+    if (settledOf(job)) continue;
     if (runner.busy?.(job.item)) {
       reasons.push(`${item.ref.id} waits: a person is talking to one of its sessions`);
       continue;

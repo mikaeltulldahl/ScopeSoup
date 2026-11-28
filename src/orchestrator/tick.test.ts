@@ -3087,6 +3087,36 @@ function answerRewrite(w: World, id: string, answers: string[], action: "accept"
   });
 }
 
+test("a rewrite a person settles while the tick settles another Item goes on from the settle at the next tick: no triage starts on it (B3)", async () => {
+  const w = world(config({ level: 3, settings: { maxParallelSessions: { value: 3, reason: "test" } } }), [item("1", { body: "Tide table units." }), item("2")]);
+  w.store.addUsageSample(usage(0.1, 0.1));
+  await w.run();
+  // Item 1 parks on its rewrite; item 2's triage still runs.
+  await step(w, "1", "succeeded", TRIAGE);
+  assert.equal(parkedOf(w.job("1"))?.as, "needs-decision");
+  // While the tick settles item 2's triage (after it has walked past item 1), a person accepts item 1's rewrite on the board. Item 2's
+  // next step is saved with an event, which reads the settle into the tick's map before the tick picks what starts.
+  const fetchMain = w.runner.fetchMain!;
+  let settled = false;
+  w.runner.fetchMain = async (branch) => {
+    if (!settled && branch === "scopesoup/2") {
+      settled = true;
+      assert.deepEqual(answerRewrite(w, "1", ["Metric"]), { settled: "accepted" });
+    }
+    return fetchMain(branch);
+  };
+  w.runner.end("2", "succeeded", TRIAGE_OK);
+  await w.run();
+  w.runner.fetchMain = fetchMain;
+  assert.ok(settled);
+  const triagesOf1 = () => w.runner.requests.filter((request) => request.subject.id === "1" && request.role === "triage").length;
+  assert.equal(triagesOf1(), 1, "the settled rewrite is not taken for a triage that waits");
+  // The next tick goes on from the settle: the rewrite accepted, the implement step next.
+  await w.run();
+  assert.equal(triagesOf1(), 1);
+  assert.match(w.reasons("orchestrator.step").find((reason) => reason.includes("accepted the rewrite")) ?? "", /accepted the rewrite/);
+});
+
 test("a triage with a question and a rewrite parked with both on the Item page, and no implement session starts", async () => {
   const w = world(config({ level: 3 }), [item("1", { body: "Tide table units." })]);
   w.store.addUsageSample(usage(0.1, 0.1));

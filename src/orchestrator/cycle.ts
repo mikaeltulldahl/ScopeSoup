@@ -1764,7 +1764,6 @@ export async function writeAboutOthers(ctx: Context): Promise<void> {
     // next waits until the triage has run again with the answers.
     toTriage(job);
     job.failures = 0;
-    takeSettled(job);
     for (const field of ["triaging", "answerArrived"] as const) delete job[field];
     const round = (job.rewriteRounds ?? 0) + 1;
     job.rewriteRounds = round;

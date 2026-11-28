@@ -437,7 +437,7 @@ export type TextWritten = { from: string; at: string };
 export type JobAt =
   /**
    * `recheck`: the triage runs again, told why and what changed since the one before. `settled`: a person settled the rewrite it parked
-   * on; the next tick goes on from it without a session.
+   * on; the next tick goes on from it without a session (`takeSettled`), and no session starts on it. Any other move drops it.
    */
   | { kind: "triage"; run: StepRun; recheck?: Recheck; settled?: SettledRewrite }
   /**
@@ -589,7 +589,7 @@ function marksOf(at: JobAt): { merge?: true; shouldRound?: true } {
 function stepCase(step: JobStep, run: StepRun, from?: JobAt, marks: { merge?: true; shouldRound?: true } = {}): StepCase {
   switch (step) {
     case "triage":
-      return { kind: "triage", run, ...(from?.kind === "triage" && from.recheck ? { recheck: from.recheck } : {}), ...(from?.kind === "triage" && from.settled ? { settled: from.settled } : {}) };
+      return { kind: "triage", run, ...(from?.kind === "triage" && from.recheck ? { recheck: from.recheck } : {}) };
     case "implement":
       return { kind: "implement", run, ...(from?.kind === "implement" ? marksOf(from) : {}), ...marks };
     case "review":
@@ -737,8 +737,7 @@ export function toTriage(job: Job, recheck?: Recheck): void {
     return;
   }
   const waiting = waitingStep(at, "toTriage");
-  const settled = waiting.kind === "triage" ? waiting.settled : undefined;
-  job.at = { kind: "triage", run: waitingRun(waiting.run.writing), ...(recheck ? { recheck } : {}), ...(settled ? { settled } : {}) };
+  job.at = { kind: "triage", run: waitingRun(waiting.run.writing), ...(recheck ? { recheck } : {}) };
 }
 
 /**
