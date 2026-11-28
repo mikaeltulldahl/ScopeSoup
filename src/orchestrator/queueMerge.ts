@@ -8,7 +8,7 @@ import { refKey } from "../model/types.ts";
 import type { SendBackReason } from "../queue/index.ts";
 import { mergeQueueOn, mergeQueueStopped } from "../store/control.ts";
 import type { Context } from "./context.ts";
-import { createLog, errorText } from "./context.ts";
+import { createLog, errorText, thrownData } from "./context.ts";
 import { park, sendBack } from "./cycle.ts";
 import type { Job } from "./jobs.ts";
 import { itemRepository } from "./workspaces.ts";
@@ -248,7 +248,7 @@ export async function settleQueueBelowLevel4(ctx: Context): Promise<boolean> {
       deliver: (notice) => apply(ctx, notice),
     });
   } catch (error) {
-    ctx.say("orchestrator.queue_problem", `What the merge queue decided could not be applied: ${errorText(error)}`);
+    ctx.say("orchestrator.queue_problem", `What the merge queue decided could not be applied: ${errorText(error)}`, undefined, thrownData(error));
     return false;
   }
   queue.reconcile(new Set());
@@ -305,7 +305,7 @@ function launch(ctx: Context, queue: QueueDriver, leased: boolean): Run {
     try {
       await queue.drain(sink);
     } catch (error) {
-      if (!(error instanceof Stopped)) write("orchestrator.queue_problem", `The queue failed: ${errorText(error)}`);
+      if (!(error instanceof Stopped)) write("orchestrator.queue_problem", `The queue failed: ${errorText(error)}`, thrownData(error));
     } finally {
       try {
         if (leased) await giveLease({ ...ctx, at: ctx.deps.now() });

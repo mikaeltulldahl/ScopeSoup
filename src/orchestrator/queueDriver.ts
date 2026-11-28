@@ -34,6 +34,7 @@ import { initialState, configWith, defaultConfig, step, toBatch } from "../queue
 import type { ChainResult, QueueBatch, QueueConfig, QueueEffect, QueueInput, QueueState } from "../queue/index.ts";
 import type { ExternalCheck, QueueCiPort } from "../ports/host.ts";
 import { NotScopeSoups, WriteLater } from "../ports/host.ts";
+import { thrownData } from "./context.ts";
 import { inertText } from "./hostText.ts";
 import type { Store } from "../store/store.ts";
 import type { CheckRun, RunCheck } from "./checkRunner.ts";
@@ -603,7 +604,7 @@ export function createQueueDriver(deps: QueueDriverDeps): QueueDriver {
       sink.note("orchestrator.queue_problem", `${what}: ${message}. Scope Soup tries again at the next tick.`);
       return "wait";
     }
-    sink.note("orchestrator.queue_problem", `${what}: ${message}`);
+    sink.note("orchestrator.queue_problem", `${what}: ${message}`, thrownData(error));
     return { kind: "pause", reason: `${what}: ${message}`, by: "queue" };
   }
 
@@ -778,7 +779,7 @@ export function createQueueDriver(deps: QueueDriverDeps): QueueDriver {
         }
         await settleEnded(repo);
       } catch (error) {
-        sink.note("orchestrator.queue_problem", `The queue could not reach its clone or the remote: ${(error as Error).message}`);
+        sink.note("orchestrator.queue_problem", `The queue could not reach its clone or the remote: ${(error as Error).message}`, thrownData(error));
         await deliverOutbox(null, sink);
         return;
       }
