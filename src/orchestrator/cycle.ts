@@ -15,7 +15,7 @@ import { persistenceLimits } from "../config/persistence.ts";
 import type { Context } from "./context.ts";
 import { ACTOR, errorText } from "./context.ts";
 import type { Ask, AskedText, Decision, ItemLinkAnswer, Job, JobParked, Rewrite, JobStep, ParkedAs, ReviewAnswer, TakenDecision, TriageAnswer, Finding } from "./jobs.ts";
-import { ASK_PERSON, answerIn, askedInLog, jobQuestions, nextPark, parkSet, asImplement, asReview, asTriage, formatFindings, hasMarkup, recoverFields, keepsRecommendations, picks, questionsSettled, releaseIn, parkedRewrite, changedRewrite, sameText, atStep, stepAt, parkedOf, mergeApproved, shouldRoundOf, parkJob, editParked, release, nextStep, endSession, wait, oweHandOver, handOverTaken, markMerged, toTriage, dropMark, pickDone, pickedFor, askOf, answeredOf, takeSettled } from "./jobs.ts";
+import { ASK_PERSON, answerIn, askedInLog, jobQuestions, nextPark, parkSet, asImplement, asReview, asTriage, formatFindings, hasMarkup, recoverFields, keepsRecommendations, picks, questionsSettled, releaseIn, parkedRewrite, changedRewrite, sameText, atStep, stepAt, parkedOf, mergeApproved, shouldRoundOf, parkJob, editParked, release, nextStep, endSession, wait, oweHandOver, handOverTaken, markMerged, toTriage, dropMark, pickDone, pickedFor, askOf, answeredOf, takeSettled, rewritePosted, postRewrite } from "./jobs.ts";
 import { providerFor } from "./providers/index.ts";
 import type { Actions, ClaimResult, SessionResultRecord } from "./ports.ts";
 import { CLAIM_EXPIRY_MINUTES } from "./ports.ts";
@@ -250,7 +250,8 @@ async function rewriteOnHost(ctx: Context, job: Job, rewrite: Rewrite): Promise<
       return true;
     }
   }
-  editParked(job, { ...postedParked(parkedOf(job)!), rewrite: { id, questions: ids, ...(ids.length > 0 ? { texts: textsOf(rewrite.questions, numbers) } : {}), ...(askedAt ? { askedAt } : {}) } });
+  editParked(job, postedParked(parkedOf(job)!));
+  postRewrite(job, { id, questions: ids, ...(ids.length > 0 ? { texts: textsOf(rewrite.questions, numbers) } : {}), ...(askedAt ? { askedAt } : {}) });
   ctx.commit("orchestrator.rewrite_posted", `Posted the triage's rewrite of round ${rewrite.round} on ${job.item.host} (comment ${id})${ids.length > 0 ? ` with ${ids.length} question${ids.length > 1 ? "s" : ""}` : ""}.`, key, { rewrite: id, questions: ids });
   return true;
 }
@@ -302,7 +303,7 @@ async function questionsDeleted(ctx: Context, item: Ref, deleted: AskedText[]): 
  * again at its triage. True when the job left its parked state.
  */
 export async function followRewrite(ctx: Context, job: Job, item: WorkItem): Promise<boolean> {
-  const posted = parkedOf(job)?.rewrite;
+  const posted = rewritePosted(job);
   const rewrite = parkedRewrite(job);
   if (!posted || posted.answered || posted.questions.length === 0 || !rewrite) return false;
   if (posted.askedAt && Date.parse(item.updatedAt) < Date.parse(posted.askedAt)) return false;
@@ -321,7 +322,7 @@ export async function followRewrite(ctx: Context, job: Job, item: WorkItem): Pro
   const answers = given.map((answer) => answer!.answer);
   const settle = ctx.deps.actions.settleQuestions;
   if (keepsRecommendations(rewrite, answers)) {
-    editParked(job, { ...parkedOf(job)!, rewrite: { ...posted, answered: true } });
+    postRewrite(job, { ...posted, answered: true });
     ctx.commit("orchestrator.rewrite_questions_answered", `The questions of the triage's rewrite (round ${rewrite.round}) were answered on ${job.item.host} with the recommendations: the rewrite waits for a person to accept, edit or reject it.`, key, { round: rewrite.round });
     return false;
   }
@@ -1547,7 +1548,7 @@ export async function withdrawSettledDuplicates(ctx: Context, job: Job): Promise
   });
   if (withdrawn.length === 0) return false;
   rewrite.questions = rewrite.questions.filter((question) => !withdrawn.includes(question));
-  if ((parkedOf(job)!.rewrite?.questions.length ?? 0) > 0) await questionsDeleted(ctx, job.item, []);
+  if ((rewritePosted(job)?.questions.length ?? 0) > 0) await questionsDeleted(ctx, job.item, []);
   if (rewrite.questions.length > 0 || !sameText(rewrite.text, rewrite.original) || (rewrite.labels && !isEmptyChange(rewrite.labels))) {
     await park(ctx, job, "needs-decision", rewriteReason(rewrite), "decision", undefined, { asks: { is: "rewrite", rewrite } });
     return true;

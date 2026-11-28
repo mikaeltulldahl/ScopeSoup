@@ -33,7 +33,7 @@ import type { Store } from "../store/store.ts";
 import type { UsageCheckDecision } from "./usageCheck.ts";
 import type { Job, Jobs, PickTo, Recheck } from "./jobs.ts";
 import type { RetriageBudget } from "../core/retriage.ts";
-import { adoptStored, changedMeanwhile, dropUnreadable, loadJobs, NO_DECISIONS, takenText, WRITING_WAIT_MS, atStep, stepAt, sessionIdOf, parkedOf, mergeApproved, shouldRoundOf, writingOf, waitingOf, endSession, markMerged, awaitText, startSession, pickedFor, pickDone, endingOver, STEP_PICK, settledOf } from "./jobs.ts";
+import { adoptStored, changedMeanwhile, dropUnreadable, loadJobs, NO_DECISIONS, takenText, WRITING_WAIT_MS, atStep, stepAt, sessionIdOf, parkedOf, mergeApproved, shouldRoundOf, writingOf, waitingOf, endSession, markMerged, awaitText, startSession, pickedFor, pickDone, endingOver, STEP_PICK, settledOf, rewritePosted } from "./jobs.ts";
 import { workBranch, workspaceKey } from "./paths.ts";
 import { adoptHandbacks } from "./handback.ts";
 import { recoverFromLogs } from "./recover.ts";
@@ -745,7 +745,7 @@ export async function tick(deps: TickDeps): Promise<TickReport> {
     // The question comments it is parked on were answered or deleted on GitHub.
     if (parkedOf(job)?.questions && item && (await followQuestions(ctx, job, item))) continue;
     // The rewrite's question comments were answered by replies, or deleted.
-    if (parkedOf(job)?.rewrite && item && (await followRewrite(ctx, job, item))) continue;
+    if (rewritePosted(job) && item && (await followRewrite(ctx, job, item))) continue;
     // The questions it is parked on in the item's log were answered on another machine's board (#248).
     if (parkedOf(job) && parkedOf(job) === parkedBefore && !sessionIdOf(job) && item && !over && followLog(ctx, job, item)) continue;
     // A person merged the branch handed over to them, and nothing but Scope Soup closes an Item here: done once main holds the head.

@@ -79,16 +79,20 @@ export function jobFromHost(item: WorkItem): Job | null {
     const questions = rewrite.questions.map(decisionOf);
     job.triage ??= { ready: true, size: "medium", paths: [], hidesDecision: false };
     job.triage.hidesDecision = questions.length > 0;
-    const asks: Ask = { is: "rewrite", rewrite: { original: (item.body ?? "").trim(), text: rewrite.text, questions, round: rewrite.round, ...(rewrite.labels ? { labels: rewrite.labels } : {}) } };
+    const ids = rewrite.questions.flatMap((question) => (question.id ? [question.id] : []));
+    const askedAt = rewrite.questions[rewrite.questions.length - 1]?.at;
+    const asks: Ask = {
+      is: "rewrite",
+      rewrite: { original: (item.body ?? "").trim(), text: rewrite.text, questions, round: rewrite.round, ...(rewrite.labels ? { labels: rewrite.labels } : {}) },
+      posted: { id: rewrite.id, questions: ids, ...(askedAt ? { askedAt } : {}) },
+    };
     // The rounds so far are the rewrite comments.
     job.rewriteRounds = Math.max(record!.rewriteRounds, rewrite.round);
     const said = questions.length > 0
       ? `Triage, round ${rewrite.round}: a rewrite of the description and ${questions.length === 1 ? "1 question waits" : `${questions.length} questions wait`} for an answer: ${questions.map((each, index) => `${index + 1}. ${each.question}`).join(" ")}`
       : `Triage, round ${rewrite.round}: a rewrite of the description waits for a person to accept, edit or reject.`;
     const note = rewrite.bodyKnown ? "" : " The description the rewrite read is no longer known: the current one is shown as the original.";
-    const ids = rewrite.questions.flatMap((question) => (question.id ? [question.id] : []));
-    const askedAt = rewrite.questions[rewrite.questions.length - 1]?.at;
-    parkJob(job, { as: "needs-decision", reason: `${said}${note}`, at: rewrite.at, rewrite: { id: rewrite.id, questions: ids, ...(askedAt ? { askedAt } : {}) } }, asks);
+    parkJob(job, { as: "needs-decision", reason: `${said}${note}`, at: rewrite.at }, asks);
     return job;
   }
 

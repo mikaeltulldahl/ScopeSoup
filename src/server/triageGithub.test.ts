@@ -83,8 +83,8 @@ async function rewriteParked(id: string): Promise<{ rewrite: string; question: s
   const asked = await actions.askQuestions!(ref(id), [{ ...QUESTION, parked: "needs-decision", step: "triage", rewrite: rewrite!.id }]);
   const job = jobFor(id, ({
     at: {
-      kind: "parked", step: "triage", parked: { as: "needs-decision", reason: "Triage, round 1.", at, rewrite: { id: rewrite!.id, questions: asked!.ids } },
-      ask: { is: "rewrite", rewrite: { original: "Show the tides.", text: REWRITE, questions: [QUESTION], round: 1 } },
+      kind: "parked", step: "triage", parked: { as: "needs-decision", reason: "Triage, round 1.", at },
+      ask: { is: "rewrite", rewrite: { original: "Show the tides.", text: REWRITE, questions: [QUESTION], round: 1 }, posted: { id: rewrite!.id, questions: asked!.ids } },
     },
     triage: { ready: true, size: "small", paths: [], hidesDecision: true, decisions: [QUESTION], rewrite: REWRITE },
     rewriteRounds: 1,
@@ -278,8 +278,8 @@ describe("label changes in a triage rewrite on GitHub", () => {
     const rewrite = await acts.postRewrite!(ref(id), { round: 1, text: REWRITE, labels: CHANGE });
     saveJobs(db, { ...loadJobs(db), [key(id)]: jobFor(id, ({
       at: {
-        kind: "parked", step: "triage", parked: { as: "needs-decision", reason: "Triage, round 1.", at, rewrite: { id: rewrite!.id, questions: [] } },
-        ask: { is: "rewrite", rewrite: { original: "Show the tides.", text: REWRITE, questions: [], round: 1, labels: CHANGE } },
+        kind: "parked", step: "triage", parked: { as: "needs-decision", reason: "Triage, round 1.", at },
+        ask: { is: "rewrite", rewrite: { original: "Show the tides.", text: REWRITE, questions: [], round: 1, labels: CHANGE }, posted: { id: rewrite!.id, questions: [] } },
       },
       triage: { ready: true, size: "small", paths: [], hidesDecision: false, rewrite: REWRITE },
       rewriteRounds: 1,
@@ -389,8 +389,8 @@ describe("scopesoup:needs-decision while a triage rewrite waits for an answer", 
     const asked = questions.length > 0 ? await acts.askQuestions!(ref(id), questions.map((each) => ({ ...each, parked: "needs-decision", step: "triage", rewrite: rewrite!.id }))) : null;
     saveJobs(db, { ...loadJobs(db), [key(id)]: jobFor(id, ({
       at: {
-        kind: "parked", step: "triage", parked: { as: "needs-decision", reason: "Triage, round 1.", at, rewrite: { id: rewrite!.id, questions: asked?.ids ?? [] } },
-        ask: { is: "rewrite", rewrite: { original: "Show the tides.", text: REWRITE, questions, round: 1 } },
+        kind: "parked", step: "triage", parked: { as: "needs-decision", reason: "Triage, round 1.", at },
+        ask: { is: "rewrite", rewrite: { original: "Show the tides.", text: REWRITE, questions, round: 1 }, posted: { id: rewrite!.id, questions: asked?.ids ?? [] } },
       },
       triage: { ready: true, size: "small", paths: [], hidesDecision: questions.length > 0, decisions: questions, rewrite: REWRITE },
       rewriteRounds: 1,

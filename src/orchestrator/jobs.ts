@@ -97,8 +97,8 @@ export type Ask =
   | { is: "question"; decision: Decision }
   /** Triage's questions, two or more, each answered on its own (`answered` so far); the last answer releases the job. */
   | { is: "questions"; list: Decision[]; answered?: Answered[] }
-  /** The triage's rewrite of the description with its questions, answered together with Accept, Edit or Reject. */
-  | { is: "rewrite"; rewrite: Rewrite }
+  /** The triage's rewrite of the description with its questions, answered together with Accept, Edit or Reject; `posted` on the host. */
+  | { is: "rewrite"; rewrite: Rewrite; posted?: RewritePosted }
   /** A restructuring triage proposed. */
   | { is: "restructuring"; proposal: Proposal };
 
@@ -239,8 +239,18 @@ export interface JobParked {
   texts?: AskedText[];
   /** The host's time of the last question comment, so an older read of the item is not taken for a deletion. */
   askedAt?: string;
-  /** The triage round's rewrite comment on the host (GitHub) and its question comments, which a person answers on the board. */
-  rewrite?: { id: string; questions: string[]; /** As `texts` above. */ texts?: AskedText[]; /** The host's time of the last question comment. */ askedAt?: string; /** Each question has its answer from a reply on the host, all the recommendations: the rewrite waits for Accept on the board. */ answered?: true };
+}
+
+/** The triage round's rewrite comment on the host (GitHub) and its question comments, which a person answers on the board. */
+export interface RewritePosted {
+  id: string;
+  questions: string[];
+  /** As `JobParked.texts`. */
+  texts?: AskedText[];
+  /** The host's time of the last question comment. */
+  askedAt?: string;
+  /** Each question has its answer from a reply on the host, all the recommendations: the rewrite waits for Accept on the board. */
+  answered?: true;
 }
 
 export interface Job {
@@ -514,6 +524,12 @@ export function rewriteOf(job: Job | null | undefined): Rewrite | undefined {
   return ask?.is === "rewrite" ? ask.rewrite : settledOf(job)?.rewrite;
 }
 
+/** The rewrite comment and its question comments on the host, for the rewrite the job is parked on, if they were posted. */
+export function rewritePosted(job: Job | null | undefined): RewritePosted | undefined {
+  const ask = askOf(job);
+  return ask?.is === "rewrite" ? ask.posted : undefined;
+}
+
 /** The answers so far to the job's several questions. */
 export function answeredOf(job: Job | null | undefined): Answered[] {
   const ask = askOf(job);
@@ -670,6 +686,12 @@ export function recordAnswers(job: Job, answered: Answered[]): void {
   const at = job.at;
   if (at.kind !== "parked" || at.ask?.is !== "questions") return impossible("recordAnswers", at);
   job.at = { ...at, ask: { ...at.ask, answered } };
+}
+
+/** The rewrite the job is parked on is (or its questions are answered) on the host as `posted`. A job asking no rewrite has none. */
+export function postRewrite(job: Job, posted: RewritePosted): void {
+  const at = job.at;
+  if (at.kind === "parked" && at.ask?.is === "rewrite") job.at = { ...at, ask: { ...at.ask, posted } };
 }
 
 /** A person settled the rewrite the job is parked on: its triage waits, and the next tick goes on from `settled` without a session. */

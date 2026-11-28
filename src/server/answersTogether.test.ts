@@ -125,8 +125,8 @@ describe("answers sent together on GitHub", () => {
       ...loadJobs(store),
       [key("3")]: jobFor(ref("3"), ({
         at: {
-          kind: "parked", step: "triage", parked: { as: "needs-decision", reason: "Triage, round 1.", at, rewrite: { id: rewrite!.id, questions: asked!.ids } },
-          ask: { is: "rewrite", rewrite: { original: fake.issues.get("3")!.body ?? "", text: "Show the tides in metres.", questions: [question], round: 1 } },
+          kind: "parked", step: "triage", parked: { as: "needs-decision", reason: "Triage, round 1.", at },
+          ask: { is: "rewrite", rewrite: { original: fake.issues.get("3")!.body ?? "", text: "Show the tides in metres.", questions: [question], round: 1 }, posted: { id: rewrite!.id, questions: asked!.ids } },
         },
         triage: { ready: true, size: "small", paths: [], hidesDecision: true, decisions: [question], rewrite: "Show the tides in metres." },
         rewriteRounds: 1,

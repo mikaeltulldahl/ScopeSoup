@@ -21,7 +21,7 @@ import { readPacing } from "./pacing.ts";
 import type { MergeQueue } from "./mergeQueue.ts";
 import { createLoop } from "./loop.ts";
 import { workspaceKey } from "./paths.ts";
-import { answerQuestion, asImplement, asTriage, loadJobs, jobQuestions, releaseJob, resumesStep, saveJobs, settleRewrite, WRITING_WAIT_MS, stepAt, mergeApproved, owesHandOver, parkedOf, sessionIdOf, shouldRoundOf, writingOf, atStep, endSession, release, nextStep, toReview as pickReview, pick, pickedFor, askOf, rewriteOf, settledOf } from "./jobs.ts";
+import { answerQuestion, asImplement, asTriage, loadJobs, jobQuestions, releaseJob, resumesStep, saveJobs, settleRewrite, WRITING_WAIT_MS, stepAt, mergeApproved, owesHandOver, parkedOf, sessionIdOf, shouldRoundOf, writingOf, atStep, endSession, release, nextStep, toReview as pickReview, pick, pickedFor, askOf, rewriteOf, settledOf, rewritePosted } from "./jobs.ts";
 import { restructuringOf } from "./restructure.ts";
 import { readProposedRewrites } from "./aboutOthers.ts";
 import { loadOwnBlockers, setOwnBlockers } from "../store/blockers.ts";
@@ -4021,7 +4021,7 @@ test("a triage round posts its rewrite as a comment with the hash of the body it
   const job = loadJobs(w.store)[ghKey("1")]!;
   assert.equal(parkedOf(job)?.as, "needs-decision");
   const [rewrite, question] = fake.comments.get("1")!;
-  assert.deepEqual(parkedOf(job)?.rewrite, { id: String(rewrite!.id), questions: [String(question!.id)], texts: [{ question: "Metric or imperial?", n: 1 }], askedAt: question!.created_at });
+  assert.deepEqual(rewritePosted(job), { id: String(rewrite!.id), questions: [String(question!.id)], texts: [{ question: "Metric or imperial?", n: 1 }], askedAt: question!.created_at });
   // The rewrite's questions are followed apart from the issue questions': their answers settle the rewrite only with Accept on the board, or start a new round.
   assert.equal(parkedOf(job)?.questions, undefined);
   assert.match(rewrite!.body!, /^<details><summary>Triage, round 1: proposed description<\/summary>\n\nShow the tide table in metres\. Done when the table shows metres only\.\n\n<\/details>\n\n<!-- scopesoup:rewrite /);
@@ -4041,7 +4041,7 @@ test("a rewrite over 60,000 characters stays on the board, and the parked Item s
   await tick(deps);
   assert.equal(fake.comments.get("1"), undefined);
   const job = loadJobs(w.store)[ghKey("1")]!;
-  assert.equal(parkedOf(job)?.rewrite, undefined);
+  assert.equal(rewritePosted(job), undefined);
   assert.match(parkedOf(job)?.reason ?? "", / The rewrite is over 60,000 characters, too large for a comment on github: it stays on Scope Soup's board\.$/);
   // As before: a person's list and the log line.
   assert.equal(w.calls.filter((call) => call.startsWith("answerTurn")).length, 1);
@@ -4094,7 +4094,7 @@ test("a trusted A1: reply to a rewrite question other than the recommendation st
   await tick(same.deps);
   const waiting = loadJobs(same.w.store)[ghKey("1")]!;
   assert.equal(parkedOf(waiting)?.as, "needs-decision");
-  assert.equal(parkedOf(waiting)?.rewrite?.answered, true);
+  assert.equal(rewritePosted(waiting)?.answered, true);
   assert.equal(settledOf(waiting)?.as, undefined);
   // The label stays while the rewrite waits for Accept, Edit or Reject.
   assert.deepEqual(labelsOn(same.fake), ["scopesoup:needs-decision"]);
@@ -4341,7 +4341,7 @@ test("a triage with no question and a changed description posts its rewrite and 
   await tick(deps);
   const job = loadJobs(w.store)[ghKey("1")]!;
   assert.equal(parkedOf(job)?.as, "needs-decision");
-  assert.deepEqual(parkedOf(job)?.rewrite?.questions, []);
+  assert.deepEqual(rewritePosted(job)?.questions, []);
   assert.deepEqual(fake.comments.get("1")!.map((comment) => readMarker(comment.body)?.kind), ["rewrite"]);
   assert.deepEqual(labelsOn(fake), ["question", "scopesoup:needs-decision"]);
 });
@@ -4870,7 +4870,7 @@ test("on GitHub the other Item's rewrite and question are posted there, the agen
   assert.ok(!/Fixes #3|@ada|Closes #4/.test(all), all);
   const parked = parkedOf(loadJobs(w.store)[ghKey("2")]);
   assert.equal(parked?.as, "needs-decision");
-  assert.equal(parked?.rewrite?.questions.length, 1);
+  assert.equal(rewritePosted(loadJobs(w.store)[ghKey("2")])?.questions.length, 1);
 });
 
 // --- a Jira project at level 2, end to end against the fake Jira: every host action is the real one ---

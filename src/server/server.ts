@@ -35,7 +35,7 @@ import { explainOrder, voteForPlace, voteLimits } from "../orchestrator/score.ts
 import { setVote, voteInStore } from "../store/votes.ts";
 import { isSha } from "../orchestrator/history.ts";
 import { readMergeQueueNote } from "../orchestrator/mergeQueueLease.ts";
-import { parkSet, adoptWritten, answerQuestion, awaitWritten, answerRefusal, rewriteRefusal, keepsRecommendations, loadJobs, questionsSettled, releaseJob, parkedRewrite, resumesStep, saveJobs, settleRewrite, parkedOf, sessionIdOf, stepAt, pick, pickedFor } from "../orchestrator/jobs.ts";
+import { parkSet, adoptWritten, answerQuestion, awaitWritten, answerRefusal, rewriteRefusal, keepsRecommendations, loadJobs, questionsSettled, releaseJob, parkedRewrite, resumesStep, saveJobs, settleRewrite, parkedOf, sessionIdOf, stepAt, pick, pickedFor, rewritePosted } from "../orchestrator/jobs.ts";
 import { readProposedRewrites, writeProposedRewrites } from "../orchestrator/aboutOthers.ts";
 import { applyMove, isMove, MOVES, moveWhys, ROLE_WORDS, runningRole } from "./moves.ts";
 import { voteToPlace } from "./place.ts";
@@ -1255,7 +1255,7 @@ export function createServer(options: ServerOptions): ScopeSoupServer {
       ? { add: [...new Set([...(proposedLabels?.add ?? []), aiLabel])], remove: (proposedLabels?.remove ?? []).filter((name) => name.toLowerCase() !== aiLabel.toLowerCase()) }
       : proposedLabels;
     // A rewrite posted on GitHub is answered there.
-    const posted = options.questions && subject.host === options.questions.host ? parkedOf(job)!.rewrite : undefined;
+    const posted = options.questions && subject.host === options.questions.host ? rewritePosted(job) : undefined;
     if (posted) return rewriteOnHost(response, item, rewrite, posted, answers, action, newText, parkedAt, labelChange);
     const write = items?.write;
     const writable = !!write?.editWork && subject.host === items!.host;

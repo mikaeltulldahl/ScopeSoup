@@ -17,7 +17,7 @@ import type { Context } from "./context.ts";
 import { createLog } from "./context.ts";
 import { createHostActions } from "./hostActions.ts";
 import type { Jobs } from "./jobs.ts";
-import { loadJobs, saveJobs, stepAt, parkedOf, rewriteOf } from "./jobs.ts";
+import { loadJobs, saveJobs, stepAt, parkedOf, rewriteOf, rewritePosted } from "./jobs.ts";
 import { recoverFromLogs } from "./recover.ts";
 
 const at = "2026-11-22T09:00:00Z";
@@ -187,8 +187,8 @@ describe("recovery from GitHub", () => {
     assert.equal(job.rewriteRounds, 2);
     assert.deepEqual(rewriteOf(job), { original: "Show the tides.", text: REWRITE, questions: [QUESTION], round: 2 });
     assert.equal(parkedOf(job)?.as, "needs-decision");
-    assert.equal(parkedOf(job)?.rewrite?.id, rewriteId);
-    assert.equal(parkedOf(job)?.rewrite?.questions.length, 1);
+    assert.equal(rewritePosted(job)?.id, rewriteId);
+    assert.equal(rewritePosted(job)?.questions.length, 1);
     assert.doesNotMatch(parkedOf(job)?.reason ?? "", /no longer known/);
     // The board reads it from the job.
     const parked = loadSnapshot(store).parked?.find((each) => each.subject.id === "5");
