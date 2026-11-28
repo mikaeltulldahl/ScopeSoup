@@ -557,11 +557,15 @@ export function pickDone(job: Job, ...tos: PickTo[]): void {
   if (job.pick && tos.includes(job.pick.to)) delete job.pick;
 }
 
-/** The session the pick was to end is over (or given up on): what is left of the pick is its move; Abandoned has none. */
+/**
+ * The session the pick was to end is over (or given up on): what is left of the pick is its move. Abandoned has none, and nor has a
+ * step or the queue on a parked job (a park settled them while the session was still to be ended).
+ */
 export function endingOver(job: Job): void {
   if (!job.pick?.ending) return;
   const { ending: _ending, ...rest } = job.pick;
-  if (rest.to === "abandoned") delete job.pick;
+  const parked = job.at.kind === "parked" && rest.to !== "todo" && rest.to !== "hand-over";
+  if (rest.to === "abandoned" || parked) delete job.pick;
   else job.pick = rest;
 }
 

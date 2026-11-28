@@ -176,11 +176,12 @@ function interrupted(ctx: Context, key: string, job: Job, item: WorkItem | null)
       return false;
     }
     if (Date.parse(ctx.at) - Date.parse(asked.at) <= INTERRUPT_WAIT_MS) return true;
-    ctx.commit("orchestrator.interrupt_failed", `The ${session.role} session ${session.ref.id} on ${item?.ref.id ?? key} is still there ${Math.round(INTERRUPT_WAIT_MS / 60_000)} minutes after ${asked.by}'s pick ended it; the job goes on as the pick left it, and nothing starts on the Item while that session runs.`, key, { by: asked.by, session: session.ref.id });
   }
   const dropped = !session && own && sessionIdOf(job) ? own : undefined;
   endingOver(job);
   endSession(job);
+  // Committed after the change, so the job is saved with its event even when nothing else in this tick commits.
+  if (session) ctx.commit("orchestrator.interrupt_failed", `The ${session.role} session ${session.ref.id} on ${item?.ref.id ?? key} is still there ${Math.round(INTERRUPT_WAIT_MS / 60_000)} minutes after ${asked.by}'s pick ended it; the job goes on as the pick left it, and nothing starts on the Item while that session runs.`, key, { by: asked.by, session: session.ref.id });
   // The session was over before the pick reached it: its result, not yet read, is not taken, and that is a change of the job. Committed
   // after the change, so the job is saved with its event even when nothing else in this tick commits (#268).
   if (dropped) ctx.commit("orchestrator.result_dropped", `${asked.by} picked ${PICK_WORDS[asked.to] ?? asked.to} for ${item?.ref.id ?? key} on the board: the result of its ${dropped.role} session ${dropped.ref.id}, which had ended, is not taken.`, key, { by: asked.by, step: stepAt(job) });

@@ -72,8 +72,9 @@ export async function park(ctx: Context, job: Job, as: ParkedAs, reason: string,
   const key = refKey(job.item);
   parkJob(job, { as, reason, at: ctx.at, ...(retry ? { retry } : {}), ...(marks.byStep ? { byStep: true } : {}), ...(marks.verdict ? { verdict: true } : {}) }, marks.asks);
   job.parks = nextPark(job, ctx.deps.store.get<WorkItem>(job.item)?.log);
-  // A person's ask was for the step that ended here (decision 104).
-  pickDone(job, "triage", "in-review", "merge-queue", "implement");
+  // A person's ask was for the step that ended here (decision 104). One whose session is still to be ended (a lost claim parks the job
+  // while the pick waits for it) stays until that is over, so a session that does not go is still reported (`endingOver` drops it then).
+  if (!job.pick?.ending) pickDone(job, "triage", "in-review", "merge-queue", "implement");
   ctx.commit(PARK_EVENT[as], reason, key, { step: stepAt(job) });
   const { runner } = ctx.deps;
   if (ask) await tellPeople(ctx, job, as, reason, ask, retry);

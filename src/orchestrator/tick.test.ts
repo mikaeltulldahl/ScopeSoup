@@ -5408,6 +5408,33 @@ test("a session a pick could not end is waited for 2 minutes, then the job goes 
   assert.match(w.reasons("orchestrator.job_dropped")[0] ?? "", /Ada put 1 back in To do/);
 });
 
+test("a claim lost while a pick waits for its session to end parks the job, and a session that never goes is still reported after 2 minutes", async () => {
+  const mine = { id: "scopesoup@laptop-a", name: "scopesoup on laptop-a", bot: true };
+  const w = world(config({ level: 2 }), [item("1")]);
+  w.claimant = mine.id;
+  w.claims = true;
+  w.store.addUsageSample(usage(0.1, 0.1));
+  await w.run();
+  assert.deepEqual(roles(w), ["triage"]);
+  const key = refKey(ref("1"));
+  // The process does not go: the runner tells it to stop, and it stays.
+  w.runner.stopFor = () => 0;
+  const jobs = loadJobs(w.store);
+  Object.assign(jobs[key]!, { pick: { by: "Ada", to: "triage" as const, ending: new Date(w.clock.ms).toISOString() } });
+  saveJobs(w.store, jobs);
+  // The claim is lost at its renewal while the pick waits for the session to go: the job parks.
+  w.store.put(item("1", { holder: { actor: mine, until: new Date(w.clock.ms + 50 * 60_000).toISOString() } }), "sync", new Date(w.clock.ms).toISOString());
+  w.claim = { won: false, why: "scopesoup on laptop-b claimed it first" };
+  await w.run();
+  assert.equal(parkedOf(w.job("1"))?.as, "escalated");
+  w.clock.ms += 3 * 60_000;
+  await w.run();
+  assert.match(w.reasons("orchestrator.interrupt_failed")[0] ?? "", /still there 2 minutes after Ada's pick ended it/);
+  // The park settled the pick's step: once the wait is over, nothing of the pick is left.
+  assert.equal(w.job("1")?.pick, undefined);
+  assert.equal(parkedOf(w.job("1"))?.as, "escalated");
+});
+
 test("meta branch: a handed-over change a person merged is logged as merged and the Item is closed", async () => {
   const w = await handedOver();
   w.closesItself = true;
