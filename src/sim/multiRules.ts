@@ -2,9 +2,12 @@
 // meta remote. `final` rules are checked once, after every machine synced and stopped; the others after every step. Each check
 // returns what is wrong in words, or null. The single-machine rules (`rules.ts`) are checked per machine besides these.
 
+import { foldLog, parseLog } from "../hosts/metaBranch/log.ts";
 import { REQUEST_TTL_MS, readRequests } from "../hosts/metaBranch/requests.ts";
 import type { RecordedAnswer, ScopeSoupEvent, WorkItem } from "../model/types.ts";
 import { refKey } from "../model/types.ts";
+import type { Job } from "../orchestrator/jobs.ts";
+import { parkedOf } from "../orchestrator/jobs.ts";
 import type { SessionRequest } from "../orchestrator/ports.ts";
 import type { MetaFiles } from "./metaHost.ts";
 import type { Ledger } from "./world.ts";
@@ -24,6 +27,10 @@ export interface MachineObs {
   /** This machine's clock, in milliseconds. */
   now: number;
   down: boolean;
+  /** This machine's jobs, by Item key. */
+  jobs: Record<string, Job>;
+  /** Ticks this machine ran with the meta remote up and no other machine's push due to get ahead of its swaps. */
+  onlineTicks: number;
 }
 
 export interface MultiObs {
@@ -230,6 +237,69 @@ export const MULTI_RULES: MultiRule[] = [
       for (const m of o.machines) {
         const made = m.answers.find((a) => !sent.has(a.answer) && !/scopesoup/i.test(a.by) && !asked.has(a.subject.id));
         if (made) return `${m.name} acts on an answer "${made.answer.slice(0, 60)}" by ${made.by} on ${made.subject.id} that no person sent`;
+      }
+      return null;
+    },
+  },
+  {
+    id: "M9",
+    why: "A wait for a person's answers belongs to no machine, and one machine goes on after the answer (#271): no machine holds a live claim on an Item while its job there only waits for a person's answers (its questions posted), once it has ticked with the remote up since; and between one person's input on an Item (an answer, or any request about it on any board) and the next, sessions on it start on one machine only, unless that machine's claim ran out before the other's claim was written.",
+    check(o, memo) {
+      // 1. No claim on a wait for answers. The tick that parks lets the claim go; a tick that could not write (offline, or other
+      // machines' pushes kept getting in first) leaves it to the next one, so a claim is wrong once the machine ticked online since.
+      const seen = (memo.seen ??= {}) as Record<string, number>;
+      for (const m of o.machines) {
+        for (const [key, job] of Object.entries(m.jobs)) {
+          const id = `${m.name}|${key}`;
+          const parked = parkedOf(job);
+          const waits = !!parked && parked.as !== "queued" && parked.as !== "handed-over" && parked.retry !== "post";
+          const files = o.remote.get(idOf(key));
+          const holder = files ? foldLog(parseLog(files.log)).holder : undefined;
+          const holds = !!holder && holder.by.agent === true && holder.by.machine === m.name && !!holder.until && Date.parse(holder.until) > m.now;
+          if (!waits || !holds || m.down || m.live.includes(key)) {
+            delete seen[id];
+            continue;
+          }
+          seen[id] ??= m.onlineTicks;
+          if (m.onlineTicks > seen[id]!) return `${idOf(key)} only waits for a person's answers on ${m.name} (${parked!.as}), which still holds a claim on it until ${holder!.until}`;
+        }
+      }
+      // 2. One machine goes on after a person's input. Input on any board starts a new turn; the first machine to start a session after
+      // it goes on, and another may start one only once that machine's claim ran out unrenewed (offline, as M3 allows).
+      const done = (memo.started ??= {}) as Record<string, number>;
+      const goesOn = (memo.goesOn ??= {}) as Record<string, { machine: string; since: number }>;
+      const inputs = new Map<string, number>();
+      const note = (key: string, step: number): void => void inputs.set(key, Math.max(inputs.get(key) ?? 0, step));
+      for (const m of o.machines) {
+        for (const a of m.ledger.answers) note(a.item, a.step);
+        for (const r of m.ledger.requests) {
+          const item = r.item && (r.status === 200 || r.status === 202) ? m.items.find((each) => each.ref.id === r.item) : undefined;
+          if (item) note(refKey(item.ref), r.step);
+        }
+      }
+      const lastClaim = (key: string, machine: string): { at: number; until: number } | undefined => {
+        let last: { at: number; until: number } | undefined;
+        for (const entry of parseLog(o.remote.get(idOf(key))?.log ?? "").entries) {
+          const until = entry.data.until;
+          if (entry.kind === "claimed" && entry.by.agent && entry.by.machine === machine && typeof until === "string") last = { at: Date.parse(entry.at), until: Date.parse(until) };
+        }
+        return last;
+      };
+      for (const m of o.machines) {
+        const from = done[m.name] ?? 0;
+        done[m.name] = m.started.length;
+        for (const s of m.started.slice(from)) {
+          const key = refKey(s.request.subject);
+          const since = inputs.get(key) ?? 0;
+          const before = goesOn[key];
+          const theirs = before ? lastClaim(key, before.machine) : undefined;
+          const mine = lastClaim(key, m.name);
+          const lapsed = !!theirs && !!mine && mine.at >= theirs.until;
+          if (before && before.since === since && before.machine !== m.name && !lapsed) {
+            return `${idOf(key)}: ${before.machine} went on after the last person's input on it (step ${since}), and ${m.name} started a ${s.request.role} session on it too, at step ${s.step}`;
+          }
+          goesOn[key] = { machine: m.name, since };
+        }
       }
       return null;
     },

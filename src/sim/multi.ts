@@ -116,6 +116,8 @@ export interface Machine {
   /** The step this machine was last checked at, and the step another machine last acted at (a push it reads at its next tick). */
   checkedAt: number;
   othersActedAt: number;
+  /** Ticks run with the remote up and no race due (M9). */
+  onlineTicks: number;
 }
 
 /** A step of a multiplayer run, as plain data. */
@@ -220,7 +222,7 @@ export class MultiWorld {
       const link = new RemoteLink(this.remote);
       const git = new FakeGit(this.origin);
       const machine: Machine = {
-        index, name, link, skew: index === 0 ? 0 : (skews.int(181) - 90) * 1000, requests: [], memo: new Map(), rules: rulesFor(index), started: [], syncedAt: 0, checkedAt: 0, othersActedAt: 0,
+        index, name, link, skew: index === 0 ? 0 : (skews.int(181) - 90) * 1000, requests: [], memo: new Map(), rules: rulesFor(index), started: [], syncedAt: 0, checkedAt: 0, othersActedAt: 0, onlineTicks: 0,
         world: undefined as unknown as SimWorld,
       };
       machine.world = new SimWorld(options, { machine: name, idPrefix: name.slice(-1).toUpperCase(), remote: link as unknown as MetaRemote, git, requests: this.requestPort(machine) });
@@ -369,7 +371,9 @@ export class MultiWorld {
         if (a.kind === "clock") return this.setClock(this.ms + a.ms);
         // The world's own "host down" is this machine offline (its link), counted down by its ticks.
         const before = m.world.ms;
+        const online = m.link.down === 0 && m.link.races === 0;
         await m.world.apply(a);
+        if (online && (a.kind === "tick" || a.kind === "inside-tick")) m.onlineTicks++;
         // A day passed with a person's commit (ageing): it passes on the shared clock, for every machine (each reads its usage itself).
         if (m.world.ms !== before) this.setClock(m.world.ms - m.skew);
         return;
@@ -392,6 +396,8 @@ export class MultiWorld {
         started: m.started,
         now: m.world.ms,
         down: m.link.down > 0,
+        jobs: m.world.jobs(),
+        onlineTicks: m.onlineTicks,
       })),
       remote: this.remote.files,
       requestLines: this.requestLines,
