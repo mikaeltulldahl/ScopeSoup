@@ -820,7 +820,13 @@ export const RULES: Rule[] = [
       // A start whose claim read the Item from the host found it closed or in Backlog on another machine (#243): that read is the
       // input, and the next tick gives the job up.
       const readAtClaim = new Set(prev.events.filter((e) => e.kind === "orchestrator.claim_lost").map((e) => e.subject));
-      const loud = o.events.find((e) => (wrote(e) || e.kind.startsWith("change.")) && !readAtClaim.has(e.subject));
+      // So is a claim that could not be written (other machines' pushes kept getting in first): the next tick claims and starts it, and
+      // the session it starts is that Item's.
+      const sessionOf = (e: { kind: string; data?: unknown }): string | undefined => {
+        const subject = e.kind === "session.created" ? (e.data as { subject?: { host: string; kind: string; id: string } } | undefined)?.subject : undefined;
+        return subject ? `${subject.host}:${subject.kind}:${subject.id}` : undefined;
+      };
+      const loud = o.events.find((e) => (wrote(e) || e.kind.startsWith("change.")) && !readAtClaim.has(e.subject) && !readAtClaim.has(sessionOf(e)));
       if (loud) return `a tick right after a tick wrote ${loud.kind}${loud.subject ? ` about ${loud.subject.split(":").pop()}` : ""}`;
       const changed = o.items.find((i) => !readAtClaim.has(i.key) && JSON.stringify(i.job ?? null) !== JSON.stringify(prevOf(prev, i.key)?.job ?? null));
       return changed ? `a tick right after a tick changed ${changed.id}'s job` : null;
@@ -987,9 +993,9 @@ export const RULES: Rule[] = [
       // So did the usage check: at the budget, or one session at a time while every window of the last reading has reset (a day
       // passing in the fake world, #217): the room was the usage check's, not the slot's.
       if (o.tick.budgetHeld) return null;
-      // Another machine let the Item go at a time later than this machine's clock (clocks apart): this machine's claim folds before that
-      // release, so it does not take until its clock passes it. A wait for a person's answers lets go at every park (#271).
-      const releasedLater = (i: ItemObs): boolean => (o.items.find((each) => each.key === i.key)?.host?.log ?? []).some((line) => line.kind === "released" && line.by.agent && !!o.machine && line.by.machine !== o.machine && Date.parse(line.at) > Date.parse(o.at));
+      // Another machine (its Scope Soup or a person there) let the Item go at a time later than this machine's clock (clocks apart): this
+      // machine's claim folds before that release, so it does not take until its clock passes it. A wait for answers lets go at every park (#271).
+      const releasedLater = (i: ItemObs): boolean => (o.items.find((each) => each.key === i.key)?.host?.log ?? []).some((line) => line.kind === "released" && !!o.machine && line.by.machine !== o.machine && Date.parse(line.at) > Date.parse(o.at));
       const waiting = prev.items.find((i) => i.w.kind === "start" && i.w.cause === "slot" && !overlaps(i) && !releasedLater(i) && !o.started.some((s) => s.item === i.key) && (() => { const now = o.items.find((each) => each.key === i.key)?.w; return now?.kind === "start" && now.cause === "slot"; })());
       return waiting ? `${waiting.id} waited only for a slot, a slot was free, and the tick did not start it (now ${wText(o.items.find((each) => each.key === waiting.key)!.w)})` : null;
     },
